@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+
+/* Placeholder palette; replaced by generated tokens from @assettracker/ui-tokens later. */
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b1020;
+    --foreground: #e2e8f0;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, sans-serif;
+}

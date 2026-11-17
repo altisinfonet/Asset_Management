@@ -30,3 +30,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# turbo / tooling
+*.tsbuildinfo
+.eslintcache
+next-env.d.ts

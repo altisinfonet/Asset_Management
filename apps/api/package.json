@@ -1,0 +1,48 @@
+{
+  "name": "@assettracker/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NestJS modular monolith (Fastify adapter). One image, many roles: api | worker | scheduler | migrate",
+  "type": "module",
+  "main": "./dist/main.js",
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node scripts/dev.mjs",
+    "start": "node dist/main.js api",
+    "migrate": "node dist/main.js migrate",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+  },
+  "dependencies": {
+    "@assettracker/schemas": "workspace:*",
+    "@nestjs/common": "12.5.1",
+    "@nestjs/core": "12.5.1",
+    "@nestjs/platform-fastify": "12.5.1",
+    "fastify": "5.12.8",
+    "nestjs-pino": "5.3.2",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "12.5.1",
+    "@swc/core": "1.16.22",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3",
+    "unplugin-swc": "2.0.0",
+    "vitest": "5.1.0"
+  }
+}

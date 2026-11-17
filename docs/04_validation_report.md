@@ -2,6 +2,8 @@
 
 Date: 2026-11-17. Audience: founding team. Product: asset management, Cloud SaaS plus Self-hosted edition.
 
+> **Snapshot note:** this report reflects the plan as of its date. Later the same day the team changed to one founder + Claude and switched to milestones M1-M6 with Self-hosted first; any "closed beta ~month 5 / GA ~month 8" timing below is superseded. Current timeline and roles: [02_product_plan.md](02_product_plan.md) sections 5.1 and 5.5.
+
 Detailed reports (all claims below trace to these):
 [competitor](validation/competitor_validation.md) | [market](validation/market_validation.md) | [technical](validation/technical_validation.md) | [spike](validation/spike_rls_pgbouncer.md)
 

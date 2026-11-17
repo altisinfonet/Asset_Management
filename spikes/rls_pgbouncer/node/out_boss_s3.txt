@@ -1,0 +1,33 @@
+scenario=s3 postgres=18.7 (Debian 18.7-1.pgdg13+2) pg-boss=12.38.2
+{
+  "scenario": "s3",
+  "postgres": "18.7 (Debian 18.7-1.pgdg13+2)",
+  "notes": [
+    "schema created + migrated + queue created via DIRECT connection as app_owner, then stopped",
+    "runtime boss.start() via PgBouncer as app_user (createSchema/migrate/supervise/schedule = false) OK",
+    "maintenance boss (supervise=true) via PgBouncer as app_owner started OK",
+    "20/20 jobs enqueued inside the caller's tenant transaction via {db:{executeSql}} on a PgBouncer connection"
+  ],
+  "elapsedMs": 2331,
+  "states": {
+    "completed": 100
+  },
+  "auditRowsPerTenant": {
+    "aaaa": "50 rows/50 distinct",
+    "bbbb": "50 rows/50 distinct"
+  },
+  "handled": 100,
+  "rlsViolationsInHandlers": 0,
+  "handlerErrors": [],
+  "backendConnections": "(none)/app_user=4, pgboss:50992077/app_owner=3, pgboss:9e7363ef/app_user=1, pgboss:cf0c707c/app_owner=1",
+  "advisoryLocksHeldNow": 0,
+  "listeners": 0,
+  "pgbouncerPools": [
+    "spike/app_owner: cl_active=2 sv_active=0 sv_idle=4",
+    "spike/app_user: cl_active=12 sv_active=0 sv_idle=4"
+  ],
+  "pgbouncerStats": "total_xact_count=2206 total_query_count=11048",
+  "events": [],
+  "pass": true
+}
+RESULT s3: PASS

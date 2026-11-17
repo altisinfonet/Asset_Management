@@ -1,0 +1,12 @@
+node_modules
+dist
+out
+.next
+.turbo
+coverage
+pnpm-lock.yaml
+docs
+research
+asset_management_systems.md
+**/next-env.d.ts
+spikes

@@ -1,0 +1,32 @@
+{
+  "name": "assettracker",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Asset management platform monorepo (Turborepo + pnpm workspaces)",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "check": "turbo run lint typecheck test build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.6",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.14.0",
+    "prettier": "3.10.1",
+    "turbo": "2.11.11",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.73.0"
+  }
+}

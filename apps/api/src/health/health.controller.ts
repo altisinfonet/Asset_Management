@@ -2,13 +2,13 @@ import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/co
 import type { HealthResponse, VersionResponse } from '@assettracker/schemas';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { AppConfig } from '../config/env.js';
-import { DbService } from '../db/db.service.js';
+import { TenancyService } from '../tenancy/tenancy.service.js';
 import { getVersionInfo } from '../version.js';
 
 @Controller()
 export class HealthController {
   constructor(
-    private readonly db: DbService,
+    private readonly db: TenancyService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 

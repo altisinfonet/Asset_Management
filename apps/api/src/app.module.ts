@@ -2,9 +2,11 @@ import { type DynamicModule, Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/env.js';
-import { DbModule } from './db/db.module.js';
+import { ControlPlaneModule } from './control-plane/control-plane.module.js';
 import { HealthModule } from './health/health.module.js';
+import { IdentityModule } from './identity/identity.module.js';
 import { pinoHttpParams } from './logging/logger.js';
+import { TenancyModule } from './tenancy/tenancy.module.js';
 
 @Module({})
 export class AppModule {
@@ -14,7 +16,9 @@ export class AppModule {
       imports: [
         ConfigModule.forRoot(config),
         LoggerModule.forRoot(pinoHttpParams(config)),
-        DbModule,
+        TenancyModule,
+        ControlPlaneModule,
+        IdentityModule,
         HealthModule,
       ],
     };

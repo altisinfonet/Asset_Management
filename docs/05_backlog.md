@@ -1002,7 +1002,7 @@ Size: S - Owner: Founder - Deps: all M2 stories
 
 **Exit criteria (demoable outcome).** On a clean Linux VM the founder follows only the install guide: pulls signed images from the licence-gated registry, supplies a licence file and TLS certificate, runs `install.sh`, logs in as the bootstrapped Owner, imports a spreadsheet, scans with the Expo app via a setup QR, then runs `upgrade.sh` to a newer release without data loss. CI proves the same automatically: a fresh install, an N-2 to latest upgrade with seeded data, the licence state machine (valid, 90% warning, expiring, grace, read-only, tampered, unknown `kid`, clock rollback) and the mobile TLS test. At least one design partner is running it on their own host.
 
-**Epics:** E4.1 Bundle and adapters (BND) - E4.2 Licence system (LIC) - E4.3 Release engineering and tests (REL) - E4.4 Self-hosted auth, export, docs, partners (SHA). 22 stories.
+**Epics:** E4.1 Bundle and adapters (BND) - E4.2 Licence system (LIC) - E4.3 Release engineering and tests (REL) - E4.4 Self-hosted auth, export, docs, partners (SHA) - E4.5 Database roles and retention (DB). 24 stories.
 
 **Not in M4 (v2, per plan decision 27):** Helm chart, air-gapped install, self-hosted SAML/SCIM via Keycloak, Vault/KMS key adapter; push relay is v1.1.
 
@@ -1082,6 +1082,15 @@ Size: S - Owner: Founder - Deps: all M2 stories
 - **M4-SHA-06** - M4 founder acceptance (UX). Size: S - Owner: Founder - Deps: all M4 stories, F-14
   - [ ] Founder installs on a clean VM using only the docs, upgrades once, restores a backup, and signs off; at least one external partner has completed an install.
 
+### E4.5 Database roles and retention
+
+- **M4-DB-01** - Narrow DB role and separate pool for identity-schema lookups. Size: M - Owner: Claude - Deps: M1-TEN-08, M1-AUTH-02
+  - [ ] The `app` role cannot SELECT `identity.credential` (permission denied, 42501); the app role loses access to `identity.credential` and `identity.session`.
+  - [ ] Login still works through a separate identity pool that uses the narrow role; the isolation suite is updated for the new grants (direct and through PgBouncer).
+- **M4-DB-02** - Retention DB role for audit/asset_history partition drops, tenant offboarding purge and DSAR deletion. Size: M - Owner: Claude - Deps: M1-TEN-06, M1-PLAT-04
+  - [ ] A dedicated retention role runs partition drops, offboarding purge and DSAR deletion; the `app` role still cannot DELETE or DROP.
+  - [ ] Each purge is audited and tested with two tenants (purging one leaves the other's rows intact).
+
 ---
 
 ## 6. Milestone M5 - Importer, licences, reports, webhooks, API completeness
@@ -1090,12 +1099,12 @@ Size: S - Owner: Founder - Deps: all M2 stories
 
 **Exit criteria (demoable outcome).** (1) A seeded Snipe-IT instance with 5,000 assets, users, licences, accessories, consumables and history is imported through the wizard (URL + token) with progress, resumability after a forced restart, and a verified object-count reconciliation; (2) licences with seats are assigned to people/assets and an expiring licence triggers an alert; (3) the dashboard and ten standard reports render with filters and export to CSV/XLSX; (4) a webhook endpoint receives HMAC-signed events, survives a failing receiver with retries, and the delivery log shows replay; (5) the audit log screen filters and exports; (6) a script using only the generated client and an API key performs the full custody workflow, and the CI parity gate proves every UI action has an endpoint.
 
-**Epics:** E5.1 Snipe-IT importer (SNIPE) - E5.2 Licences (LIC) - E5.3 Reports and dashboard (RPT) - E5.4 Webhooks (HOOK) - E5.5 Audit log (AUD) - E5.6 REST API completeness (API) - E5.7 Quality and partners (QA, BUF, UX). 26 stories.
+**Epics:** E5.1 Snipe-IT importer (SNIPE) - E5.2 Licences (LIC) - E5.3 Reports and dashboard (RPT) - E5.4 Webhooks (HOOK) - E5.5 Audit log (AUD) - E5.6 REST API completeness (API) - E5.7 Quality and partners (QA, BUF, UX). 27 stories.
 
 ### E5.1 Snipe-IT importer
 
 - **M5-SNIPE-01** - Snipe-IT API client. Size: L - Owner: Claude - Deps: M2-IMP-01, M1-PLAT-08
-  - [ ] Bearer-token client that respects 120 requests/min and 500 rows/page by default (configurable for self-hosted sources), backs off on 429, is resumable and SSRF-safe (validated DNS, no private ranges unless an explicit self-hosted allow-list); token stored envelope-encrypted and deleted at completion.
+  - [ ] Bearer-token client that respects 120 requests/min and 500 rows/page by default (configurable for self-hosted sources), backs off on 429, is resumable and SSRF-safe (validated DNS, no private ranges unless an explicit self-hosted allow-list); token stored envelope-encrypted in `integration_connection` (M5-SNIPE-05); for a one-off import the connection row and its credentials are purged when the job completes or is cancelled, unless the admin explicitly saves the connection for repeat imports.
   - [ ] Contract tests against a recorded Snipe-IT API fixture set and against a dockerised Snipe-IT in CI.
   - [ ] No Snipe-IT code is copied (AGPL-3.0); only the public API is used.
 - **M5-SNIPE-02** - Object mapping and staged import. Size: L - Owner: Claude - Deps: M5-SNIPE-01, M5-LIC-02
@@ -1108,6 +1117,12 @@ Size: S - Owner: Founder - Deps: all M2 stories
 - **M5-SNIPE-04** - Wizard, dry run and import test bench. Size: L - Owner: Both - Deps: M5-SNIPE-02, M2-IMP-08
   - [ ] Wizard: URL + token, connection test, object selection, dry run preview using the M2 dry-run machinery, progress UI, resume after restart.
   - [ ] CI test bench seeds a dockerised Snipe-IT with 5,000 assets and compares counts; founder runs it against a design partner's real (or anonymised) instance and records results.
+
+- **M5-SNIPE-05** - `integration_connection` table with envelope-encrypted credentials; Snipe-IT importer reads credentials from it. Size: M - Owner: Claude - Deps: M5-SNIPE-01, M1-PLAT-08
+  - [ ] Tenant table `integration_connection` (provider, base URL, credential envelope-encrypted with tenant and purpose context, key version); CRUD API with audit; credential never returned after save.
+  - [ ] The Snipe-IT importer loads its token from `integration_connection` at run time; a run without a connection fails with a clear problem response.
+  - [ ] One-off import credentials purged on completion/cancel; saved connections only on explicit opt-in.
+  - [ ] Isolation suite covers the new table and routes (direct and through PgBouncer).
 
 ### E5.2 Licences
 
@@ -1314,6 +1329,7 @@ These cannot be done by Claude and several have long external lead times, so the
 | F-27 | Support operations: inbox, response targets, incident communication templates, on-call plan | M6 | M6-GTM-02 | Days | Launch |
 | F-28 | Business insurance (cyber/tech E&O) before paid Cloud customers | M5 | M6 launch | Days to weeks | Launch |
 | F-29 | Decide interim security review before design partners run M4 on real data (see section 12, question 2) | End of M3 | M4-SHA-04 | Decision only | M4 |
+| F-30 | Decide product name and primary colour before M3 store testing (placeholders "Asset Tracker" and blue #2A55D6 / #7AA2FF; see `docs/design/design_system.md` section 11) | M3 start | M3-MOB-02 (first TestFlight and Play internal builds) | Decision only; a rename touches one config | M3-MOB-02, M3-QA-02 |
 
 ---
 
@@ -1428,10 +1444,10 @@ From the plan's confirmed cuts and later phases; not part of any milestone above
 
 1. **Closed beta vs milestones.** The plan runs a Cloud closed beta at about month 5 with 5-10 design partners; the new milestones put the first real users on the Self-hosted bundle (M4) and the Cloud launch at M6. Assumption used here: design partners run the Self-hosted bundle on their own host (or a founder-run Compose instance per partner) between M4 and M6, and the decision-20 keep/kill metrics are collected from those installs. Confirm, because "Cloud beta" and "Self-hosted beta" produce different support loads.
 2. **Security assurance before M4.** M4 puts real customer data on installs before the external pen test (M6). This backlog adds an internal review (M4-SHA-04). Decide whether to pay for an interim external review of tenant isolation before partners install (F-29).
-3. **State types.** Plan 5.3 lists "ready, assigned, in repair, archived/disposed, lost"; plan 7.1 lists "deployable, deployed, pending, archived, lost". M1-REG-03 uses ready, assigned, pending, in_repair, archived, lost; confirm in S0-DATA-01.
+3. **State types.** Plan 5.3 lists "ready, assigned, in repair, archived/disposed, lost"; plan 7.1 lists "deployable, deployed, pending, archived, lost". M1-REG-03 uses ready, assigned, pending, in_repair, archived, lost; confirm in S0-DATA-01. **Resolved 2026-11-17 — see docs/engineering/decisions.md.**
 4. **"MFA-ready" in M1.** Interpreted as TOTP fully implemented with per-tenant enforcement; passkeys deferred. Confirm.
 5. **OIDC social login (a plan Must)** is not named in any milestone. Placed in M4 (Self-hosted needs it); Cloud reuses it in M6. If Cloud design partners need Google/Microsoft login earlier, move M4-SHA-01 into M2.
-6. **Stocktake (a plan Must)** is not named in M2 or M3. Placed in M3 because mobile scanning is its main use, with web screens alongside.
+6. **Stocktake (a plan Must)** is not named in M2 or M3. Placed in M3 because mobile scanning is its main use, with web screens alongside. **Resolved 2026-11-17 — see docs/engineering/decisions.md.**
 7. **Items not named in any milestone** and where they were placed: attachments/ClamAV and notifications (M2, needed by repair log, check-in photos and loaner alerts), vendors (M1, referenced by assets), saved views and list export (M2), command palette (M1), location scoping (M2, Should), straight-line depreciation (M5, Should), full tenant export (M4, because Self-hosted guarantees export in read-only mode), audit log write path (M1) vs UI (M5).
 8. **Idempotency-Key and ETag** are pulled forward into M1-PLAT-02 although "REST API completeness" is M5, because M2 check-out and the M3 retry queue need them. M5 completes parity, API keys, rate limits and docs.
 9. **Signup and onboarding wizard.** Plan lists tenant signup under the MVP; milestones place self-serve signup at M6 (Cloud) and a bootstrap CLI/first-run at M1/M4. Confirm that M1-M5 need no self-serve signup.

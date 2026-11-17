@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Tracker - low-fi prototype</title>
+<style>
+/* ===== Design tokens (generated from docs/design/tokens.json) ===== */
+:root{
+--font-sans:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+--font-mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+--fs-xs:12px;--lh-xs:16px;
+--fs-sm:13px;--lh-sm:20px;
+--fs-base:14px;--lh-base:20px;
+--fs-md:16px;--lh-md:24px;
+--fs-lg:18px;--lh-lg:26px;
+--fs-xl:20px;--lh-xl:28px;
+--fs-2xl:24px;--lh-2xl:32px;
+--fs-3xl:30px;--lh-3xl:38px;
+--r-sm:4px;
+--r-md:6px;
+--r-lg:8px;
+--r-xl:12px;
+--r-full:9999px;
+--space-0:0px;
+--space-1:4px;
+--space-2:8px;
+--space-3:12px;
+--space-4:16px;
+--space-5:20px;
+--space-6:24px;
+--space-8:32px;
+--space-10:40px;
+--space-12:48px;
+--space-16:64px;
+--space-0_5:2px;
+--control:36px;--control-dense:28px;--sidebar:232px;--content-max:1440px;
+--z-sticky:10;--z-drawer:40;--z-toast:70;
+--bg:#F6F7F9;
+--surface:#FFFFFF;
+--sunken:#EDEFF3;
+--text:#14171F;
+--muted:#4A5365;
+--border:#D6DAE1;
+--border-strong:#7A8294;
+--focus:#1B4FD8;
+--scrim:#0B0E14;
+--primary:#2A55D6;
+--primary-hover:#2147B8;
+--primary-on:#FFFFFF;--primary-subtle:#E7EDFC;--primary-text:#1E43AD;
+--success:#157A45;
+--success-on:#FFFFFF;--success-subtle:#E3F4EA;--success-text:#0F6035;
+--warning:#A8510A;
+--warning-on:#FFFFFF;--warning-subtle:#FDF0D5;--warning-text:#7A3B05;
+--danger:#C0262D;
+--danger-on:#FFFFFF;--danger-subtle:#FCE8E8;--danger-text:#9C1C22;
+--info:#0B6E99;
+--info-on:#FFFFFF;--info-subtle:#E1F2F9;--info-text:#085777;
+--shadow-sm:0px 1px 2px 0px #14171F14;
+--shadow-md:0px 4px 12px -2px #14171F1F;
+--shadow-lg:0px 12px 32px -4px #14171F2E;
+color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+:root:not([data-theme="light"]){
+--bg:#0E1117;
+--surface:#161A22;
+--sunken:#1E232D;
+--text:#E9ECF2;
+--muted:#A5AEBF;
+--border:#2C3340;
+--border-strong:#7C8699;
+--focus:#8CAEFF;
+--scrim:#000000;
+--primary:#7AA2FF;
+--primary-hover:#93B3FF;
+--primary-on:#0A1228;--primary-subtle:#1B2A4F;--primary-text:#9DBAFF;
+--success:#3DBE82;
+--success-on:#04170E;--success-subtle:#12301F;--success-text:#6FD9A3;
+--warning:#E8A23A;
+--warning-on:#1C1000;--warning-subtle:#38270B;--warning-text:#F2C068;
+--danger:#F0686E;
+--danger-on:#1F0507;--danger-subtle:#3B1518;--danger-text:#FF9A9F;
+--info:#4DB6E3;
+--info-on:#041823;--info-subtle:#0F2E3D;--info-text:#82CDEE;
+--shadow-sm:0px 1px 2px 0px #00000066;
+--shadow-md:0px 4px 12px -2px #00000080;
+--shadow-lg:0px 12px 32px -4px #000000A6;
+color-scheme: dark;
+}
+}
+:root[data-theme="dark"]{
+--bg:#0E1117;
+--surface:#161A22;
+--sunken:#1E232D;
+--text:#E9ECF2;
+--muted:#A5AEBF;
+--border:#2C3340;
+--border-strong:#7C8699;
+--focus:#8CAEFF;
+--scrim:#000000;
+--primary:#7AA2FF;
+--primary-hover:#93B3FF;
+--primary-on:#0A1228;--primary-subtle:#1B2A4F;--primary-text:#9DBAFF;
+--success:#3DBE82;
+--success-on:#04170E;--success-subtle:#12301F;--success-text:#6FD9A3;
+--warning:#E8A23A;
+--warning-on:#1C1000;--warning-subtle:#38270B;--warning-text:#F2C068;
+--danger:#F0686E;
+--danger-on:#1F0507;--danger-subtle:#3B1518;--danger-text:#FF9A9F;
+--info:#4DB6E3;
+--info-on:#041823;--info-subtle:#0F2E3D;--info-text:#82CDEE;
+--shadow-sm:0px 1px 2px 0px #00000066;
+--shadow-md:0px 4px 12px -2px #00000080;
+--shadow-lg:0px 12px 32px -4px #000000A6;
+color-scheme: dark;
+}
+/* ===== Base ===== */
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:var(--fs-base);line-height:var(--lh-base);-webkit-font-smoothing:antialiased}
+h1,h2,h3{margin:0;font-weight:600}
+h1{font-size:var(--fs-xl);line-height:var(--lh-xl)}
+h2{font-size:var(--fs-lg);line-height:var(--lh-lg)}
+a{color:var(--primary-text)}
+button,input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--font-mono);font-size:var(--fs-sm)}
+.muted{color:var(--muted)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.skip{position:absolute;left:-999px;top:8px;background:var(--surface);color:var(--text);padding:8px 12px;border-radius:var(--r-md);z-index:100;border:1px solid var(--border-strong)}
+.skip:focus{left:8px}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-3px}
+svg.i.lg{width:20px;height:20px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+/* ===== Layout ===== */
+.app{display:grid;grid-template-columns:var(--sidebar) 1fr;height:100vh}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:12px 8px;overflow:auto}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 16px;font-weight:600;font-size:var(--fs-md)}
+.brand .mark{width:24px;height:24px;border-radius:6px;background:var(--primary);color:var(--primary-on);display:grid;place-items:center}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;padding:0 10px;min-height:36px;border-radius:var(--r-md);color:var(--text);text-decoration:none;position:relative}
+.nav a:hover{background:var(--sunken)}
+.nav a[aria-current="page"]{background:var(--primary-subtle);color:var(--primary-text);font-weight:500}
+.nav a[aria-current="page"]::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--primary)}
+.nav .count{margin-left:auto;font-size:var(--fs-xs);background:var(--danger-subtle);color:var(--danger-text);border-radius:var(--r-full);padding:0 6px}
+.nav .group{font-size:var(--fs-xs);color:var(--muted);padding:12px 10px 4px;letter-spacing:.04em;text-transform:uppercase}
+.main-col{display:flex;flex-direction:column;min-width:0;height:100vh}
+.topbar{display:flex;align-items:center;gap:12px;padding:8px 24px;background:var(--surface);border-bottom:1px solid var(--border);min-height:52px}
+.topbar .crumbs{color:var(--muted);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scanfield{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:0 8px;height:var(--control);width:260px}
+.scanfield input{border:0;background:transparent;outline:0;flex:1;min-width:0}
+.scanfield:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+kbd{font-family:var(--font-mono);font-size:var(--fs-xs);background:var(--sunken);border:1px solid var(--border);border-radius:4px;padding:0 5px;color:var(--muted)}
+.banner-proto{background:var(--info-subtle);color:var(--info-text);padding:6px 24px;font-size:var(--fs-sm);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}
+main{flex:1;overflow:auto;padding:24px;max-width:100%}
+.page{max-width:var(--content-max);margin:0 auto}
+.page-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.page-head .spacer{flex:1}
+.menu-btn{display:none}
+
+/* ===== Controls ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:var(--control);padding:0 14px;border-radius:var(--r-md);border:1px solid var(--border-strong);background:var(--surface);cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--sunken)}
+.btn.primary{background:var(--primary);color:var(--primary-on);border-color:transparent}
+.btn.primary:hover{background:var(--primary-hover)}
+.btn.danger{background:var(--danger);color:var(--danger-on);border-color:transparent}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.ghost:hover{background:var(--sunken)}
+.btn.sm{height:var(--control-dense);padding:0 10px;font-size:var(--fs-sm)}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:16px}
+.field label,.field .lbl{font-weight:500}
+.field .help{color:var(--muted);font-size:var(--fs-sm)}
+.input,select.input,textarea.input{height:var(--control);padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--r-md);background:var(--surface);width:100%}
+textarea.input{height:auto;padding:8px 10px;min-height:64px}
+.input:focus{outline:2px solid var(--focus);outline-offset:2px}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;height:34px;padding:0 14px;cursor:pointer;font-weight:500}
+.seg button[aria-selected="true"],.seg button[aria-pressed="true"]{background:var(--primary-subtle);color:var(--primary-text)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);border-radius:var(--r-full);padding:2px 6px 2px 10px;background:var(--surface);font-size:var(--fs-sm)}
+.chip button{border:0;background:transparent;cursor:pointer;display:grid;place-items:center;border-radius:50%;width:20px;height:20px}
+.chip button:hover{background:var(--sunken)}
+
+/* ===== Badges ===== */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:1px 8px 1px 6px;border-radius:var(--r-full);font-size:var(--fs-xs);font-weight:500;line-height:18px;white-space:nowrap}
+.b-success{background:var(--success-subtle);color:var(--success-text)}
+.b-primary{background:var(--primary-subtle);color:var(--primary-text)}
+.b-warning{background:var(--warning-subtle);color:var(--warning-text)}
+.b-danger{background:var(--danger-subtle);color:var(--danger-text)}
+.b-info{background:var(--info-subtle);color:var(--info-text)}
+.b-neutral{background:var(--sunken);color:var(--muted)}
+
+/* ===== Card + Table ===== */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg)}
+.card.pad{padding:16px}
+.toolbar{display:flex;align-items:center;gap:8px;padding:12px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.toolbar .spacer{flex:1}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);padding:0 8px;overflow-x:auto;overflow-y:hidden}
+.tabs button{border:0;background:transparent;padding:10px 12px;cursor:pointer;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--primary)}
+.tabs button:hover{color:var(--text)}
+.tbl-wrap{overflow:auto;max-height:calc(100vh - 340px);min-height:120px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:var(--fs-sm)}
+th{position:sticky;top:0;background:var(--sunken);text-align:left;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap;z-index:var(--z-sticky)}
+td{padding:8px 12px;border-bottom:1px solid var(--border);height:40px;white-space:nowrap}
+tbody tr:hover td{background:var(--sunken)}
+tbody tr[aria-selected="true"] td{background:var(--primary-subtle)}
+tbody tr{cursor:pointer}
+td.chk,th.chk{width:36px;padding-right:0}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary)}
+.table-foot{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;color:var(--muted);font-size:var(--fs-sm)}
+.bulkbar{display:flex;gap:8px;align-items:center;padding:8px 12px;background:var(--primary-subtle);color:var(--primary-text);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.empty{text-align:center;padding:48px 16px}
+.empty h2{margin-bottom:4px}
+.empty p{color:var(--muted);margin:0 0 16px}
+
+/* ===== Detail ===== */
+.hero{display:flex;gap:16px;align-items:flex-start;padding:16px;flex-wrap:wrap}
+.photo{width:88px;height:88px;border-radius:var(--r-lg);background:var(--sunken);border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--muted);font-size:var(--fs-xs)}
+.hero .info{flex:1;min-width:240px}
+.hero .actions{display:flex;gap:8px;flex-wrap:wrap}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;padding:16px}
+dl.kv{margin:0;display:grid;grid-template-columns:130px 1fr;gap:8px 12px}
+dl.kv dt{color:var(--muted)}
+dl.kv dd{margin:0}
+.timeline{list-style:none;margin:0;padding:16px}
+.timeline li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}
+.timeline .dot{width:8px;height:8px;border-radius:50%;background:var(--border-strong);margin-top:7px;flex:none}
+.timeline time{color:var(--muted);font-size:var(--fs-sm);min-width:130px}
+
+/* ===== Settings ===== */
+.settings{display:grid;grid-template-columns:200px 1fr;gap:24px}
+.subnav{display:flex;flex-direction:column;gap:2px}
+.subnav a{padding:0 10px;min-height:34px;display:flex;align-items:center;border-radius:var(--r-md);color:var(--text);text-decoration:none}
+.subnav a:hover{background:var(--sunken)}
+.subnav a[aria-current="page"]{background:var(--primary-subtle);color:var(--primary-text);font-weight:500}
+.tree{list-style:none;margin:0;padding:0}
+.tree ul{list-style:none;margin:0;padding-left:20px}
+.tree .row{display:flex;align-items:center;gap:6px;min-height:34px;padding:0 8px;border-radius:var(--r-md)}
+.tree .row:hover{background:var(--sunken)}
+.tree .row button.tg{border:0;background:transparent;cursor:pointer;width:24px;height:24px;display:grid;place-items:center;border-radius:4px}
+.tree .row .n{margin-left:auto;color:var(--muted)}
+.callout{display:flex;gap:8px;padding:10px 12px;border-radius:var(--r-lg);background:var(--info-subtle);color:var(--info-text);margin-bottom:16px}
+
+/* ===== Dialog / drawer / toast / palette ===== */
+dialog{border:1px solid var(--border);border-radius:var(--r-xl);background:var(--surface);color:var(--text);padding:0;box-shadow:var(--shadow-lg);width:min(560px,calc(100vw - 32px))}
+dialog::backdrop{background:color-mix(in srgb,var(--scrim) 55%,transparent)}
+dialog.drawer{margin:0 0 0 auto;height:100vh;max-height:100vh;width:min(480px,100vw);border-radius:var(--r-xl) 0 0 var(--r-xl)}
+.dlg-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.dlg-body{padding:20px;overflow:auto}
+.dlg-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface)}
+dialog.drawer form{display:flex;flex-direction:column;height:100%}
+dialog.drawer .dlg-body{flex:1}
+#toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:var(--z-toast)}
+.toast{background:var(--surface);border:1px solid var(--border-strong);border-left:4px solid var(--success);border-radius:var(--r-lg);box-shadow:var(--shadow-md);padding:10px 12px;display:flex;gap:12px;align-items:center;min-width:280px}
+.toast.err{border-left-color:var(--danger)}
+.pal{padding:0;width:min(560px,calc(100vw - 32px));margin-top:12vh}
+.pal input{width:100%;border:0;border-bottom:1px solid var(--border);padding:14px 16px;background:transparent;outline:0;font-size:var(--fs-md)}
+.pal ul{list-style:none;margin:0;padding:8px;max-height:320px;overflow:auto}
+.pal li button{display:flex;gap:10px;align-items:center;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:var(--r-md);cursor:pointer;min-height:36px}
+.pal li button:hover,.pal li button[aria-selected="true"]{background:var(--primary-subtle);color:var(--primary-text)}
+.pal .grp{font-size:var(--fs-xs);color:var(--muted);padding:8px 10px 2px}
+.inline-err{color:var(--danger-text);display:flex;gap:6px;align-items:center;margin-top:4px}
+
+@media (max-width: 1023px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar);transform:translateX(-100%);z-index:var(--z-drawer);box-shadow:var(--shadow-lg)}
+  body.nav-open .sidebar{transform:none}
+  .menu-btn{display:inline-flex}
+  .settings{grid-template-columns:1fr}
+  .scanfield{width:160px}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="app">
+  <nav class="sidebar" aria-label="Primary">
+    <div class="brand"><span class="mark" aria-hidden="true"><svg class="i" viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg></span> Asset Tracker</div>
+    <div class="nav" id="nav"></div>
+  </nav>
+  <div class="main-col">
+    <div class="banner-proto" role="note"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg> Low-fidelity clickable prototype. Data is fake and resets on reload. Try: open an asset, Check out, Ctrl+K, scan field (type AT-00124 + Enter), Settings.</div>
+    <header class="topbar">
+      <button class="btn ghost menu-btn" id="menuBtn" aria-label="Open navigation"><svg class="i lg" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <div class="crumbs" id="crumbs" aria-live="polite"></div>
+      <label class="scanfield"><svg class="i" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg><span class="sr-only">Scan or type an asset tag</span><input id="scan" placeholder="Scan or type tag" autocomplete="off"><kbd>/</kbd></label>
+      <button class="btn" id="palBtn" aria-label="Open command palette">Search <kbd>Ctrl K</kbd></button>
+      <button class="btn" id="themeBtn" aria-pressed="false">Dark mode</button>
+    </header>
+    <main id="main" tabindex="-1"><div class="page" id="view"></div></main>
+  </div>
+</div>
+<div id="toasts" role="status" aria-live="polite"></div>
+<dialog id="dlg" aria-labelledby="dlgTitle"></dialog>
+<dialog id="drawer" class="drawer" aria-labelledby="drTitle"></dialog>
+<dialog id="pal" class="pal" aria-label="Command palette"></dialog>
+
+<script>
+(function(){
+'use strict';
+/* ---------- icons ---------- */
+var P = {
+  package:'<path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/>',
+  pin:'<path d="M12 21s7-6 7-11a7 7 0 0 0-14 0c0 5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  repeat:'<path d="M4 9a6 6 0 0 1 6-5h8M15 1l3 3-3 3M20 15a6 6 0 0 1-6 5H6M9 23l-3-3 3-3"/>',
+  wrench:'<path d="M14.5 6.5a4 4 0 0 0 5 5L21 13l-8 8-4-4 8-8z" /><path d="M3 21l5-5"/>',
+  clip:'<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 3v2h6V3M9 13l2 2 4-4"/>',
+  printer:'<path d="M7 9V3h10v6M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="7" y="14" width="10" height="7"/>',
+  upload:'<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  check:'<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01"/>',
+  archive:'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  chevR:'<path d="m9 6 6 6-6 6"/>', chevD:'<path d="m6 9 6 6 6-6"/>',
+  alert:'<path d="M12 3 2 20h20z"/><path d="M12 10v5M12 18h.01"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  history:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 8v5l3 2"/>'
+};
+function ic(n, cls){ return '<svg class="i '+(cls||'')+'" viewBox="0 0 24 24" aria-hidden="true">'+P[n]+'</svg>'; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+/* ---------- fake data ---------- */
+var STATUS = { // label -> state type
+  'Ready':{type:'ready',cls:'b-success',icon:'check'},
+  'Deployed':{type:'assigned',cls:'b-primary',icon:'user'},
+  'Out for fix':{type:'repair',cls:'b-warning',icon:'wrench'},
+  'Missing':{type:'lost',cls:'b-danger',icon:'help'},
+  'Retired':{type:'disposed',cls:'b-neutral',icon:'archive'}
+};
+var PEOPLE = ['A. Chen','D. Park','J. Okafor','M. Reyes','S. Lee','T. Nowak'];
+var today = '2026-11-17';
+var assets = [
+ {tag:'AT-00123',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Ready',who:'',loc:'Room 101',warr:'2027-08',due:'',serial:'5CG1234XYA',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true},
+ {tag:'AT-00124',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Deployed',who:'J. Okafor',loc:'Room 204',warr:'2027-08',due:'2026-12-18',serial:'5CG1234XYZ',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true},
+ {tag:'AT-00125',name:'iPad 9th gen',model:'Apple iPad A2602',cat:'Tablet',status:'Out for fix',who:'',loc:'Repairs shelf',warr:'2026-05',due:'',serial:'DMPXK12Q',cost:'$329.00',supplier:'Apple Education',order:'PO-4102',os:'iPadOS 17',screen:'10.2',managed:true},
+ {tag:'AT-00126',name:'Projector EB-X49',model:'Epson EB-X49',cat:'Projector',status:'Deployed',who:'M. Reyes',loc:'Gym',warr:'2025-09',due:'2026-11-10',serial:'X4900217',cost:'$549.00',supplier:'CDW',order:'PO-3310',os:'',screen:'',managed:false},
+ {tag:'AT-00127',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Ready',who:'',loc:'Room 101',warr:'2027-08',due:'',serial:'5CG1234XYB',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true},
+ {tag:'AT-00128',name:'Latitude 5440',model:'Dell Latitude 5440',cat:'Laptop',status:'Deployed',who:'S. Lee',loc:'Main office',warr:'2028-02',due:'',serial:'LT5440A1',cost:'$1,120.00',supplier:'Dell',order:'PO-4880',os:'Windows 11',screen:'14',managed:true},
+ {tag:'AT-00129',name:'iPad 9th gen',model:'Apple iPad A2602',cat:'Tablet',status:'Ready',who:'',loc:'Library',warr:'2026-12',due:'',serial:'DMPXK12R',cost:'$329.00',supplier:'Apple Education',order:'PO-4102',os:'iPadOS 17',screen:'10.2',managed:true},
+ {tag:'AT-00130',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Missing',who:'',loc:'Unknown',warr:'2027-08',due:'',serial:'5CG1234XYC',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true},
+ {tag:'AT-00131',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Deployed',who:'A. Chen',loc:'Room 101',warr:'2027-08',due:'2026-11-12',serial:'5CG1234XYD',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true},
+ {tag:'AT-00132',name:'Label printer',model:'Brother QL-820',cat:'Printer',status:'Ready',who:'',loc:'IT closet',warr:'2027-01',due:'',serial:'QL820Z9',cost:'$179.00',supplier:'CDW',order:'PO-4003',os:'',screen:'',managed:false},
+ {tag:'AT-00133',name:'Smartboard 6000',model:'Smart SBID-6075',cat:'Projector',status:'Retired',who:'',loc:'Storage',warr:'2023-03',due:'',serial:'SB6075X',cost:'$2,400.00',supplier:'Smart',order:'PO-1201',os:'',screen:'75',managed:false},
+ {tag:'AT-00134',name:'Chromebook 3100',model:'Dell Chromebook 3100',cat:'Chromebook',status:'Ready',who:'',loc:'Room 204',warr:'2027-08',due:'',serial:'5CG1234XYE',cost:'$289.00',supplier:'CDW',order:'PO-4471',os:'ChromeOS 126',screen:'11.6',managed:true}
+];
+var history = {
+ 'AT-00124':[
+  ['2026-11-10 14:02','Checked out to J. Okafor by S. Lee. Due 2026-12-18'],
+  ['2026-10-28 09:15','Checked in from M. Reyes by S. Lee. Note: cracked bezel'],
+  ['2026-10-02 11:40','Repair logged: replaced screen, $64'],
+  ['2026-08-12 10:00','Created (imported from CSV batch 3)']
+ ]
+};
+var repairs = { 'AT-00124':[['2026-10-02','Replace screen','Acme Fix','$64.00','Done']] };
+var cats = [['Chromebook',5,642,'36 months'],['Laptop',6,118,'48 months'],['Tablet',4,205,'36 months'],['Projector',3,31,'60 months'],['Printer',2,8,'60 months']];
+var fields = [
+ ['Screen size','Number (in)','Chromebook, Laptop, Tablet',false,true],
+ ['OS version','Text','Chromebook, Laptop, Tablet',false,true],
+ ['Managed','Checkbox','Chromebook, Tablet',false,true],
+ ['Condition','Select','All categories',true,true],
+ ['Admin console URL','URL','Chromebook',false,false]
+];
+var statusRows = [['Ready','ready','Ready',1204,true],['Deployed','assigned','Deployed',388,false],['Out for fix','repair','Out for fix',41,false],['Missing','lost','Missing',3,false],['Retired','disposed','Retired',96,false]];
+var locs = {n:'Riverside Elementary',c:412,k:[{n:'Main building',c:301,k:[{n:'Room 101',c:38},{n:'Room 204',c:41},{n:'Library',c:55},{n:'Main office',c:9}]},{n:'Gym',c:24},{n:'IT closet',c:87}]};
+var locsB = {n:'Northside Annex',c:112,k:[{n:'Room A',c:50},{n:'Room B',c:62}]};
+var open = {};
+
+/* ---------- state ---------- */
+var state = {q:'', status:'', sel:{}, cols:true};
+
+/* ---------- helpers ---------- */
+function badge(a){
+  var isOverdue = a.status==='Deployed' && a.due && a.due < today;
+  if(isOverdue) return '<span class="badge b-danger">'+ic('clock')+'Overdue</span>';
+  var s = STATUS[a.status] || {cls:'b-neutral',icon:'archive'};
+  return '<span class="badge '+s.cls+'">'+ic(s.icon)+esc(a.status==='Deployed'?'Deployed':a.status)+'</span>';
+}
+function statusBadge(label){ var s=STATUS[label]; return '<span class="badge '+s.cls+'">'+ic(s.icon)+esc(label)+'</span>'; }
+function toast(msg, undo, err){
+  var t = document.createElement('div'); t.className='toast'+(err?' err':'');
+  t.innerHTML = '<span style="flex:1">'+msg+'</span>'+(undo?'<button class="btn sm">Undo</button>':'')+'<button class="btn sm ghost" aria-label="Dismiss">'+ic('x')+'</button>';
+  var box = document.getElementById('toasts'); box.appendChild(t);
+  var kill = function(){ if(t.parentNode) t.parentNode.removeChild(t); };
+  var btns = t.querySelectorAll('button');
+  if(undo){ btns[0].onclick=function(){undo();kill();}; btns[1].onclick=kill; } else { btns[0].onclick=kill; }
+  setTimeout(kill, undo?8000:5000);
+}
+function byTag(tag){ for(var i=0;i<assets.length;i++) if(assets[i].tag.toLowerCase()===String(tag).toLowerCase()) return assets[i]; return null; }
+function go(h){ if(location.hash===h) render(); else location.hash=h; }
+
+/* ---------- nav ---------- */
+var NAV = [
+ ['#/assets','package','Assets'],['#/locations','pin','Locations'],['#/loaner','repeat','Loaner pool'],['#/repairs','wrench','Repairs'],
+ ['#/stocktake','clip','Stocktake'],['#/labels','printer','Labels'],['#/import','upload','Import'],['#/settings/categories','settings','Settings']
+];
+function renderNav(route){
+  var h='';
+  NAV.forEach(function(n){
+    var cur = (route===n[0]) || (n[0]==='#/assets' && /^#\/asset/.test(route)) || (n[0].indexOf('settings')>-1 && /^#\/settings/.test(route));
+    h += '<a href="'+n[0]+'"'+(cur?' aria-current="page"':'')+'>'+ic(n[1],'lg')+n[2]+(n[2]==='Loaner pool'?'<span class="count" aria-label="3 overdue">3</span>':'')+'</a>';
+  });
+  document.getElementById('nav').innerHTML = h;
+}
+
+/* ---------- views ---------- */
+function viewAssets(){
+  var rows = assets.filter(function(a){
+    if(state.status){ if(state.status==='Overdue'){ if(!(a.status==='Deployed'&&a.due&&a.due<today)) return false; } else if(a.status!==state.status) return false; }
+    if(state.q){ var q=state.q.toLowerCase(); if((a.tag+' '+a.name+' '+a.serial+' '+a.who+' '+a.loc+' '+a.model).toLowerCase().indexOf(q)<0) return false; }
+    return true;
+  });
+  var selN = Object.keys(state.sel).filter(function(k){return state.sel[k];}).length;
+  var h = '<div class="page-head"><h1>Assets <span class="muted" style="font-weight:400">('+rows.length+')</span></h1><span class="spacer"></span>'+
+    '<button class="btn" data-act="goimport">'+ic('upload')+'Import</button><button class="btn primary" data-act="newasset">'+ic('plus')+'New asset</button></div>';
+  h += '<div class="card"><div class="tabs" role="tablist" aria-label="Saved views">';
+  [['','All assets'],['Deployed','My checked-out'],['Overdue','Overdue'],['Out for fix','In repair']].forEach(function(v){
+    h += '<button role="tab" data-view="'+v[0]+'" aria-selected="'+(state.status===v[0])+'">'+v[1]+'</button>';
+  });
+  h += '<button data-act="saveview" aria-label="Save current filters as a view">'+ic('plus')+'</button></div>';
+  h += '<div class="toolbar"><label class="sr-only" for="q">Filter assets</label><input id="q" class="input" style="width:240px" placeholder="Filter by tag, name, serial, person" value="'+esc(state.q)+'">'+
+    '<label class="sr-only" for="st">Status</label><select id="st" class="input" style="width:170px"><option value="">Status: any</option>'+Object.keys(STATUS).map(function(s){return '<option'+(state.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'<option'+(state.status==='Overdue'?' selected':'')+'>Overdue</option></select>';
+  if(state.status||state.q){ h+='<span class="chips">'; if(state.status) h+='<span class="chip">Status: '+esc(state.status)+'<button data-act="clrstatus" aria-label="Remove status filter">'+ic('x')+'</button></span>'; if(state.q) h+='<span class="chip">Text: '+esc(state.q)+'<button data-act="clrq" aria-label="Remove text filter">'+ic('x')+'</button></span>'; h+='<button class="btn sm ghost" data-act="clrall">Clear all</button></span>'; }
+  h += '<span class="spacer"></span><button class="btn sm" data-act="togcols" aria-pressed="'+state.cols+'">Columns: '+(state.cols?'all':'compact')+'</button></div>';
+  if(selN){ h += '<div class="bulkbar" role="region" aria-label="Bulk actions"><strong>'+selN+' selected</strong><button class="btn sm" data-act="bulkout">Check out</button><button class="btn sm" data-act="bulkprint">Print labels</button><button class="btn sm" data-act="bulkedit">Bulk edit</button><button class="btn sm ghost" data-act="clrsel">Clear selection</button></div>'; }
+  if(!rows.length){
+    h += '<div class="empty"><h2>No assets match these filters</h2><p>Check the tag spelling or loosen a filter.</p><button class="btn" data-act="clrall">Clear filters</button></div>';
+  } else {
+    h += '<div class="tbl-wrap"><table><caption class="sr-only">Assets</caption><thead><tr><th class="chk"><input type="checkbox" id="all" aria-label="Select all visible assets"></th><th scope="col">Tag</th><th scope="col">Name</th>'+(state.cols?'<th scope="col">Model</th>':'')+'<th scope="col">Status</th><th scope="col">Assignee</th><th scope="col">Location</th>'+(state.cols?'<th scope="col">Warranty</th>':'')+'</tr></thead><tbody>';
+    rows.forEach(function(a){
+      h += '<tr data-tag="'+a.tag+'" aria-selected="'+(!!state.sel[a.tag])+'"><td class="chk"><input type="checkbox" data-sel="'+a.tag+'" aria-label="Select '+a.tag+'"'+(state.sel[a.tag]?' checked':'')+'></td>'+
+        '<td><a class="mono" href="#/asset/'+a.tag+'">'+a.tag+'</a></td><td>'+esc(a.name)+'</td>'+(state.cols?'<td class="muted">'+esc(a.model)+'</td>':'')+'<td>'+badge(a)+'</td><td>'+(esc(a.who)||'<span class="muted">-</span>')+'</td><td>'+esc(a.loc)+'</td>'+(state.cols?'<td class="muted">'+esc(a.warr)+'</td>':'')+'</tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '<div class="table-foot"><span>Showing '+rows.length+' of 1,204 (prototype sample)</span><span>Click a row for the detail page. Space on a tag checkbox selects.</span></div></div>';
+  return h;
+}
+
+function viewDetail(tag, tab){
+  var a = byTag(tag);
+  if(!a) return '<div class="empty"><h2>'+ic('lock','lg')+' Not found or no access</h2><p>This asset does not exist or you do not have access to it.</p><a class="btn" href="#/assets">Back to assets</a></div>';
+  tab = tab || 'overview';
+  var hist = history[a.tag] || [['2026-08-12 10:00','Created']];
+  var rep = repairs[a.tag] || [];
+  var h = '<div class="page-head"><a href="#/assets">Assets</a><span class="muted" aria-hidden="true">/</span><span class="mono">'+a.tag+'</span></div>';
+  h += '<div class="card"><div class="hero"><div class="photo" aria-hidden="true">No photo</div><div class="info"><h1>'+esc(a.name)+' '+badge(a)+'</h1>'+
+    '<div class="muted" style="margin-top:4px"><span class="mono">'+a.tag+'</span> &middot; Serial <span class="mono">'+esc(a.serial)+'</span> &middot; '+esc(a.model)+'</div>'+
+    '<div class="muted">'+esc(a.loc)+', Riverside Elementary'+(a.who?' &middot; Assigned to <strong style="color:var(--text)">'+esc(a.who)+'</strong>'+(a.due?' &middot; due '+a.due:''):'')+'</div></div>'+
+    '<div class="actions">'+
+      (a.status==='Ready'?'<button class="btn primary" data-act="checkout" data-tag="'+a.tag+'">Check out</button>':'')+
+      (a.status==='Deployed'?'<button class="btn primary" data-act="checkin" data-tag="'+a.tag+'">Check in</button><button class="btn" data-act="transfer" data-tag="'+a.tag+'">Transfer</button>':'')+
+      (a.status==='Out for fix'?'<button class="btn" data-act="checkin" data-tag="'+a.tag+'">Mark repaired</button>':'')+
+      '<button class="btn" data-act="edit">Edit</button><button class="btn" data-act="print">'+ic('printer')+'Print label</button><button class="btn" data-act="repair">'+ic('wrench')+'Log repair</button></div></div>';
+  h += '<div class="tabs" role="tablist" aria-label="Asset sections">';
+  [['overview','Overview'],['history','History ('+hist.length+')'],['repairs','Repairs ('+rep.length+')'],['files','Attachments (3)']].forEach(function(t){
+    h += '<button role="tab" data-tab="'+t[0]+'" aria-selected="'+(tab===t[0])+'">'+t[1]+'</button>';
+  });
+  h += '</div>';
+  if(tab==='overview'){
+    h += '<div class="cols"><div><h2 style="margin-bottom:8px">Details</h2><dl class="kv"><dt>Category</dt><dd>'+esc(a.cat)+'</dd><dt>Model</dt><dd>'+esc(a.model)+'</dd><dt>Status</dt><dd>'+statusBadge(a.status)+'</dd><dt>Assignee</dt><dd>'+(esc(a.who)||'-')+'</dd><dt>Due back</dt><dd>'+(a.due||'-')+'</dd><dt>Location</dt><dd>'+esc(a.loc)+'</dd></dl></div>'+
+      '<div><h2 style="margin-bottom:8px">Purchase</h2><dl class="kv"><dt>Cost</dt><dd>'+esc(a.cost)+'</dd><dt>Supplier</dt><dd>'+esc(a.supplier)+'</dd><dt>Order no.</dt><dd>'+esc(a.order)+'</dd><dt>Warranty end</dt><dd>'+esc(a.warr)+'</dd></dl></div>'+
+      '<div><h2 style="margin-bottom:8px">Fields for '+esc(a.cat)+'</h2><dl class="kv"><dt>Screen size</dt><dd>'+(a.screen?esc(a.screen)+' in':'-')+'</dd><dt>OS version</dt><dd>'+(esc(a.os)||'-')+'</dd><dt>Managed</dt><dd>'+(a.managed?'Yes':'No')+'</dd></dl></div></div>';
+  } else if(tab==='history'){
+    h += '<ol class="timeline" aria-label="Chain of custody">'+hist.map(function(e){return '<li><span class="dot" aria-hidden="true"></span><time>'+e[0]+'</time><span>'+esc(e[1])+'</span></li>';}).join('')+'</ol>';
+  } else if(tab==='repairs'){
+    h += rep.length ? '<div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Description</th><th>Vendor</th><th>Cost</th><th>State</th></tr></thead><tbody>'+rep.map(function(r){return '<tr><td>'+r[0]+'</td><td>'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td>'+esc(r[3])+'</td><td><span class="badge b-success">'+ic('check')+esc(r[4])+'</span></td></tr>';}).join('')+'</tbody></table></div>' :
+      '<div class="empty"><h2>No repairs logged</h2><p>Record repairs to keep cost and downtime history.</p><button class="btn" data-act="repair">'+ic('wrench')+'Log repair</button></div>';
+  } else {
+    h += '<div class="card pad" style="margin:16px;border-style:dashed"><strong>Drop files here or browse</strong><div class="muted">PDF, images up to 20 MB. Files are virus-scanned before they become available.</div></div>'+
+      '<div class="tbl-wrap"><table><tbody><tr><td>invoice-4471.pdf</td><td><span class="badge b-success">'+ic('check')+'Ready</span></td></tr><tr><td>serial-photo.jpg</td><td><span class="badge b-success">'+ic('check')+'Ready</span></td></tr><tr><td>warranty-card.png</td><td><span class="badge b-info">'+ic('clock')+'Scanning</span></td></tr></tbody></table></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function viewSettings(sub){
+  sub = sub || 'categories';
+  var items = [['categories','Categories'],['models','Models'],['fields','Custom fields'],['status','Status labels'],['locations','Locations'],['users','Users and roles']];
+  var h = '<div class="page-head"><h1>Settings</h1></div><div class="settings"><nav class="subnav" aria-label="Settings">'+items.map(function(i){return '<a href="#/settings/'+i[0]+'"'+(sub===i[0]?' aria-current="page"':'')+'>'+i[1]+'</a>';}).join('')+'</nav><section>';
+  if(sub==='categories'){
+    h += '<div class="page-head"><h2>Categories</h2><span class="spacer"></span><button class="btn primary" data-act="newcat">'+ic('plus')+'New category</button></div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Custom fields</th><th>Assets</th><th>Default depreciation</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'+
+      cats.map(function(c){return '<tr><td><strong>'+c[0]+'</strong></td><td>'+c[1]+'</td><td>'+c[2]+'</td><td>'+c[3]+'</td><td style="text-align:right"><button class="btn sm">Edit</button> <button class="btn sm ghost" aria-label="Move '+c[0]+' up">'+ic('chevD')+'</button></td></tr>';}).join('')+'</tbody></table></div></div>';
+  } else if(sub==='fields'){
+    h += '<div class="page-head"><h2>Custom fields</h2><span class="spacer"></span><button class="btn primary" data-act="newfield">'+ic('plus')+'New field</button></div><div class="callout">'+ic('info')+'<span>Typed fields are scoped to categories, filterable, importable and available in the API. Types: text, number, date, select, multi-select, checkbox, URL.</span></div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Label</th><th>Type</th><th>Categories</th><th>Required</th><th>Filterable</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'+
+      fields.map(function(f){return '<tr><td><strong>'+f[0]+'</strong></td><td>'+f[1]+'</td><td>'+f[2]+'</td><td>'+(f[3]?'Yes':'No')+'</td><td>'+(f[4]?'Yes':'No')+'</td><td style="text-align:right"><button class="btn sm">Edit</button></td></tr>';}).join('')+'</tbody></table></div></div>';
+  } else if(sub==='status'){
+    h += '<div class="page-head"><h2>Status labels</h2><span class="spacer"></span><button class="btn primary" data-act="newstatus">'+ic('plus')+'New label</button></div><div class="callout">'+ic('info')+'<span>Rename labels freely. Each label maps to a fixed state type that controls behaviour and badge colour. Retired and disposed assets do not count toward your asset band.</span></div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Label</th><th>State type</th><th>Preview</th><th>Default for new</th><th>Assets</th></tr></thead><tbody>'+
+      statusRows.map(function(s){return '<tr><td><strong>'+s[0]+'</strong></td><td>'+s[1]+'</td><td>'+statusBadge(s[2])+'</td><td>'+(s[4]?'Yes':'-')+'</td><td>'+s[3]+'</td></tr>';}).join('')+'</tbody></table></div></div>';
+  } else if(sub==='locations'){
+    h += '<div class="page-head"><h2>Locations</h2><span class="spacer"></span><button class="btn primary" data-act="newloc">'+ic('plus')+'Add location</button></div><div class="card pad"><ul class="tree" role="tree" aria-label="Locations">'+treeHtml(locs,'a')+treeHtml(locsB,'b')+'</ul><p class="muted" style="margin-bottom:0">Company &gt; site &gt; building &gt; room. Use the toggle arrows to expand.</p></div>';
+  } else if(sub==='models'){
+    h += '<div class="page-head"><h2>Models</h2><span class="spacer"></span><button class="btn primary">'+ic('plus')+'New model</button></div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Manufacturer</th><th>Model</th><th>Category</th><th>EOL</th><th>Assets</th></tr></thead><tbody><tr><td>Dell</td><td>Chromebook 3100</td><td>Chromebook</td><td>2029-06</td><td>310</td></tr><tr><td>Apple</td><td>iPad 9th gen A2602</td><td>Tablet</td><td>2027-09</td><td>205</td></tr><tr><td>Epson</td><td>EB-X49</td><td>Projector</td><td>2028-01</td><td>22</td></tr></tbody></table></div></div>';
+  } else {
+    h += '<div class="page-head"><h2>Users and roles</h2><span class="spacer"></span><button class="btn primary">'+ic('plus')+'Invite</button></div><div class="card"><div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Scope</th></tr></thead><tbody><tr><td>S. Lee</td><td>Asset Manager</td><td>All locations</td></tr><tr><td>J. Park</td><td>Technician/Auditor</td><td>Riverside only</td></tr></tbody></table></div></div>';
+  }
+  return h + '</section></div>';
+}
+function treeHtml(n, key){
+  var id = key+n.n; var isOpen = open[id]===undefined ? (key==='a' && n.n==='Riverside Elementary') : open[id];
+  var has = n.k && n.k.length;
+  var h = '<li role="treeitem"'+(has?' aria-expanded="'+isOpen+'"':'')+'><div class="row">'+(has?'<button class="tg" data-tog="'+esc(id)+'" aria-label="'+(isOpen?'Collapse':'Expand')+' '+esc(n.n)+'">'+ic(isOpen?'chevD':'chevR')+'</button>':'<span style="width:24px"></span>')+'<span>'+esc(n.n)+'</span><span class="n">'+n.c+'</span></div>';
+  if(has && isOpen){ h += '<ul role="group">'+n.k.map(function(c){return treeHtml(c,id+'/');}).join('')+'</ul>'; }
+  return h+'</li>';
+}
+function viewStub(title, text){
+  return '<div class="page-head"><h1>'+title+'</h1></div><div class="card"><div class="empty"><h2>Not part of this prototype</h2><p>'+text+' See wireframes.md for the full layout.</p><a class="btn" href="#/assets">Back to assets</a></div></div>';
+}
+
+/* ---------- router ---------- */
+function render(){
+  var hash = location.hash || '#/assets';
+  var parts = hash.replace(/^#\//,'').split('/');
+  var h='', crumb='';
+  if(parts[0]==='assets'){ h=viewAssets(); crumb='Assets'; }
+  else if(parts[0]==='asset'){ h=viewDetail(parts[1], parts[2]); crumb='Assets / '+parts[1]; }
+  else if(parts[0]==='settings'){ h=viewSettings(parts[1]); crumb='Settings'; }
+  else if(parts[0]==='locations'){ h=viewStub('Locations','The locations tree lives under Settings in this prototype.'); crumb='Locations'; }
+  else if(parts[0]==='loaner'){ h=viewStub('Loaner pool','Loaner pool: quick check-out, due dates, overdue alerts, bulk check-in.'); crumb='Loaner pool'; }
+  else if(parts[0]==='repairs'){ h=viewStub('Repairs','Repair log across all assets.'); crumb='Repairs'; }
+  else if(parts[0]==='stocktake'){ h=viewStub('Stocktake','Audit sessions by location with scan-to-confirm and variance report.'); crumb='Stocktake'; }
+  else if(parts[0]==='labels'){ h=viewStub('Labels','QR / Code128 PDF sheet preview and download.'); crumb='Labels'; }
+  else if(parts[0]==='import'){ h=viewStub('Import','CSV upload, column mapping, dry-run results, import.'); crumb='Import'; }
+  else { h=viewStub('Not found','That page does not exist.'); crumb='Not found'; }
+  document.getElementById('view').innerHTML = h;
+  document.getElementById('crumbs').textContent = crumb;
+  renderNav(hash);
+  document.body.classList.remove('nav-open');
+  document.title = crumb + ' - Asset Tracker prototype';
+}
+window.addEventListener('hashchange', function(){ render(); var m=document.getElementById('main'); m.scrollTop=0; });
+
+/* ---------- dialogs ---------- */
+var lastTrigger = null;
+function openDlg(el, html, trigger){
+  lastTrigger = trigger || document.activeElement;
+  el.innerHTML = html; el.showModal();
+  var f = el.querySelector('[autofocus]') || el.querySelector('input,select,button.primary');
+  if(f) f.focus();
+  el.addEventListener('close', function once(){ el.removeEventListener('close', once); if(lastTrigger && document.contains(lastTrigger)) lastTrigger.focus(); });
+}
+function closeDlg(el){ if(el.open) el.close(); }
+function options(list, sel){ return list.map(function(p){return '<option'+(p===sel?' selected':'')+'>'+esc(p)+'</option>';}).join(''); }
+
+function checkoutDialog(tag, mode, trigger){
+  var a = byTag(tag); if(!a) return;
+  mode = mode || (a.status==='Deployed' ? 'in' : 'out');
+  var tabs = '<div class="seg" role="tablist" aria-label="Action"><button type="button" role="tab" data-mode="out" aria-selected="'+(mode==='out')+'">Check out</button><button type="button" role="tab" data-mode="in" aria-selected="'+(mode==='in')+'">Check in</button><button type="button" role="tab" data-mode="transfer" aria-selected="'+(mode==='transfer')+'">Transfer</button></div>';
+  var blocked = '';
+  if(mode==='out' && a.status==='Deployed') blocked = '<div class="callout" style="background:var(--danger-subtle);color:var(--danger-text)" role="alert">'+ic('alert')+'<span>Already assigned to '+esc(a.who)+'. Check it in first.</span></div>';
+  if(mode==='in' && a.status!=='Deployed' && a.status!=='Out for fix') blocked = '<div class="callout" style="background:var(--warning-subtle);color:var(--warning-text)" role="alert">'+ic('alert')+'<span>This asset is not checked out.</span></div>';
+  var body = '';
+  if(mode==='out' || mode==='transfer'){
+    body = '<div class="field"><label for="co-person">'+(mode==='out'?'Check out to':'Transfer to')+' (required)</label><select id="co-person" class="input">'+options(PEOPLE, 'A. Chen')+'</select></div>'+
+      '<div class="field"><label for="co-due">Expected return</label><input id="co-due" type="date" class="input" value="2026-12-18"><div class="chips" style="margin-top:4px"><button type="button" class="btn sm" data-due="2026-11-17">Today</button><button type="button" class="btn sm" data-due="2026-11-24">+1 week</button><button type="button" class="btn sm" data-due="2026-12-18">End of term</button></div></div>';
+  } else {
+    body = '<div class="field"><label for="ci-cond">Condition</label><select id="ci-cond" class="input"><option>Good</option><option>Damaged</option><option>Needs repair</option></select></div>'+
+      '<div class="field"><label for="ci-status">Status after check-in</label><select id="ci-status" class="input"><option>Ready</option><option>Out for fix</option></select></div>';
+  }
+  body += '<div class="field"><label for="co-note">Notes</label><textarea id="co-note" class="input" placeholder="Optional"></textarea></div>';
+  var html = '<form method="dialog" id="coForm"><div class="dlg-head"><h2 id="dlgTitle">'+(mode==='out'?'Check out':mode==='in'?'Check in':'Transfer')+' asset</h2><button type="button" class="btn ghost" data-close aria-label="Close dialog">'+ic('x','lg')+'</button></div>'+
+    '<div class="dlg-body">'+tabs+'<div style="margin:16px 0;padding:10px 12px;background:var(--sunken);border-radius:var(--r-lg)"><span class="mono"><strong>'+a.tag+'</strong></span> &nbsp;'+esc(a.name)+' '+badge(a)+'</div>'+blocked+body+'</div>'+
+    '<div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" '+(blocked?'disabled':'')+'>'+(mode==='out'?'Check out':mode==='in'?'Check in':'Transfer')+'</button></div></form>';
+  var d = document.getElementById('dlg');
+  openDlg(d, html, trigger);
+  d.dataset.tag = tag;
+}
+
+function newFieldDrawer(trigger){
+  openDlg(document.getElementById('drawer'),
+   '<form method="dialog"><div class="dlg-head"><h2 id="drTitle">New custom field</h2><button type="button" class="btn ghost" data-close aria-label="Close">'+ic('x','lg')+'</button></div><div class="dlg-body">'+
+   '<div class="field"><label for="f-l">Label (required)</label><input id="f-l" class="input" placeholder="e.g. Screen size" autofocus></div>'+
+   '<div class="field"><label for="f-t">Type</label><select id="f-t" class="input"><option>Text</option><option>Number</option><option>Date</option><option>Select</option><option>Multi-select</option><option>Checkbox</option><option>URL</option></select><span class="help">Type cannot change after assets have data.</span></div>'+
+   '<fieldset style="border:0;padding:0;margin:0 0 16px"><legend class="lbl" style="font-weight:500;margin-bottom:4px">Applies to categories</legend>'+cats.map(function(c){return '<label style="display:flex;gap:8px;align-items:center;min-height:28px"><input type="checkbox"> '+c[0]+'</label>';}).join('')+'</fieldset>'+
+   '<label style="display:flex;gap:8px;align-items:center;min-height:28px"><input type="checkbox"> Required</label><label style="display:flex;gap:8px;align-items:center;min-height:28px"><input type="checkbox" checked> Filterable</label>'+
+   '<div class="field" style="margin-top:12px"><label for="f-h">Help text</label><input id="f-h" class="input"></div></div>'+
+   '<div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" data-save="field">Save field</button></div></form>', trigger);
+}
+function simpleDlg(title, bodyHtml, cta, trigger){
+  openDlg(document.getElementById('dlg'),'<form method="dialog"><div class="dlg-head"><h2 id="dlgTitle">'+title+'</h2><button type="button" class="btn ghost" data-close aria-label="Close dialog">'+ic('x','lg')+'</button></div><div class="dlg-body">'+bodyHtml+'</div><div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">'+cta+'</button></div></form>', trigger);
+}
+
+/* ---------- palette ---------- */
+var palItems = [];
+function openPalette(){
+  var d = document.getElementById('pal'); lastTrigger = document.activeElement;
+  d.innerHTML = '<input id="palq" placeholder="Type a command or an asset tag" aria-label="Command palette search" autocomplete="off"><ul id="pall" role="listbox"></ul>';
+  d.showModal(); document.getElementById('palq').focus(); palFilter('');
+  d.addEventListener('close', function once(){ d.removeEventListener('close', once); if(lastTrigger && document.contains(lastTrigger)) lastTrigger.focus(); });
+}
+var palSel = 0;
+function palFilter(q){
+  q = q.toLowerCase();
+  var all = [['Go to','Assets','#/assets'],['Go to','Settings: Custom fields','#/settings/fields'],['Go to','Settings: Status labels','#/settings/status'],['Go to','Settings: Locations','#/settings/locations'],['Action','New asset','act:newasset'],['Action','Check out an asset','act:quickout'],['Action','Toggle dark mode','act:theme']];
+  assets.forEach(function(a){ all.push(['Asset', a.tag+'  '+a.name+'  ('+a.status+')', '#/asset/'+a.tag]); });
+  palItems = all.filter(function(i){ return !q || i[1].toLowerCase().indexOf(q)>-1; });
+  palItems.sort(function(x,y){ var ex = (x[0]==='Asset' && x[1].toLowerCase().indexOf(q)===0 && q)?0:1, ey=(y[0]==='Asset' && y[1].toLowerCase().indexOf(q)===0 && q)?0:1; return ex-ey; });
+  palItems = palItems.slice(0, 9); palSel = 0;
+  var last='', h='';
+  palItems.forEach(function(i,idx){ if(i[0]!==last){ h+='<li class="grp" role="presentation">'+i[0]+'</li>'; last=i[0]; } h+='<li role="presentation"><button role="option" data-pi="'+idx+'" aria-selected="'+(idx===palSel)+'">'+esc(i[1])+'</button></li>'; });
+  if(!palItems.length) h = '<li class="grp">No results</li>';
+  document.getElementById('pall').innerHTML = h;
+}
+function palRun(idx){
+  var it = palItems[idx]; if(!it) return;
+  closeDlg(document.getElementById('pal'));
+  if(it[2].indexOf('act:')===0){
+    var a = it[2].slice(4);
+    if(a==='theme') toggleTheme();
+    else if(a==='newasset') toast('New asset form is in wireframes.md (WEB-06).');
+    else if(a==='quickout') go('#/assets');
+  } else go(it[2]);
+}
+
+/* ---------- theme ---------- */
+function applyTheme(t){ document.documentElement.setAttribute('data-theme', t); var b=document.getElementById('themeBtn'); b.setAttribute('aria-pressed', t==='dark'); b.textContent = t==='dark' ? 'Light mode' : 'Dark mode'; try{ localStorage.setItem('at-theme', t);}catch(e){} }
+function currentTheme(){ var t=document.documentElement.getAttribute('data-theme'); if(t) return t; return (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark':'light'; }
+function toggleTheme(){ applyTheme(currentTheme()==='dark'?'light':'dark'); }
+
+/* ---------- events ---------- */
+document.addEventListener('click', function(e){
+  var t = e.target;
+  var close = t.closest('[data-close]'); if(close){ var dd = close.closest('dialog'); closeDlg(dd); return; }
+  var tog = t.closest('[data-tog]'); if(tog){ var id=tog.getAttribute('data-tog'); var cur = open[id]===undefined ? (id==='aRiverside Elementary') : open[id]; open[id]=!cur; render(); var nb=document.querySelector('[data-tog="'+id.replace(/"/g,'\\"')+'"]'); if(nb) nb.focus(); return; }
+  var pi = t.closest('[data-pi]'); if(pi){ palRun(+pi.getAttribute('data-pi')); return; }
+  var due = t.closest('[data-due]'); if(due){ document.getElementById('co-due').value = due.getAttribute('data-due'); return; }
+  var mode = t.closest('[data-mode]'); if(mode){ var d=document.getElementById('dlg'); var tag=d.dataset.tag; var trg=lastTrigger; checkoutDialog(tag, mode.getAttribute('data-mode'), trg); var nt = d.querySelector('[data-mode="'+mode.getAttribute('data-mode')+'"]'); if(nt) nt.focus(); return; }
+  var vw = t.closest('[data-view]'); if(vw){ state.status = vw.getAttribute('data-view'); render(); var nv=document.querySelector('[data-view="'+state.status+'"]'); if(nv) nv.focus(); return; }
+  var tb = t.closest('[data-tab]'); if(tb){ var cur2 = location.hash.split('/'); go('#/asset/'+cur2[2]+'/'+tb.getAttribute('data-tab')); var nt2=document.querySelector('[data-tab="'+tb.getAttribute('data-tab')+'"]'); if(nt2) nt2.focus(); return; }
+  var act = t.closest('[data-act]');
+  if(act){
+    var a = act.getAttribute('data-act'), tag = act.getAttribute('data-tag') || (location.hash.split('/')[2]||'');
+    if(a==='checkout') checkoutDialog(tag,'out',act);
+    else if(a==='checkin') checkoutDialog(tag,'in',act);
+    else if(a==='transfer') checkoutDialog(tag,'transfer',act);
+    else if(a==='clrstatus'){ state.status=''; render(); }
+    else if(a==='clrq'){ state.q=''; render(); }
+    else if(a==='clrall'){ state.status=''; state.q=''; render(); }
+    else if(a==='clrsel'){ state.sel={}; render(); }
+    else if(a==='togcols'){ state.cols=!state.cols; render(); var tc=document.querySelector('[data-act="togcols"]'); if(tc) tc.focus(); }
+    else if(a==='newfield') newFieldDrawer(act);
+    else if(a==='newcat') simpleDlg('New category','<div class="field"><label for="nc">Name (required)</label><input id="nc" class="input" autofocus></div>','Create category',act);
+    else if(a==='newstatus') simpleDlg('New status label','<div class="field"><label for="ns">Label (required)</label><input id="ns" class="input" autofocus></div><div class="field"><label for="nt">State type</label><select id="nt" class="input"><option>Ready</option><option>Assigned</option><option>In repair</option><option>Lost</option><option>Archived/disposed</option></select><span class="help">State type decides behaviour and badge colour.</span></div>','Create label',act);
+    else if(a==='newloc') simpleDlg('Add location','<div class="field"><label for="nl">Name (required)</label><input id="nl" class="input" autofocus></div><div class="field"><label for="np">Parent</label><select id="np" class="input"><option>Riverside Elementary</option><option>Main building</option></select></div>','Add location',act);
+    else if(a==='newasset') toast('Asset create/edit form is in wireframes.md (WEB-06).');
+    else if(a==='goimport') go('#/import');
+    else if(a==='saveview') toast('View saved (prototype).');
+    else if(a==='edit') toast('Edit form is in wireframes.md (WEB-06).');
+    else if(a==='print') toast('Label preview is in wireframes.md (WEB-15).');
+    else if(a==='repair') simpleDlg('Log repair','<div class="field"><label for="rd">Description (required)</label><input id="rd" class="input" autofocus></div><div class="field"><label for="rc">Cost</label><input id="rc" class="input" placeholder="$0.00"></div>','Save repair',act);
+    else if(a==='bulkout'||a==='bulkprint'||a==='bulkedit') toast('Bulk action: '+a.replace('bulk','')+' (prototype).');
+    return;
+  }
+  var row = t.closest('tbody tr[data-tag]');
+  if(row && !t.closest('input,a,button')){ go('#/asset/'+row.getAttribute('data-tag')); }
+});
+document.addEventListener('change', function(e){
+  var t = e.target;
+  if(t.id==='st'){ state.status=t.value; render(); var s=document.getElementById('st'); if(s) s.focus(); }
+  else if(t.id==='all'){ document.querySelectorAll('tbody tr[data-tag]').forEach(function(r){ state.sel[r.getAttribute('data-tag')] = t.checked; }); render(); }
+  else if(t.hasAttribute && t.hasAttribute('data-sel')){ state.sel[t.getAttribute('data-sel')] = t.checked; render(); var c=document.querySelector('[data-sel="'+t.getAttribute('data-sel')+'"]'); if(c) c.focus(); }
+});
+document.addEventListener('input', function(e){
+  if(e.target.id==='q'){ state.q = e.target.value; var pos=e.target.selectionStart; render(); var q=document.getElementById('q'); q.focus(); q.setSelectionRange(pos,pos); }
+  if(e.target.id==='palq'){ palFilter(e.target.value); }
+});
+document.addEventListener('submit', function(e){
+  var f = e.target;
+  if(f.id==='coForm'){
+    var d = document.getElementById('dlg'), a = byTag(d.dataset.tag); if(!a) return;
+    var active = d.querySelector('[data-mode][aria-selected="true"]').getAttribute('data-mode');
+    var snap = JSON.stringify(a), stamp = '2026-11-17 '+('0'+new Date().getHours()).slice(-2)+':'+('0'+new Date().getMinutes()).slice(-2);
+    history[a.tag] = history[a.tag] || [['2026-08-12 10:00','Created']];
+    if(active==='out' || active==='transfer'){
+      var who = document.getElementById('co-person').value, due = document.getElementById('co-due').value;
+      a.status='Deployed'; a.who=who; a.due=due;
+      history[a.tag].unshift([stamp,(active==='out'?'Checked out to ':'Transferred to ')+who+' by you. Due '+due]);
+      toast('<strong>'+a.tag+'</strong> '+(active==='out'?'checked out to ':'transferred to ')+esc(who)+'.', function(){ var o=JSON.parse(snap); for(var k in o) a[k]=o[k]; history[a.tag].shift(); render(); toast('Undone.'); });
+    } else {
+      var st = document.getElementById('ci-status').value, from=a.who;
+      a.status=st; a.who=''; a.due='';
+      history[a.tag].unshift([stamp,'Checked in from '+(from||'user')+' by you. Condition: '+document.getElementById('ci-cond').value]);
+      toast('<strong>'+a.tag+'</strong> checked in.', function(){ var o=JSON.parse(snap); for(var k in o) a[k]=o[k]; history[a.tag].shift(); render(); toast('Undone.'); });
+    }
+    render();
+  } else if(f.querySelector('[data-save="field"]')){
+    var v = document.getElementById('f-l').value.trim();
+    if(v){ fields.push([v, document.getElementById('f-t').value, 'Selected', false, true]); toast('Field "'+esc(v)+'" added.'); render(); }
+  } else if(f.closest('#dlg')) {
+    toast('Saved (prototype).');
+  }
+});
+document.addEventListener('keydown', function(e){
+  var tgt = e.target, typing = tgt && (/^(INPUT|TEXTAREA|SELECT)$/.test(tgt.tagName));
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); return; }
+  if(document.getElementById('pal').open){
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); palSel = Math.max(0, Math.min(palItems.length-1, palSel + (e.key==='ArrowDown'?1:-1))); document.querySelectorAll('#pall [data-pi]').forEach(function(b,i){ b.setAttribute('aria-selected', i===palSel); if(i===palSel) b.scrollIntoView({block:'nearest'}); }); }
+    else if(e.key==='Enter'){ e.preventDefault(); palRun(palSel); }
+    return;
+  }
+  if(e.key==='/' && !typing){ e.preventDefault(); document.getElementById('scan').focus(); }
+  if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ var sub = document.querySelector('dialog[open] button[type=submit]'); if(sub && !sub.disabled){ e.preventDefault(); sub.click(); } }
+});
+document.getElementById('scan').addEventListener('keydown', function(e){
+  if(e.key==='Enter'){
+    var v = this.value.trim(); if(!v) return;
+    var a = byTag(v);
+    if(a){ this.value=''; go('#/asset/'+a.tag); toast('Opened '+a.tag+'.'); }
+    else { toast('No asset with tag '+esc(v)+'.', null, true); }
+  }
+});
+document.getElementById('palBtn').addEventListener('click', openPalette);
+document.getElementById('themeBtn').addEventListener('click', toggleTheme);
+document.getElementById('menuBtn').addEventListener('click', function(){ document.body.classList.toggle('nav-open'); });
+document.addEventListener('click', function(e){ if(document.body.classList.contains('nav-open') && !e.target.closest('.sidebar') && !e.target.closest('#menuBtn')) document.body.classList.remove('nav-open'); });
+['dlg','drawer','pal'].forEach(function(id){ var d=document.getElementById(id); d.addEventListener('click', function(e){ if(e.target===d) closeDlg(d); }); });
+
+/* ---------- init ---------- */
+(function(){ var saved=null; try{ saved=localStorage.getItem('at-theme'); }catch(e){} if(saved==='dark'||saved==='light') document.documentElement.setAttribute('data-theme', saved); applyTheme(currentTheme()); })();
+render();
+})();
+</script>
+</body>
+</html>

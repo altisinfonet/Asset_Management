@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TURBO_TELEMETRY_DISABLED: '1'
+
+jobs:
+  check:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # pnpm version comes from the root package.json "packageManager" field.
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm turbo run lint typecheck test build --cache-dir=.turbo
+
+      - name: Static export exists and has no middleware/proxy
+        run: |
+          test -f apps/web/out/index.html
+          test ! -f apps/web/src/middleware.ts
+          test ! -f apps/web/src/proxy.ts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-static-export
+          path: apps/web/out
+          if-no-files-found: error
+          retention-days: 7
+
+  api-e2e:
+    name: API e2e (Postgres ${{ matrix.postgres }} via PgBouncer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['16', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      pgbouncer:
+        # >= 1.26.1, transaction pooling, prepared statements enabled
+        image: edoburu/pgbouncer:v1.26.1-p0
+        env:
+          DATABASE_URL: postgres://app:dev@postgres:5432/app
+          LISTEN_PORT: '6432'
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          MAX_PREPARED_STATEMENTS: '100'
+        ports:
+          - 6432:6432
+    env:
+      PGPASSWORD: dev
+      MIGRATOR_DATABASE_URL: postgres://migrator:dev@localhost:5432/app
+      # Runtime role through PgBouncer, exactly like production.
+      DATABASE_URL: postgres://app:dev@localhost:6432/app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - run: pnpm install --frozen-lockfile --filter "@assettracker/api..."
+      - run: pnpm --filter "@assettracker/api..." run build
+
+      - name: Create roles and extensions (same script as docker compose)
+        run: psql -h localhost -U postgres -d app -v ON_ERROR_STOP=1 -f docker/postgres/init/01-roles.sql
+
+      - name: Migrate (owner role, direct connection)
+        run: pnpm --filter @assettracker/api migrate
+
+      - name: Migrate again (must be a no-op)
+        run: pnpm --filter @assettracker/api migrate
+
+      - name: e2e (app role through PgBouncer)
+        run: pnpm --filter @assettracker/api test:e2e
+
+  docker-build:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build api image (runtime target)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runtime
+          push: false
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Compose file is valid
+        run: docker compose config -q

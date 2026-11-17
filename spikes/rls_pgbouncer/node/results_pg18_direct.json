@@ -1,0 +1,113 @@
+{
+  "target": "direct",
+  "label": "pg18_direct",
+  "postgres": "18.7 (Debian 18.7-1.pgdg13+2)",
+  "pgbouncer": "n/a",
+  "results": [
+    {
+      "id": "a",
+      "name": "tenant A sees only A rows, tenant B only B rows (set_config(..., true) in tx)",
+      "status": "PASS",
+      "out": [
+        "A: 5 rows, distinct tenant_ids=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "B: 5 rows, distinct tenant_ids=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+      ]
+    },
+    {
+      "id": "b",
+      "name": "unset tenant fails closed (reads + writes)",
+      "status": "PASS",
+      "out": [
+        "b1 fresh direct backend (GUC never defined): count=0 guc=null",
+        "b1 insert with unset tenant -> 42501 new row violates row-level security policy for table \"asset\"",
+        "b2 pooled tx, no set_config: ERROR 22P02 invalid input syntax for type uuid: \"\""
+      ]
+    },
+    {
+      "id": "b3",
+      "name": "GOTCHA: after a set_config(...,true) on a connection, later \"unset\" reads as empty string -> policy as specified raises 22P02 (still fail-closed); NULLIF variant returns 0 rows",
+      "status": "PASS",
+      "out": [
+        "outside any tx, after earlier tenant tx: guc=\"\" (empty string, not NULL)",
+        "policy as specified  (current_setting(..., true)::uuid)           -> ERROR 22P02 invalid input syntax for type uuid: \"\"",
+        "NULLIF variant       (NULLIF(current_setting(..., true), '')::uuid) -> count=0",
+        "NULLIF variant insert with unset tenant -> 42501 new row violates row-level security policy for table \"asset_nullif\""
+      ]
+    },
+    {
+      "id": "c",
+      "name": "leak test: 600 interleaved concurrent txs (2 tenants, pool=10, some erroring/rolling back); then outside-tx sees no tenant",
+      "status": "PASS",
+      "out": [
+        "txs completed=600, cross-tenant/row-count violations=0, wrong-GUC-in-tx=0, intended failures rolled back=36",
+        "distinct server backend PIDs used by the 600 txs: 10 ",
+        "80 autocommit queries outside any tx across 10 backends: observed GUC values=\"\" leaked=0",
+        "select from asset_nullif outside any tx -> 0"
+      ]
+    },
+    {
+      "id": "d",
+      "name": "NEGATIVE CONTROL: session-level SET app.tenant_id leaks across pooled clients (pool_size=1 alias)",
+      "status": "N/A",
+      "out": [
+        "not applicable on direct"
+      ]
+    },
+    {
+      "id": "e",
+      "name": "WITH CHECK blocks insert/update of rows for another tenant; cross-tenant UPDATE/DELETE affect 0 rows",
+      "status": "PASS",
+      "out": [
+        "tenant A inserts row with tenant_id=B -> 42501 new row violates row-level security policy for table \"asset\"",
+        "tenant A updates own rows to tenant_id=B -> 42501 new row violates row-level security policy for table \"asset\"",
+        "tenant A update/delete targeting B's rows: rowCount update=0 delete=0",
+        "control: A inserts+deletes own row -> 1 row(s) OK"
+      ]
+    },
+    {
+      "id": "f",
+      "name": "security_invoker view respects RLS; default (definer) view over a NON-forced owner table bypasses it",
+      "status": "PASS",
+      "out": [
+        "FORCE table  : asset_v_invoker (security_invoker=true) as A: rows=5 tenants=1",
+        "FORCE table  : asset_v_definer (default, owner=app_owner) as A: rows=5 tenants=1   <- FORCE RLS still applies to the view owner",
+        "NO-FORCE tbl : noforce_v_invoker as A: rows=5 tenants=1",
+        "NO-FORCE tbl : noforce_v_definer as A: rows=10 tenants=2   <- BYPASS (owner rights, no FORCE)"
+      ]
+    },
+    {
+      "id": "g",
+      "name": "partition: RLS via parent vs direct partition access (and privilege-based mitigation)",
+      "status": "PASS",
+      "out": [
+        "as tenant A, via parent audit_log: 2 rows [\"login\",\"create\"]  (A owns 2 of 4 rows)",
+        "relrowsecurity/force per relation: audit_log=true/true, audit_log_2026_11=false/false, audit_log_2026_12=false/false, audit_log_default=false/false",
+        "as tenant A, DIRECT audit_log_2026_11 (app_user has table privilege on partition): 3 rows, tenants=aaaa,bbbb",
+        "as tenant A, DIRECT audit_log_2026_12: 1 rows, tenants=bbbb",
+        "=> direct partition access BYPASSES parent policy (leak) when app_user has privileges on the partition",
+        "mitigation: REVOKE on partitions -> direct partition read: 42501 permission denied for table audit_log_2026_11",
+        "mitigation: via parent still works with only parent privileges: select=2 rows, insert routed to partition ok (1 row, cleanup via superuser: 1)",
+        "mitigation 2: policy on the partition itself + privilege granted -> direct read as A: 2 rows, only A=true"
+      ]
+    },
+    {
+      "id": "h",
+      "name": "app_owner: without FORCE bypasses RLS; with FORCE is restricted; superuser bypasses even FORCE",
+      "status": "PASS",
+      "out": [
+        "app_owner, no tenant set: asset_noforce (ENABLE only) -> 10 rows (BYPASS); asset (FORCE) -> 0 rows",
+        "app_owner with tenant A set: asset (FORCE) -> 5 rows; asset_noforce -> 10 rows",
+        "after ALTER TABLE asset_noforce FORCE ROW LEVEL SECURITY (same tx, rolled back afterwards): 5 rows",
+        "superuser postgres on FORCE table with no tenant: 10 rows (superuser/BYPASSRLS ignore FORCE). roles: app_owner(super=false,bypassrls=false) app_user(super=false,bypassrls=false) postgres(super=true,bypassrls=true)"
+      ]
+    },
+    {
+      "id": "i",
+      "name": "extra: named prepared statements + parameter binding survive transaction pooling (max_prepared_statements=100)",
+      "status": "PASS",
+      "out": [
+        "30 executions of one named prepared statement over 6 clients/4 backends: all counts=5"
+      ]
+    }
+  ]
+}

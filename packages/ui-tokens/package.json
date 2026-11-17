@@ -2,22 +2,33 @@
   "name": "@assettracker/ui-tokens",
   "version": "0.0.0",
   "private": true,
-  "description": "Design tokens shared by web and mobile (placeholder until docs/design/tokens.json lands)",
+  "description": "Design tokens shared by web and mobile, generated from docs/design/tokens.json (CSS variables, Tailwind v4 theme, typed object, WCAG contrast checks)",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "**/*.css"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./tokens.css": {
+      "style": "./dist/tokens.css",
+      "default": "./dist/tokens.css"
+    },
+    "./tailwind-theme.css": {
+      "style": "./dist/tailwind-theme.css",
+      "default": "./dist/tailwind-theme.css"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "generate": "node scripts/generate.mjs",
+    "build": "node scripts/generate.mjs && tsc -p tsconfig.build.json && node scripts/copy-css.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

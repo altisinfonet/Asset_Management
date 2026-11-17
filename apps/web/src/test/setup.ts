@@ -1,3 +1,5 @@
+import '@testing-library/jest-dom/vitest';
+
 // jsdom lacks several browser APIs that Radix UI and cmdk rely on.
 class ResizeObserverStub {
   observe() {}

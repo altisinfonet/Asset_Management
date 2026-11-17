@@ -56,12 +56,12 @@ export async function applyMigrations(
   await client.query('select pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
   try {
     await client.query(`
-      create table if not exists schema_migrations (
+      create table if not exists public.schema_migrations (
         id text primary key,
         checksum text not null,
         applied_at timestamptz not null default now()
       )`);
-    const { rows } = await client.query('select id, checksum from schema_migrations');
+    const { rows } = await client.query('select id, checksum from public.schema_migrations');
     const applied = new Map(rows.map((r) => [String(r.id), String(r.checksum)]));
 
     const ran: string[] = [];
@@ -80,10 +80,10 @@ export async function applyMigrations(
           await client.query("set local lock_timeout = '5s'");
           await client.query("set local statement_timeout = '15min'");
           await client.query(m.sql);
-          await client.query('insert into schema_migrations (id, checksum) values ($1, $2)', [
-            m.id,
-            m.checksum,
-          ]);
+          await client.query(
+            'insert into public.schema_migrations (id, checksum) values ($1, $2)',
+            [m.id, m.checksum],
+          );
           await client.query('COMMIT');
         } catch (err) {
           await client.query('ROLLBACK');
@@ -91,7 +91,7 @@ export async function applyMigrations(
         }
       } else {
         await client.query(m.sql);
-        await client.query('insert into schema_migrations (id, checksum) values ($1, $2)', [
+        await client.query('insert into public.schema_migrations (id, checksum) values ($1, $2)', [
           m.id,
           m.checksum,
         ]);

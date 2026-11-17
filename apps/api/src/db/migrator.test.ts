@@ -15,7 +15,7 @@ function fakeClient(alreadyApplied: Array<{ id: string; checksum: string }> = []
   const client: MigrationClient = {
     async query(text) {
       statements.push(text.trim().split('\n')[0]!.trim());
-      if (text.includes('from schema_migrations')) return { rows: alreadyApplied };
+      if (text.includes('from public.schema_migrations')) return { rows: alreadyApplied };
       return { rows: [] };
     },
   };

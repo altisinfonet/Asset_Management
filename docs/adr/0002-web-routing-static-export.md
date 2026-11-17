@@ -39,6 +39,8 @@ Everything below was run in this repo (Chrome 157 driven by Playwright 1.65; `ap
 
 `curl` against the static server: `/assets/view/?id=<uuid>` and `/assets/view?id=<uuid>` both return 200 with the prerendered `assets/view/index.html` (5629 B); `/settings/users` returns the prerendered settings page; `/s/AB12CD34` and `/no/such/page` return 200 with `404.html`; a missing `/_next/static/*.js` returns a real 404 (the SPA fallback must never answer asset requests).
 
+Build note: on Windows, Next 16.4.6 writes the per-segment prefetch files (`__next.<segment>.__PAGE__.txt`) into nested directories instead of flat files (it joins segment paths with `path.relative`, which uses backslashes), so the client's prefetch requests return 404 and Next silently falls back to a normal navigation. Pages, deep links and refresh are unaffected. Release builds come from Linux (CI, Docker), where the flat files are emitted; treat a Windows `out/` as a dev artefact.
+
 Key conclusions:
 
 - A query-string route needs **no fallback at all**: the path is a real file, so refresh, deep links and bookmarks work on any static host, in the same way in `next dev` and the export. This is the property that makes it the safer default.

@@ -167,10 +167,11 @@ function renderCss(m) {
   return `/* ${HEADER}
  *
  * Theme selection: light by default; dark when the OS prefers it, unless the user forced light with
- * <html data-theme="light">; <html data-theme="dark"> forces dark. */
+ * <html data-theme="light">; <html data-theme="dark"> forces dark. The attribute also works on any element, so a
+ * subtree can show the other theme (used by the /ui gallery). */
 
 :root,
-:root[data-theme='light'] {
+[data-theme='light'] {
   color-scheme: light;
 ${colorDecls(m.colorFlat.light, '  ')}
 ${shadowDecls(m.shadow.light, '  ')}
@@ -184,7 +185,7 @@ ${darkBody}
   }
 }
 
-:root[data-theme='dark'] {
+[data-theme='dark'] {
   color-scheme: dark;
 ${darkBodyTop}
 }

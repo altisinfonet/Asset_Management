@@ -78,9 +78,9 @@ describe('tokens.css matches tokens.json', () => {
   }
 
   it('declares every light colour on :root and every dark colour under both dark selectors', () => {
-    const lightBlock = block(":root,\n:root[data-theme='light']");
+    const lightBlock = block(":root,\n[data-theme='light']");
     const darkMedia = block('@media (prefers-color-scheme: dark)');
-    const darkAttr = block(":root[data-theme='dark']");
+    const darkAttr = block("[data-theme='dark']");
     for (const [p, leaf] of leaves(source.color.light)) {
       expect(lightBlock).toContain(`--color-${colorVarName(p)}: ${leaf.$value};`);
     }

@@ -18,7 +18,7 @@ info:
     Every mutating request (POST, PATCH, DELETE) accepts an `Idempotency-Key` header (8-255 chars, client-generated, unique per principal). It is **required** on check-out, check-in, transfer, loaner check-out, stock movements and import commit. A retry with the same key and the same body replays the stored response and sets `Idempotent-Replayed: true`; the same key with a different body returns `422` (`idempotency-key-reuse`); a retry while the first request is still running returns `409` (`idempotency-key-in-flight`). Keys expire after 24 hours.
 
     ## Optimistic concurrency
-    Single-resource GET and every create/update response carry an `ETag` (`W/"<version>"`). `PATCH` and `DELETE` require `If-Match` (`428` if missing, `412` if stale). Check-out, check-in and transfer accept `If-Match` on the asset but also serialise server-side, so a lost race returns `409`.
+    Single-resource GET and every create/update response carry an `ETag` (`W/"<version>"`). `PATCH` and `DELETE` require `If-Match` (`428` if missing, `412` if stale). Check-out, check-in and transfer accept `If-Match` on the asset but also serialise server-side, so a lost race returns `409`. Their responses return the **updated asset** (body and `ETag`) together with the assignment (and the transfer record), so a client can chain the next call without a re-fetch.
 
     ## Pagination, sorting, filtering
     List endpoints use **cursor pagination**: `limit` (1-200, default 50) and an opaque `cursor`; the response carries `page.next_cursor` and `page.has_more`. `page.total` is only returned with `include_total=true` (it costs a count). Cursors are bound to the `sort` and filters that produced them. `sort` is a comma-separated list, `-` prefix for descending. Filters are plain query parameters; array filters are comma-separated; custom fields filter with `cf[<key>]=<value>`.
@@ -402,7 +402,10 @@ paths:
         - Accessories
       operationId: checkinAccessory
       summary: Return accessory units
-      description: Requires permission `accessory:checkout`.
+      description: |-
+        Returns `quantity` units (default: everything still outstanding) of an open assignment. A partial return increases `quantity_returned` on the same assignment, which stays open; the return that completes it sets `checked_in_at`. The returned units are available again immediately. Returning more than the outstanding units is rejected with 422.
+
+        Requires permission `accessory:checkout`.
       x-permission: accessory:checkout
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -416,7 +419,7 @@ paths:
               $ref: "#/components/schemas/AccessoryCheckinRequest"
       responses:
         "200":
-          description: The closed assignment.
+          description: "The assignment after the return: still open with a higher `quantity_returned` after a partial return, closed (`checked_in_at` set) after the last units come back."
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -453,7 +456,7 @@ paths:
       operationId: checkoutAccessory
       summary: Check out accessory units
       description: |-
-        Fails with 409 `insufficient-stock` if the quantity exceeds what is available.
+        Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments).
 
         Requires permission `accessory:checkout`.
       x-permission: accessory:checkout
@@ -1143,7 +1146,7 @@ paths:
               $ref: "#/components/schemas/CheckinRequest"
       responses:
         "200":
-          description: Checked in; the closed assignment. `ETag` is the new version of the asset.
+          description: Checked in. Returns the updated asset and the closed assignment; `ETag` is the new version of the asset.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -1160,7 +1163,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Assignment"
+                $ref: "#/components/schemas/CustodyResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1205,7 +1208,7 @@ paths:
               note: Loan for the exam week
       responses:
         "201":
-          description: Checked out. `ETag` is the new version of the asset.
+          description: Checked out. Returns the updated asset and the new assignment; `ETag` is the new version of the asset and `Location` points at the assignment.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -1224,7 +1227,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Assignment"
+                $ref: "#/components/schemas/CustodyResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1388,7 +1391,7 @@ paths:
               $ref: "#/components/schemas/TransferRequest"
       responses:
         "201":
-          description: Transferred. `ETag` is the new version of the asset.
+          description: Transferred. Returns the updated asset, the transfer record and the new assignment; `ETag` is the new version of the asset.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -3491,7 +3494,7 @@ paths:
       operationId: checkoutLoaner
       summary: Quick loan from the pool
       description: |-
-        Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty.
+        Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment.
 
         Requires permission `loaner:checkout`.
       x-permission: loaner:checkout
@@ -3507,7 +3510,7 @@ paths:
               $ref: "#/components/schemas/LoanerCheckoutRequest"
       responses:
         "201":
-          description: Loan opened.
+          description: Loan opened. Returns the updated asset and the new assignment; `ETag` is the new version of the asset.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -3517,6 +3520,8 @@ paths:
               $ref: "#/components/headers/RateLimitRemaining"
             RateLimit-Reset:
               $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
             Location:
               $ref: "#/components/headers/Location"
             Idempotent-Replayed:
@@ -3524,7 +3529,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Assignment"
+                $ref: "#/components/schemas/CustodyResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -8996,6 +9001,10 @@ components:
         quantity:
           type: integer
           minimum: 1
+        quantity_returned:
+          type: integer
+          minimum: 0
+          description: Units already returned. Always 0 while an asset is out and 1 once it is checked in; for accessories it grows with each partial return. `0 <= quantity_returned <= quantity`, and the assignment is closed (`checked_in_at` set) exactly when `quantity_returned = quantity`. Outstanding units = `quantity - quantity_returned`.
         loaner_pool_id:
           type:
             - string
@@ -9047,6 +9056,7 @@ components:
       required:
         - id
         - quantity
+        - quantity_returned
         - checked_out_at
         - acceptance_state
       description: One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set.
@@ -9186,16 +9196,31 @@ components:
         - asset_id
         - to_assignment_id
         - transferred_at
+    CustodyResult:
+      type: object
+      properties:
+        asset:
+          $ref: "#/components/schemas/Asset"
+        assignment:
+          $ref: "#/components/schemas/Assignment"
+      required:
+        - asset
+        - assignment
+      description: "Result of a check-out or check-in: the **updated asset** (status, location and `current_assignment` reflect the change; its new `ETag` is also in the response header) and the assignment that was opened (check-out) or closed (check-in)."
     TransferResult:
       type: object
       properties:
+        asset:
+          $ref: "#/components/schemas/Asset"
         transfer:
           $ref: "#/components/schemas/Transfer"
         assignment:
           $ref: "#/components/schemas/Assignment"
       required:
+        - asset
         - transfer
         - assignment
+      description: "Result of a transfer: the **updated asset** (new `ETag` also in the header), the `Transfer` record and the newly opened assignment."
     HistoryEvent:
       type: object
       properties:
@@ -9297,7 +9322,7 @@ components:
         quantity:
           type: integer
           minimum: 1
-          description: Partial return; defaults to the full assignment quantity. A partial return closes the row and reopens the remainder.
+          description: Units being returned now; defaults to everything still outstanding (`quantity - quantity_returned`). A partial return adds to `quantity_returned` and leaves the assignment open; the return that brings `quantity_returned` up to `quantity` closes it. More than the outstanding units is rejected with 422.
         note:
           type: string
           maxLength: 2000

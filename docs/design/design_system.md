@@ -306,9 +306,25 @@ React Native components, one `theme` object generated from `tokens.json`, fonts 
 
 ---
 
-## 11. Open decisions for the founder
+## 11. Design decisions (2026-11-17)
 
-See the end of `wireframes.md` and the hand-off report: product name, primary colour, font (Inter bundled vs system), default theme, density default, custom status colours, logo, whether to use NativeWind on mobile, and Lucide vs a licensed icon set.
+**Decided (founder accepted):**
+- **Theme:** follow the OS theme (`prefers-color-scheme`) with a manual light/dark override stored in the user profile (D6, section 3).
+- **Web density:** as proposed. 14px body, 13px table cells, 36px comfortable rows, 28px compact option (sections 2 and 3.1 to 3.2).
+- **Row click:** opens the 480px detail drawer (W11). Enter opens the full asset page.
+- **Mobile home:** the Scan screen (M1, section 7).
+- **Status colours:** fixed per state type (section 4). Admins rename labels but do not recolour them in MVP.
+- **Icons:** Lucide, bundled, no remote loading (section 3.6).
+- **Font:** Inter bundled locally, with the system UI font as fallback. JetBrains Mono (falling back to `ui-monospace`) for asset tags, serial numbers and scan codes (section 3.1).
+- **Shared code:** only design tokens are shared between web and mobile. No shared components (section 9).
+- **Mobile styling:** plain StyleSheet plus shared tokens for MVP; no NativeWind (section 9).
+- **Loaner pool:** a top-level sidebar item (W2, section 6).
+
+**Deferred (placeholders kept):**
+- **Product name:** "Asset Tracker" (placeholder, see the note at the top of this file).
+- **Primary colour:** blue placeholder `#2A55D6` (light) and `#7AA2FF` (dark) (sections 2 and 4, Appendix A).
+- **Brand visuals:** logo (section 2 logo slot), empty-state illustrations (section 2) and tone of voice (section 2).
+- **Decide before M3 store testing.** All names come from one config, so a rename is a small change.
 
 ---
 

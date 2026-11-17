@@ -12,6 +12,7 @@
 **/.env.*
 !**/.env.example
 docs
+!docs/design/tokens.json
 research
 asset_management_systems.md
 docker-compose*.yml

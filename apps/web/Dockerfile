@@ -21,6 +21,8 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 FROM deps AS build
 COPY tsconfig.base.json ./
+# ui-tokens generates its CSS and TS from the design tokens at build time
+COPY docs/design/tokens.json docs/design/tokens.json
 COPY packages packages
 COPY apps/web apps/web
 RUN pnpm --filter "@assettracker/web..." run build

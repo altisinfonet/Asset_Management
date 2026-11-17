@@ -1,7 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../config/env.js';
-import type { DbService } from '../db/db.service.js';
+import type { TenancyService } from '../tenancy/tenancy.service.js';
 import { HealthController } from './health.controller.js';
 
 const config = loadConfig({
@@ -9,7 +9,7 @@ const config = loadConfig({
   GIT_SHA: 'abc1234',
 });
 
-const dbWith = (ping: DbService['ping']) => ({ ping }) as unknown as DbService;
+const dbWith = (ping: TenancyService['ping']) => ({ ping }) as unknown as TenancyService;
 
 describe('HealthController', () => {
   it('returns ok with latency when the database answers', async () => {

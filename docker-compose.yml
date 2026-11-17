@@ -1,6 +1,7 @@
 # Local development stack. DUMMY credentials only; real secrets never go in this file.
 #   docker compose up -d --build          postgres, pgbouncer, mailpit, minio, migrate, api
 #   docker compose --profile web up -d    adds the Next.js dev server (http://localhost:3001)
+#   docker compose --profile pooling run --rm pgbouncer-check   asserts the PgBouncer profile (SHOW POOLS/CONFIG)
 #   docker compose run --rm migrate       apply new migrations
 # Host ports are overridable via .env (see .env.example); Postgres defaults to 5433 because 5432
 # is commonly taken by a local install.
@@ -11,8 +12,8 @@ x-api-env: &api-env
   HOST: 0.0.0.0
   PORT: '3000'
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  # Runtime role (non-owner `app`) goes THROUGH PgBouncer (transaction pooling).
-  DATABASE_URL: postgres://app:dev@pgbouncer:6432/app
+  # Runtime role (non-owner `app_user`) goes THROUGH PgBouncer (transaction pooling).
+  DATABASE_URL: postgres://app_user:dev@pgbouncer:6432/app
   S3_ENDPOINT: http://minio:9000
   SMTP_URL: smtp://mailpit:1025
 
@@ -39,15 +40,14 @@ services:
 
   pgbouncer:
     image: edoburu/pgbouncer:v1.26.1-p0 # >= 1.26.1 (CVE-2025-12819 fixed in 1.25.1)
-    environment:
-      # Generates pgbouncer.ini + userlist.txt for the `app` role only. Migrations bypass it.
-      DATABASE_URL: postgres://app:dev@postgres:5432/app
-      LISTEN_PORT: '6432'
-      AUTH_TYPE: scram-sha-256
-      POOL_MODE: transaction
-      MAX_PREPARED_STATEMENTS: '100' # at 0, named prepared statements break in transaction mode
-      DEFAULT_POOL_SIZE: '20'
-      MAX_CLIENT_CONN: '200'
+    # Config is a mounted file (not env-generated) because it defines the `app_one` pool_size=1 alias
+    # used only by the isolation suite's negative control. Settings: transaction pooling,
+    # max_prepared_statements=100 (at 0, named prepared statements break), empty server_reset_query,
+    # default_pool_size=4 (small on purpose: forces multiplexing). Migrations bypass the pooler.
+    entrypoint: ['pgbouncer', '/etc/pgbouncer/pgbouncer.ini']
+    volumes:
+      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
     ports:
       - '${PGBOUNCER_PORT:-6432}:6432'
     depends_on:
@@ -59,6 +59,31 @@ services:
       timeout: 3s
       retries: 10
 
+  # `pooling` profile: one-shot assertion of the PgBouncer settings the isolation suite relies on.
+  #   docker compose --profile pooling run --rm pgbouncer-check
+  pgbouncer-check:
+    profiles: ['pooling']
+    image: postgres:18
+    environment:
+      PGPASSWORD: dev
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        set -eu
+        Q="psql -h pgbouncer -p 6432 -U pgbouncer_admin -d pgbouncer -At"
+        cfg() { $$Q -c 'show config' | grep "^$$1|" | cut -d'|' -f2; }
+        echo "pool_mode=$$(cfg pool_mode) max_prepared_statements=$$(cfg max_prepared_statements) default_pool_size=$$(cfg default_pool_size) server_reset_query='$$(cfg server_reset_query)'"
+        test "$$(cfg pool_mode)" = transaction
+        test "$$(cfg max_prepared_statements)" = 100
+        test "$$(cfg default_pool_size)" = 4
+        test -z "$$(cfg server_reset_query)"
+        echo '--- SHOW DATABASES'; $$Q -c 'show databases'
+        $$Q -c 'show databases' | grep -q '^app_one|.*|1|' && echo 'app_one alias has pool_size=1'
+        echo '--- SHOW POOLS'; $$Q -c 'show pools'
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+
   migrate:
     build:
       context: .
@@ -68,8 +93,10 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Owner role, DIRECT to Postgres (never through the pooler: session advisory lock + DDL).
-      MIGRATOR_DATABASE_URL: postgres://migrator:dev@postgres:5432/app
+      # Owner role (app_owner), DIRECT to Postgres (never through the pooler: session advisory lock + DDL).
+      MIGRATOR_DATABASE_URL: postgres://app_owner:dev@postgres:5432/app
+      # Dev only: create the demo tenants Acme and Globex after migrating (refused in production).
+      SEED_DEMO_DATA: 'true'
     depends_on:
       postgres:
         condition: service_healthy

@@ -17,11 +17,13 @@ const envSchema = z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
 
-    /** Runtime role (`app`), through PgBouncer in transaction mode. */
+    /** Runtime role (`app_user`), through PgBouncer in transaction mode. */
     DATABASE_URL: postgresUrl.optional(),
-    /** Owner role (`migrator`), DIRECT to Postgres. Used only by the `migrate` role. */
+    /** Owner role (`app_owner`), DIRECT to Postgres. Used only by the `migrate` role. */
     MIGRATOR_DATABASE_URL: postgresUrl.optional(),
     DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+    /** `migrate` role only: also create the demo tenants (dev; refused when NODE_ENV=production). */
+    SEED_DEMO_DATA: z.stringbool().default(false),
 
     S3_ENDPOINT: z.url().optional(),
     SMTP_URL: z.string().min(1).optional(),

@@ -65,9 +65,9 @@ jobs:
           retention-days: 7
 
   api-e2e:
-    name: API e2e (Postgres ${{ matrix.postgres }} via PgBouncer)
+    name: API e2e + tenant isolation (Postgres ${{ matrix.postgres }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -86,22 +86,12 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      pgbouncer:
-        # >= 1.26.1, transaction pooling, prepared statements enabled
-        image: edoburu/pgbouncer:v1.26.1-p0
-        env:
-          DATABASE_URL: postgres://app:dev@postgres:5432/app
-          LISTEN_PORT: '6432'
-          AUTH_TYPE: scram-sha-256
-          POOL_MODE: transaction
-          MAX_PREPARED_STATEMENTS: '100'
-        ports:
-          - 6432:6432
     env:
       PGPASSWORD: dev
-      MIGRATOR_DATABASE_URL: postgres://migrator:dev@localhost:5432/app
-      # Runtime role through PgBouncer, exactly like production.
-      DATABASE_URL: postgres://app:dev@localhost:6432/app
+      # Owner role (app_owner), DIRECT: migrations, schema lint, fixtures that need DDL.
+      MIGRATOR_DATABASE_URL: postgres://app_owner:dev@localhost:5432/app
+      # Superuser, used ONLY by the lint-fixture test that flips BYPASSRLS inside a rolled-back transaction.
+      ADMIN_DATABASE_URL: postgres://postgres:dev@localhost:5432/app
     steps:
       - uses: actions/checkout@v4
 
@@ -115,8 +105,20 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter "@assettracker/api..."
       - run: pnpm --filter "@assettracker/api..." run build
 
+      - name: Unit tests
+        run: pnpm --filter @assettracker/api test
+
       - name: Create roles and extensions (same script as docker compose)
         run: psql -h localhost -U postgres -d app -v ON_ERROR_STOP=1 -f docker/postgres/init/01-roles.sql
+
+      # PgBouncer 1.26.1+ in transaction mode with the repo's config (pool_size=4, max_prepared_statements=100,
+      # empty server_reset_query, `app_one` pool_size=1 alias for the negative control). The config file is
+      # mounted, so it runs as a plain container after checkout; `postgres` resolves to the host-published port.
+      - name: Start PgBouncer (repo config)
+        run: |
+          docker run -d --name pgbouncer -p 6432:6432 --add-host postgres:host-gateway             -v "$PWD/docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro"             -v "$PWD/docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro"             --entrypoint pgbouncer edoburu/pgbouncer:v1.26.1-p0 /etc/pgbouncer/pgbouncer.ini
+          for i in $(seq 1 30); do pg_isready -h localhost -p 6432 && exit 0; sleep 1; done
+          docker logs pgbouncer; exit 1
 
       - name: Migrate (owner role, direct connection)
         run: pnpm --filter @assettracker/api migrate
@@ -124,8 +126,30 @@ jobs:
       - name: Migrate again (must be a no-op)
         run: pnpm --filter @assettracker/api migrate
 
-      - name: e2e (app role through PgBouncer)
+      - name: Schema lint and role audit (fails on any app table without ENABLE+FORCE RLS and policy, partition grants, uuidv7 defaults, ...)
+        run: pnpm --filter @assettracker/api schema:lint
+
+      - name: Tenant isolation + e2e, DIRECT (app_user -> Postgres)
+        env:
+          ISOLATION_MODE: direct
+          DATABASE_URL: postgres://app_user:dev@localhost:5432/app
         run: pnpm --filter @assettracker/api test:e2e
+
+      - name: Tenant isolation + e2e, THROUGH PgBouncer (app_user -> PgBouncer, incl. negative control)
+        env:
+          ISOLATION_MODE: pooled
+          DATABASE_URL: postgres://app_user:dev@localhost:6432/app
+          POOLED_ONE_URL: postgres://app_user:dev@localhost:6432/app_one
+        run: pnpm --filter @assettracker/api test:e2e
+
+      - name: Bootstrap CLI and seed are idempotent
+        env:
+          DATABASE_URL: postgres://app_user:dev@localhost:6432/app
+        run: |
+          pnpm --filter @assettracker/api cli tenant:create --name "CI Corp" --admin-email admin@ci.example
+          pnpm --filter @assettracker/api cli tenant:create --name "CI Corp" --admin-email admin@ci.example
+          pnpm --filter @assettracker/api seed
+          pnpm --filter @assettracker/api seed
 
   docker-build:
     name: Docker images build

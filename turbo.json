@@ -20,7 +20,13 @@
     "test:e2e": {
       "dependsOn": ["^build"],
       "cache": false,
-      "passThroughEnv": ["DATABASE_URL", "MIGRATOR_DATABASE_URL", "E2E_DATABASE_URL"]
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "MIGRATOR_DATABASE_URL",
+        "POOLED_ONE_URL",
+        "ADMIN_DATABASE_URL",
+        "ISOLATION_MODE"
+      ]
     },
     "dev": {
       "dependsOn": ["^build"],

@@ -35,3 +35,6 @@ pnpm-debug.log*
 *.tsbuildinfo
 .eslintcache
 next-env.d.ts
+
+# Claude Code local state (agent worktrees, settings)
+.claude/

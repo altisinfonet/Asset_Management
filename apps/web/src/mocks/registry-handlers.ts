@@ -1176,7 +1176,9 @@ const assetHandlers: HttpHandler[] = [
         'purchase_date',
         'warranty_end',
       ] as const;
-      for (const key of simple) if (body[key] !== undefined) (target as Record<string, unknown>)[key] = text(body[key]) ?? null;
+      for (const key of simple)
+        if (body[key] !== undefined)
+          (target as Record<string, unknown>)[key] = text(body[key]) ?? null;
       if (body.asset_tag !== undefined && text(body.asset_tag))
         target.asset_tag = text(body.asset_tag)!;
       if (body.category_id !== undefined) target.category_id = body.category_id as string;

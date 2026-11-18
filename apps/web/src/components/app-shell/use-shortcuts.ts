@@ -19,15 +19,18 @@ function modalOpen(): boolean {
 
 /**
  * Single-key shortcuts that work anywhere except while typing or while a dialog or menu is
- * open: `?` shows the shortcut help, `g` then `d`/`a`/`s` goes to a screen (wireframe WEB-21).
+ * open: `?` shows the shortcut help, `g` then `d`/`a`/`s` goes to a screen, `c` creates an asset (wireframe WEB-21).
  * Ctrl/Cmd+K and `/` are handled next to the palette and the scan field.
  */
 export function useShortcuts({
   onHelp,
   onGoTo,
+  onNewAsset,
 }: {
   onHelp: () => void;
   onGoTo: (target: GoToTarget) => void;
+  /** `c` starts a new asset; leave undefined when the user may not create assets. */
+  onNewAsset?: () => void;
 }): void {
   useEffect(() => {
     let pendingG: number | undefined;
@@ -56,6 +59,11 @@ export function useShortcuts({
         }
         return;
       }
+      if (event.key === 'c' && onNewAsset) {
+        event.preventDefault();
+        onNewAsset();
+        return;
+      }
       if (event.key.toLowerCase() === 'g' && !event.shiftKey) {
         pendingG = window.setTimeout(clear, SEQUENCE_WINDOW_MS);
       }
@@ -66,5 +74,5 @@ export function useShortcuts({
       window.removeEventListener('keydown', onKeyDown);
       clear();
     };
-  }, [onHelp, onGoTo]);
+  }, [onHelp, onGoTo, onNewAsset]);
 }

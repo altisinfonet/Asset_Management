@@ -20,6 +20,7 @@ interface Shortcut {
 const GENERAL: Shortcut[] = [
   { labelKey: 'shortcuts.palette', keys: ['Ctrl', 'K'] },
   { labelKey: 'shortcuts.scan', keys: ['/'] },
+  { labelKey: 'shortcuts.newAsset', keys: ['C'] },
   { labelKey: 'shortcuts.help', keys: ['?'] },
   { labelKey: 'shortcuts.close', keys: ['Esc'] },
 ];

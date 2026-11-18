@@ -11,6 +11,7 @@ const config = [
       'src/app/**/*.tsx',
       'src/components/app-shell/**/*.tsx',
       'src/components/auth/**/*.tsx',
+      'src/components/registry/**/*.tsx',
       'src/components/*.tsx',
     ],
     ignores: ['src/app/ui/**', '**/*.test.tsx'],

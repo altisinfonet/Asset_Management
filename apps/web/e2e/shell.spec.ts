@@ -51,23 +51,23 @@ test.describe('navigation shell', () => {
     await expect(page.getByPlaceholder('Scan or type tag')).toBeFocused();
     await page.keyboard.type('AT-00124');
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('asset-code')).toHaveText('AT-00124');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
   });
 
   test('assets row click opens the 480px drawer; Enter on a row opens the full page', async ({
     page,
   }) => {
     await page.goto('/assets');
-    await page.getByRole('row', { name: /AT-00123/ }).click();
+    await page.getByRole('row', { name: /PRJ-00010/ }).click();
     const drawer = page.getByRole('dialog');
     await expect(drawer).toBeVisible();
     expect((await drawer.boundingBox())?.width).toBeCloseTo(480, 0);
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
 
-    await page.getByRole('row', { name: /AT-00125/ }).focus();
+    await page.getByRole('row', { name: /PRJ-00009/ }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('asset-id')).toBeVisible();
+    await expect(page.getByTestId('asset-tag')).toHaveText('PRJ-00009');
   });
 });
 

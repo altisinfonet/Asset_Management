@@ -81,6 +81,11 @@ export interface MfaEnrolment {
 export interface MfaEnrolmentResult {
   /** Ten single-use recovery codes, shown exactly once. */
   recovery_codes: string[];
+  /**
+   * CSRF token of the NEW session: confirming enrolment rotates the session id (the user becomes
+   * MFA-verified), so the token from login / `me` no longer matches.
+   */
+  csrf_token: string;
 }
 
 export interface SessionInfo {

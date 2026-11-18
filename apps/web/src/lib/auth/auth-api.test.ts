@@ -139,6 +139,22 @@ describe('auth API against the mock contract', () => {
     expect((await authApi.getMe()).user.mfa_enabled).toBe(true);
   });
 
+  it('confirming MFA enrolment rotates the session: the new csrf_token is stored for later mutations', async () => {
+    const login = await authApi.login({
+      email: MOCK_ACCOUNTS.mfaRequired,
+      password: MOCK_PASSWORD,
+    });
+    await authApi.startMfaEnrolment();
+    const done = await authApi.confirmMfaEnrolment(MOCK_TOTP_CODE);
+    expect(done.csrf_token).toBeTruthy();
+    expect(done.csrf_token).not.toBe(login.csrf_token);
+    // No refetch of /me in between: a mutation must already carry the rotated token.
+    await expect(authApi.revokeSession('sess-phone')).resolves.toBeUndefined();
+    // The pre-rotation token is dead, like on the real API.
+    setCsrfToken(login.csrf_token);
+    expect((await failure(authApi.revokeSession('sess-phone'))).code).toBe('csrf-invalid');
+  });
+
   it('password reset: accepted for any email, token single-use, weak or breached passwords rejected', async () => {
     await expect(authApi.forgotPassword('anyone@example.org')).resolves.toBeUndefined();
     await expect(authApi.forgotPassword(MOCK_ACCOUNTS.owner)).resolves.toBeUndefined();

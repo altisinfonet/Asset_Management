@@ -4,7 +4,9 @@ packages:
 
 # Needed by `pnpm deploy` (apps/api/Dockerfile) so workspace packages are copied, not symlinked.
 allowBuilds:
+  '@prisma/engines': true
   '@swc/core': false
+  prisma: true
 
 injectWorkspacePackages: true
 

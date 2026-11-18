@@ -1,10 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { type Kysely, sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import type { Database } from './database.js';
+import { currentRequestId } from '../context/request-context.js';
+import type { Prisma } from '../generated/prisma/client.js';
 
-/** A transaction handle over the typed schema. */
-export type Tx = Transaction<Database>;
+/**
+ * A transaction handle over the Prisma schema (`tx.asset.findMany()`, `tx.$queryRaw`...). It exists
+ * only inside {@link withTenantTx} / {@link withPreTenantTx}; there is no other way to obtain one.
+ */
+export type Tx = Prisma.TransactionClient;
 
 /** Who and what a tenant transaction acts for. Only `tenantId` is required. */
 export interface TenantContext {
@@ -14,6 +17,16 @@ export interface TenantContext {
   /** correlation id: becomes `app.request_id` for the transaction. */
   requestId?: string;
 }
+
+/** Interactive transaction limits (Prisma defaults to 2 s wait / 5 s run, too tight for imports). */
+export interface TxOptions {
+  /** Max time to wait for a connection from the pool. */
+  maxWaitMs?: number;
+  /** Max time the callback may run before Prisma rolls the transaction back. */
+  timeoutMs?: number;
+}
+
+export const DEFAULT_TX_OPTIONS = { maxWaitMs: 5_000, timeoutMs: 30_000 } as const;
 
 const uuid = z.uuid();
 const requestId = z.string().max(200);
@@ -45,11 +58,16 @@ export function currentTenantContext(): TenantContext | undefined {
   return active.getStore()?.ctx;
 }
 
-/** The slice of Kysely that `withTenantTx` needs (lets unit tests pass a fake). */
-export type TxSource = Pick<Kysely<Database>, 'transaction'>;
+/** The slice of PrismaClient that the helpers need (lets unit tests pass a fake). */
+export interface TxSource {
+  $transaction<T>(
+    fn: (tx: Tx) => Promise<T>,
+    options?: { maxWait?: number; timeout?: number },
+  ): Promise<T>;
+}
 
 /**
- * Runs `fn` inside an explicit transaction with the tenant context set transaction-locally:
+ * Runs `fn` inside an interactive Prisma transaction with the tenant context set transaction-locally:
  *
  *   BEGIN; select set_config('app.tenant_id' | 'app.actor_id' | 'app.request_id', $n, true); ...; COMMIT
  *
@@ -64,11 +82,13 @@ export async function withTenantTx<T>(
   source: TxSource,
   ctx: TenantContext,
   fn: (trx: Tx) => Promise<T>,
+  options: TxOptions = {},
 ): Promise<T> {
   // Validate before touching the database: the tenant id never reaches SQL unchecked.
   const tenantId = uuid.parse(ctx.tenantId);
   const actorId = ctx.actorId === undefined ? '' : uuid.parse(ctx.actorId);
-  const reqId = ctx.requestId === undefined ? '' : requestId.parse(ctx.requestId);
+  const effectiveRequestId = ctx.requestId ?? currentRequestId();
+  const reqId = effectiveRequestId === undefined ? '' : requestId.parse(effectiveRequestId);
 
   const outer = active.getStore();
   if (outer) {
@@ -80,21 +100,34 @@ export async function withTenantTx<T>(
     return fn(outer.trx);
   }
 
-  return source.transaction().execute(async (trx) => {
-    await sql`select set_config('app.tenant_id', ${tenantId}, true),
-                     set_config('app.actor_id', ${actorId}, true),
-                     set_config('app.request_id', ${reqId}, true)`.execute(trx);
-    return active.run(
-      { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: ctx.requestId } },
-      () => fn(trx),
-    );
-  });
+  return source.$transaction(
+    async (trx) => {
+      await trx.$executeRaw`select set_config('app.tenant_id', ${tenantId}, true),
+                                   set_config('app.actor_id', ${actorId}, true),
+                                   set_config('app.request_id', ${reqId}, true)`;
+      return active.run(
+        { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId } },
+        () => fn(trx),
+      );
+    },
+    {
+      maxWait: options.maxWaitMs ?? DEFAULT_TX_OPTIONS.maxWaitMs,
+      timeout: options.timeoutMs ?? DEFAULT_TX_OPTIONS.timeoutMs,
+    },
+  );
 }
 
 /**
  * Runs `fn` in a transaction with NO tenant context, for the pre-tenant `identity` lookups and the
  * control plane (tables with no RLS). Tenant tables return zero rows here (fail closed).
  */
-export function withPreTenantTx<T>(source: TxSource, fn: (trx: Tx) => Promise<T>): Promise<T> {
-  return source.transaction().execute(fn);
+export function withPreTenantTx<T>(
+  source: TxSource,
+  fn: (trx: Tx) => Promise<T>,
+  options: TxOptions = {},
+): Promise<T> {
+  return source.$transaction(fn, {
+    maxWait: options.maxWaitMs ?? DEFAULT_TX_OPTIONS.maxWaitMs,
+    timeout: options.timeoutMs ?? DEFAULT_TX_OPTIONS.timeoutMs,
+  });
 }

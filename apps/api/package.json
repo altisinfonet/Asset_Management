@@ -13,25 +13,28 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/ensure-generated.mjs && tsc -p tsconfig.build.json",
     "dev": "node scripts/dev.mjs",
     "start": "node dist/main.js api",
     "migrate": "node dist/main.js migrate",
     "cli": "node dist/cli/main.js",
     "seed": "node dist/cli/main.js seed",
     "schema:lint": "node dist/cli/main.js schema:lint",
+    "db:pull": "node scripts/db-pull.mjs",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "typecheck": "node scripts/ensure-generated.mjs && tsc --noEmit",
+    "test": "node scripts/ensure-generated.mjs && vitest run",
+    "test:e2e": "node scripts/ensure-generated.mjs && vitest run --config vitest.e2e.config.ts",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@assettracker/schemas": "workspace:*",
     "@nestjs/common": "12.5.1",
     "@nestjs/core": "12.5.1",
     "@nestjs/platform-fastify": "12.5.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "fastify": "5.12.8",
-    "kysely": "0.29.8",
     "nestjs-pino": "5.3.2",
     "pg": "8.23.1",
     "pino": "10.4.0",
@@ -46,6 +49,7 @@
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "eslint": "9.39.5",
+    "prisma": "7.10.1",
     "typescript": "6.0.3",
     "unplugin-swc": "2.0.0",
     "vitest": "5.1.0"

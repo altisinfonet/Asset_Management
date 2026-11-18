@@ -1,6 +1,6 @@
 # ADR-0002: Web routing under Next.js static export (query-string detail routes)
 
-- Status: accepted (M1-WEB-10 spike, 2026-11-17)
+- Status: ACCEPTED (founder, 2026-11-18); proposed by the M1-WEB-10 spike, 2026-11-17
 - Deciders: Claude (frontend), founder informed
 - Relates to: architecture section 3 ("web as a Next.js static export"), technical validation item 6, backlog M1-WEB-10 / M1-WEB-01
 

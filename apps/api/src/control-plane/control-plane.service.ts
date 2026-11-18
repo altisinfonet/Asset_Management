@@ -39,22 +39,14 @@ export class ControlPlaneService {
   /** Registry entry of a tenant, or null when it does not exist. */
   async resolveTenant(tenantId: string): Promise<TenantRegistryEntry | null> {
     const row = await this.tenancy.withPreTenantTx((trx) =>
-      trx
-        .selectFrom('identity.tenant_directory')
-        .select(['tenant_id', 'slug', 'status', 'cell'])
-        .where('tenant_id', '=', tenantId)
-        .executeTakeFirst(),
+      trx.tenant_directory.findUnique({ where: { tenant_id: tenantId }, select: REGISTRY_FIELDS }),
     );
     return row ? toEntry(row) : null;
   }
 
   async findBySlug(slug: string): Promise<TenantRegistryEntry | null> {
     const row = await this.tenancy.withPreTenantTx((trx) =>
-      trx
-        .selectFrom('identity.tenant_directory')
-        .select(['tenant_id', 'slug', 'status', 'cell'])
-        .where('slug', '=', slug)
-        .executeTakeFirst(),
+      trx.tenant_directory.findUnique({ where: { slug }, select: REGISTRY_FIELDS }),
     );
     return row ? toEntry(row) : null;
   }
@@ -62,12 +54,11 @@ export class ControlPlaneService {
   /** Ids and status only: what the scheduler needs to fan out per-tenant jobs. */
   async listActiveTenants(): Promise<TenantRegistryEntry[]> {
     const rows = await this.tenancy.withPreTenantTx((trx) =>
-      trx
-        .selectFrom('identity.tenant_directory')
-        .select(['tenant_id', 'slug', 'status', 'cell'])
-        .where('status', '=', 'active')
-        .orderBy('created_at')
-        .execute(),
+      trx.tenant_directory.findMany({
+        where: { status: 'active' },
+        select: REGISTRY_FIELDS,
+        orderBy: { created_at: 'asc' },
+      }),
     );
     return rows.map(toEntry);
   }
@@ -83,13 +74,12 @@ export class ControlPlaneService {
   /** Changes the status in the registry and on the tenant row, atomically. */
   async setTenantStatus(tenantId: string, status: TenantStatus): Promise<void> {
     await this.tenancy.withTenantTx({ tenantId }, async (trx) => {
-      const dir = await trx
-        .updateTable('identity.tenant_directory')
-        .set({ status })
-        .where('tenant_id', '=', tenantId)
-        .executeTakeFirst();
-      if (dir.numUpdatedRows === 0n) throw new Error(`unknown tenant ${tenantId}`);
-      await trx.updateTable('app.tenant').set({ status }).where('id', '=', tenantId).execute();
+      const dir = await trx.tenant_directory.updateMany({
+        where: { tenant_id: tenantId },
+        data: { status },
+      });
+      if (dir.count === 0) throw new Error(`unknown tenant ${tenantId}`);
+      await trx.tenant.update({ where: { id: tenantId }, data: { status } });
     });
   }
 
@@ -98,11 +88,19 @@ export class ControlPlaneService {
   }
 }
 
+const REGISTRY_FIELDS = { tenant_id: true, slug: true, status: true, cell: true } as const;
+
 function toEntry(row: {
   tenant_id: string;
   slug: string;
-  status: TenantStatus;
+  status: string;
   cell: string;
 }): TenantRegistryEntry {
-  return { tenantId: row.tenant_id, slug: row.slug, status: row.status, cell: row.cell };
+  // The CHECK constraint on identity.tenant_directory.status guarantees the union.
+  return {
+    tenantId: row.tenant_id,
+    slug: row.slug,
+    status: row.status as TenantStatus,
+    cell: row.cell,
+  };
 }

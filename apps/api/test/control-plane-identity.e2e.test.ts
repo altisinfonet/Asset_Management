@@ -14,7 +14,7 @@ import {
   SeedRefusedError,
   seedDemoData,
 } from '../src/seed/seed.js';
-import { sql } from '../src/tenancy/index.js';
+import { asBytes, Prisma, type Tx } from '../src/tenancy/index.js';
 import { dbEnabled, mode, newTenancy } from './support/db.js';
 
 const TENANT_TABLES = [
@@ -39,6 +39,13 @@ const TENANT_TABLES = [
   'app.audit_log',
 ] as const;
 
+/** Row count of a table from the fixed lists in this file (Prisma.raw splices a trusted identifier). */
+async function countOf(trx: Tx, table: string): Promise<number> {
+  const [row] = await trx.$queryRaw<Array<{ n: number }>>`
+    select count(*)::int as n from ${Prisma.raw(table)}`;
+  return row!.n;
+}
+
 describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed (${mode})`, () => {
   const tenancy = newTenancy();
   const identity = new IdentityLookupService(tenancy);
@@ -52,12 +59,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
   const rowCounts = (tenantId: string) =>
     tenancy.withTenantTx({ tenantId }, async (trx) => {
       const counts: Record<string, number> = {};
-      for (const t of TENANT_TABLES) {
-        const { rows } = await sql<{
-          n: number;
-        }>`select count(*)::int as n from ${sql.table(t)}`.execute(trx);
-        counts[t] = rows[0]!.n;
-      }
+      for (const t of TENANT_TABLES) counts[t] = await countOf(trx, t);
       return counts;
     });
 
@@ -92,14 +94,14 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       const idsOf = (tenantId: string) =>
         tenancy.withTenantTx({ tenantId }, async (trx) => {
           const ids = new Set<string>();
-          for (const t of [
-            'app.role',
-            'app.status_label',
-            'app.category',
-            'app.user_account',
-            'app.company',
-          ] as const) {
-            for (const r of await trx.selectFrom(t).select('id').execute()) ids.add(r.id);
+          for (const rows of [
+            await trx.role.findMany({ select: { id: true } }),
+            await trx.status_label.findMany({ select: { id: true } }),
+            await trx.category.findMany({ select: { id: true } }),
+            await trx.user_account.findMany({ select: { id: true } }),
+            await trx.company.findMany({ select: { id: true } }),
+          ]) {
+            for (const r of rows) ids.add(r.id);
           }
           return ids;
         });
@@ -108,13 +110,11 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
 
       // The admin has the tenant_admin role.
       await tenancy.withTenantTx({ tenantId: a.tenantId }, async (trx) => {
-        const roles = await trx
-          .selectFrom('app.role_assignment as ra')
-          .innerJoin('app.role as r', 'r.id', 'ra.role_id')
-          .select(['r.key', 'ra.user_id', 'ra.scope_type'])
-          .execute();
+        const roles = await trx.role_assignment.findMany({
+          select: { user_id: true, scope_type: true, role: { select: { key: true } } },
+        });
         expect(roles).toEqual([
-          { key: 'tenant_admin', user_id: a.adminUserId, scope_type: 'tenant' },
+          { role: { key: 'tenant_admin' }, user_id: a.adminUserId, scope_type: 'tenant' },
         ]);
       });
     });
@@ -172,37 +172,34 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       const keyHash = hashToken(generateToken());
       const apiKeyId = uuidv7();
       await tenancy.withTenantTx({ tenantId: a.tenantId }, async (trx) => {
-        await trx
-          .insertInto('app.api_key')
-          .values({
+        await trx.api_key.create({
+          data: {
             id: apiKeyId,
             tenant_id: a.tenantId,
             name: 'ci key',
             key_prefix: keyPrefix,
             scopes: ['asset:read'],
-          })
-          .execute();
-        await trx
-          .insertInto('identity.api_key_lookup')
-          .values({
+          },
+        });
+        await trx.api_key_lookup.create({
+          data: {
             key_prefix: keyPrefix,
-            key_hash: keyHash,
+            key_hash: asBytes(keyHash),
             tenant_id: a.tenantId,
             api_key_id: apiKeyId,
-          })
-          .execute();
-        await trx
-          .insertInto('identity.session')
-          .values({
+          },
+        });
+        await trx.session.create({
+          data: {
             id: uuidv7(),
-            token_hash: hashToken(sessionToken),
+            token_hash: asBytes(hashToken(sessionToken)),
             tenant_id: a.tenantId,
             user_id: a.adminUserId,
             auth_method: 'password',
             idle_expires_at: new Date(Date.now() + 3600_000),
             expires_at: new Date(Date.now() + 7200_000),
-          })
-          .execute();
+          },
+        });
       });
 
       const session = await identity.findSessionByTokenHash(hashToken(sessionToken));
@@ -224,10 +221,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       // ... and with no tenant context, every tenant table is invisible (fail closed).
       await tenancy.withPreTenantTx(async (trx) => {
         for (const t of TENANT_TABLES) {
-          const { rows } = await sql<{
-            n: number;
-          }>`select count(*)::int as n from ${sql.table(t)}`.execute(trx);
-          expect(rows[0]!.n, `${t} visible without a tenant`).toBe(0);
+          expect(await countOf(trx, t), `${t} visible without a tenant`).toBe(0);
         }
       });
     });
@@ -250,12 +244,11 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
         subject: 'deadbeef',
         ip: '203.0.113.9',
       });
-      const events = await tenancy.withPreTenantTx((trx) =>
-        trx
-          .selectFrom('identity.security_event')
-          .select(['event_type', 'tenant_id', 'subject'])
-          .where('ip', '=', '203.0.113.9')
-          .execute(),
+      const events = await tenancy.withPreTenantTx(
+        (trx) =>
+          trx.$queryRaw<Array<{ event_type: string; tenant_id: string | null; subject: string }>>`
+            select event_type, tenant_id::text as tenant_id, subject
+            from identity.security_event where ip = ${'203.0.113.9'}::inet`,
       );
       expect(events.map((e) => e.event_type)).toEqual(
         expect.arrayContaining(['login_failed', 'api_key_invalid']),
@@ -265,12 +258,10 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
 
     it('app_user has only the narrow identity grants (no UPDATE on api_key_lookup, no DELETE on credential)', async () => {
       await tenancy.withPreTenantTx(async (trx) => {
-        const { rows } = await sql<{ k: boolean; c: boolean; s: boolean }>`
+        const rows = await trx.$queryRaw<Array<{ k: boolean; c: boolean; s: boolean }>>`
           select has_table_privilege('app_user', 'identity.api_key_lookup', 'update') as k,
                  has_table_privilege('app_user', 'identity.credential', 'delete') as c,
-                 has_table_privilege('app_user', 'identity.security_event', 'update') as s`.execute(
-          trx,
-        );
+                 has_table_privilege('app_user', 'identity.security_event', 'update') as s`;
         expect(rows[0]).toEqual({ k: false, c: false, s: false });
       });
     });
@@ -316,7 +307,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
         );
         // the tenant row and the registry stay in step
         const row = await tenancy.withTenantTx({ tenantId: t.tenantId }, (trx) =>
-          trx.selectFrom('app.tenant').select('status').executeTakeFirstOrThrow(),
+          trx.tenant.findFirstOrThrow({ select: { status: true } }),
         );
         expect(row.status).toBe(status);
       }
@@ -354,28 +345,22 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
               'app.custom_field_def',
               'app.status_label',
             ] as const) {
-              c[t] = (
-                await sql<{ n: number }>`select count(*)::int as n from ${sql.table(t)}`.execute(
-                  trx,
-                )
-              ).rows[0]!.n;
+              c[t] = await countOf(trx, t);
             }
             return c;
           })(),
           tags: (
-            await trx.selectFrom('app.asset').select('asset_tag').orderBy('asset_tag').execute()
+            await trx.asset.findMany({ select: { asset_tag: true }, orderBy: { asset_tag: 'asc' } })
           ).map((r) => r.asset_tag),
           serials: (
-            await trx.selectFrom('app.asset').select('serial').orderBy('serial').execute()
+            await trx.asset.findMany({ select: { serial: true }, orderBy: { serial: 'asc' } })
           ).map((r) => r.serial),
           roles: (
-            await trx
-              .selectFrom('app.role_assignment as ra')
-              .innerJoin('app.role as r', 'r.id', 'ra.role_id')
-              .select('r.key')
-              .orderBy('r.key')
-              .execute()
-          ).map((r) => r.key),
+            await trx.role_assignment.findMany({
+              select: { role: { select: { key: true } } },
+              orderBy: { role: { key: 'asc' } },
+            })
+          ).map((r) => r.role.key),
         }));
       const [acme, globex] = [
         await snapshot(first.tenants[0]!.tenantId),

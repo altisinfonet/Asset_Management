@@ -13,3 +13,5 @@ spikes
 test-results
 playwright-report
 packages/ui-tokens/src/generated
+apps/api/src/generated
+apps/api/prisma/schema.prisma

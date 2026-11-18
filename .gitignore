@@ -41,3 +41,6 @@ next-env.d.ts
 # playwright
 test-results/
 playwright-report/
+
+# generated Prisma client (pnpm --filter @assettracker/api generate)
+apps/api/src/generated/

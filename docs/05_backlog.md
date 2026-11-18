@@ -449,7 +449,7 @@ Status: done - Per-tenant template via `GET/PUT /v1/settings/asset-tag-template`
 
 #### M1-REG-07 - Asset list, filters and performance budget
 Size: L - Owner: Claude - Deps: M1-REG-05
-Status: done - List p95 68 ms on 2 x 50,000 assets (budget 500 ms), measured with `scripts/ci/perf-check.mjs`.
+Status: done - List p95 61 ms on 2 x 50,000 assets (budget 500 ms), measured with `scripts/ci/perf-check.mjs`.
 - [ ] `GET /v1/assets` supports filters (status, state type, category, model, manufacturer, vendor, archived, text) plus custom-field filters through JSONB, sorting and cursor pagination.
 - [ ] Indexes lead with `tenant_id`; query plans captured in a test fixture.
 - [ ] On a seeded 50,000-asset tenant (with a second 50,000-asset tenant present), list p95 < 500 ms server side (plan P9) measured by the perf job (M1-CI-05).
@@ -457,7 +457,7 @@ Status: done - List p95 68 ms on 2 x 50,000 assets (budget 500 ms), measured wit
 
 #### M1-REG-08 - Search and exact tag/serial lookup
 Size: M - Owner: Claude - Deps: M1-REG-05
-Status: done - Search p95 94 ms (budget 200 ms), tag lookup p95 47 ms (budget 150 ms) on 2 x 50,000 assets.
+Status: done - Search p95 89 ms (budget 200 ms), tag lookup p95 56 ms (budget 150 ms) on 2 x 50,000 assets.
 - [ ] `tsvector` + `pg_trgm` indexes (tenant-scoped); `GET /v1/search?q=` returns assets now and is structured to add more entity types later.
 - [ ] Exact-match fast path `GET /v1/assets?tag=` and `?serial=` (the scan/keyboard-wedge critical path) with p95 < 150 ms on the 50k dataset.
 - [ ] Global search p95 < 200 ms on the 50k dataset; ranking puts exact tag/serial first.

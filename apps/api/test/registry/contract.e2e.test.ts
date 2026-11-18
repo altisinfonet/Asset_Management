@@ -402,6 +402,25 @@ describe.skipIf(!dbEnabled)('registry contract (live)', () => {
     expect(cached.raw).toBe('');
   });
 
+  it('GET /v1/health and GET /v1/version are public and match the System operations of the contract', async () => {
+    const anon = new Client(app);
+    for (const [operationId, url] of [
+      ['getHealth', '/v1/health'],
+      ['getVersion', '/v1/version'],
+    ] as const) {
+      const op = byId.get(operationId);
+      expect(op, `${operationId} is in the contract`).toBeDefined();
+      expect(op!.public).toBe(true);
+      const res = await anon.get(url, { cookie: false });
+      expect(res.status).toBe(200);
+      expect(op!.statuses).toContain(res.status);
+      expect(
+        check({ $ref: `#/components/schemas/${op!.responseSchemas[200]}` }, res.body),
+        `${operationId} response body`,
+      ).toEqual([]);
+    }
+  });
+
   it('the documented permission of each operation is enforced: an API key without it gets 403', async () => {
     // a key with ONLY search:read cannot call anything else of the registry
     const key = await t.admin.post('/v1/api-keys', {

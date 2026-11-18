@@ -24,7 +24,7 @@ import type {
  *   GET    /v1/auth/invitations/{token}    -> InvitationInfo              (404 unknown, 410 expired)
  *   POST   /v1/auth/invitations/accept     AcceptInvitationRequest        -> LoginResponse
  *   POST   /v1/auth/mfa/enrol              -> MfaEnrolment                (secret + otpauth URI)
- *   POST   /v1/auth/mfa/enrol/confirm      { code }                       -> MfaEnrolmentResult
+ *   POST   /v1/auth/mfa/enrol/confirm      { code }                       -> MfaEnrolmentResult (new csrf_token: the session is rotated)
  *   GET    /v1/auth/sessions               -> { data: SessionInfo[] }
  *   DELETE /v1/auth/sessions/{id}          -> 204
  */
@@ -95,10 +95,13 @@ export const authApi = {
     return apiRequest<MfaEnrolment>('POST', '/v1/auth/mfa/enrol', { body: {} });
   },
 
-  confirmMfaEnrolment(code: string): Promise<MfaEnrolmentResult> {
-    return apiRequest<MfaEnrolmentResult>('POST', '/v1/auth/mfa/enrol/confirm', {
+  async confirmMfaEnrolment(code: string): Promise<MfaEnrolmentResult> {
+    const result = await apiRequest<MfaEnrolmentResult>('POST', '/v1/auth/mfa/enrol/confirm', {
       body: { code },
     });
+    // The session was rotated: later mutations must carry the new token.
+    if (result.csrf_token) setCsrfToken(result.csrf_token);
+    return result;
   },
 
   async listSessions(signal?: AbortSignal): Promise<SessionInfo[]> {

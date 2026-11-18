@@ -8,15 +8,19 @@ import {
   IdempotencyInterceptor,
   type IdempotencyOptions,
 } from './idempotency.js';
+import { PortsModule } from './ports.module.js';
 import { PROBLEM_TYPE_BASE, ProblemFilter } from './problem.filter.js';
+import { RequestIdentityInterceptor } from './request-identity.interceptor.js';
 
 /**
  * Platform kernel, HTTP conventions (M1-PLAT-02): problem+json for every error, Idempotency-Key
  * for mutating requests. Pipes, pagination and ETag helpers are plain exports (see `index.ts`).
  * Request-id propagation is installed on the Fastify instance by `createApiApp` (it must exist
- * before Nest routes).
+ * before Nest routes). Imports {@link PortsModule}, which binds the shared ports (audit, outbox, jobs,
+ * mail, secret box) for every module.
  */
 @Module({
+  imports: [PortsModule],
   providers: [
     {
       provide: PROBLEM_TYPE_BASE,
@@ -31,6 +35,7 @@ import { PROBLEM_TYPE_BASE, ProblemFilter } from './problem.filter.js';
       }),
     },
     { provide: APP_FILTER, useClass: ProblemFilter },
+    { provide: APP_INTERCEPTOR, useClass: RequestIdentityInterceptor },
     {
       provide: APP_INTERCEPTOR,
       inject: [TenancyService, Reflector, IDEMPOTENCY_OPTIONS],

@@ -86,6 +86,10 @@ dev-only `/v1` proxy exists only in the dev-server phase of `next.config.ts` (ta
   ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app     POOLED_ONE_URL=postgres://app_user:dev@localhost:6432/app_one pnpm test:e2e
   ```
 
+  The e2e suite runs on its own pg-boss schema (`JOBS_SCHEMA=pgboss_e2e`, provisioned by
+  `apps/api/test/support/global-setup.ts`), so it is safe to run while the compose `worker` and
+  `scheduler` are up: they poll the default `pgboss` schema and never see the suite's jobs.
+
 - `docker compose --profile pooling run --rm pgbouncer-check` asserts the PgBouncer settings
   (transaction mode, `max_prepared_statements=100`, empty `server_reset_query`, pool size 4).
 - `pnpm --filter @assettracker/api schema:lint` runs `app.schema_lint()` plus the role audit

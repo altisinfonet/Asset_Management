@@ -43,6 +43,8 @@ describe.skipIf(!dbEnabled)(`API conventions (${mode})`, () => {
         IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
       }),
       [DemoModule],
+      // These fixtures fake authentication with their own guard (see support/demo-module.ts).
+      { auth: false },
     );
     await app.init();
     await app.getHttpAdapter().getInstance().ready();

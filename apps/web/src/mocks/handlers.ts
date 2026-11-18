@@ -393,6 +393,7 @@ export const handlers: HttpHandler[] = [
         errors: [{ pointer: '/code', message: 'does not match', code: 'invalid' }],
       });
     }
+    const rotatedCsrf = newId('csrf');
     updateState((state) => {
       const email = guard.user.email;
       if (!state.mfaEnrolled.includes(email)) state.mfaEnrolled.push(email);
@@ -400,9 +401,11 @@ export const handlers: HttpHandler[] = [
       if (state.session) {
         state.session.limited = false;
         state.session.mfaVerified = true;
+        // Like the API: becoming MFA-verified rotates the session (and so its CSRF token).
+        state.session.csrf = rotatedCsrf;
       }
     });
-    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES });
+    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES, csrf_token: rotatedCsrf });
   }),
 
   // ---- proposed: device list ---------------------------------------------------------------

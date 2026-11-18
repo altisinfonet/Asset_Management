@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { ToastProvider } from '@/components/ui/toast';
 import { I18nProvider } from '@/i18n';
 import { AuthProvider } from '@/lib/auth/auth-context';
+import { setCsrfToken } from '@/lib/auth/http';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { findUser, updateState } from '@/mocks/state';
 
@@ -23,6 +24,8 @@ export function seedSession(
       createdAt: new Date().toISOString(),
     };
   });
+  // The page-level CSRF token is module state: a previous test may have left a rotated one behind.
+  setCsrfToken('csrf-test');
 }
 
 /** Render with the providers the real app has (i18n, toasts, auth bootstrap against the mock API). */

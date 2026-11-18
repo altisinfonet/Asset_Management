@@ -1,5 +1,7 @@
+import { seedDemoLogins } from '../auth/index.js';
 import { addUser, bootstrapTenant } from '../bootstrap/bootstrap-tenant.js';
 import { uuidv7 } from '../ids/uuidv7.js';
+import type { SecretBox } from '../ports/index.js';
 import type { Prisma, TenancyService, Tx } from '../tenancy/index.js';
 
 export interface SeedTenantSpec {
@@ -78,7 +80,7 @@ const STATE_BY_INDEX = [
  */
 export async function seedDemoData(
   tenancy: TenancyService,
-  options: { nodeEnv?: string; logger?: SeedLogger } = {},
+  options: { nodeEnv?: string; logger?: SeedLogger; secretBox?: SecretBox } = {},
 ): Promise<{ tenants: Array<{ slug: string; tenantId: string; seeded: boolean }> }> {
   if ((options.nodeEnv ?? process.env.NODE_ENV) === 'production') throw new SeedRefusedError();
   const log = options.logger ?? { info: () => undefined };
@@ -98,6 +100,13 @@ export async function seedDemoData(
       `${spec.slug}: tenant ${boot.tenantId} ${seeded ? 'seeded' : 'already seeded, left unchanged'}`,
     );
     tenants.push({ slug: spec.slug, tenantId: boot.tenantId, seeded });
+  }
+  if (options.secretBox) {
+    const logins = await seedDemoLogins(tenancy, { secretBox: options.secretBox });
+    const count = Object.values(logins.credentialed).reduce((n, users) => n + users.length, 0);
+    log.info(
+      `demo logins: ${count} user(s) got the password "${logins.password}"; owners are MFA-enrolled (TOTP secret ${logins.totpSecret})`,
+    );
   }
   return { tenants };
 }

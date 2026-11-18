@@ -23,6 +23,7 @@ export interface SessionLookupResult {
   authMethod: 'password' | 'oidc' | 'saml';
   mfaVerifiedAt: Date | null;
   idleExpiresAt: Date;
+  lastSeenAt: Date;
   expiresAt: Date;
   revokedAt: Date | null;
 }
@@ -34,7 +35,20 @@ export interface InvitationTokenLookupResult {
 }
 
 export interface SecurityEventInput {
-  eventType: 'login_failed' | 'api_key_invalid' | 'session_invalid' | 'tenant_inactive' | 'other';
+  eventType:
+    | 'login_failed'
+    | 'api_key_invalid'
+    | 'session_invalid'
+    | 'tenant_inactive'
+    | 'other'
+    // added by migration 0010 (M1-AUTH)
+    | 'account_locked'
+    | 'mfa_failed'
+    | 'password_reset_requested'
+    | 'password_reset_failed'
+    | 'invitation_token_invalid'
+    | 'csrf_rejected'
+    | 'throttled';
   tenantId?: string;
   /** email (lower-cased), key prefix, ...: never a secret. */
   subject?: string;
@@ -104,6 +118,7 @@ export class IdentityLookupService {
           authMethod: row.auth_method as SessionLookupResult['authMethod'],
           mfaVerifiedAt: row.mfa_verified_at,
           idleExpiresAt: row.idle_expires_at,
+          lastSeenAt: row.last_seen_at,
           expiresAt: row.expires_at,
           revokedAt: row.revoked_at,
         }

@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 import { bootstrapTenant } from '../bootstrap/bootstrap-tenant.js';
+import { loadConfig } from '../config/env.js';
+import { createStandaloneSecretBox } from '../crypto/index.js';
 import { auditRoles, ensurePartitions, schemaLint, withOwnerClient } from '../db/maintenance.js';
 import { seedDemoData } from '../seed/seed.js';
 import { TenancyService } from '../tenancy/index.js';
@@ -8,8 +10,10 @@ const USAGE = `usage: cli <command> [options]
 
   tenant:create --name <name> --admin-email <email> [--admin-name <name>] [--slug <slug>] [--currency USD]
       Bootstrap a tenant (idempotent per slug). Uses DATABASE_URL (runtime role).
+  tenant:mfa-policy --slug <slug> --mode off|admins|all
+      Who must enrol in MFA (settings.mfa_required): nobody, administrators (roles holding * or user:manage), everyone.
   seed
-      Create the demo tenants Acme and Globex (idempotent; refuses NODE_ENV=production). Uses DATABASE_URL.
+      Create the demo tenants Acme and Globex with demo logins (idempotent; refuses NODE_ENV=production). Uses DATABASE_URL.
   schema:lint
       Run app.schema_lint() and the role audit; exit 1 on any violation. Uses MIGRATOR_DATABASE_URL.
   db:ensure-partitions [--months 12]
@@ -71,6 +75,42 @@ async function main(): Promise<number> {
       }
     }
 
+    case 'tenant:mfa-policy': {
+      const { values } = parseArgs({
+        args: rest,
+        options: { slug: { type: 'string' }, mode: { type: 'string' } },
+      });
+      if (!values.slug || !['off', 'admins', 'all'].includes(values.mode ?? '')) {
+        console.error('tenant:mfa-policy needs --slug and --mode off|admins|all\n\n' + USAGE);
+        return 2;
+      }
+      const tenancy = new TenancyService({
+        connectionString: need('DATABASE_URL'),
+        poolMax: 2,
+        applicationName: 'assettracker-cli',
+      });
+      try {
+        const entry = await tenancy.withPreTenantTx((trx) =>
+          trx.tenant_directory.findUnique({ where: { slug: values.slug! } }),
+        );
+        if (!entry) {
+          console.error(`no tenant with slug ${values.slug}`);
+          return 1;
+        }
+        await tenancy.withTenantTx({ tenantId: entry.tenant_id }, async (trx) => {
+          const tenant = await trx.tenant.findUniqueOrThrow({ where: { id: entry.tenant_id } });
+          await trx.tenant.update({
+            where: { id: entry.tenant_id },
+            data: { settings: { ...(tenant.settings as object), mfa_required: values.mode! } },
+          });
+        });
+        console.log(`${values.slug}: mfa_required = ${values.mode}`);
+        return 0;
+      } finally {
+        await tenancy.onModuleDestroy();
+      }
+    }
+
     case 'seed': {
       const tenancy = new TenancyService({
         connectionString: need('DATABASE_URL'),
@@ -80,6 +120,10 @@ async function main(): Promise<number> {
       try {
         const { tenants } = await seedDemoData(tenancy, {
           logger: { info: (m) => console.log(m) },
+          secretBox: createStandaloneSecretBox(
+            loadConfig({ ...process.env, APP_ROLE: 'api' }),
+            (m) => console.warn(m),
+          ),
         });
         console.log(JSON.stringify(tenants, null, 2));
         return 0;

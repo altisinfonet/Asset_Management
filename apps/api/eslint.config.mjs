@@ -15,13 +15,32 @@ import { base } from '../../eslint.config.mjs';
  */
 
 /** Modules with a public facade (`index.ts`). */
-export const FACADE_MODULES = ['tenancy', 'platform', 'control-plane', 'identity'];
+export const FACADE_MODULES = [
+  'tenancy',
+  'platform',
+  'control-plane',
+  'identity',
+  'auth',
+  'audit',
+  'outbox',
+  'jobs',
+  'crypto',
+  'mail',
+  'observability',
+];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [
   'platform',
   'tenancy',
   'control-plane',
   'identity',
+  'auth',
+  'audit',
+  'outbox',
+  'jobs',
+  'crypto',
+  'mail',
+  'observability',
   'config',
   'logging',
   'ids',
@@ -79,7 +98,7 @@ const UNSAFE_RAW_SELECTOR =
 const dirs = (list) => list.flatMap((d) => [`**/${d}`, `**/${d}/**`]);
 
 /** `no-restricted-imports` options for a file group. */
-function restricted({ driver, kernel }) {
+function restricted({ driver, kernel, allowPgBoss = false }) {
   const patterns = [
     ...FACADE_MODULES.map((m) => ({
       group: [`**/${m}/*`, `!**/${m}/index.js`],
@@ -100,7 +119,12 @@ function restricted({ driver, kernel }) {
       })),
     );
     patterns.push({
-      group: [...DRIVER_PACKAGES.filter((p) => p.includes('*')), ...GENERATED_CLIENT_PATTERNS],
+      // pg-boss matches `pg-*`; the jobs adapter is the one place besides db/ that may import it.
+      group: [
+        ...DRIVER_PACKAGES.filter((p) => p.includes('*')),
+        ...(allowPgBoss ? ['!pg-boss'] : []),
+        ...GENERATED_CLIENT_PATTERNS,
+      ],
       allowTypeImports: true,
       message: DRIVER_MESSAGE,
     });
@@ -129,10 +153,22 @@ export default tseslint.config(
   },
   // Kernel code that must not touch the database client: platform, control-plane, identity, config, ...
   {
-    files: srcOf(KERNEL_DIRS.filter((d) => !['tenancy', 'db'].includes(d))),
+    files: srcOf(KERNEL_DIRS.filter((d) => !['tenancy', 'db', 'jobs'].includes(d))),
     ignores: testFiles,
     rules: {
       '@typescript-eslint/no-restricted-imports': restricted({ driver: true, kernel: true }),
+    },
+  },
+  // The jobs adapter: like the rest of the kernel, but the only module (with db/) allowed to import pg-boss.
+  {
+    files: srcOf(['jobs']),
+    ignores: testFiles,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': restricted({
+        driver: true,
+        kernel: true,
+        allowPgBoss: true,
+      }),
     },
   },
   // tenancy and db own the client; they still obey the facade and downward-dependency rules.

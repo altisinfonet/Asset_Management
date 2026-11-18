@@ -3,6 +3,7 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { healthResponseSchema, versionResponseSchema } from '@assettracker/schemas';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApiApp } from '../src/app.js';
+import { TestPortsModule } from './support/test-ports.js';
 import { loadConfig } from '../src/config/env.js';
 
 /**
@@ -14,6 +15,8 @@ const databaseUrl = process.env.DATABASE_URL;
 async function start(url: string): Promise<NestFastifyApplication> {
   const app = await createApiApp(
     loadConfig({ NODE_ENV: 'test', DATABASE_URL: url, LOG_LEVEL: 'silent', GIT_SHA: 'e2e' }),
+    // The auth module is on: the probes must stay reachable without a credential.
+    [TestPortsModule],
   );
   await app.init();
   await app.getHttpAdapter().getInstance().ready();

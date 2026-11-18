@@ -61,6 +61,7 @@ async function main(): Promise<void> {
       const { applied, partitionsCreated } = await runMigrate(
         config.MIGRATOR_DATABASE_URL!,
         logger,
+        config.JOBS_SCHEMA,
       );
       logger.info(
         { applied, partitionsCreated },

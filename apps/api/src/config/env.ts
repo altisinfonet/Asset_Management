@@ -77,6 +77,15 @@ const envSchema = z
       .regex(/^[A-Za-z0-9._-]{1,32}$/)
       .optional(),
 
+    /**
+     * Postgres schema that holds pg-boss (default `pgboss`). Every role of one deployment must use
+     * the same value. The e2e suite uses its own (`pgboss_e2e`) so it never competes with a running
+     * compose worker for jobs.
+     */
+    JOBS_SCHEMA: z
+      .string()
+      .regex(/^[a-z_][a-z0-9_]{0,62}$/, 'must be a lower-case Postgres identifier')
+      .default('pgboss'),
     /** Background jobs (pg-boss). Polling only: LISTEN/NOTIFY does not work behind PgBouncer. */
     JOBS_POLL_SECONDS: z.coerce.number().min(1).max(2).default(1),
     JOBS_LOCAL_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),

@@ -46,6 +46,7 @@ export class JobsRuntime implements OnApplicationShutdown {
         connectionString: this.config.DATABASE_URL!,
         applicationName: `assettracker-${this.config.APP_ROLE}-jobs`,
         poolMax: this.config.JOBS_POOL_MAX,
+        schema: this.config.JOBS_SCHEMA,
       }),
     );
     // An unhandled 'error' event would crash the process; pg-boss reports background failures there.

@@ -24,10 +24,11 @@ export interface MigrateResult {
 export async function runMigrate(
   migratorDatabaseUrl: string,
   logger: MigrationLogger,
+  jobsSchema?: string,
 ): Promise<MigrateResult> {
   const applied = await migrate(migratorDatabaseUrl, logger);
   // pg-boss schema + queues + runtime grants, over the same direct owner connection (M1-PLAT-06).
-  const { queues } = await provisionJobs(migratorDatabaseUrl, logger);
+  const { queues } = await provisionJobs(migratorDatabaseUrl, logger, jobsSchema);
   return withOwnerClient(migratorDatabaseUrl, async (client) => {
     const partitionsCreated = await ensurePartitions(client);
     const violations = [...(await schemaLint(client)), ...(await auditRoles(client))];

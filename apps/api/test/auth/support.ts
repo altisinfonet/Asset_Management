@@ -4,7 +4,7 @@ import { createApiApp } from '../../src/app.js';
 import { bootstrapTenant } from '../../src/bootstrap/bootstrap-tenant.js';
 import { loadConfig } from '../../src/config/env.js';
 import { base32Decode, hotp, totpStep } from '../../src/auth/totp.js';
-import { dbEnabled, env, newTenancy, withClient } from '../support/db.js';
+import { dbEnabled, env, jobsSchema, newTenancy, withClient } from '../support/db.js';
 import { testPorts, TestPortsModule } from '../support/test-ports.js';
 import type { TenancyService } from '../../src/tenancy/index.js';
 
@@ -44,6 +44,7 @@ export async function startApp(
     ARGON2_MEMORY_KIB: '64',
     ARGON2_TIME_COST: '1',
     WEB_BASE_URL: 'http://web.test',
+    JOBS_SCHEMA: jobsSchema,
     // app.inject connects from loopback; trusting only it lets each test client pick its address
     // through X-Forwarded-For (per-IP throttling must not couple unrelated tests).
     TRUST_PROXY: '127.0.0.1',

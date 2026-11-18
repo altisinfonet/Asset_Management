@@ -23,11 +23,18 @@ interface Common {
   connectionString: string;
   applicationName: string;
   poolMax?: number;
+  /** Schema holding pg-boss (`JOBS_SCHEMA`); defaults to {@link PGBOSS_SCHEMA}. */
+  schema?: string;
 }
 
-const base = ({ connectionString, applicationName, poolMax }: Common): ConstructorOptions => ({
+const base = ({
   connectionString,
-  schema: PGBOSS_SCHEMA,
+  applicationName,
+  poolMax,
+  schema,
+}: Common): ConstructorOptions => ({
+  connectionString,
+  schema: schema ?? PGBOSS_SCHEMA,
   application_name: applicationName,
   ...(poolMax ? { max: poolMax } : {}),
   useListenNotify: false,

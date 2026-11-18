@@ -30,10 +30,12 @@ import {
   dbEnabled,
   env,
   FIXTURE_ASSETS,
+  jobsSchema,
   type FixtureTenant,
   mode,
   newTenancy,
   sleep,
+  withClient,
 } from './support/db.js';
 import { randomBytes } from 'node:crypto';
 
@@ -66,6 +68,7 @@ describe.skipIf(!dbEnabled)(`platform services (${mode})`, () => {
     DATABASE_URL: env.databaseUrl,
     LOG_LEVEL: 'silent',
     JOBS_POOL_MAX: '4',
+    JOBS_SCHEMA: jobsSchema,
   });
   const tenancy = newTenancy();
   const controlPlane = new ControlPlaneService(tenancy, new AllModulesOnEntitlementSource());
@@ -94,7 +97,7 @@ describe.skipIf(!dbEnabled)(`platform services (${mode})`, () => {
   beforeAll(async () => {
     // Provisioning is the migrate step; the e2e database was migrated by CI/compose already, and a
     // second run must be a harmless no-op.
-    await provisionJobs(env.migratorUrl!, { info: () => undefined });
+    await provisionJobs(env.migratorUrl!, { info: () => undefined }, jobsSchema);
 
     A = await createFixtureTenant(tenancy, 'JA');
     B = await createFixtureTenant(tenancy, 'JB');
@@ -293,42 +296,45 @@ describe.skipIf(!dbEnabled)(`platform services (${mode})`, () => {
 
   describe('pgboss grants survive upgrades (M1-PLAT-06)', () => {
     it('provisioning is idempotent and the runtime role has everything it needs', async () => {
-      await provisionJobs(env.migratorUrl!, { info: () => undefined });
+      await provisionJobs(env.migratorUrl!, { info: () => undefined }, jobsSchema);
       await withOwnerClient(env.migratorUrl!, async (c) => {
-        expect(await verifyJobsGrants(c)).toEqual([]);
+        expect(await verifyJobsGrants(c, 'app_user', jobsSchema)).toEqual([]);
       });
     });
 
     it('objects added later by the owner (a pg-boss upgrade) are covered by default privileges; a re-grant fixes any gap', async () => {
       await withOwnerClient(env.migratorUrl!, async (c) => {
         try {
-          await c.query('create table pgboss.zz_upgrade_probe (id int primary key)');
-          await c.query('create sequence pgboss.zz_upgrade_probe_seq');
+          await c.query(`create table ${jobsSchema}.zz_upgrade_probe (id int primary key)`);
+          await c.query(`create sequence ${jobsSchema}.zz_upgrade_probe_seq`);
           await c.query(
-            'create function pgboss.zz_upgrade_probe_fn() returns int language sql as $$ select 1 $$',
+            `create function ${jobsSchema}.zz_upgrade_probe_fn() returns int language sql as $$ select 1 $$`,
           );
           // default privileges (set by provisioning) already cover the new objects
-          expect(await verifyJobsGrants(c)).toEqual([]);
+          expect(await verifyJobsGrants(c, 'app_user', jobsSchema)).toEqual([]);
           // simulate an upgrade that recreated an object WITHOUT the grants
-          await c.query('revoke all on pgboss.zz_upgrade_probe from app_user');
-          expect((await verifyJobsGrants(c)).join()).toMatch(/zz_upgrade_probe/);
-          await grantJobsAccess(c);
-          expect(await verifyJobsGrants(c)).toEqual([]);
+          await c.query(`revoke all on ${jobsSchema}.zz_upgrade_probe from app_user`);
+          expect((await verifyJobsGrants(c, 'app_user', jobsSchema)).join()).toMatch(
+            /zz_upgrade_probe/,
+          );
+          await grantJobsAccess(c, 'app_user', jobsSchema);
+          expect(await verifyJobsGrants(c, 'app_user', jobsSchema)).toEqual([]);
         } finally {
-          await c.query('drop table if exists pgboss.zz_upgrade_probe');
-          await c.query('drop sequence if exists pgboss.zz_upgrade_probe_seq');
-          await c.query('drop function if exists pgboss.zz_upgrade_probe_fn()');
+          await c.query(`drop table if exists ${jobsSchema}.zz_upgrade_probe`);
+          await c.query(`drop sequence if exists ${jobsSchema}.zz_upgrade_probe_seq`);
+          await c.query(`drop function if exists ${jobsSchema}.zz_upgrade_probe_fn()`);
         }
       });
     });
 
-    it('the runtime role cannot do DDL in schema pgboss', async () => {
-      const state = await tenancy
-        .withPreTenantTx((tx) => tx.$executeRaw`create table pgboss.zz_runtime_ddl (id int)`)
-        .then(
-          () => undefined,
-          (e: unknown) => sqlStateOf(e),
-        );
+    it('the runtime role cannot do DDL in the pg-boss schema', async () => {
+      // A raw runtime-role connection (the schema name is a test constant, not user input).
+      const state = await withClient(env.databaseUrl!, (c) =>
+        c.query(`create table ${jobsSchema}.zz_runtime_ddl (id int)`),
+      ).then(
+        () => undefined,
+        (e: unknown) => sqlStateOf(e),
+      );
       expect(state).toBe('42501');
     });
   });

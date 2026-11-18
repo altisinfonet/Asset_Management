@@ -13,6 +13,7 @@ export class MaintenanceInstance {
   constructor(
     private readonly ownerDatabaseUrl: string,
     private readonly logger: Logger,
+    private readonly schema?: string,
   ) {}
 
   async start(): Promise<void> {
@@ -21,6 +22,7 @@ export class MaintenanceInstance {
         connectionString: this.ownerDatabaseUrl,
         applicationName: 'assettracker-scheduler-maintenance',
         poolMax: 2,
+        ...(this.schema ? { schema: this.schema } : {}),
       }),
     );
     boss.on('error', (err) => this.logger.error({ err: err.message }, 'pg-boss maintenance error'));

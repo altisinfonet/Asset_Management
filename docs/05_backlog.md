@@ -954,6 +954,13 @@ Size: S - Owner: Claude - Deps: M1-CI-05, M2-IMP-05, M2-TAG-02
 Size: S - Owner: Claude - Deps: M2-IMP-08, M2-TAG-03, M2-LOAN-02
 - [ ] Task-based guides: import your spreadsheet, import from Google Admin, print and apply labels, run a loaner day, log a repair; each with screenshots generated from the seeded stack.
 
+#### M2-AUTH-01 - Expose the MFA policy to the client
+Size: S - Owner: Claude - Deps: M1-AUTH-04
+Founder request (2026-11-18): the Security page cannot know up front whether the organisation enforces two-step verification, so "Turn off" is always shown and only explains the policy after a 403 `mfa-required-by-policy`.
+- [ ] `GET /v1/auth/me` returns `mfa_policy: { required: boolean, scope: 'off' | 'admins' | 'all' }` for the current user (contract, generator, API, generated client).
+- [ ] Security page shows "Turn off" disabled with the explanation when `required` is true; the 403 path stays as a fallback.
+- [ ] Mocks mirror the real API; unit, mock e2e and real-stack tests cover enforced and not-enforced users.
+
 #### M2-UX-01 - M2 founder acceptance walk-through
 Size: S - Owner: Founder - Deps: all M2 stories
 - [ ] Founder completes the exit-criteria script (items 1 to 8) on the Compose stack with real data and real hardware.

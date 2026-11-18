@@ -33,6 +33,8 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/api apps/api
+# The API contract is bundled into dist at build time and served at /v1/openapi.json (scripts/bundle-openapi.mjs).
+COPY docs/engineering/openapi.yaml docs/engineering/openapi.yaml
 # `...` = the api plus the workspace packages it depends on, built in topological order.
 RUN pnpm --filter "@assettracker/api..." run build
 # Self-contained production tree: compiled dist, migrations, prod node_modules only.
@@ -55,6 +57,9 @@ ENV NODE_ENV=production \
     APP_VERSION=${APP_VERSION}
 WORKDIR /app
 COPY --from=build --chown=node:node /out/ ./
+# The image never runs npm/npx (ENTRYPOINT is node); the CLI bundled in the base image only adds CVEs
+# (brace-expansion, undici inside /usr/local/lib/node_modules/npm) and attack surface. Removed.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Non-root (uid 1000 from the base image); no secrets or shell tooling are added.
 USER node
 EXPOSE 3000

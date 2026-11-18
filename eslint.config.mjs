@@ -16,6 +16,7 @@ export const base = tseslint.config(
       '**/.turbo/**',
       '**/coverage/**',
       '**/next-env.d.ts',
+      'packages/api-client/src/generated/**',
       'docs/**',
       'research/**',
     ],

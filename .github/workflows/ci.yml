@@ -1,21 +1,33 @@
+# Main CI pipeline (M1-CI-01, M1-CI-02, M1-CI-04). Required checks and what each job proves:
+# docs/engineering/ci.md. Security scanning lives in security.yml and codeql.yml; the nightly performance
+# budget in perf.yml.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly re-run on main: new CVEs in the pinned base image show up as a failing image scan
+    # even when nobody pushed (M1-CI-03 "weekly rebuild").
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
 
+# One run per PR / branch: a new push cancels the superseded run of the same PR. Pushes to main and the
+# weekly schedule are never cancelled (every main commit gets a complete result).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
   TURBO_TELEMETRY_DISABLED: '1'
+  API_IMAGE: assettracker-api:ci
 
 jobs:
+  # ------------------------------------------------------------------ M1-CI-01
   check:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
@@ -23,32 +35,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
+      - uses: ./.github/actions/setup
 
-      # pnpm version comes from the root package.json "packageManager" field.
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
-
-      - uses: actions/cache@v4
+      # Turborepo local cache. Task hashes make a stale restore harmless; the key changes on every commit
+      # so the newest cache is always saved, and the prefix restore picks the latest one.
+      - name: Cache Turborepo
+        uses: actions/cache@v4
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
           restore-keys: turbo-${{ runner.os }}-
 
-      - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
+      # lint includes the module-boundary and DB-driver import rules (ESLint no-restricted-imports, ADR 0003).
       - run: pnpm turbo run lint typecheck test build --cache-dir=.turbo
 
       # `pnpm build` already runs the forbidden-feature check before and after `next build`
@@ -68,24 +67,22 @@ jobs:
           retention-days: 7
 
   web-e2e:
-    # Optional: deep-link / refresh / back-forward cases against the static export (ADR-0002).
-    name: Web routing e2e (optional)
+    # Deep-link / refresh / back-forward cases against the static export (ADR-0002), on the MOCK API.
+    # Not a required check; the required end-to-end check is `web-e2e-real` below (real stack).
+    name: Web routing e2e (mock API, optional)
     runs-on: ubuntu-latest
     needs: check
     continue-on-error: true
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup
         with:
-          node-version-file: .nvmrc
-      - name: Enable pnpm
-        run: corepack enable
+          filter: '@assettracker/web...'
       - uses: actions/download-artifact@v4
         with:
           name: web-static-export
           path: apps/web/out
-      - run: pnpm install --frozen-lockfile --filter "@assettracker/web..."
       - run: pnpm --filter @assettracker/web exec playwright install --with-deps chromium
       - run: pnpm --filter @assettracker/web test:e2e
       - uses: actions/upload-artifact@v4
@@ -95,6 +92,7 @@ jobs:
           path: apps/web/test-results
           retention-days: 7
 
+  # ------------------------------------------------------------------ M1-CI-02
   api-e2e:
     name: API e2e + tenant isolation (Postgres ${{ matrix.postgres }})
     runs-on: ubuntu-latest
@@ -119,29 +117,31 @@ jobs:
           --health-retries 20
       # Mail adapter e2e (M1-PLAT-09): messages sent over SMTP are read back from the Mailpit API.
       mailpit:
-        image: axllent/mailpit:latest
+        image: axllent/mailpit:v1.34.0
         ports:
           - 1025:1025
           - 8025:8025
+    # EVERY variable the suites read is set, because the database-, SMTP- and admin-backed blocks use
+    # `describe.skipIf(!env)` and would otherwise pass silently by skipping. The "no skipped tests" steps
+    # below enforce that.
     env:
       PGPASSWORD: dev
-      SMTP_URL: smtp://localhost:1025
-      MAILPIT_API_URL: http://localhost:8025
-      # Owner role (app_owner), DIRECT: migrations, schema lint, fixtures that need DDL.
+      # Owner role (app_owner), DIRECT: migrations, schema lint, fixtures that need DDL, pg-boss provisioning.
       MIGRATOR_DATABASE_URL: postgres://app_owner:dev@localhost:5432/app
       # Superuser, used ONLY by the lint-fixture test that flips BYPASSRLS inside a rolled-back transaction.
       ADMIN_DATABASE_URL: postgres://postgres:dev@localhost:5432/app
+      SMTP_URL: smtp://localhost:1025
+      MAILPIT_API_URL: http://localhost:8025
+      # The suite runs on its own pg-boss schema (apps/api/vitest.e2e.config.ts sets the same value), so
+      # nothing it enqueues can be picked up by another worker. Set here too to make that explicit.
+      JOBS_SCHEMA: pgboss_e2e
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup
         with:
-          node-version-file: .nvmrc
+          filter: '@assettracker/api...'
 
-      - name: Enable pnpm
-        run: corepack enable
-
-      - run: pnpm install --frozen-lockfile --filter "@assettracker/api..."
       - run: pnpm --filter "@assettracker/api..." run build
 
       - name: Unit tests
@@ -151,13 +151,17 @@ jobs:
         run: psql -h localhost -U postgres -d app -v ON_ERROR_STOP=1 -f docker/postgres/init/01-roles.sql
 
       # PgBouncer 1.26.1+ in transaction mode with the repo's config (pool_size=4, max_prepared_statements=100,
-      # empty server_reset_query, `app_one` pool_size=1 alias for the negative control). The config file is
+      # empty server_reset_query, `app_one` pool_size=1 alias for the negative control). The config files are
       # mounted, so it runs as a plain container after checkout; `postgres` resolves to the host-published port.
       - name: Start PgBouncer (repo config)
         run: |
-          docker run -d --name pgbouncer -p 6432:6432 --add-host postgres:host-gateway             -v "$PWD/docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro"             -v "$PWD/docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro"             --entrypoint pgbouncer edoburu/pgbouncer:v1.26.1-p0 /etc/pgbouncer/pgbouncer.ini
-          for i in $(seq 1 30); do pg_isready -h localhost -p 6432 && exit 0; sleep 1; done
-          docker logs pgbouncer; exit 1
+          docker run -d --name pgbouncer -p 6432:6432 --add-host postgres:host-gateway \
+            -v "$PWD/docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro" \
+            -v "$PWD/docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro" \
+            --entrypoint pgbouncer edoburu/pgbouncer:v1.26.1-p0 /etc/pgbouncer/pgbouncer.ini
+          for _ in $(seq 1 30); do pg_isready -h localhost -p 6432 && exit 0; sleep 1; done
+          docker logs pgbouncer
+          exit 1
 
       - name: Migrate (owner role, direct connection)
         run: pnpm --filter @assettracker/api migrate
@@ -181,14 +185,23 @@ jobs:
         env:
           ISOLATION_MODE: direct
           DATABASE_URL: postgres://app_user:dev@localhost:5432/app
-        run: pnpm --filter @assettracker/api test:e2e
+        run: pnpm --filter @assettracker/api test:e2e --reporter=default --reporter=json --outputFile.json=e2e-direct.json
 
       - name: Tenant isolation + e2e, THROUGH PgBouncer (app_user -> PgBouncer, incl. negative control)
         env:
           ISOLATION_MODE: pooled
           DATABASE_URL: postgres://app_user:dev@localhost:6432/app
           POOLED_ONE_URL: postgres://app_user:dev@localhost:6432/app_one
-        run: pnpm --filter @assettracker/api test:e2e
+        run: pnpm --filter @assettracker/api test:e2e --reporter=default --reporter=json --outputFile.json=e2e-pooled.json
+
+      # A green run in which suites silently skipped proves nothing: fail on any skipped/todo test.
+      - name: No skipped tests (direct and pooled)
+        run: node scripts/ci/assert-no-skips.mjs apps/api/e2e-direct.json apps/api/e2e-pooled.json
+
+      - name: The suite used its own pg-boss schema
+        run: |
+          n="$(psql -h localhost -U postgres -d app -At -c "select count(*) from information_schema.schemata where schema_name = 'pgboss_e2e'")"
+          test "$n" = 1
 
       - name: Bootstrap CLI and seed are idempotent
         env:
@@ -199,8 +212,21 @@ jobs:
           pnpm --filter @assettracker/api seed
           pnpm --filter @assettracker/api seed
 
-  docker-build:
-    name: Docker images build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-reports-pg${{ matrix.postgres }}
+          path: |
+            apps/api/e2e-direct.json
+            apps/api/e2e-pooled.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ------------------------------------------------------------------ M1-CI-04
+  # The api image is built ONCE here; the smoke test, the image scan and the registry push all use this
+  # exact image (passed between jobs as an artifact).
+  image:
+    name: Image build (api runtime)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -213,8 +239,202 @@ jobs:
           file: apps/api/Dockerfile
           target: runtime
           push: false
+          tags: ${{ env.API_IMAGE }}
           build-args: GIT_SHA=${{ github.sha }}
+          outputs: type=docker,dest=${{ runner.temp }}/api-image.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Compose file is valid
-        run: docker compose config -q
+      - name: Record image size
+        run: |
+          size="$(stat -c %s "$RUNNER_TEMP/api-image.tar")"
+          {
+            echo "### API image"
+            echo "- tag: \`$API_IMAGE\`, commit \`$GITHUB_SHA\`"
+            echo "- exported tar: $((size / 1048576)) MiB"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}/api-image.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    needs: image
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/api-image.tar"
+      # docker compose up (dummy dev credentials), wait for /readyz, GET /v1/health, check that the ops
+      # port is not published, tear down (docker compose down -v on exit, also on failure).
+      - name: Compose up, /readyz, /v1/health, down
+        env:
+          BUILD_IMAGE: '0'
+          COMPOSE_PROJECT: ci-smoke
+        run: scripts/ci/compose-smoke.sh
+
+  # ------------------------------------------------------------------ M1-WEB-11
+  # The web app against the REAL stack: the compose stack from the image built above (api, worker,
+  # scheduler, Postgres 18 + PgBouncer, Mailpit, MinIO, demo seed) and the production static export
+  # (no mock code in it) served with `/v1` proxied to the API. One signed-in story with Playwright:
+  # sign in (password + TOTP), category + custom field, asset, edit and a 412, list filter, bulk
+  # archive / restore, palette search, tag numbering, invite a user (mail read from Mailpit), sign out.
+  web-e2e-real:
+    name: Web e2e (real stack)
+    runs-on: ubuntu-latest
+    needs: [check, image, compose-smoke]
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT: ci-e2e
+      BUILD_IMAGE: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          filter: '@assettracker/web...'
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-static-export
+          path: apps/web/out
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/api-image.tar"
+      - name: Start the stack (same image as the smoke test)
+        run: |
+          docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" up -d
+          for _ in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:3000/readyz >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "api did not become ready" >&2
+          docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" ps -a
+          exit 1
+      - run: pnpm --filter @assettracker/web exec playwright install --with-deps chromium
+      - name: Playwright (project real)
+        run: pnpm --filter @assettracker/web test:e2e:real
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" logs --no-color --tail=200
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-e2e-real-traces
+          path: apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" down -v --remove-orphans
+
+  image-scan:
+    name: Image scan (Trivy) and SBOM
+    runs-on: ubuntu-latest
+    needs: image
+    timeout-minutes: 15
+    env:
+      # Pinned scanner version: bump with the image in .github/dependabot.yml (docker ecosystem does not
+      # see this one, bump it by hand when Trivy releases or when the DB schema changes).
+      TRIVY_IMAGE: aquasec/trivy:0.76.2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - name: Trivy DB cache key (daily)
+        id: day
+        run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.day.outputs.d }}
+          restore-keys: trivy-db-
+
+      # SBOM first: it is produced even when the vulnerability gate below fails.
+      - name: SBOM (CycloneDX)
+        run: |
+          mkdir -p "$HOME/.cache/trivy" sbom
+          docker run --rm -v "$RUNNER_TEMP:/work:ro" -v "$PWD/sbom:/out" -v "$HOME/.cache/trivy:/root/.cache" \
+            "$TRIVY_IMAGE" image --quiet --input /work/api-image.tar --format cyclonedx --output /out/api-image.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-api-image-cyclonedx
+          path: sbom/api-image.cdx.json
+          retention-days: 90
+
+      # Gate: fixable HIGH/CRITICAL vulnerabilities fail the job. Unfixed ones are ignored (nothing to do
+      # about them yet); exceptions are expiring entries in .github/security/trivy-ignore.yaml.
+      - name: Trivy gate (fixable HIGH and CRITICAL)
+        run: |
+          docker run --rm -v "$RUNNER_TEMP:/work:ro" -v "$PWD/.github/security:/sec:ro" -v "$HOME/.cache/trivy:/root/.cache" \
+            "$TRIVY_IMAGE" image --input /work/api-image.tar \
+            --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /sec/trivy-ignore.yaml \
+            --exit-code 1 --format table
+
+  publish:
+    # M1-CI-04: on merge to main, push the image tagged with the git SHA to GHCR (dev registry).
+    name: Publish image to GHCR (main only)
+    runs-on: ubuntu-latest
+    needs: [check, api-e2e, compose-smoke, web-e2e-real, image-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/api-image.tar"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag and push
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}/api"
+          docker tag "$API_IMAGE" "$repo:$GITHUB_SHA"
+          docker tag "$API_IMAGE" "$repo:main"
+          docker push "$repo:$GITHUB_SHA"
+          docker push "$repo:main"
+          echo "Pushed \`$repo:$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ gate + timing
+  # ONE stable required check for branch protection (matrix and optional jobs make per-job lists brittle),
+  # and the "total PR pipeline time" report (target: under 15 minutes).
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [check, api-e2e, image, compose-smoke, web-e2e-real, image-scan]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Every required job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+      - name: Pipeline time
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          started="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)"
+          secs=$(( $(date -u +%s) - $(date -u -d "$started" +%s) ))
+          echo "### Pipeline time: $((secs / 60)) min $((secs % 60)) s (target: under 15 min)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$secs" -gt 900 ]; then echo "::warning::CI pipeline took $((secs / 60)) minutes (target is under 15)"; fi

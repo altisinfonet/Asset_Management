@@ -1,6 +1,6 @@
 'use client';
 
-import { type HealthResponse } from '@assettracker/api-client';
+import { getHealth, type HealthResponse } from '@assettracker/api-client';
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,8 +20,7 @@ export function ApiStatus() {
   useEffect(() => {
     let cancelled = false;
     const api = getApi();
-    api.client
-      .getHealth()
+    getHealth(api.http)
       .then((health) => !cancelled && setState({ kind: 'ready', health }))
       .catch(
         (err: unknown) => !cancelled && setState({ kind: 'error', error: api.toUiError(err) }),

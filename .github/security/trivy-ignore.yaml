@@ -1,0 +1,12 @@
+# Trivy exceptions for the runtime image scan (M1-CI-03). Used via `trivy image --ignorefile`.
+# The scan already ignores unfixed vulnerabilities (--ignore-unfixed): only an entry for a vulnerability
+# that HAS a fixed version belongs here (for example while a base-image update is still in review).
+# Every entry needs `statement` (why it is acceptable) and `expired_at` (at most 90 days out); Trivy
+# stops honouring an entry after its date, so an expired exception fails the build again by itself.
+# Changes need CODEOWNERS review. See docs/engineering/ci.md.
+#
+# 2026-11-18: the six npm CLI findings (brace-expansion, undici inside the base image's bundled npm) were
+# removed at the source: the runtime stage of apps/api/Dockerfile deletes npm and npx, which the image never
+# runs. Scan result: 0 HIGH/CRITICAL without any exception. Add an entry here only for a fixable finding
+# that cannot be fixed yet.
+vulnerabilities: []

@@ -1,6 +1,15 @@
-import { ApiError, createApiClient, type ApiClient } from '@assettracker/api-client';
+import {
+  ApiError,
+  createTypedClient,
+  ETagStore,
+  ifMatch,
+  type TypedClient,
+} from '@assettracker/api-client';
 import type { TranslationKey } from '@/i18n/messages/en';
-import { reportUnauthorized } from '@/lib/auth/session-events';
+import { getCsrfToken } from '@/lib/auth/http';
+import { reportMfaEnrolmentRequired, reportUnauthorized } from '@/lib/auth/session-events';
+
+export { ETagStore, ifMatch };
 
 /**
  * Thin web wrapper around `@assettracker/api-client`.
@@ -21,6 +30,8 @@ export interface ProblemDetails {
   code?: string;
   request_id?: string;
   errors?: Array<{ pointer: string; message: string }>;
+  /** On a `409` that refuses to delete or change something still in use: what references it. */
+  usage?: Record<string, number>;
 }
 
 export type ApiErrorKind =
@@ -49,6 +60,10 @@ export interface UiError {
   /** Catalogue key for a user-safe message. */
   messageKey: TranslationKey;
   requestId?: string;
+  /** The problem's human-readable `detail` (for example "Used by 3 assets"), when it sent one. */
+  detail?: string;
+  /** Counts of what still references the record, from a `409` (`usage` in the problem), e.g. `{ assets: 12 }`. */
+  usage?: Record<string, number>;
   fieldErrors: FieldError[];
 }
 
@@ -68,6 +83,15 @@ function isProblem(body: unknown): body is ProblemDetails {
   return typeof body === 'object' && body !== null;
 }
 
+/** Keeps only positive integer counts of a problem's `usage` member. */
+function usageOf(value: unknown): Record<string, number> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const entries = Object.entries(value).filter(
+    (e): e is [string, number] => typeof e[1] === 'number' && Number.isFinite(e[1]) && e[1] > 0,
+  );
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 /** Map any thrown value from an API call to a `UiError`. Never throws. */
 export function toUiError(err: unknown, headerRequestId?: string): UiError {
   if (err instanceof ApiError) {
@@ -83,6 +107,8 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
       code: problem?.code,
       messageKey,
       requestId: problem?.request_id ?? headerRequestId,
+      detail: typeof problem?.detail === 'string' ? problem.detail : undefined,
+      usage: usageOf(problem?.usage),
       fieldErrors: Array.isArray(problem?.errors) ? problem.errors : [],
     };
   }
@@ -93,57 +119,36 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
   return { kind: 'unknown', messageKey: 'error.unknown', fieldErrors: [] };
 }
 
-/** Per-resource ETag memory (`GET` responses), keyed by request path. */
-export class ETagStore {
-  private readonly etags = new Map<string, string>();
-  private lastFailedRequestId: string | undefined;
-
-  record(path: string, response: Response): void {
-    const etag = response.headers.get('etag');
-    if (etag) this.etags.set(path, etag);
-    if (!response.ok) this.lastFailedRequestId = response.headers.get('x-request-id') ?? undefined;
-  }
-
-  /** ETag to send as `If-Match` when writing `path`; undefined when it was never read. */
-  etagFor(path: string): string | undefined {
-    return this.etags.get(path);
-  }
-
-  forget(path: string): void {
-    this.etags.delete(path);
-  }
-
-  /** Request id of the most recent failed call (fallback when the body has none). */
-  get failedRequestId(): string | undefined {
-    return this.lastFailedRequestId;
-  }
-}
-
-/** Headers for a conditional write. */
-export function ifMatch(etag: string | undefined): Record<string, string> {
-  return etag ? { 'If-Match': etag } : {};
-}
-
 export interface WebApi {
-  client: ApiClient;
+  /** The typed REST client generated from docs/engineering/openapi.yaml. */
+  http: TypedClient;
   etags: ETagStore;
   /** Convert a thrown value to a `UiError`, filling the request id from the last failed response. */
   toUiError: (err: unknown) => UiError;
 }
 
+/**
+ * Endpoints whose `401` is an expected answer (wrong password, session bootstrap, sign-out), not
+ * an ended session, so it is not broadcast to the auth provider.
+ */
+const EXPECTED_401 = /^\/v1\/auth\/(login|logout|me|mfa\/verify|password\/|invitations)/;
+
 export function createWebApi(fetchImpl?: typeof fetch): WebApi {
   const etags = new ETagStore();
-  const baseFetch = fetchImpl ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
-  const tracked: typeof fetch = async (input, init) => {
-    const response = await baseFetch(input, init);
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    etags.record(new URL(url, 'http://same-origin').pathname, response);
-    // An ended session (idle timeout, revoked) answers 401 anywhere; the auth provider reacts.
-    if (response.status === 401) reportUnauthorized();
-    return response;
-  };
   return {
-    client: createApiClient({ baseUrl: '', fetch: tracked }),
+    http: createTypedClient({
+      fetch: fetchImpl,
+      etags,
+      getCsrfToken,
+      onResponse: ({ pathname, response, problemCode }) => {
+        // An ended session answers 401 anywhere; the auth provider reacts.
+        if (response.status === 401 && !EXPECTED_401.test(pathname)) reportUnauthorized();
+        // A limited session (tenant requires MFA, user not enrolled) answers 403 everywhere else.
+        if (response.status === 403 && problemCode === 'mfa-enrolment-required') {
+          reportMfaEnrolmentRequired();
+        }
+      },
+    }),
     etags,
     toUiError: (err) => toUiError(err, etags.failedRequestId),
   };

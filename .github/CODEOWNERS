@@ -1,0 +1,20 @@
+# CODEOWNERS (M1-CI-01). FOUNDER: replace `@OWNER` with your GitHub username (or a team, @org/team)
+# before turning on "Require review from Code Owners" in the branch protection rule for `main`.
+# Until it is replaced, GitHub reports every line below as an unknown owner and enforces nothing.
+# The last matching pattern wins, so the specific lines below only restate the owner; they exist to make
+# review of security-relevant paths explicit and easy to split between several owners later.
+* @OWNER
+
+# Security exceptions (expiring allow-lists), scanners' config and CI definitions.
+/.github/ @OWNER
+/.gitleaks.toml @OWNER
+/.gitleaks-baseline.json @OWNER
+
+# Tenant isolation: roles, RLS, migrations, the schema lint and the isolation suite.
+/docker/postgres/ @OWNER
+/apps/api/migrations/ @OWNER
+/apps/api/test/isolation/ @OWNER
+
+# Decisions and the threat model.
+/docs/adr/ @OWNER
+/docs/engineering/threat-model.md @OWNER

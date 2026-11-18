@@ -63,7 +63,7 @@ Sizes are of focused AI-engineer effort including tests and verification, not ca
 
 ### 1.4 Priority and status
 
-Priority uses the plan's MoSCoW: every story is **Must** unless tagged **(Should)** or **(Could)**. A Should slips before any Must (plan 5.4 cut order). Status values: `todo`, `doing`, `blocked`, `done`, `dropped`.
+Priority uses the plan's MoSCoW: every story is **Must** unless tagged **(Should)** or **(Could)**. A Should slips before any Must (plan 5.4 cut order). Status values: `todo`, `doing`, `blocked`, `done`, `partial` (works, with a stated gap), `dropped`. M1 stories carry a `Status:` line with a one-line note (state of 2026-11-18).
 
 ### 1.5 Definition of Done (applies to every story)
 
@@ -119,6 +119,7 @@ Milestones 3-6 use a compact form (key stories with 2-4 acceptance bullets) beca
 
 #### M1-REPO-01 - Shared workspace tooling
 Size: M - Owner: Claude - Deps: S0-REPO-01
+Status: done - Turborepo, shared tsconfig, ESLint flat config, Prettier, Vitest; Dependabot instead of Renovate.
 Sprint 0 creates the empty Turborepo + pnpm workspaces (`apps/api`, `apps/web`, `apps/mobile` placeholder, `packages/api-client`, `packages/schemas`, `packages/ui-tokens`). This story adds the shared configuration every package uses.
 - [ ] One base `tsconfig` (TypeScript 6, strict, ESM), ESLint flat config and Prettier shared by all packages; `pnpm lint`, `pnpm typecheck`, `pnpm test` run through Turborepo with remote-cache-ready config.
 - [ ] Node 24 LTS pinned in `.nvmrc` and `engines` (minimum 22.13); a CI check fails if a different major is used.
@@ -128,6 +129,7 @@ Sprint 0 creates the empty Turborepo + pnpm workspaces (`apps/api`, `apps/web`, 
 
 #### M1-REPO-02 - Docker Compose dev stack
 Size: L - Owner: Claude - Deps: M1-REPO-01, M1-REPO-04, M1-DB-02
+Status: partial - Compose runs postgres 18, pgbouncer, migrate, api, worker, scheduler, mailpit, minio; the web dev server only with `--profile web`; no redis service (throttling lives in Postgres); roles are `app_owner` / `app_user`.
 The developer Compose file from architecture 8.2 (not the self-hosted bundle).
 - [ ] `docker compose up` starts `postgres:18`, `migrate` (one-shot), `api`, `worker`, `scheduler`, `web`, `minio`+`minio-init`, `mailpit`, `redis`, with health checks and correct `depends_on` (`service_completed_successfully` for migrate).
 - [ ] Postgres init script creates roles `migrator` (owner) and `app` (non-owner, NOBYPASSRLS, not superuser) and extension `pg_trgm`; the PG 18 data-directory/volume layout is verified (volume survives `down`/`up`).
@@ -137,6 +139,7 @@ The developer Compose file from architecture 8.2 (not the self-hosted bundle).
 
 #### M1-REPO-03 - PgBouncer `pooling` profile
 Size: M - Owner: Claude - Deps: M1-REPO-02
+Status: done - PgBouncer 1.26.1 is always in the api path (transaction mode); `--profile pooling run pgbouncer-check` asserts the settings and the `app_one` alias.
 - [ ] Profile `pooling` runs PgBouncer 1.26.1 or later in transaction mode with `max_prepared_statements=100`, `server_reset_query` empty, and `default_pool_size` small enough (4) to force multiplexing.
 - [ ] A second database alias `app_one` with `pool_size=1` exists solely for the negative-control test.
 - [ ] With the profile on, `api`/`worker`/`scheduler` use the PgBouncer URL; `migrate` and pg-boss schema/maintenance use the direct URL.
@@ -144,6 +147,7 @@ Size: M - Owner: Claude - Deps: M1-REPO-02
 
 #### M1-REPO-04 - Backend Dockerfile (one image, many roles)
 Size: M - Owner: Claude - Deps: M1-REPO-01, M1-PLAT-01
+Status: partial - One image, four roles, digest-pinned Node 24 slim, non-root, bundled npm removed (Trivy: 0 HIGH/CRITICAL with no exceptions); the read-only root filesystem is not set yet.
 - [ ] Multi-stage `apps/api/Dockerfile` with stages `base` (Node 24 slim pinned by digest, non-root), `deps` (lockfile-only layer with BuildKit cache), `build`, `dev` (watch, never pushed), `runtime` (compiled output, prod deps, migrations, non-root, no secrets).
 - [ ] `APP_ROLE` (`api`, `worker`, `scheduler`, `migrate`) selects behaviour; unknown role exits non-zero with a clear message.
 - [ ] Runtime image builds from the monorepo root in CI with layer caching; image size and a Trivy scan result are recorded in the PR (gate comes in M1-CI-03).
@@ -151,6 +155,7 @@ Size: M - Owner: Claude - Deps: M1-REPO-01, M1-PLAT-01
 
 #### M1-REPO-05 - Seed data and demo tenants
 Size: S - Owner: Claude - Deps: M1-TEN-09, M1-REG-05
+Status: done - `pnpm seed` / `SEED_DEMO_DATA=true` creates Acme and Globex with Owner (TOTP), Admin, Technician, Viewer and 50 assets each; idempotent, refuses production.
 - [ ] `pnpm seed` (also run by `migrate` in dev) creates tenants "Acme" and "Globex", each with an Owner, an Admin, a Technician, a Viewer, default status labels, categories, models and 50 assets with custom fields.
 - [ ] Seed is idempotent (running twice changes nothing) and refuses to run when `NODE_ENV=production`.
 - [ ] Both tenants have deliberately overlapping tags/serials so uniqueness-per-tenant bugs surface immediately.
@@ -159,6 +164,7 @@ Size: S - Owner: Claude - Deps: M1-TEN-09, M1-REG-05
 
 #### M1-DB-01 - ADR and implementation: data access layer and migration tool
 Size: M - Owner: Both - Deps: S0-ADR-01
+Status: done - ADR 0001 accepted: Prisma 7 with the pg driver adapter over raw SQL migrations and a checksum ledger.
 Architecture 8.5 leaves Kysely vs Drizzle and node-pg-migrate vs Atlas open. Decide on evidence, then implement.
 - [ ] A written ADR compares the options against three requirements: per-transaction `set_config(..., true)`, no session state behind PgBouncer, SQL-first migrations that Claude can review; founder approves the choice.
 - [ ] Chosen query layer wired into `tenancy` only (nothing else imports the driver); chosen migration tool runs as `migrator` with `lock_timeout`/`statement_timeout`.
@@ -167,6 +173,7 @@ Architecture 8.5 leaves Kysely vs Drizzle and node-pg-migrate vs Atlas open. Dec
 
 #### M1-DB-02 - Roles, extensions and UUIDv7
 Size: M - Owner: Claude - Deps: M1-REPO-02
+Status: done - Roles `app_owner` / `app_user` (NOBYPASSRLS), pg_trgm, app-side UUIDv7; 14 migrations.
 - [ ] Roles `migrator` (owner of all objects) and `app` (non-owner, no BYPASSRLS, no CREATE) created by a bootstrap migration/script; `app` has no privileges by default, only explicit grants per table.
 - [ ] A role-audit script asserts: `app` and any future reporting/support roles are neither superuser nor BYPASSRLS; runs in CI.
 - [ ] UUIDv7 generated app-side (single code path for PG 16 and 18); a unit test shows ids sort by creation time; `pg_trgm` installed.
@@ -176,6 +183,7 @@ Size: M - Owner: Claude - Deps: M1-REPO-02
 
 #### M1-TEN-01 - `createTenantTable` migration helper and the NULLIF policy
 Size: M - Owner: Claude - Deps: M1-DB-01, M1-DB-02
+Status: done - Tenant-table helper, NULLIF policies, FORCE RLS.
 The single approved way to create a tenant table (spike finding F1).
 - [ ] Helper emits `tenant_id uuid NOT NULL`, `created_at`, `updated_at`, `created_by`, `archived_at`, `company_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, and policy `tenant_isolation` with both `USING` and `WITH CHECK` of `tenant_id = (SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid)`.
 - [ ] Helper adds an index with `tenant_id` as the leading column and supports composite keys `(tenant_id, id)` and composite foreign keys.
@@ -184,6 +192,7 @@ The single approved way to create a tenant table (spike finding F1).
 
 #### M1-TEN-02 - `withTenantTx` and `TenantRepository`
 Size: L - Owner: Claude - Deps: M1-TEN-01
+Status: done - `TenancyService.withTenantTx` and `TenantRepository`.
 The only code path to tenant data (architecture A1, A6).
 - [ ] `withTenantTx(ctx, fn)` opens an explicit transaction and calls `set_config('app.tenant_id' | 'app.actor_id' | 'app.request_id', value, true)` before any query; no session-level `SET` exists anywhere (a grep-based test fails the build if `SET app.` without `LOCAL` appears).
 - [ ] `TenantRepository` base class exposes the query builder only inside a transaction; calling it outside throws.
@@ -192,6 +201,7 @@ The only code path to tenant data (architecture A1, A6).
 
 #### M1-TEN-03 - Schema lint
 Size: L - Owner: Claude - Deps: M1-TEN-01
+Status: done - `app.schema_lint()` and the role audit run in CI.
 Runs in CI against a freshly migrated database (architecture 5.3, 8.5).
 - [ ] Every table is classified `tenant`, `non-tenant` or `partition`; an unclassified table fails the build.
 - [ ] Tenant tables must have `tenant_id`, RLS enabled and forced, a policy in the NULLIF form with `WITH CHECK`, and a leading-`tenant_id` index; foreign keys between tenant tables must be composite `(tenant_id, id)`.
@@ -201,6 +211,7 @@ Runs in CI against a freshly migrated database (architecture 5.3, 8.5).
 
 #### M1-TEN-04 - Two-tenant isolation harness (direct connection)
 Size: L - Owner: Claude - Deps: M1-TEN-02, M1-TEN-03
+Status: done - Two-tenant isolation harness plus the route-replay harness for registry routes.
 Ports the spike tests (`docs/validation/spike_rls_pgbouncer.md` tests a, b, b3, c, e, f, h) into the permanent suite.
 - [ ] Fixtures create two tenants with overlapping data; tests cover: A sees only A; unset context returns 0 rows and inserts fail with 42501; NULLIF case (connection reused after a tenant tx returns 0 rows, not 22P02); 600 interleaved concurrent transactions with zero cross-tenant reads; `WITH CHECK` blocks writing a foreign `tenant_id`; `security_invoker` view respects RLS; owner without a tenant sees 0 rows (FORCE).
 - [ ] **Route replay**: every registered HTTP route is called with tenant B's credentials against tenant A's resource IDs and must return 404/403; the harness fails if a route is not registered with it.
@@ -209,6 +220,7 @@ Ports the spike tests (`docs/validation/spike_rls_pgbouncer.md` tests a, b, b3, 
 
 #### M1-TEN-05 - Isolation suite through PgBouncer with negative control
 Size: M - Owner: Claude - Deps: M1-TEN-04, M1-REPO-03
+Status: done - Isolation suite also runs through PgBouncer with the negative control.
 - [ ] The same suite runs through PgBouncer 1.26.1+ in transaction mode (`max_prepared_statements=100`).
 - [ ] **Negative control**: a deliberate session-level `SET app.tenant_id` through the `pool_size=1` alias must be detected as a leak; the test passes only if the leak is observed, so a green run proves the harness can fail.
 - [ ] Added cases: a transaction that fails mid-way and the next borrower sees no tenant; no GUC value visible to 80 autocommit queries outside any transaction; named prepared statements survive pooling.
@@ -216,6 +228,7 @@ Size: M - Owner: Claude - Deps: M1-TEN-04, M1-REPO-03
 
 #### M1-TEN-06 - Partition grant rule and direct-partition test
 Size: M - Owner: Claude - Deps: M1-TEN-03, M1-PLAT-04
+Status: done - Partition grant rule in the schema lint; direct-partition test.
 (Spike finding F2.)
 - [ ] `audit_log` is range-partitioned by month; partitions are created by the `migrator` role (rotation job runs as the owner) with no grants to `app`; `app` holds privileges on the parent only.
 - [ ] Optional defence in depth: each partition has `FORCE` RLS and the same policy.
@@ -225,12 +238,14 @@ Size: M - Owner: Claude - Deps: M1-TEN-03, M1-PLAT-04
 
 #### M1-TEN-07 - Control-plane module (minimal)
 Size: M - Owner: Claude - Deps: M1-TEN-02
+Status: done - Control-plane module.
 - [ ] Tables `tenant`, `company` (default company per tenant), `cell_map` with `resolveTenant(tenantId)` always returning cell `us-1` (a constant `local` in Self-hosted later); `entitlementsFor(tenantId)` returns an "all modules on" stub behind the `EntitlementSource` interface.
 - [ ] Tenant status (`active`, `suspended`, `deleting`); requests and jobs for a non-active tenant are rejected.
 - [ ] Control-plane tables are accessed by a restricted role/schema path and classified `non-tenant` in the lint, with justification recorded.
 
 #### M1-TEN-08 - `identity` schema for pre-tenant lookups
 Size: M - Owner: Claude - Deps: M1-TEN-07
+Status: done - `identity` schema for pre-tenant lookups.
 Resolves architecture Appendix A item 2 (authn runs before the tenant is known).
 - [ ] Schema `identity` holds only hashes and ids needed before tenant resolution: session lookup, invitation token lookup, API-key hash lookup (table created, populated in M5), SSO domain map.
 - [ ] `app` has the minimum grants (no unrelated columns), tables are classified `non-tenant` with an explicit reason, and no `SECURITY DEFINER` is used.
@@ -239,6 +254,7 @@ Resolves architecture Appendix A item 2 (authn runs before the tenant is known).
 
 #### M1-TEN-09 - Tenant bootstrap
 Size: M - Owner: Claude - Deps: M1-TEN-07, M1-AUTH-01
+Status: done - Tenant bootstrap CLI and service.
 - [ ] CLI/API-internal `bootstrapTenant({name, ownerEmail})` creates tenant, default company, Owner user (invite email sent), built-in roles, default status labels, default categories; idempotent on rerun.
 - [ ] The same function is what Self-hosted first-run will call (M4); there is no separate code path.
 - [ ] Two tenants bootstrapped back to back share no rows (isolation test).
@@ -247,6 +263,7 @@ Size: M - Owner: Claude - Deps: M1-TEN-07, M1-AUTH-01
 
 #### M1-PLAT-01 - NestJS 12 + Fastify 5 application skeleton
 Size: L - Owner: Claude - Deps: M1-REPO-01
+Status: done - NestJS 12 on Fastify 5, ESM, zod-validated config.
 - [ ] ESM-first NestJS 12 on Fastify 5 with a typed config module (env validated with zod, fails fast), graceful shutdown, `APP_ROLE` bootstrap for `api`, `worker`, `scheduler`, `migrate`.
 - [ ] Module layout from architecture 4 (`registry`, `identity-access`, `tenancy`, `audit`, `events`, `jobs`, `files`, `notifications`, `control-plane`, ...) with public facades only.
 - [ ] Boundary lint (dependency-cruiser or ESLint boundaries; tool chosen in an ADR): a module importing another module's internals fails CI; platform kernel never imports domain modules.
@@ -254,6 +271,7 @@ Size: L - Owner: Claude - Deps: M1-REPO-01
 
 #### M1-PLAT-02 - API conventions
 Size: L - Owner: Claude - Deps: M1-PLAT-01, M1-TEN-02
+Status: done - problem+json, request id, zod pipe, cursor pagination, ETag/If-Match, Idempotency-Key, bulk convention (ADR 0003).
 Pulled forward from M5 because M2 check-out and the M3 retry queue depend on them.
 - [ ] `/v1` prefix; errors as RFC 9457 `application/problem+json` with stable `type` codes; request id echoed as `X-Request-Id`.
 - [ ] Cursor pagination, filter/sort/field-selection query conventions, a shared list helper used by every list endpoint.
@@ -263,6 +281,7 @@ Pulled forward from M5 because M2 check-out and the M3 retry queue depend on the
 
 #### M1-PLAT-03 - OpenAPI 3.1 generation, typed client and API docs
 Size: M - Owner: Claude - Deps: M1-PLAT-02
+Status: partial - `docs/engineering/openapi.yaml` (generated by `docs/engineering/tools/gen.mjs`, Redocly-linted) is bundled and served at `GET /v1/openapi.json`; `packages/api-client` is generated from it and `generate:check` fails when stale; contract tests walk every route. Not derived from controllers and no static API reference artifact yet.
 - [ ] The API build emits an OpenAPI 3.1 document from controllers and zod schemas (`packages/schemas`); required permission per operation appears in the document.
 - [ ] `packages/api-client` is generated from the document; CI regenerates it and fails the PR if it differs from the committed client.
 - [ ] A static API reference (for example Scalar or Redoc) is built from the document and published as a CI artifact.
@@ -270,6 +289,7 @@ Size: M - Owner: Claude - Deps: M1-PLAT-02
 
 #### M1-PLAT-04 - Audit module
 Size: L - Owner: Claude - Deps: M1-TEN-02, M1-TEN-01
+Status: done - Audit module and append-only log.
 - [ ] `AuditWriter.record(tx, ...)` writes actor (user, api_key, integration, system), action, entity type/id, before/after diff with sensitive fields redacted, IP, user agent, request id, in the same transaction as the change.
 - [ ] `audit_log` is an append-only monthly partitioned table; `app` has INSERT and SELECT only (a test proves UPDATE and DELETE fail).
 - [ ] `GET /v1/audit-events` with filters (entity, actor, date range) and cursor pagination, requiring `audit:read`.
@@ -278,12 +298,14 @@ Size: L - Owner: Claude - Deps: M1-TEN-02, M1-TEN-01
 
 #### M1-PLAT-05 - Events and transactional outbox
 Size: M - Owner: Claude - Deps: M1-TEN-02
+Status: done - Transactional outbox and relay.
 - [ ] `outbox_event` tenant table and `EventsFacade.publish(tx, event)`; events carry tenant id, entity ids, a version and the API representation reference.
 - [ ] Outbox relay (worker role) claims rows per tenant under tenant context and dispatches to in-process subscribers; failed dispatch retries with backoff.
 - [ ] A test proves a rolled-back transaction leaves no outbox row and a committed one is delivered exactly once to a test subscriber.
 
 #### M1-PLAT-06 - Jobs module on pg-boss 12.x
 Size: L - Owner: Claude - Deps: M1-TEN-02, M1-DB-01
+Status: done - pg-boss 12 jobs module.
 Implements the rules from architecture 5.2 and spike findings F5.
 - [ ] pg-boss sits behind a queue adapter interface; runtime uses `createSchema: false, migrate: false, supervise: false, schedule: false`; schema creation and upgrades run in `migrate` over the direct connection as `migrator`; one maintenance instance runs as the owner.
 - [ ] `useListenNotify` stays false and no queue is created with `notify: true`; workers poll every 1-2 s; a test or lint fails if `notify` is enabled.
@@ -295,12 +317,14 @@ Implements the rules from architecture 5.2 and spike findings F5.
 
 #### M1-PLAT-07 - Worker and scheduler role skeletons
 Size: M - Owner: Claude - Deps: M1-PLAT-06
+Status: done - Worker and scheduler roles with ops server.
 - [ ] `worker` registers handlers and exposes a heartbeat health file/endpoint; per-tenant concurrency limit and priority classes (interactive > scheduled > bulk) configurable.
 - [ ] `scheduler` registers singleton-keyed cron producers that enumerate tenants from the control plane and enqueue one job per tenant; running two schedulers does not duplicate jobs (test).
 - [ ] First real jobs: partition rotation (M1-TEN-06) and a no-op `tenant.heartbeat` used by tests.
 
 #### M1-PLAT-08 - Crypto module (KeyProvider, envelope encryption)
 Size: M - Owner: Claude - Deps: M1-PLAT-01
+Status: done - SecretBox envelope encryption with a file-based master key.
 Needed in M1 because TOTP secrets are encrypted at rest; reused by webhooks and importers later.
 - [ ] `KeyProvider.wrap/unwrap` with a file/env master-key implementation (the Self-hosted default) and an interface ready for AWS KMS (M6).
 - [ ] AES-256-GCM envelope helper binds an encryption context of `tenant_id` + `purpose`; ciphertext copied to another tenant or purpose fails to decrypt (test); key version stored for rotation; rotation re-wraps data keys without re-encrypting payloads.
@@ -308,6 +332,7 @@ Needed in M1 because TOTP secrets are encrypted at rest; reused by webhooks and 
 
 #### M1-PLAT-09 - Mail adapter and templates
 Size: M - Owner: Claude - Deps: M1-PLAT-06
+Status: done - Mail adapter, templates and the `mail.send` job; Mailpit in dev and CI.
 - [ ] `MailAdapter` with an SMTP implementation (Mailpit in dev); sending happens via a worker job, never inline in a request.
 - [ ] Localised template mechanism (English catalogue only) for invitation and password reset emails; plain-text and HTML parts.
 - [ ] Dev e2e test reads the message from the Mailpit API.
@@ -316,6 +341,7 @@ Size: M - Owner: Claude - Deps: M1-PLAT-06
 
 #### M1-AUTH-01 - RBAC model and policy layer
 Size: L - Owner: Claude - Deps: M1-TEN-01, M1-PLAT-01
+Status: done - Roles, permissions and the policy layer; role x operation matrix test.
 - [ ] Tables `user_account`, `role`, `role_assignment` (scope columns `scope_type` tenant|company|location, `scope_id` nullable; only tenant scope enforced in M1, location scope lands in M2-LOC-03).
 - [ ] Permission catalogue as `resource:action` strings; built-in roles Owner, Admin, Asset Manager, Technician/Auditor, Viewer/Employee seeded per tenant with documented permission bundles.
 - [ ] `PolicyService.can(principal, permission, resource)` is the only authorisation entry point; controllers declare required permissions in a decorator that also feeds OpenAPI.
@@ -323,6 +349,7 @@ Size: L - Owner: Claude - Deps: M1-TEN-01, M1-PLAT-01
 
 #### M1-AUTH-02 - Email and password authentication
 Size: M - Owner: Claude - Deps: M1-AUTH-01, M1-TEN-08
+Status: done - Argon2id passwords, breached-password check; throttling and lockout are stored in Postgres, not Redis.
 - [ ] argon2id password hashing with documented parameters; login endpoint with constant-time failure behaviour for unknown accounts.
 - [ ] Breached-password check through a pluggable provider: a bundled local list (works offline, needed by Self-hosted) and an optional online k-anonymity provider.
 - [ ] Throttling and lockout per account and per IP using Redis; failures logged to the security log (M1-TEN-08).
@@ -330,6 +357,7 @@ Size: M - Owner: Claude - Deps: M1-AUTH-01, M1-TEN-08
 
 #### M1-AUTH-03 - Browser sessions
 Size: L - Owner: Claude - Deps: M1-AUTH-02
+Status: done - Cookie sessions with idle/absolute timeouts, CSRF token, rotation on MFA.
 - [ ] Server-side sessions in the `identity` schema, token stored hashed; cookie `__Host-` prefixed, `HttpOnly`, `Secure`, `SameSite`; idle and absolute timeouts configurable.
 - [ ] CSRF protection on every cookie-authenticated mutation (test: mutation without token rejected).
 - [ ] Device list endpoint with last-seen, IP, user agent; user and admin can revoke a session; revoked sessions fail on the next request.
@@ -337,6 +365,7 @@ Size: L - Owner: Claude - Deps: M1-AUTH-02
 
 #### M1-AUTH-04 - MFA (TOTP)
 Size: M - Owner: Claude - Deps: M1-AUTH-03, M1-PLAT-08
+Status: done - TOTP with replay protection and recovery codes; demo Owner is MFA-enrolled.
 Interprets "MFA-ready" as TOTP fully working plus enforcement hooks; passkeys are out of M1 (Should, later).
 - [ ] Enrolment returns a provisioning URI/QR; secret stored envelope-encrypted; verify-then-activate flow; 10 single-use recovery codes stored hashed.
 - [ ] Login with MFA enabled requires a valid TOTP or recovery code; replay of the same code within its window is rejected; attempts are throttled.
@@ -345,24 +374,28 @@ Interprets "MFA-ready" as TOTP fully working plus enforcement hooks; passkeys ar
 
 #### M1-AUTH-05 - Invitations and password reset
 Size: M - Owner: Claude - Deps: M1-AUTH-02, M1-PLAT-09
+Status: done - Invitations and password reset by mail.
 - [ ] Admin creates an invitation (email, role); token stored hashed with expiry; accepting sets the password and (if required) forces MFA enrolment.
 - [ ] Password reset request never reveals whether an email exists; reset invalidates all sessions; tokens are single-use.
 - [ ] Re-sending and revoking invitations works; expired tokens give a clear error.
 
 #### M1-AUTH-06 - Tenant resolution middleware
 Size: M - Owner: Claude - Deps: M1-AUTH-03, M1-TEN-07
+Status: done - Tenant derived from the credential only.
 - [ ] Tenant comes only from the authenticated principal (never a client header/body); the request pipeline is: rate limit, authn lookup in `identity`, tenant active/cell check, authorise, then `withTenantTx`.
 - [ ] If a hostname hint is present and disagrees with the principal's tenant the request is rejected.
 - [ ] Test: a request carrying tenant B's id in header, query and body while authenticated as tenant A still operates only on tenant A.
 
 #### M1-AUTH-07 - User management API
 Size: M - Owner: Claude - Deps: M1-AUTH-05
+Status: done - User management API.
 - [ ] CRUD for login users (list, get, update name/role, deactivate/reactivate); the last Owner cannot be removed or demoted.
 - [ ] Role changes and deactivation revoke the user's sessions; both are audited.
 - [ ] Permissions enforced per role matrix (Admin cannot grant Owner).
 
 #### M1-AUTH-08 - Auth security test suite
 Size: M - Owner: Claude - Deps: M1-AUTH-04, M1-AUTH-06
+Status: done - Auth security suite.
 - [ ] Automated tests: brute force throttling, session fixation, CSRF, expired/revoked session, MFA bypass attempts (skipping the challenge endpoint), privilege escalation through role endpoints.
 - [ ] OWASP ASVS L2 checklist file created with authentication/session items marked and linked to tests.
 - [ ] Run as part of the integration job, not optional.
@@ -371,18 +404,21 @@ Size: M - Owner: Claude - Deps: M1-AUTH-04, M1-AUTH-06
 
 #### M1-REG-01 - Categories
 Size: M - Owner: Claude - Deps: M1-TEN-01, M1-AUTH-01
+Status: done - Categories (asset kinds, tag prefix).
 - [ ] `category` tenant table with `kind` (asset now; accessory, consumable, component, license reserved), name unique per tenant, optional parent display grouping not required.
 - [ ] CRUD API with permissions, audit, ETag; deleting a category in use is refused with a problem response listing counts.
 - [ ] Isolation suite covers the new routes and table automatically.
 
 #### M1-REG-02 - Manufacturers and models
 Size: M - Owner: Claude - Deps: M1-REG-01
+Status: done - Manufacturers and models.
 - [ ] `manufacturer` and `asset_model` tables (model: manufacturer, default category, model number, default depreciation months, default EOL date, image reference nullable until M2).
 - [ ] CRUD API; composite foreign keys; uniqueness per tenant (manufacturer name, model number within manufacturer).
 - [ ] Models can be filtered by category/manufacturer and text-searched.
 
 #### M1-REG-03 - Status labels with fixed state types
 Size: M - Owner: Both - Deps: M1-REG-01, S0-DATA-01
+Status: done - Status labels with fixed state types; `StatusLabel.color` is still stored and returned.
 Configurable names mapped to fixed state types (plan 5.3).
 - [ ] State types are fixed in code: ready, assigned, pending, in_repair, archived (retired/disposed), lost (final set confirmed in S0-DATA-01; the plan lists two slightly different sets).
 - [ ] Tenant admins create/rename/reorder/colour labels, each mapped to exactly one state type; a default label per state type is seeded and cannot be deleted; labels in use cannot be deleted.
@@ -390,6 +426,7 @@ Configurable names mapped to fixed state types (plan 5.3).
 
 #### M1-REG-04 - Custom field definitions and validation
 Size: L - Owner: Claude - Deps: M1-REG-01
+Status: done - Custom field definitions and validation.
 - [ ] `custom_field_definition` per category with types text, number, date, select, multi-select, checkbox, URL; required flag, default, options, help text, display order, filterable flag.
 - [ ] Values live in `asset.custom_data` JSONB, validated server-side from the definitions (type coercion, unknown keys rejected, select values checked); a GIN index supports filtering.
 - [ ] Changing a field type is refused when values exist; deleting a field archives it and keeps stored values readable in history.
@@ -397,6 +434,7 @@ Size: L - Owner: Claude - Deps: M1-REG-01
 
 #### M1-REG-05 - Assets: create, read, update
 Size: L - Owner: Claude - Deps: M1-REG-02, M1-REG-03, M1-REG-04, M1-PLAT-02, M1-PLAT-04
+Status: done - Assets create/read/update with ETag, audit and outbox in one transaction.
 - [ ] `asset` tenant table: tag (unique per tenant), serial, name, model, category (via model or explicit), status label, purchase date, purchase cost (integer minor units + ISO currency), order number, warranty end, vendor (nullable), notes, `custom_data`, `parent_asset_id` (column only), `external_source`/`external_id`, `company_id`, `archived_at`.
 - [ ] Create/update through `AssetsFacade` with ETag/If-Match, audit and `asset.created`/`asset.updated` outbox events in the same transaction.
 - [ ] Duplicate tag in the same tenant returns 409 with a problem type; the same tag in another tenant is allowed (seed proves it).
@@ -404,12 +442,14 @@ Size: L - Owner: Claude - Deps: M1-REG-02, M1-REG-03, M1-REG-04, M1-PLAT-02, M1-
 
 #### M1-REG-06 - Asset tag auto-numbering with templates
 Size: M - Owner: Claude - Deps: M1-REG-05
+Status: done - Per-tenant template via `GET/PUT /v1/settings/asset-tag-template`, counters per full prefix.
 - [ ] Tenant setting for a template (prefix, zero-padded counter width, optional category prefix); counter stored in a per-tenant row locked per allocation, not a global Postgres sequence.
 - [ ] 100 parallel creates in one tenant produce 100 distinct, gap-tolerant tags; two tenants allocate independently.
 - [ ] Manual tag entry overrides the template; template changes never rewrite existing tags.
 
 #### M1-REG-07 - Asset list, filters and performance budget
 Size: L - Owner: Claude - Deps: M1-REG-05
+Status: done - List p95 61 ms on 2 x 50,000 assets (budget 500 ms), measured with `scripts/ci/perf-check.mjs`.
 - [ ] `GET /v1/assets` supports filters (status, state type, category, model, manufacturer, vendor, archived, text) plus custom-field filters through JSONB, sorting and cursor pagination.
 - [ ] Indexes lead with `tenant_id`; query plans captured in a test fixture.
 - [ ] On a seeded 50,000-asset tenant (with a second 50,000-asset tenant present), list p95 < 500 ms server side (plan P9) measured by the perf job (M1-CI-05).
@@ -417,24 +457,28 @@ Size: L - Owner: Claude - Deps: M1-REG-05
 
 #### M1-REG-08 - Search and exact tag/serial lookup
 Size: M - Owner: Claude - Deps: M1-REG-05
+Status: done - Search p95 89 ms (budget 200 ms), tag lookup p95 56 ms (budget 150 ms) on 2 x 50,000 assets.
 - [ ] `tsvector` + `pg_trgm` indexes (tenant-scoped); `GET /v1/search?q=` returns assets now and is structured to add more entity types later.
 - [ ] Exact-match fast path `GET /v1/assets?tag=` and `?serial=` (the scan/keyboard-wedge critical path) with p95 < 150 ms on the 50k dataset.
 - [ ] Global search p95 < 200 ms on the 50k dataset; ranking puts exact tag/serial first.
 
 #### M1-REG-09 - Clone and bulk operations
 Size: M - Owner: Claude - Deps: M1-REG-05, M1-PLAT-02
+Status: done - `POST /v1/assets/{id}/clone` and `bulk-update|bulk-archive|bulk-restore` (100 ids, per-item results); the web uses the bulk endpoints.
 - [ ] Clone creates N copies from a source asset with fresh tags (template) and cleared serials; choose which fields to copy.
 - [ ] Bulk update (status, category, model, custom fields) and bulk archive on up to the documented N items per request with per-item results; one audit entry per asset plus a parent bulk-operation record.
 - [ ] A failure in one item does not roll back the others and is reported in the response; idempotent with `Idempotency-Key`.
 
 #### M1-REG-10 - Archive and restore
 Size: S - Owner: Claude - Deps: M1-REG-05
+Status: done - Archive and restore, single and bulk.
 - [ ] Soft delete via `archived_at`; archived assets are hidden by default, retrievable with a filter, and restorable.
 - [ ] Hard delete does not exist for users; archive/restore are audited and emit events.
 - [ ] Archived assets are excluded from "active asset" counts (needed for billing and Free-tier limits later).
 
 #### M1-REG-11 - Vendors (simple)
 Size: S - Owner: Claude - Deps: M1-TEN-01
+Status: done - Vendors.
 - [ ] `vendor` tenant table (name, contact name/email/phone, URL, notes) with CRUD API; assets reference vendors through a composite FK.
 - [ ] Deleting a vendor in use is refused with counts.
 
@@ -442,6 +486,7 @@ Size: S - Owner: Claude - Deps: M1-TEN-01
 
 #### M1-WEB-10 - Static-export spike and CI feature check (do first)
 Size: M - Owner: Claude - Deps: M1-REPO-01
+Status: done - ADR 0002 and the forbidden-feature check.
 Week-1 spike required by architecture section 3.
 - [ ] A minimal Next.js 16 `output: 'export'` app proves deep links, hard refresh, back/forward and QR-style deep links (`/s/<code>`) using query-string detail routes (for example `/assets/view?id=`) and SPA fallback; Playwright tests keep these cases forever.
 - [ ] A CI check fails the web build if `proxy.ts`/middleware, `rewrites`, `redirects`, `headers`, Server Actions, cookies APIs or the default image loader appear.
@@ -450,6 +495,7 @@ Week-1 spike required by architecture section 3.
 
 #### M1-WEB-01 - Web app shell, routing, API client, i18n
 Size: L - Owner: Claude - Deps: M1-WEB-10, M1-PLAT-03
+Status: done - Static-export shell, generated typed client, i18n; the legacy zod client is gone.
 - [ ] Next.js 16 App Router static export; client-side data layer over the generated `api-client` with typed errors, optimistic concurrency (ETag) handling and request-id display in error toasts.
 - [ ] i18n framework wired with an English catalogue only; locale, timezone and currency formatting helpers; no hard-coded user-facing strings (lint rule).
 - [ ] Auth guard and session bootstrap (`/me`), idle-timeout handling, tenant name/branding header.
@@ -457,6 +503,7 @@ Size: L - Owner: Claude - Deps: M1-WEB-10, M1-PLAT-03
 
 #### M1-WEB-02 - Design system components
 Size: L - Owner: Both - Deps: S0-DES-01, M1-REPO-01
+Status: done - Design-system components; founder acceptance is M1-UX-01.
 Implements the Sprint 0 design system from `packages/ui-tokens`.
 - [ ] Tokens (colour, spacing, type, radius, elevation) compiled to CSS variables with light/dark themes; components: button, input, select/combobox, checkbox, date input, table, tabs, dialog, drawer, toast, badge, empty state, form layout, skeleton.
 - [ ] Every component is keyboard-operable and passes automated axe checks (WCAG 2.2 AA target); focus management is tested for dialogs.
@@ -466,46 +513,54 @@ Implements the Sprint 0 design system from `packages/ui-tokens`.
 
 #### M1-WEB-03 - Authentication screens
 Size: M - Owner: Both - Deps: M1-WEB-01, M1-AUTH-05
+Status: done - Login, MFA, invitation accept, password reset, enrolment.
 - [ ] Login, MFA challenge (TOTP and recovery code), accept invitation, forgot/reset password, MFA enrolment with QR, session/device list with revoke.
 - [ ] Error states do not reveal whether an account exists; lockout and throttle messages are clear.
 - [ ] Playwright covers login to logout including MFA.
 
 #### M1-WEB-04 - Navigation shell and command palette
 Size: M - Owner: Both - Deps: M1-WEB-02, M1-REG-08
+Status: done - Navigation shell and command palette with live search.
 - [ ] Role-aware navigation and empty states; user menu; responsive collapse.
 - [ ] Command palette (Ctrl/Cmd+K): navigate to screens, search assets by tag/serial/name, run "new asset"; palette results come from `/v1/search`.
 - [ ] Keyboard-first: documented shortcuts, no keyboard traps.
 
 #### M1-WEB-05 - Category and custom-field admin
 Size: L - Owner: Both - Deps: M1-REG-04, M1-WEB-02
+Status: done - Categories and custom-field builder.
 - [ ] Categories list/create/edit; field builder supports all types, ordering by drag or buttons, options editor, required/filterable flags, with a live preview of the form.
 - [ ] Destructive actions explain impact (counts of assets affected).
 - [ ] Playwright creates a category with one field of each type.
 
 #### M1-WEB-06 - Models, status labels, tag numbering and vendors screens
 Size: M - Owner: Both - Deps: M1-REG-02, M1-REG-03, M1-REG-06, M1-REG-11, M1-WEB-02
+Status: done - Models, status labels, vendors, tag numbering (template + category prefix).
 - [ ] CRUD screens for manufacturers, models, status labels (state type picker), tag template with live example, vendors.
 - [ ] Inline validation matches API problem responses.
 
 #### M1-WEB-07 - Assets list screen
 Size: L - Owner: Both - Deps: M1-REG-07, M1-WEB-02
+Status: done - Assets list with filters, saved views, columns, bulk actions.
 - [ ] Virtualised table with column chooser, filters including custom fields, sort, cursor pagination and row selection with bulk actions (edit, archive).
 - [ ] Remains responsive with the 50k dataset (first meaningful paint under 1 s on the founder's machine, manual measurement recorded).
 - [ ] Keyboard navigation of rows and a "copy tag" affordance.
 
 #### M1-WEB-08 - Asset detail, create and edit
 Size: L - Owner: Both - Deps: M1-REG-05, M1-REG-09, M1-WEB-07
+Status: partial - Detail, create, edit (412 handling) and clone work; the history tab and the location pickers are empty on the M1 API (their endpoints are M2) and fill in once those exist.
 - [ ] Detail page on a query-string route (`/assets/view?id=`) with sections for core fields, purchase info, custom fields and a placeholder "history" tab (filled in M2).
 - [ ] Create/edit forms render custom fields dynamically, handle ETag conflicts (412) with a merge prompt, and support clone and archive/restore.
 - [ ] Usable at 375 px width.
 
 #### M1-WEB-09 - Users, roles and invitations screens
 Size: M - Owner: Both - Deps: M1-AUTH-07, M1-WEB-02
+Status: done - Users, roles, invitations.
 - [ ] User list, invite dialog, role change, deactivate; pending invitations list with resend/revoke; MFA-required setting.
 - [ ] Controls hidden/disabled per permission and enforced server side.
 
 #### M1-WEB-11 - End-to-end smoke suite
 Size: M - Owner: Claude - Deps: M1-WEB-03, M1-WEB-08, M1-CI-04
+Status: done - Playwright project `real` (`apps/web/e2e-real`) against the compose stack; CI job `web-e2e-real`. Includes model creation, bulk edit, the second tenant getting 404, the invitation mail in Mailpit.
 - [ ] Playwright against the Compose stack: login, create category + field, create model, create asset, search by tag, bulk edit, archive, logout; second tenant cannot reach the first tenant's asset URL.
 - [ ] Runs in CI on every PR to `main` with traces and screenshots on failure.
 
@@ -513,27 +568,32 @@ Size: M - Owner: Claude - Deps: M1-WEB-03, M1-WEB-08, M1-CI-04
 
 #### M1-CI-01 - PR pipeline (lint, typecheck, unit)
 Size: M - Owner: Claude - Deps: M1-REPO-01
+Status: done - PR pipeline with Turborepo cache and the CI gate; verified locally, branch protection is the founder's (F-01) and the first hosted run is pending.
 - [ ] GitHub Actions workflow runs lint, typecheck, boundary lint and unit tests with Turborepo caching; required status checks configured on `main` (branch protection set by the founder, F-01).
 - [ ] Total PR pipeline time reported; target under 15 minutes.
 
 #### M1-CI-02 - Integration job with PostgreSQL matrix
 Size: M - Owner: Claude - Deps: M1-CI-01, M1-TEN-04
+Status: done - Postgres 16/18 matrix, direct and pooled, no skipped tests; verified locally, first hosted run pending.
 - [ ] Matrix of `postgres:16` and `postgres:18` service containers; migrations applied as `migrator`, tests run as `app`; schema lint and isolation suite included.
 - [ ] A second pass runs the suite through PgBouncer 1.26.1+ (M1-TEN-05).
 
 #### M1-CI-03 - Security scanning
 Size: M - Owner: Claude - Deps: M1-CI-01, M1-REPO-04
+Status: done - CodeQL, dependency audit with an expiring allow-list, gitleaks, Trivy (0 exceptions) and a CycloneDX SBOM; verified locally.
 - [ ] SAST (CodeQL or Semgrep), SCA (osv-scanner or `pnpm audit` with allow-list), secret scanning (gitleaks) on every PR.
 - [ ] Trivy scans the runtime image and fails on fixable critical/high; SBOM generated (syft) and stored as an artifact.
 - [ ] Exceptions require an expiring entry in a reviewed allow-list file.
 
 #### M1-CI-04 - Image build and Compose smoke test
 Size: M - Owner: Claude - Deps: M1-REPO-02, M1-CI-01
+Status: done - Image built once and reused by smoke, real-stack e2e, scan and GHCR push; the smoke makes an authenticated call.
 - [ ] On merge to `main`, build the backend runtime image, tag with the git SHA, push to GHCR (dev registry); build the static web export as an artifact.
 - [ ] A job brings up the Compose stack in CI and hits `/readyz` plus one authenticated API call.
 
 #### M1-CI-05 - Performance budget job
 Size: M - Owner: Claude - Deps: M1-REG-07, M1-REG-08
+Status: done - `scripts/ci/perf-seed.sh` seeds 2 x 50,000; registry budgets are enforced; first nightly run pending.
 - [ ] Nightly job seeds 2 x 50,000 assets and measures asset list p95, search p95, tag lookup p95 with k6 or autocannon; fails on budget breach (list < 500 ms, search < 200 ms, tag lookup < 150 ms).
 - [ ] Results trend is stored as a CI artifact/summary.
 
@@ -541,18 +601,21 @@ Size: M - Owner: Claude - Deps: M1-REG-07, M1-REG-08
 
 #### M1-OPS-01 - Logging, metrics, tracing and health basics
 Size: M - Owner: Claude - Deps: M1-PLAT-01, M1-AUTH-06
+Status: done - pino with redaction, metrics on an internal port, health and readiness probes.
 - [ ] Structured JSON logs (pino) with `request_id`, `tenant_id`, `actor_id`; a redaction test proves passwords, tokens and keys never appear.
 - [ ] OpenTelemetry tracing with `tenant_id` as a span/log attribute and not a metric label; Prometheus `/metrics` (RED metrics per route, DB pool, queue depth) on an internal port.
 - [ ] Optional Sentry via env var; errors carry request id.
 
 #### M1-DOC-01 - ADRs, developer guide and tenancy threat model
 Size: M - Owner: Claude - Deps: M1-TEN-05
+Status: done - ADR index (0001-0005), developer guide, tenancy threat model.
 - [ ] `docs/adr/` with ADRs for data access layer, migration tool, boundary-lint tool, web routing, ID strategy, state types, breached-password provider.
 - [ ] Developer guide (setup, `make test-isolation`, how to add a tenant table and a route, expand/contract rules) and a repo-level agent guide for Claude's workflow and sub-agent conventions.
 - [ ] Short tenancy threat model recording known exposures: `pgboss.*` has no RLS (ids-only payloads), `identity` and control-plane tables are non-RLS, superuser/BYPASSRLS ignores FORCE, partition rule, restore granularity.
 
 #### M1-UX-01 - M1 founder acceptance walk-through
 Size: S - Owner: Founder - Deps: all M1 stories
+Status: todo - Founder walk-through; `docker compose up` then sign in as `owner@acme.example` (README quick start).
 - [ ] Founder completes the exit-criteria script from a clean clone and records findings as new stories or defects.
 - [ ] Look and feel (design system) and screen flows accepted or change requests logged.
 - [ ] Founder confirms the isolation demo: a second-tenant user cannot reach the first tenant's data through UI and API.

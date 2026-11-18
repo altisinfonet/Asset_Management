@@ -33,14 +33,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
       # Turborepo local cache. Task hashes make a stale restore harmless; the key changes on every commit
       # so the newest cache is always saved, and the prefix restore picks the latest one.
       - name: Cache Turborepo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -59,7 +59,7 @@ jobs:
           pnpm --filter @assettracker/web check:static
           pnpm --filter @assettracker/web exec node scripts/check-static-export.mjs --built
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-static-export
           path: apps/web/out
@@ -75,17 +75,17 @@ jobs:
     continue-on-error: true
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           filter: '@assettracker/web...'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-static-export
           path: apps/web/out
       - run: pnpm --filter @assettracker/web exec playwright install --with-deps chromium
       - run: pnpm --filter @assettracker/web test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: web-e2e-traces
@@ -136,7 +136,7 @@ jobs:
       # nothing it enqueues can be picked up by another worker. Set here too to make that explicit.
       JOBS_SCHEMA: pgboss_e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
         with:
@@ -212,7 +212,7 @@ jobs:
           pnpm --filter @assettracker/api seed
           pnpm --filter @assettracker/api seed
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-reports-pg${{ matrix.postgres }}
@@ -230,10 +230,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build api image (runtime target)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/api/Dockerfile
@@ -252,7 +252,7 @@ jobs:
             echo "- tag: \`$API_IMAGE\`, commit \`$GITHUB_SHA\`"
             echo "- exported tar: $((size / 1048576)) MiB"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: api-image
           path: ${{ runner.temp }}/api-image.tar
@@ -266,8 +266,8 @@ jobs:
     needs: image
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: api-image
           path: ${{ runner.temp }}
@@ -295,15 +295,15 @@ jobs:
       COMPOSE_PROJECT: ci-e2e
       BUILD_IMAGE: '0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           filter: '@assettracker/web...'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-static-export
           path: apps/web/out
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: api-image
           path: ${{ runner.temp }}
@@ -324,7 +324,7 @@ jobs:
       - name: Stack logs
         if: failure()
         run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" logs --no-color --tail=200
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: web-e2e-real-traces
@@ -345,15 +345,15 @@ jobs:
       # see this one, bump it by hand when Trivy releases or when the DB schema changes).
       TRIVY_IMAGE: aquasec/trivy:0.76.2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: api-image
           path: ${{ runner.temp }}
       - name: Trivy DB cache key (daily)
         id: day
         run: echo "d=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ steps.day.outputs.d }}
@@ -365,7 +365,7 @@ jobs:
           mkdir -p "$HOME/.cache/trivy" sbom
           docker run --rm -v "$RUNNER_TEMP:/work:ro" -v "$PWD/sbom:/out" -v "$HOME/.cache/trivy:/root/.cache" \
             "$TRIVY_IMAGE" image --quiet --input /work/api-image.tar --format cyclonedx --output /out/api-image.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom-api-image-cyclonedx
           path: sbom/api-image.cdx.json
@@ -391,12 +391,12 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: api-image
           path: ${{ runner.temp }}
       - run: docker load -i "$RUNNER_TEMP/api-image.tar"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

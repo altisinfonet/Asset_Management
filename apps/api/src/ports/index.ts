@@ -38,12 +38,15 @@ export interface OutboxPublisher {
 
 /** Background job enqueue (pg-boss behind an adapter, M1-PLAT-06). Payloads carry ids only. */
 export interface JobQueue {
-  /** Enqueue inside `tx` when given (transactional enqueue), otherwise immediately. */
+  /**
+   * Enqueue inside `tx` when given (transactional enqueue), otherwise immediately. Resolves to the
+   * job id, or `null` when a `singletonKey` deduplicated the job (an equivalent one already exists).
+   */
   enqueue(
     name: string,
     payload: { tenantId?: string } & Record<string, unknown>,
     opts?: { tx?: Tx; startAfterSeconds?: number; singletonKey?: string },
-  ): Promise<string>;
+  ): Promise<string | null>;
 }
 
 /** Outbound mail (SMTP in self-hosted / Mailpit in dev, SES in Cloud) (M1-PLAT-09). */

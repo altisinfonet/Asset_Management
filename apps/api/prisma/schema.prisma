@@ -316,6 +316,30 @@ model invitation {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model mail_outbox {
+  id          String    @id @db.Uuid
+  tenant_id   String    @db.Uuid
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime  @default(now()) @db.Timestamptz(6)
+  created_by  String?   @db.Uuid
+  updated_by  String?   @db.Uuid
+  archived_at DateTime? @db.Timestamptz(6)
+  version     Int       @default(1)
+  template    String
+  locale      String?
+  status      String    @default("queued")
+  message_enc Bytes?
+  sent_at     DateTime? @db.Timestamptz(6)
+  tenant      tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, created_at], map: "mail_outbox_queued_idx", where: raw("(status = 'queued'::text)"))
+  @@index([tenant_id, created_at(sort: Desc), id(sort: Desc)], map: "mail_outbox_tenant_created_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model manufacturer {
   id            String        @id @db.Uuid
@@ -342,19 +366,23 @@ model manufacturer {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model outbox_event {
-  id             String    @id @db.Uuid
-  tenant_id      String    @db.Uuid
-  event_type     String
-  aggregate_type String
-  aggregate_id   String    @db.Uuid
-  payload        Json      @default("{}")
-  created_at     DateTime  @default(now()) @db.Timestamptz(6)
-  published_at   DateTime? @db.Timestamptz(6)
-  attempts       Int       @default(0)
-  tenant         tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id               String    @id @db.Uuid
+  tenant_id        String    @db.Uuid
+  event_type       String
+  aggregate_type   String
+  aggregate_id     String    @db.Uuid
+  payload          Json      @default("{}")
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  published_at     DateTime? @db.Timestamptz(6)
+  attempts         Int       @default(0)
+  next_attempt_at  DateTime  @default(now()) @db.Timestamptz(6)
+  last_error       String?
+  dead_lettered_at DateTime? @db.Timestamptz(6)
+  tenant           tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, id])
-  @@index([tenant_id, id], map: "outbox_event_pending_idx", where: raw("(published_at IS NULL)"))
+  @@index([tenant_id, dead_lettered_at], map: "outbox_event_dead_idx", where: raw("(dead_lettered_at IS NOT NULL)"))
+  @@index([tenant_id, next_attempt_at, id], map: "outbox_event_pending_idx", where: raw("((published_at IS NULL) AND (dead_lettered_at IS NULL))"))
   @@schema("app")
 }
 
@@ -451,6 +479,7 @@ model tenant {
   custom_field_def  custom_field_def[]
   idempotency_key   idempotency_key[]
   invitation        invitation[]
+  mail_outbox       mail_outbox[]
   manufacturer      manufacturer[]
   outbox_event      outbox_event[]
   role              role[]
@@ -467,30 +496,32 @@ model tenant {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model user_account {
-  id                String              @id @db.Uuid
-  tenant_id         String              @db.Uuid
-  email             String
-  display_name      String
-  status            String              @default("invited")
-  locale            String?
-  timezone          String?
-  mfa_enabled       Boolean             @default(false)
-  last_login_at     DateTime?           @db.Timestamptz(6)
-  created_at        DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
-  created_by        String?             @db.Uuid
-  updated_by        String?             @db.Uuid
-  archived_at       DateTime?           @db.Timestamptz(6)
-  version           Int                 @default(1)
-  invitation        invitation[]
-  role_assignment   role_assignment[]
-  tenant            tenant              @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  credential        credential?
-  external_identity external_identity[]
-  login_identity    login_identity?
-  mfa_factor        mfa_factor[]
-  mfa_recovery_code mfa_recovery_code[]
-  session           session[]
+  id                   String                 @id @db.Uuid
+  tenant_id            String                 @db.Uuid
+  email                String
+  display_name         String
+  status               String                 @default("invited")
+  locale               String?
+  timezone             String?
+  mfa_enabled          Boolean                @default(false)
+  last_login_at        DateTime?              @db.Timestamptz(6)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  created_by           String?                @db.Uuid
+  updated_by           String?                @db.Uuid
+  archived_at          DateTime?              @db.Timestamptz(6)
+  version              Int                    @default(1)
+  invitation           invitation[]
+  role_assignment      role_assignment[]
+  tenant               tenant                 @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  credential           credential?
+  external_identity    external_identity[]
+  login_identity       login_identity?
+  mfa_challenge        mfa_challenge[]
+  mfa_factor           mfa_factor[]
+  mfa_recovery_code    mfa_recovery_code[]
+  password_reset_token password_reset_token[]
+  session              session[]
 
   @@unique([tenant_id, id])
   @@index([tenant_id, status], map: "user_account_status_idx")
@@ -532,6 +563,18 @@ model api_key_lookup {
   api_key_id String  @db.Uuid
   api_key    api_key @relation(fields: [tenant_id, api_key_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model auth_throttle {
+  bucket       String
+  window_start DateTime @db.Timestamptz(6)
+  hits         Int      @default(0)
+
+  @@id([bucket, window_start])
+  @@index([window_start], map: "auth_throttle_window_idx")
   @@schema("identity")
 }
 
@@ -594,6 +637,25 @@ model login_identity {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model mfa_challenge {
+  token_hash   Bytes        @id
+  tenant_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  expires_at   DateTime     @db.Timestamptz(6)
+  attempts     Int          @default(0)
+  consumed_at  DateTime?    @db.Timestamptz(6)
+  ip           String?      @db.Inet
+  user_agent   String?
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([expires_at], map: "mfa_challenge_expiry_idx")
+  @@index([tenant_id, user_id], map: "mfa_challenge_user_idx")
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model mfa_factor {
   id               String       @id @db.Uuid
   tenant_id        String       @db.Uuid
@@ -607,6 +669,7 @@ model mfa_factor {
   confirmed_at     DateTime?    @db.Timestamptz(6)
   last_used_at     DateTime?    @db.Timestamptz(6)
   created_at       DateTime     @default(now()) @db.Timestamptz(6)
+  last_used_step   BigInt?
   user_account     user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([tenant_id, user_id], map: "mfa_factor_user_idx")
@@ -624,6 +687,20 @@ model mfa_recovery_code {
   user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([tenant_id, user_id], map: "mfa_recovery_code_user_idx", where: raw("(used_at IS NULL)"))
+  @@schema("identity")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model password_reset_token {
+  token_hash   Bytes        @id
+  tenant_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  expires_at   DateTime     @db.Timestamptz(6)
+  used_at      DateTime?    @db.Timestamptz(6)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, user_id], map: "password_reset_token_user_idx")
   @@schema("identity")
 }
 

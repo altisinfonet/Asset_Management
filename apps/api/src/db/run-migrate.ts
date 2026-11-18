@@ -1,4 +1,5 @@
 import { auditRoles, ensurePartitions, schemaLint, withOwnerClient } from './maintenance.js';
+import { provisionJobs } from './provision-jobs.js';
 import { migrate, type MigrationLogger } from './migrator.js';
 
 export class SchemaLintError extends Error {
@@ -11,6 +12,8 @@ export class SchemaLintError extends Error {
 export interface MigrateResult {
   applied: string[];
   partitionsCreated: number;
+  /** pg-boss queues ensured (the dead-letter queue first). */
+  queues: string[];
 }
 
 /**
@@ -21,12 +24,15 @@ export interface MigrateResult {
 export async function runMigrate(
   migratorDatabaseUrl: string,
   logger: MigrationLogger,
+  jobsSchema?: string,
 ): Promise<MigrateResult> {
   const applied = await migrate(migratorDatabaseUrl, logger);
+  // pg-boss schema + queues + runtime grants, over the same direct owner connection (M1-PLAT-06).
+  const { queues } = await provisionJobs(migratorDatabaseUrl, logger, jobsSchema);
   return withOwnerClient(migratorDatabaseUrl, async (client) => {
     const partitionsCreated = await ensurePartitions(client);
     const violations = [...(await schemaLint(client)), ...(await auditRoles(client))];
     if (violations.length > 0) throw new SchemaLintError(violations);
-    return { applied, partitionsCreated };
+    return { applied, partitionsCreated, queues };
   });
 }

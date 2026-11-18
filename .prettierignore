@@ -16,3 +16,4 @@ playwright-report
 packages/ui-tokens/src/generated
 apps/api/src/generated
 apps/api/prisma/schema.prisma
+apps/api/src/auth/data

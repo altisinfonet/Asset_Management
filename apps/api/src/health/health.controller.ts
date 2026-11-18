@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, Res } from '@nestjs/common';
 import type { HealthResponse, VersionResponse } from '@assettracker/schemas';
 import type { FastifyReply } from 'fastify';
+import { Public } from '../auth/index.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { AppConfig } from '../config/env.js';
 import { loadMigrations } from '../db/migrator.js';
@@ -22,6 +23,8 @@ export interface ReadyResponse {
   };
 }
 
+/** Orchestrator and load-balancer probes: no credential, never behind the auth guard. */
+@Public()
 @Controller()
 export class HealthController {
   private expectedMigrations?: Promise<string[]>;

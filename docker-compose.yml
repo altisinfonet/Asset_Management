@@ -1,5 +1,5 @@
 # Local development stack. DUMMY credentials only; real secrets never go in this file.
-#   docker compose up -d --build          postgres, pgbouncer, mailpit, minio, migrate, api
+#   docker compose up -d --build          postgres, pgbouncer, mailpit, minio, migrate, api, worker, scheduler
 #   docker compose --profile web up -d    adds the Next.js dev server (http://localhost:3001)
 #   docker compose --profile pooling run --rm pgbouncer-check   asserts the PgBouncer profile (SHOW POOLS/CONFIG)
 #   docker compose run --rm migrate       apply new migrations
@@ -16,6 +16,11 @@ x-api-env: &api-env
   DATABASE_URL: postgres://app_user:dev@pgbouncer:6432/app
   S3_ENDPOINT: http://minio:9000
   SMTP_URL: smtp://mailpit:1025
+  MAIL_FROM: 'Asset Tracker <no-reply@assettracker.local>'
+  # Envelope-encryption master key (SecretBox): a Docker secret FILE, never an env value.
+  MASTER_KEY_FILE: /run/secrets/master_key
+  # Internal ops server (/metrics, and /healthz /readyz on worker and scheduler). Not published.
+  OPS_PORT: '9464'
 
 services:
   postgres:
@@ -97,6 +102,9 @@ services:
       MIGRATOR_DATABASE_URL: postgres://app_owner:dev@postgres:5432/app
       # Dev only: create the demo tenants Acme and Globex after migrating (refused in production).
       SEED_DEMO_DATA: 'true'
+      # The demo seed encrypts the demo TOTP secrets: same master key as the api (a Docker secret file).
+      MASTER_KEY_FILE: /run/secrets/master_key
+    secrets: [master_key]
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,6 +120,7 @@ services:
     command: ['api']
     init: true
     environment: *api-env
+    secrets: [master_key]
     ports:
       - '${API_PORT:-3000}:3000'
     depends_on:
@@ -135,6 +144,64 @@ services:
       timeout: 5s
       retries: 6
       start_period: 10s
+
+  # Background roles: the SAME image as the api (architecture 3: one image, many roles).
+  # worker: pg-boss job workers (mail.send, tenant.heartbeat, ...) + the outbox relay.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: ${API_TARGET:-runtime}
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    command: ['worker']
+    init: true
+    environment: *api-env
+    secrets: [master_key]
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck: &ops-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:9464/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # scheduler: cron producers (singleton-keyed, safe to run two), the pg-boss maintenance instance
+  # and owner-only maintenance jobs (partition rotation). It is the only long-running role holding the
+  # OWNER credentials, and it connects to Postgres DIRECTLY (never through PgBouncer).
+  scheduler:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: ${API_TARGET:-runtime}
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    command: ['scheduler']
+    init: true
+    environment:
+      <<: *api-env
+      MAINTENANCE_DATABASE_URL: postgres://app_owner:dev@postgres:5432/app
+    secrets: [master_key]
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+    healthcheck: *ops-healthcheck
 
   # Optional: Next.js dev server with hot reload. `/v1` is proxied to the api (dev only; the
   # production build is a static export, which cannot use rewrites).
@@ -173,6 +240,12 @@ services:
       - '${MINIO_CONSOLE_PORT:-9001}:9001'
     volumes:
       - miniodata:/data
+
+# Dummy DEV master key (docker/secrets/master_key.dev). A real install generates its own:
+#   openssl rand -base64 32 > master_key && chmod 600 master_key   (and BACK IT UP: without it, encrypted data is lost)
+secrets:
+  master_key:
+    file: ${MASTER_KEY_FILE_PATH:-./docker/secrets/master_key.dev}
 
 volumes:
   pgdata:

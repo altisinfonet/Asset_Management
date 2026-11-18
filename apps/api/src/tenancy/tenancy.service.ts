@@ -1,5 +1,6 @@
 import { Logger, type OnModuleDestroy } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import { PrismaClient } from '../generated/prisma/client.js';
 import {
   type TenantContext,
@@ -34,22 +35,33 @@ export interface PingResult {
 export class TenancyService implements OnModuleDestroy {
   private readonly logger = new Logger(TenancyService.name);
   private readonly db: PrismaClient;
+  private readonly pool: pg.Pool;
 
   constructor(options: TenancyOptions) {
-    const adapter = new PrismaPg(
-      {
-        connectionString: options.connectionString,
-        max: options.poolMax ?? 10,
-        connectionTimeoutMillis: 5_000,
-        idleTimeoutMillis: 30_000,
-        application_name: options.applicationName ?? 'assettracker',
-      },
-      {
-        // An idle client erroring (e.g. the pooler restarting) must not crash the process.
-        onPoolError: (err) => this.logger.error(`idle pg client error: ${err.message}`),
-      },
-    );
+    // The pool is created here (not by the adapter) so its size and use can be exported as metrics.
+    this.pool = new pg.Pool({
+      connectionString: options.connectionString,
+      max: options.poolMax ?? 10,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 30_000,
+      application_name: options.applicationName ?? 'assettracker',
+    });
+    const adapter = new PrismaPg(this.pool, {
+      disposeExternalPool: true,
+      // An idle client erroring (e.g. the pooler restarting) must not crash the process.
+      onPoolError: (err) => this.logger.error(`idle pg client error: ${err.message}`),
+    });
     this.db = new PrismaClient({ adapter });
+  }
+
+  /** Connection pool gauges (observability: `db_pool_connections`). */
+  poolStats(): { max: number; total: number; idle: number; waiting: number } {
+    return {
+      max: this.pool.options.max ?? 10,
+      total: this.pool.totalCount,
+      idle: this.pool.idleCount,
+      waiting: this.pool.waitingCount,
+    };
   }
 
   /** Cheap round trip used by the health check. Goes through PgBouncer when so configured. */

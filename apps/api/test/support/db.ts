@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { uuidv7 } from '../../src/ids/uuidv7.js';
 import { sqlStateOf, TenancyService, type Tx } from '../../src/tenancy/index.js';
+import { E2E_JOBS_SCHEMA } from './jobs-schema.js';
 
 /**
  * Shared e2e plumbing. Environment:
@@ -16,6 +17,14 @@ export const env = {
   pooledOneUrl: process.env.POOLED_ONE_URL,
   adminUrl: process.env.ADMIN_DATABASE_URL,
 };
+
+/**
+ * pg-boss schema used by the e2e suite. vitest.e2e.config.ts sets JOBS_SCHEMA=pgboss_e2e and
+ * test/support/global-setup.ts provisions it, so a running compose `worker` (which polls the
+ * default `pgboss` schema) can never steal this suite's jobs. Every `loadConfig` in the e2e tests
+ * passes it as JOBS_SCHEMA.
+ */
+export const jobsSchema = process.env.JOBS_SCHEMA ?? E2E_JOBS_SCHEMA;
 export const mode: 'direct' | 'pooled' =
   process.env.ISOLATION_MODE === 'pooled' || (!process.env.ISOLATION_MODE && env.pooledOneUrl)
     ? 'pooled'

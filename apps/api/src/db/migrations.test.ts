@@ -6,10 +6,11 @@ describe('shipped migrations', async () => {
   const migrations = await loadMigrations(DEFAULT_MIGRATIONS_DIR);
   const sql = migrations.map((m) => m.sql).join('\n');
 
-  it('are numbered contiguously from 0001', () => {
-    expect(migrations.map((m) => m.id.slice(0, 4))).toEqual(
-      migrations.map((_, i) => String(i + 1).padStart(4, '0')),
-    );
+  it('have unique, strictly increasing numbers (lanes reserve ranges: 0010-0019 auth, 0020-0029 platform)', () => {
+    const numbers = migrations.map((m) => Number(m.id.slice(0, 4)));
+    expect(numbers[0]).toBe(1);
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
   });
 
   it('M1 ships tenancy, catalogue, assets, audit, identity and provisioning only (no M2 tables)', () => {
@@ -53,7 +54,7 @@ describe('shipped migrations', async () => {
     ]) {
       expect(tables).toContain(`app.${m1}`);
     }
-    expect(tables.filter((t) => t.startsWith('identity.'))).toHaveLength(10);
+    expect(tables.filter((t) => t.startsWith('identity.'))).toHaveLength(13);
   });
 
   it('every app table is passed through app.apply_tenant_conventions in the same migration', () => {

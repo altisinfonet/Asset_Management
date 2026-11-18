@@ -3,12 +3,14 @@ import { defineConfig } from '@playwright/test';
 /**
  * Routing and smoke e2e for the web app.
  *
- *   E2E_TARGET=static (default)  serves the exported `out/` with scripts/serve-static.mjs
- *   E2E_TARGET=dev               runs `next dev`
+ *   E2E_TARGET=static (default)  serves the MOCK export `out-mock/` (pnpm build:mock) with scripts/serve-static.mjs
+ *   E2E_TARGET=dev               runs `next dev` with the mock API (scripts/dev-mock.mjs)
  *   E2E_FALLBACK=404|index|none  SPA-fallback mode of the static server (see serve-static.mjs)
  *   PW_CHANNEL=chrome|msedge     use an installed browser instead of the Playwright download
  *
- * Optional in CI (needs a browser); the static `out/` must be built first (`pnpm build`).
+ * Every screen sits behind the auth guard, so the app runs against the MSW mock API (docs/engineering/openapi.yaml
+ * contract); `pnpm test:e2e` builds out-mock/ first, `pnpm test:e2e:run` reuses an existing build.
+ * Optional in CI (needs a browser).
  */
 const target = process.env.E2E_TARGET ?? 'static';
 const fallback = process.env.E2E_FALLBACK ?? '404';
@@ -28,13 +30,13 @@ export default defineConfig({
   webServer:
     target === 'dev'
       ? {
-          command: `pnpm exec next dev --port ${port}`,
+          command: `node scripts/dev-mock.mjs --port ${port}`,
           port,
           reuseExistingServer: !process.env.CI,
           timeout: 120_000,
         }
       : {
-          command: `node scripts/serve-static.mjs out --port=${port} --fallback=${fallback}${
+          command: `node scripts/serve-static.mjs out-mock --port=${port} --fallback=${fallback}${
             process.env.E2E_REDIRECT_SLASH ? ' --redirect-slash' : ''
           }`,
           port,

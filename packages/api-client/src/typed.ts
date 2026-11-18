@@ -70,6 +70,9 @@ export function createTypedClient(options: TypedClientOptions = {}): TypedClient
     async onResponse({ request, response }) {
       const pathname = new URL(request.url).pathname;
       etags.record(pathname, response);
+      // A create answers with the new resource's ETag; remember it under the resource path.
+      const location = response.headers.get('location');
+      if (location && response.ok) etags.record(new URL(location, request.url).pathname, response);
 
       if (response.ok) {
         if (!SAFE_METHODS.has(request.method) && response.status === 204) etags.forget(pathname);

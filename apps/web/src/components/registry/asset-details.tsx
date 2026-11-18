@@ -19,7 +19,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
       <dt className="text-muted">{label}</dt>
-      <dd className="min-w-0 break-words">{children || <span className="text-muted">{'-'}</span>}</dd>
+      <dd className="min-w-0 break-words">
+        {children || <span className="text-muted">{'-'}</span>}
+      </dd>
     </>
   );
 }

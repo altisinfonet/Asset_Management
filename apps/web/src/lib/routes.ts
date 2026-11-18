@@ -24,7 +24,12 @@ export const routes = {
   security: '/account/security',
   dashboard: '/',
   assets: '/assets',
-  assetView: (id: string) => `/assets/view?id=${encodeURIComponent(id)}`,
+  assetView: (id: string, tab?: string) =>
+    `/assets/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
+  assetNew: '/assets/new',
+  /** New asset prefilled from an existing one (everything but tag and serial). */
+  assetClone: (id: string) => `/assets/new?clone=${encodeURIComponent(id)}`,
+  assetEdit: (id: string) => `/assets/edit?id=${encodeURIComponent(id)}`,
   /** Resolve a scanned tag or QR code to an asset (`/s/<code>` redirects here). */
   assetByCode: (code: string) => `/assets/view?code=${encodeURIComponent(code)}`,
   settings: (section: SettingsSection = 'organisation') => `/settings/${section}`,
@@ -36,8 +41,11 @@ export const SETTINGS_SECTIONS = [
   'users',
   'categories',
   'models',
+  'manufacturers',
   'fields',
   'status',
+  'tags',
+  'vendors',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

@@ -28,6 +28,8 @@ export const MOCK_ACCOUNTS = {
   owner: 'alice@example.org',
   /** Owner with TOTP enrolled: login asks for a code (123456) or a recovery code. */
   mfaOwner: 'mfa@example.org',
+  /** Asset Manager: manages assets and the catalogue, but cannot see Users. */
+  manager: 'manager@example.org',
   /** Read-only role: no Settings in the navigation, 403 screens on admin pages. */
   viewer: 'viewer@example.org',
   /** Answers 429 with `Retry-After: 90`. */

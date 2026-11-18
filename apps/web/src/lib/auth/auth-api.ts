@@ -1,4 +1,5 @@
-import { apiRequest, setCsrfToken } from './http';
+import { getApi } from '@/lib/api';
+import { setCsrfToken } from './http';
 import type {
   AcceptInvitationRequest,
   InvitationInfo,
@@ -12,104 +13,87 @@ import type {
 } from './types';
 
 /**
- * Typed calls for the auth endpoints.
+ * Typed calls for the auth endpoints, all through the generated client (`getApi().http`): paths,
+ * bodies and responses are checked against docs/engineering/openapi.yaml, and the client adds the
+ * CSRF header, an idempotency key and turns failures into `ApiError`s.
  *
- * In docs/engineering/openapi.yaml today:  POST /v1/auth/login, POST /v1/auth/logout,
- * GET /v1/auth/me, POST /v1/auth/mfa/verify.
- *
- * PROPOSED (the screens need them, the contract does not define them yet; the mock layer in
- * `src/mocks` implements exactly these shapes so the backend can align):
- *   POST   /v1/auth/password/forgot        { email }                      -> 202
- *   POST   /v1/auth/password/reset         { token, password }            -> 204
- *   GET    /v1/auth/invitations/{token}    -> InvitationInfo              (404 unknown, 410 expired)
- *   POST   /v1/auth/invitations/accept     AcceptInvitationRequest        -> LoginResponse
- *   POST   /v1/auth/mfa/enrol              -> MfaEnrolment                (secret + otpauth URI)
- *   POST   /v1/auth/mfa/enrol/confirm      { code }                       -> MfaEnrolmentResult (new csrf_token: the session is rotated)
- *   GET    /v1/auth/sessions               -> { data: SessionInfo[] }
- *   DELETE /v1/auth/sessions/{id}          -> 204
+ * `confirmMfaEnrolment` returns only the recovery codes (the contract); the session may rotate
+ * when enrolment completes, so the CSRF token is re-read from `GET /v1/auth/me` right after.
  */
+const http = () => getApi().http;
+
 export const authApi = {
   async getMe(signal?: AbortSignal): Promise<Me> {
-    const me = await apiRequest<Me>('GET', '/v1/auth/me', { expectUnauthorized: true, signal });
+    const { data } = await http().GET('/v1/auth/me', { signal });
+    const me = data as Me;
     setCsrfToken(me.csrf_token);
     return me;
   },
 
   async login(request: LoginRequest): Promise<LoginResponse> {
-    const response = await apiRequest<LoginResponse>('POST', '/v1/auth/login', {
-      body: request,
-      expectUnauthorized: true,
-    });
+    const { data } = await http().POST('/v1/auth/login', { body: request });
+    const response = data as LoginResponse;
     if (response.csrf_token) setCsrfToken(response.csrf_token);
     return response;
   },
 
   async verifyMfa(request: MfaVerifyRequest): Promise<LoginResponse> {
-    const response = await apiRequest<LoginResponse>('POST', '/v1/auth/mfa/verify', {
-      body: request,
-      expectUnauthorized: true,
-    });
+    const { data } = await http().POST('/v1/auth/mfa/verify', { body: request });
+    const response = data as LoginResponse;
     if (response.csrf_token) setCsrfToken(response.csrf_token);
     return response;
   },
 
   async logout(): Promise<void> {
     try {
-      await apiRequest<void>('POST', '/v1/auth/logout', { expectUnauthorized: true });
+      await http().POST('/v1/auth/logout');
     } finally {
       setCsrfToken(undefined);
     }
   },
 
-  forgotPassword(email: string): Promise<void> {
-    return apiRequest<void>('POST', '/v1/auth/password/forgot', {
-      body: { email },
-      expectUnauthorized: true,
-    });
+  async forgotPassword(email: string): Promise<void> {
+    await http().POST('/v1/auth/password/forgot', { body: { email } });
   },
 
-  resetPassword(token: string, password: string): Promise<void> {
-    return apiRequest<void>('POST', '/v1/auth/password/reset', {
-      body: { token, password },
-      expectUnauthorized: true,
-    });
+  async resetPassword(token: string, password: string): Promise<void> {
+    await http().POST('/v1/auth/password/reset', { body: { token, password } });
   },
 
-  getInvitation(token: string, signal?: AbortSignal): Promise<InvitationInfo> {
-    return apiRequest<InvitationInfo>('GET', `/v1/auth/invitations/${encodeURIComponent(token)}`, {
-      expectUnauthorized: true,
+  async getInvitation(token: string, signal?: AbortSignal): Promise<InvitationInfo> {
+    const { data } = await http().GET('/v1/auth/invitations/{token}', {
+      params: { path: { token } },
       signal,
     });
+    return data as InvitationInfo;
   },
 
   async acceptInvitation(request: AcceptInvitationRequest): Promise<LoginResponse> {
-    const response = await apiRequest<LoginResponse>('POST', '/v1/auth/invitations/accept', {
-      body: request,
-      expectUnauthorized: true,
-    });
+    const { data } = await http().POST('/v1/auth/invitations/accept', { body: request });
+    const response = data as LoginResponse;
     if (response.csrf_token) setCsrfToken(response.csrf_token);
     return response;
   },
 
-  startMfaEnrolment(): Promise<MfaEnrolment> {
-    return apiRequest<MfaEnrolment>('POST', '/v1/auth/mfa/enrol', { body: {} });
+  async startMfaEnrolment(): Promise<MfaEnrolment> {
+    const { data } = await http().POST('/v1/auth/mfa/enrol');
+    return data as MfaEnrolment;
   },
 
   async confirmMfaEnrolment(code: string): Promise<MfaEnrolmentResult> {
-    const result = await apiRequest<MfaEnrolmentResult>('POST', '/v1/auth/mfa/enrol/confirm', {
-      body: { code },
-    });
-    // The session was rotated: later mutations must carry the new token.
-    if (result.csrf_token) setCsrfToken(result.csrf_token);
-    return result;
+    const { data } = await http().POST('/v1/auth/mfa/enrol/confirm', { body: { code } });
+    // Becoming MFA-verified may rotate the session: learn the current CSRF token before the
+    // next mutation (the contract returns only the recovery codes here).
+    await authApi.getMe();
+    return data as MfaEnrolmentResult;
   },
 
   async listSessions(signal?: AbortSignal): Promise<SessionInfo[]> {
-    const page = await apiRequest<{ data: SessionInfo[] }>('GET', '/v1/auth/sessions', { signal });
-    return page.data;
+    const { data } = await http().GET('/v1/auth/sessions', { signal });
+    return (data as { data: SessionInfo[] }).data;
   },
 
-  revokeSession(id: string): Promise<void> {
-    return apiRequest<void>('DELETE', `/v1/auth/sessions/${encodeURIComponent(id)}`);
+  async revokeSession(id: string): Promise<void> {
+    await http().DELETE('/v1/auth/sessions/{id}', { params: { path: { id } } });
   },
 };

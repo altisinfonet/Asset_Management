@@ -7,11 +7,13 @@ import {
   LogOut,
   Menu,
   Package,
+  Plus,
   ScanLine,
   Search,
   ShieldCheck,
   User,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -20,6 +22,8 @@ import { cn } from '@/lib/cn';
 import { useAuth } from '@/lib/auth/auth-context';
 import { hasAnyPermission } from '@/lib/auth/permissions';
 import { isAssetCode, pushRecent, readRecent, type RecentEntry } from '@/lib/recent-items';
+import { search } from '@/lib/registry/api';
+import { useDebounced } from '@/lib/use-debounced';
 import { routes } from '@/lib/routes';
 import { useTheme } from '@/lib/theme';
 import { Button, IconButton } from '@/components/ui/button';
@@ -70,6 +74,16 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const scanRef = useRef<HTMLInputElement>(null);
+  const canCreateAsset = auth.can('asset:create');
+  // Live search (GET /v1/search) while the palette is open, debounced so typing does not flood it.
+  const liveQuery = useDebounced(paletteSearch.trim(), 250);
+  const live = useQuery({
+    queryKey: ['palette-search', liveQuery],
+    queryFn: ({ signal }) => search(liveQuery, signal),
+    enabled: paletteOpen && liveQuery.length >= 2 && auth.can('search:read'),
+    staleTime: 10_000,
+    retry: false,
+  });
 
   // Role-aware navigation: hide what the signed-in user has no permission for.
   const permissions = auth.me?.permissions;
@@ -126,7 +140,12 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
     },
     [router, visibleItems],
   );
-  useShortcuts({ onHelp: openShortcuts, onGoTo: goTo });
+  const newAsset = useCallback(() => router.push(routes.assetNew), [router]);
+  useShortcuts({
+    onHelp: openShortcuts,
+    onGoTo: goTo,
+    onNewAsset: canCreateAsset ? newAsset : undefined,
+  });
 
   // `/` focuses the scan field unless the user is already typing somewhere.
   useEffect(() => {
@@ -207,6 +226,18 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
         id: 'actions',
         heading: t('palette.actions'),
         items: [
+          ...(canCreateAsset
+            ? [
+                {
+                  id: 'new-asset',
+                  label: t('palette.newAsset'),
+                  icon: Plus,
+                  shortcut: 'C',
+                  keywords: ['create', 'add'],
+                  onSelect: () => router.push(routes.assetNew),
+                },
+              ]
+            : []),
           {
             id: 'security',
             label: t('palette.security'),
@@ -244,6 +275,34 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
         ],
       },
     );
+    // Live results from the API: assets first, then models and categories (always shown: the server
+    // already matched them, the palette must not re-filter on a different field).
+    const results = live.data ?? [];
+    for (const [type, heading] of [
+      ['asset', t('palette.assets')],
+      ['model', t('palette.models')],
+      ['category', t('palette.categories')],
+    ] as const) {
+      const items = results
+        .filter((r) => r.type === type && liveQuery === code)
+        .map((r) => ({
+          id: `live-${r.type}-${r.id}`,
+          label: r.sublabel ? `${r.label} (${r.sublabel})` : r.label,
+          icon: type === 'asset' ? Package : undefined,
+          alwaysShow: true,
+          onSelect: () => {
+            if (type === 'asset') {
+              const tag = r.label.split(' ')[0] ?? '';
+              if (isAssetCode(tag)) pushRecent({ type: 'asset', code: tag });
+              router.push(routes.assetView(r.id));
+            } else
+              router.push(
+                type === 'model' ? routes.settings('models') : routes.settings('categories'),
+              );
+          },
+        }));
+      if (items.length > 0) list.push({ id: `live-${type}`, heading, items });
+    }
     // Tag quick-jump: whatever tag-like text is typed can be opened directly. It comes last so
     // Enter prefers a real match (typing "settings" must not open an asset called settings).
     if (code && isAssetCode(code)) {
@@ -272,6 +331,9 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
     openAssetByCode,
     openShortcuts,
     onSignOut,
+    live.data,
+    liveQuery,
+    canCreateAsset,
   ]);
 
   const onScanSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -459,6 +521,12 @@ export function breadcrumbTrail(pathname: string, t: ReturnType<typeof useT>): C
   if (pathname === '/assets/view') {
     return [{ label: t('nav.assets'), href: routes.assets }, { label: t('assetView.title') }];
   }
+  if (pathname === '/assets/new' || pathname === '/assets/edit') {
+    return [
+      { label: t('nav.assets'), href: routes.assets },
+      { label: t(pathname === '/assets/new' ? 'assetForm.newTitle' : 'assetForm.editTitle') },
+    ];
+  }
   if (pathname === '/account/security') {
     return [{ label: t('nav.account') }, { label: t('security.title') }];
   }
@@ -470,8 +538,11 @@ export function breadcrumbTrail(pathname: string, t: ReturnType<typeof useT>): C
         users: 'settings.sections.users',
         categories: 'settings.sections.categories',
         models: 'settings.sections.models',
+        manufacturers: 'settings.sections.manufacturers',
         fields: 'settings.sections.fields',
         status: 'settings.sections.status',
+        tags: 'settings.sections.tags',
+        vendors: 'settings.sections.vendors',
       } as const
     )[section as 'organisation'];
     return [

@@ -1,4 +1,4 @@
-import { expect, gotoApp, test } from './fixtures';
+import { expect, gotoApp, settled, test } from './fixtures';
 
 test.describe('theme', () => {
   test('follows the OS and a manual override survives a reload without a flash', async ({
@@ -51,34 +51,45 @@ test.describe('navigation shell', () => {
     await expect(page.getByPlaceholder('Scan or type tag')).toBeFocused();
     await page.keyboard.type('AT-00124');
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('asset-code')).toHaveText('AT-00124');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
   });
 
   test('assets row click opens the 480px drawer; Enter on a row opens the full page', async ({
     page,
   }) => {
     await page.goto('/assets');
-    await page.getByRole('row', { name: /AT-00123/ }).click();
+    await page.getByRole('row', { name: /PRJ-00010/ }).click();
     const drawer = page.getByRole('dialog');
     await expect(drawer).toBeVisible();
     expect((await drawer.boundingBox())?.width).toBeCloseTo(480, 0);
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
 
-    await page.getByRole('row', { name: /AT-00125/ }).focus();
+    await page.getByRole('row', { name: /PRJ-00009/ }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('asset-id')).toBeVisible();
+    await expect(page.getByTestId('asset-tag')).toHaveText('PRJ-00009');
   });
 });
 
 test.describe('responsive layout (375, 768, 1440)', () => {
   for (const width of [375, 768, 1440]) {
-    for (const url of ['/', '/assets', '/settings/users', '/account/security']) {
+    for (const url of [
+      '/',
+      '/assets',
+      '/assets/new',
+      '/settings/users',
+      '/settings/categories',
+      '/settings/fields',
+      '/settings/models',
+      '/settings/status',
+      '/account/security',
+    ]) {
       test(`${url} has no horizontal page scroll at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(url);
         await page.waitForLoadState('networkidle');
         await expect(page.locator('main')).toBeVisible();
+        if (url !== '/') await settled(page);
         const overflow = await page.evaluate(
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
         );

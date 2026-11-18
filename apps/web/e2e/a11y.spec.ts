@@ -1,5 +1,5 @@
 import { violations } from './axe';
-import { expect, test } from './fixtures';
+import { assetId, expect, settled, test } from './fixtures';
 
 /**
  * Automated WCAG 2.2 AA checks (axe-core) in a real browser, including colour contrast, for the
@@ -9,7 +9,8 @@ import { expect, test } from './fixtures';
 const APP_PAGES = [
   '/',
   '/assets',
-  '/assets/view?id=0190a6b2-7c3e-7a10-9d2f-4f5e6a7b8c9d',
+  `/assets/view?id=${assetId(124)}`,
+  `/assets/view?id=${assetId(124)}&tab=history`,
   '/settings/categories',
 ];
 const PUBLIC_PAGES = ['/login', '/ui'];
@@ -19,8 +20,9 @@ for (const scheme of ['light', 'dark'] as const) {
     test(`axe: ${url} (${scheme})`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto(url);
-      await page.waitForLoadState('networkidle');
       await expect(page.locator('main')).toBeVisible();
+      // the dashboard's counters are permanent placeholders until the registry reports on it
+      if (url !== '/') await settled(page);
       expect(await violations(page)).toEqual([]);
     });
   }
@@ -39,8 +41,9 @@ for (const scheme of ['light', 'dark'] as const) {
 
 test('axe: assets drawer and command palette are accessible when open', async ({ page }) => {
   await page.goto('/assets');
-  await page.getByRole('row', { name: /AT-00123/ }).click();
+  await page.getByRole('row', { name: /PRJ-00010/ }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await settled(page);
   expect(await violations(page)).toEqual([]);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+k');

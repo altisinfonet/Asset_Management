@@ -163,7 +163,9 @@ export function SecurityScreen() {
                           <Button
                             size="sm"
                             loading={revoking === session.id}
-                            aria-label={t('security.revokeLabel', { device: session.user_agent })}
+                            aria-label={t('security.revokeLabel', {
+                              device: session.user_agent ?? session.ip ?? '',
+                            })}
                             onClick={() => void revoke(session)}
                           >
                             {t('security.revoke')}

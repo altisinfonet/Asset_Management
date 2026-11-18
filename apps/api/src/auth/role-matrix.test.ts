@@ -44,7 +44,7 @@ describe('contract coverage', () => {
     expect(anySignedIn.map((o) => o.operationId).sort()).toEqual(['getMe', 'logout']);
   });
 
-  it('the public operations are exactly the unauthenticated auth endpoints', () => {
+  it('the public operations are exactly the unauthenticated auth endpoints and the health/version probes', () => {
     expect(
       operations
         .filter((o) => o.public)
@@ -54,8 +54,10 @@ describe('contract coverage', () => {
       [
         'acceptInvitation',
         'forgotPassword',
+        'getHealth',
         'getInvitation',
         'getPasswordPolicy',
+        'getVersion',
         'login',
         'resetPassword',
         'verifyMfa',

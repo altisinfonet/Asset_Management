@@ -427,9 +427,6 @@ importers:
 
   packages/api-client:
     dependencies:
-      '@assettracker/schemas':
-        specifier: workspace:*
-        version: link:../schemas
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0

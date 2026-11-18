@@ -17,8 +17,8 @@ import type {
  * bodies and responses are checked against docs/engineering/openapi.yaml, and the client adds the
  * CSRF header, an idempotency key and turns failures into `ApiError`s.
  *
- * `confirmMfaEnrolment` returns only the recovery codes (the contract); the session may rotate
- * when enrolment completes, so the CSRF token is re-read from `GET /v1/auth/me` right after.
+ * `confirmMfaEnrolment` rotates the session: the response carries the new `csrf_token`, stored here
+ * before the next mutation.
  */
 const http = () => getApi().http;
 
@@ -82,10 +82,10 @@ export const authApi = {
 
   async confirmMfaEnrolment(code: string): Promise<MfaEnrolmentResult> {
     const { data } = await http().POST('/v1/auth/mfa/enrol/confirm', { body: { code } });
-    // Becoming MFA-verified may rotate the session: learn the current CSRF token before the
-    // next mutation (the contract returns only the recovery codes here).
-    await authApi.getMe();
-    return data as MfaEnrolmentResult;
+    const result = data as MfaEnrolmentResult;
+    // Becoming MFA-verified rotates the session; the old CSRF token is dead.
+    setCsrfToken(result.csrf_token);
+    return result;
   },
 
   async listSessions(signal?: AbortSignal): Promise<SessionInfo[]> {

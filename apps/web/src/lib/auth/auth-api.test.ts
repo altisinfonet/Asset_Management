@@ -152,7 +152,8 @@ describe('auth API against the mock contract', () => {
     await authApi.startMfaEnrolment();
     const done = await authApi.confirmMfaEnrolment(MOCK_TOTP_CODE);
     expect(done.recovery_codes).toHaveLength(10);
-    // The contract returns only the codes; the client re-read /me for the rotated CSRF token.
+    // The confirm response carries the rotated CSRF token, which the client stored.
+    expect(getCsrfToken()).toBe(done.csrf_token);
     expect(getCsrfToken()).toBeTruthy();
     expect(getCsrfToken()).not.toBe(login.csrf_token);
     await expect(authApi.revokeSession('sess-phone')).resolves.toBeUndefined();

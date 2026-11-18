@@ -361,8 +361,7 @@ export const handlers: HttpHandler[] = [
         state.session.csrf = rotatedCsrf;
       }
     });
-    // The contract returns only the codes; the client re-reads /me for the rotated CSRF token.
-    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES });
+    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES, csrf_token: rotatedCsrf });
   }),
 
   // ---- proposed: device list ---------------------------------------------------------------

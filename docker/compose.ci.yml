@@ -1,0 +1,22 @@
+# CI / smoke override (M1-CI-04). Use WITH the main file:
+#   docker compose -f docker-compose.yml -f docker/compose.ci.yml -p <project> up -d
+# The api image is built ONCE (docker build -f apps/api/Dockerfile --target runtime -t $API_IMAGE .)
+# and shared by migrate, api, worker and scheduler, so compose never builds anything here.
+# Requires Docker Compose >= 2.24 (`!reset`).
+services:
+  migrate:
+    image: ${API_IMAGE:-assettracker-api:ci}
+    pull_policy: never
+    build: !reset null
+  api:
+    image: ${API_IMAGE:-assettracker-api:ci}
+    pull_policy: never
+    build: !reset null
+  worker:
+    image: ${API_IMAGE:-assettracker-api:ci}
+    pull_policy: never
+    build: !reset null
+  scheduler:
+    image: ${API_IMAGE:-assettracker-api:ci}
+    pull_policy: never
+    build: !reset null

@@ -1,0 +1,91 @@
+# Nightly performance budget job (M1-CI-05). Budgets: scripts/ci/perf-budgets.json (documented in
+# docs/engineering/ci.md). Not a required check on PRs; a red nightly run is a defect to triage next morning.
+# The asset-list / search / tag-lookup budgets are SKIPPED until the registry endpoints exist (they are
+# only enforced when the repository variable PERF_REQUIRE_REGISTRY is '1').
+name: Performance
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds of load per endpoint
+        default: '10'
+      connections:
+        description: Concurrent connections
+        default: '10'
+
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  API_IMAGE: assettracker-api:ci
+  COMPOSE_PROJECT: ci-perf
+
+jobs:
+  perf:
+    name: Performance budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/setup-buildx-action@v3
+      - name: Build api image (runtime target)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runtime
+          load: true
+          push: false
+          tags: ${{ env.API_IMAGE }}
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Brings the whole stack up (demo seed on), waits for /readyz and leaves it running.
+      - name: Start the Compose stack
+        env:
+          BUILD_IMAGE: '0'
+          KEEP_STACK: '1'
+        run: scripts/ci/compose-smoke.sh
+
+      # M1-CI-05 seeds 2 x 50,000 assets. The seeder arrives with the registry (M1-REG-07/08): until
+      # scripts/ci/perf-seed.sh exists the job measures the demo seed only and the registry budgets skip.
+      - name: Seed 2 x 50,000 assets (when the seeder exists)
+        run: |
+          if [ -x scripts/ci/perf-seed.sh ]; then
+            scripts/ci/perf-seed.sh
+          else
+            echo "scripts/ci/perf-seed.sh not present yet: registry budgets are skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Measure budgets
+        env:
+          PERF_BASE_URL: http://127.0.0.1:3000
+          PERF_DURATION: ${{ inputs.duration || '10' }}
+          PERF_CONNECTIONS: ${{ inputs.connections || '10' }}
+          PERF_REQUIRE_REGISTRY: ${{ vars.PERF_REQUIRE_REGISTRY || '0' }}
+          PERF_OUT: perf-results.json
+        run: node scripts/ci/perf-check.mjs
+
+      # The trend is the series of these artifacts (one JSON per night, 90 days) plus the job summary table.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: perf-results.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" down -v --remove-orphans

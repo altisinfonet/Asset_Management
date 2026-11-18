@@ -1,0 +1,41 @@
+{
+  "$comment": "Performance budgets (docs/05_backlog.md section 9.3, M1-CI-05; docs/engineering/ci.md). p95 server-side latency in ms under PERF_CONNECTIONS concurrent connections. `requires: registry` entries are SKIPPED (not failed) while the route answers 404/405 or the seeded data is missing, unless PERF_REQUIRE_REGISTRY=1 (set it once M1-REG-07/08 have landed). `health` is a proposed budget of this repo (not in the backlog): the liveness-plus-DB-round-trip endpoint through PgBouncer.",
+  "endpoints": [
+    {
+      "name": "health",
+      "description": "GET /v1/health (API + PgBouncer + Postgres round trip, no auth)",
+      "path": "/v1/health",
+      "auth": false,
+      "p95Ms": 100,
+      "maxErrorRate": 0,
+      "requires": null
+    },
+    {
+      "name": "asset-list",
+      "description": "GET /v1/assets, first page of the registry list (M1-REG-07; backlog budget: p95 < 500 ms on 2 x 50,000 assets)",
+      "path": "/v1/assets?limit=50",
+      "auth": true,
+      "p95Ms": 500,
+      "maxErrorRate": 0,
+      "requires": "registry"
+    },
+    {
+      "name": "asset-search",
+      "description": "GET /v1/assets?q=<tag or name of a seeded asset> (trigram search; backlog budget: p95 < 200 ms)",
+      "path": "/v1/assets?limit=25&q={{searchTerm}}",
+      "auth": true,
+      "p95Ms": 200,
+      "maxErrorRate": 0,
+      "requires": "registry"
+    },
+    {
+      "name": "tag-lookup",
+      "description": "GET /v1/assets?tag=<exact tag> (barcode scan path; backlog budget: p95 < 150 ms)",
+      "path": "/v1/assets?tag={{assetTag}}",
+      "auth": true,
+      "p95Ms": 150,
+      "maxErrorRate": 0,
+      "requires": "registry"
+    }
+  ]
+}

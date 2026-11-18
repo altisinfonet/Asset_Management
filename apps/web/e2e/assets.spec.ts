@@ -353,7 +353,8 @@ test.describe('create, edit and clone (M1-WEB-08)', () => {
     await page.getByLabel('Purchase date').fill('2026-11-01');
     await page.getByLabel('Serial number').fill('TAB-ONE');
     await page.getByRole('button', { name: 'Save and add another' }).click();
-    await expect(page.getByText(/Created TAB-00021/)).toBeVisible();
+    // the toast text is mirrored into a live region for screen readers: take the visible toast
+    await expect(page.getByText('Created TAB-00021.', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Serial number')).toHaveValue('');
     await expect(page.getByLabel('Serial number')).toBeFocused();
     await expect(page.getByLabel('Purchase date')).toHaveValue('2026-11-01');

@@ -117,9 +117,9 @@ dependency-free (Node 22+, global `fetch`): `PERF_CONNECTIONS` (default 10) conc
 | Endpoint                          | Budget (p95, server side)  | Source                         | State today                                                             |
 | --------------------------------- | -------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
 | `GET /v1/health`                  | < 100 ms                   | proposed by this repo          | enforced                                                                |
-| `GET /v1/assets` (list)           | < 500 ms                   | backlog 9.3, plan P9           | enforced (2 x 50,000 assets); p95 68 ms measured locally on 2026-11-18  |
-| `GET /v1/assets?q=` (search)      | < 200 ms                   | backlog 9.3                    | enforced; p95 94 ms measured locally                                    |
-| `GET /v1/assets?tag=` (tag lookup)| < 150 ms                   | backlog 9.3                    | enforced; p95 47 ms measured locally                                    |
+| `GET /v1/assets` (list)           | < 500 ms                   | backlog 9.3, plan P9           | enforced (2 x 50,000 assets); p95 61 ms measured locally on 2026-11-18  |
+| `GET /v1/assets?q=` (search)      | < 200 ms                   | backlog 9.3                    | enforced; p95 89 ms measured locally                                    |
+| `GET /v1/assets?tag=` (tag lookup)| < 150 ms                   | backlog 9.3                    | enforced; p95 56 ms measured locally                                    |
 
 Later budgets from the backlog (check-out < 300 ms, import throughput and dry run) are added by M2-OPS-01.
 The backlog measures on **two tenants of 50,000 assets each**: `scripts/ci/perf-seed.sh` inserts them (one

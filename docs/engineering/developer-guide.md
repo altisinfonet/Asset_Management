@@ -153,7 +153,14 @@ tests in 13 files and takes roughly 15 seconds per mode.
 - The isolation suite is a **gate for everything after M1-TEN**: do not weaken or skip a case to get a
   change through. If the negative control stops failing the way it should, the harness has gone blind.
 - Web: `pnpm --filter @assettracker/web test` (unit) and `pnpm --filter @assettracker/web test:e2e`
-  (Playwright against the static export; needs `playwright install chromium` once).
+  (Playwright against the mock-API static export; needs `playwright install chromium` once).
+- Web against the **real stack** (M1-WEB-11): `docker compose up -d --build`, `pnpm --filter @assettracker/web build`,
+  then `pnpm --filter @assettracker/web test:e2e:real` (Playwright project `real`, `apps/web/e2e-real`). It serves
+  `out/` with `/v1` proxied to the API, signs in as `owner@acme.example` (password + TOTP computed from the demo
+  secret, see `support.ts`) and reads invitation mail from Mailpit. Names carry a per-run suffix, so it can run again
+  on the same database; a rerun inside the same 30 s TOTP step waits for the next step (replay protection).
+- Performance: `scripts/ci/perf-seed.sh` (2 x 50,000 assets in the demo tenants) then `scripts/ci/perf-check.mjs`
+  (see `docs/engineering/ci.md` section 4).
 
 ### Mailpit
 

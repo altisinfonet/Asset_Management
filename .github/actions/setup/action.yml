@@ -1,0 +1,49 @@
+name: Setup Node and pnpm
+description: >-
+  Node from .nvmrc, pnpm (version from the root package.json "packageManager" field, via corepack),
+  the pnpm store cached by lockfile hash, and `pnpm install --frozen-lockfile`.
+
+inputs:
+  filter:
+    description: 'Optional pnpm --filter selector (for example "@assettracker/api..."). Empty = whole workspace.'
+    required: false
+    default: ''
+  install:
+    description: 'Set to "false" to only set up the toolchain and cache (no install).'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+
+    - name: Enable pnpm (corepack, version pinned by packageManager)
+      shell: bash
+      run: corepack enable
+
+    - name: Get pnpm store path
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        PNPM_FILTER: ${{ inputs.filter }}
+      run: |
+        if [ -n "$PNPM_FILTER" ]; then
+          pnpm install --frozen-lockfile --filter "$PNPM_FILTER"
+        else
+          pnpm install --frozen-lockfile
+        fi

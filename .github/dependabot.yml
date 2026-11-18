@@ -1,0 +1,135 @@
+# Dependabot version updates (M1-CI-03). Security updates are separate and always on once the
+# repository has the dependency graph enabled (Settings > Advanced Security).
+#
+# Policy:
+#   - weekly, Monday morning, one grouped PR per theme instead of one PR per package;
+#   - minor and patch together per group, MAJOR versions always on their own PR (they need reading);
+#   - a 3-day cooldown so a freshly published (and possibly yanked or compromised) release is not
+#     proposed on day one; the repo also sets minimumReleaseAge in pnpm-workspace.yaml;
+#   - the repo pins EXACT versions (no ^ or ~), so every update is an explicit, reviewed diff.
+# PRs are labelled; review requests go to the CODEOWNERS (.github/CODEOWNERS).
+version: 2
+
+updates:
+  # pnpm workspace (root pnpm-lock.yaml covers apps/* and packages/*).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 8
+    cooldown:
+      default-days: 3
+    labels: [dependencies]
+    groups:
+      nestjs:
+        patterns: ['@nestjs/*', 'nestjs-*', 'rxjs', 'reflect-metadata']
+        update-types: [minor, patch]
+      fastify:
+        patterns: ['fastify', 'fastify-*', '@fastify/*']
+        update-types: [minor, patch]
+      database:
+        patterns: ['prisma', '@prisma/*', 'pg', 'pg-*', '@types/pg', 'pg-boss']
+        update-types: [minor, patch]
+      observability:
+        patterns: ['pino', 'pino-*', '@opentelemetry/*', 'prom-client']
+        update-types: [minor, patch]
+      web-framework:
+        patterns:
+          [
+            'next',
+            'react',
+            'react-dom',
+            '@types/react',
+            '@types/react-dom',
+            'eslint-config-next',
+            'tailwindcss',
+            '@tailwindcss/*',
+            'postcss',
+          ]
+        update-types: [minor, patch]
+      lint-format-typescript:
+        patterns:
+          [
+            'eslint',
+            '@eslint/*',
+            'eslint-*',
+            'typescript',
+            'typescript-eslint',
+            '@typescript-eslint/*',
+            'prettier',
+            'globals',
+            'turbo',
+          ]
+        update-types: [minor, patch]
+      testing:
+        patterns:
+          [
+            'vitest',
+            '@vitest/*',
+            '@playwright/*',
+            'playwright',
+            'playwright-*',
+            'msw',
+            'unplugin-swc',
+            '@swc/*',
+          ]
+        update-types: [minor, patch]
+      types:
+        patterns: ['@types/*']
+        update-types: [minor, patch]
+      minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # GitHub Actions used by the workflows and by the local composite action.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+    labels: [dependencies, ci]
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  # Dockerfiles: the node base image (apps/api uses ARG NODE_IMAGE=...@sha256:; Dependabot can miss an
+  # image that is only named in an ARG default. If it does, bump the digest by hand, see docs/engineering/ci.md).
+  - package-ecosystem: docker
+    directories:
+      - /apps/api
+      - /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+    labels: [dependencies, docker]
+    groups:
+      docker-base-images:
+        patterns: ['*']
+
+  # Images in docker-compose.yml and docker/compose.ci.yml (postgres, pgbouncer, mailpit, minio).
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '05:00'
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+    labels: [dependencies, docker]
+    groups:
+      compose-images:
+        patterns: ['*']

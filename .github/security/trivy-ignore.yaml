@@ -1,0 +1,45 @@
+# Trivy exceptions for the runtime image scan (M1-CI-03). Used via `trivy image --ignorefile`.
+# The scan already ignores unfixed vulnerabilities (--ignore-unfixed): only an entry for a vulnerability
+# that HAS a fixed version belongs here (for example while a base-image update is still in review).
+# Every entry needs `statement` (why it is acceptable) and `expired_at` (at most 90 days out); Trivy
+# stops honouring an entry after its date, so an expired exception fails the build again by itself.
+# Changes need CODEOWNERS review. See docs/engineering/ci.md.
+#
+# 2026-11-18: first scan of the runtime image (node:24-slim digest pinned in apps/api/Dockerfile).
+# Debian packages: 0 HIGH/CRITICAL. The six HIGH findings below are all inside the npm CLI that the
+# node base image bundles under /usr/local/lib/node_modules/npm (brace-expansion 5.0.9, undici 6.28.0).
+# The image never runs npm (ENTRYPOINT is `node dist/main.js`; the app's own dependencies are clean).
+# Permanent fix (apps/api/Dockerfile, owned by the api agent): remove npm/npx from the runtime stage
+#   RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# or bump NODE_IMAGE to a digest whose bundled npm has the fixed versions. Then delete these entries.
+vulnerabilities:
+  - id: CVE-2026-102276
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'brace-expansion inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18
+  - id: CVE-2026-102278
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'brace-expansion inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18
+  - id: CVE-2026-109383
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'undici inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18
+  - id: CVE-2026-109869
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'undici inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18
+  - id: CVE-2026-19534
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'undici inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18
+  - id: CVE-2026-87018
+    paths:
+      - 'usr/local/lib/node_modules/npm/**'
+    statement: 'undici inside the npm CLI bundled in the node base image; npm is never executed in the runtime image.'
+    expired_at: 2026-12-18

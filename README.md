@@ -131,7 +131,11 @@ each file in a transaction with `lock_timeout`/`statement_timeout`, history in
 
 ## CI
 
-`.github/workflows/ci.yml`: `check` (format, lint, typecheck, test, build, uploads the static
-export), `api-e2e` (Postgres 16 and 18 service containers plus PgBouncer in transaction mode with
-the repo config, roles script, migrate twice, schema lint, then the tenant-isolation suite as
-`app_user` direct and through PgBouncer with the negative control), and `docker-build`.
+`.github/workflows/ci.yml` (`check`, `api-e2e` on Postgres 16 and 18 direct and through PgBouncer,
+`image`, `compose-smoke`, `image-scan` with SBOM, `publish`, `ci-gate`), `security.yml` (dependency
+audit, gitleaks), `codeql.yml` and the nightly `perf.yml`. Required checks, security exceptions,
+performance budgets and what only GitHub can verify: [`docs/engineering/ci.md`](docs/engineering/ci.md).
+Developer reference (setup per OS, ports, e2e modes, troubleshooting):
+[`docs/engineering/developer-guide.md`](docs/engineering/developer-guide.md); threat model:
+[`docs/engineering/threat-model.md`](docs/engineering/threat-model.md); decisions:
+[`docs/adr/`](docs/adr/README.md).

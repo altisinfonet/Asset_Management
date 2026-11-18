@@ -1,0 +1,42 @@
+[
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+    "StartLine": 11,
+    "EndLine": 11,
+    "StartColumn": 8,
+    "EndColumn": 37,
+    "Match": "KEY = 'REDACTED'",
+    "Secret": "REDACTED",
+    "File": "apps/api/src/platform/idempotency.test.ts",
+    "SymlinkFile": "",
+    "Commit": "2873b00f550baf9a2e0fe7d5d0118dc0afa215f0",
+    "Entropy": 3.5503407,
+    "Author": "user6",
+    "Email": "altisdev1@gmail.com",
+    "Date": "2026-11-18T05:51:18Z",
+    "Message": "feat(api): platform conventions M1-PLAT-01/02 (problem+json, request id, zod pipe, cursor pagination, ETag/If-Match, Idempotency-Key, bulk, probes)\n\n- RFC 9457 problem+json for every error with stable codes and request_id; X-Request-Id reuse/mint, ambient request context -\u003e app.request_id\n- ZodValidationPipe (422 body / 400 query), keyset listPage with cursors bound to sort+filters\n- ETag/If-Match (428/412), Idempotency-Key claimed in the request transaction (replay, 422 reuse, 409 in-flight)\n- /healthz and /readyz (migration 0009 grants app_user SELECT(id) on the ledger)\n- ESLint module-boundary rules (facade only, kernel never imports domain); ADR 0003\n- unit and e2e tests (direct and through PgBouncer)\n\nCo-Authored-By: Claude Opus 5.5 \u003cnoreply@anthropic.com\u003e",
+    "Tags": [],
+    "Fingerprint": "2873b00f550baf9a2e0fe7d5d0118dc0afa215f0:apps/api/src/platform/idempotency.test.ts:generic-api-key:11"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+    "StartLine": 1164,
+    "EndLine": 1164,
+    "StartColumn": 57,
+    "EndColumn": 96,
+    "Match": "auth guide, REDACTED ",
+    "Secret": "REDACTED",
+    "File": "docs/05_backlog.md",
+    "SymlinkFile": "",
+    "Commit": "72b7903842fe7c7c958cb2ae4a46a4631d3bb007",
+    "Entropy": 3.7821221,
+    "Author": "user6",
+    "Email": "altisdev1@gmail.com",
+    "Date": "2026-11-17T12:45:19Z",
+    "Message": "chore: sprint 0 - monorepo scaffold, data model, API contract, design, backlog\n\n- Turborepo + pnpm monorepo: NestJS 12/Fastify 5 API (health, version,\n  withTenant transaction helper, SQL migration runner), Next.js 16\n  static-export web shell, shared schemas/api-client/ui-tokens packages\n- Docker Compose dev stack: Postgres 18, PgBouncer 1.26.1 (transaction\n  mode), Mailpit, MinIO; GitHub Actions CI with PG 16/18 matrix\n- docs/engineering: M1+M2 data model, PG18 schema with forced RLS\n  (NULLIF policy, partition grant rule), OpenAPI 3.1 contract\n- docs/design: design system, tokens, wireframes, HTML prototype\n- docs/05_backlog.md: milestones M1-M6 with stories and founder tasks\n- Plan/architecture updated for founder + AI team, milestones, and\n  self-hosted first; RLS/PgBouncer spike preserved under spikes/\n\nCo-Authored-By: Claude Opus 5.5 \u003cnoreply@anthropic.com\u003e",
+    "Tags": [],
+    "Fingerprint": "72b7903842fe7c7c958cb2ae4a46a4631d3bb007:docs/05_backlog.md:generic-api-key:1164"
+  }
+]

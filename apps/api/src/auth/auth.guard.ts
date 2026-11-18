@@ -105,7 +105,12 @@ export class AuthGuard implements CanActivate {
     }
 
     request.auth = auth;
-    request.principal = { tenantId: auth.tenantId, principalId: auth.principalId };
+    request.principal = {
+      tenantId: auth.tenantId,
+      principalId: auth.principalId,
+      // Audit rows record who acted: a person (cookie session) or an API key (bearer).
+      actorType: auth.method === 'api_key' ? 'api_key' : 'user',
+    };
     return true;
   }
 }

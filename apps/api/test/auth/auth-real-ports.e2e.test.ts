@@ -77,6 +77,44 @@ describe.skipIf(!dbEnabled)('auth with the platform ports', () => {
     expect(await queued('auth.password-reset')).toBe(before + 1);
   });
 
+  it('audits the actor type: a user session writes actor_type user, an API key writes api_key', async () => {
+    const email = `actor-${Date.now()}@${T.slug}.example`;
+    const byUser = await T.admin.post('/v1/users', {
+      email,
+      display_name: 'By user',
+      role_assignments: [{ role_id: T.roles.viewer }],
+    });
+    expect(byUser.status).toBe(201);
+
+    const key = await T.admin.post('/v1/api-keys', { name: 'actor', scopes: ['user:manage'] });
+    expect(key.status).toBe(201);
+    const byKey = await new Client(app).post(
+      `/v1/users/${byUser.body.id}/invitation/resend`,
+      {},
+      {
+        headers: { authorization: `Bearer ${key.body.secret}` },
+        cookie: false,
+        csrf: false,
+      },
+    );
+    expect(byKey.status, byKey.raw).toBe(204);
+
+    const rows = await ownerTenantSql(
+      T.tenantId,
+      `select action, actor_type, actor_user_id, actor_ref from app.audit_log
+        where entity_id = $1::uuid and action in ('user.created', 'invitation.resent')`,
+      [byUser.body.id],
+    );
+    const row = (action: string) => rows.rows.find((r) => r.action === action);
+    expect(row('user.created')).toMatchObject({ actor_type: 'user', actor_ref: null });
+    expect(row('user.created').actor_user_id).not.toBeNull();
+    expect(row('invitation.resent')).toMatchObject({
+      actor_type: 'api_key',
+      actor_user_id: null,
+      actor_ref: key.body.id,
+    });
+  });
+
   it('queues the mfa-enabled mail and stores the TOTP secret through the real SecretBox', async () => {
     const before = await queued('auth.mfa-enabled');
     const client = new Client(app);

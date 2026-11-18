@@ -1,10 +1,8 @@
 import {
   ApiError,
-  createApiClient,
   createTypedClient,
   ETagStore,
   ifMatch,
-  type ApiClient,
   type TypedClient,
 } from '@assettracker/api-client';
 import type { TranslationKey } from '@/i18n/messages/en';
@@ -108,8 +106,6 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
 }
 
 export interface WebApi {
-  /** Health / version probes (not part of the registry contract). */
-  client: ApiClient;
   /** The typed REST client generated from docs/engineering/openapi.yaml. */
   http: TypedClient;
   etags: ETagStore;
@@ -125,17 +121,7 @@ const EXPECTED_401 = /^\/v1\/auth\/(login|logout|me|mfa\/verify|password\/|invit
 
 export function createWebApi(fetchImpl?: typeof fetch): WebApi {
   const etags = new ETagStore();
-  const baseFetch = fetchImpl ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
-  const tracked: typeof fetch = async (input, init) => {
-    const response = await baseFetch(input, init);
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    etags.record(new URL(url, 'http://same-origin').pathname, response);
-    // An ended session (idle timeout, revoked) answers 401 anywhere; the auth provider reacts.
-    if (response.status === 401) reportUnauthorized();
-    return response;
-  };
   return {
-    client: createApiClient({ baseUrl: '', fetch: tracked }),
     http: createTypedClient({
       fetch: fetchImpl,
       etags,

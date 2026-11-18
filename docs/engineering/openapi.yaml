@@ -57,6 +57,8 @@ security:
 tags:
   - name: Auth
     description: Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.
+  - name: System
+    description: Liveness/health and build version; no credential needed.
   - name: Search
     description: Global search across registry entities, filtered by the caller's permissions.
   - name: Access
@@ -2509,7 +2511,7 @@ paths:
         - Auth
       operationId: confirmMfaEnrolment
       summary: Confirm TOTP enrolment
-      description: "Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
+      description: "Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. The session id is rotated (new cookie) and the response carries the new `csrf_token`. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
       x-self-service: true
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -2521,7 +2523,7 @@ paths:
               $ref: "#/components/schemas/MfaConfirmRequest"
       responses:
         "200":
-          description: Factor active; recovery codes.
+          description: Factor active; recovery codes and the new CSRF token.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -2534,7 +2536,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MfaRecoveryCodes"
+                $ref: "#/components/schemas/MfaEnrolmentConfirmed"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4149,6 +4151,35 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/health:
+    get:
+      tags:
+        - System
+      operationId: getHealth
+      summary: Health with a database round trip
+      security: []
+      description: Liveness plus a database round trip (through PgBouncer when so configured). No credential needed. `503` with the same body shape when the database does not answer.
+      responses:
+        "200":
+          description: Healthy.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: "Degraded: the database check failed (same body)."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
   /v1/imports:
     get:
       tags:
@@ -7817,6 +7848,26 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/version:
+    get:
+      tags:
+        - System
+      operationId: getVersion
+      summary: Build version
+      security: []
+      description: Name, version, commit and process role of the running build. No credential needed.
+      responses:
+        "200":
+          description: The build.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     sessionCookie:
@@ -8259,6 +8310,64 @@ components:
           readOnly: true
           description: A sample tag produced by the template (counter 42).
       additionalProperties: false
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+        checks:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - ok
+                    - error
+                latencyMs:
+                  type: number
+                  minimum: 0
+                  description: Round trip of the database probe (only when `ok`).
+                error:
+                  type: string
+                  description: Why the probe failed (only when `error`).
+              required:
+                - status
+          required:
+            - db
+        uptimeSeconds:
+          type: number
+          minimum: 0
+      required:
+        - status
+        - checks
+        - uptimeSeconds
+      description: Health of the API process and its database. `200` when `ok`, `503` (same shape) when `degraded`.
+    VersionResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Package name of the API build.
+        version:
+          type: string
+          description: Semantic version of the build.
+        commit:
+          type: string
+          description: Git commit the image was built from (`dev` for local runs).
+        role:
+          type: string
+          description: "Process role: `api`, `worker`, `scheduler` or `migrate`."
+      required:
+        - name
+        - version
+        - commit
+        - role
     Problem:
       type: object
       properties:
@@ -11241,6 +11350,20 @@ components:
             - string
             - "null"
           format: uuid
+        actor:
+          oneOf:
+            - type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                display_name:
+                  type: string
+              required:
+                - id
+                - display_name
+            - type: "null"
+          description: Who did it, resolved for display; null for system events or when the user no longer exists.
         assignment_id:
           type:
             - string
@@ -12454,6 +12577,22 @@ components:
           description: Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.
       required:
         - recovery_codes
+    MfaEnrolmentConfirmed:
+      type: object
+      properties:
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          minItems: 10
+          maxItems: 10
+          description: Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.
+        csrf_token:
+          type: string
+          description: "The session is rotated on activation, so the CSRF token changes: store this one and send it as `X-CSRF-Token` on the next cookie-authenticated mutation."
+      required:
+        - recovery_codes
+        - csrf_token
     ReauthRequest:
       type: object
       description: Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.

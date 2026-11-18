@@ -16,6 +16,6 @@ export type Me = Schemas['Me'];
 export type InvitationInfo = Schemas['InvitationInfo'];
 export type AcceptInvitationRequest = Schemas['AcceptInvitationRequest'];
 export type MfaEnrolment = Schemas['MfaEnrolment'];
-/** Ten single-use recovery codes, shown exactly once. */
-export type MfaEnrolmentResult = Schemas['MfaRecoveryCodes'];
+/** Ten single-use recovery codes, shown exactly once, and the rotated CSRF token. */
+export type MfaEnrolmentResult = Schemas['MfaEnrolmentConfirmed'];
 export type SessionInfo = Schemas['SessionInfo'];

@@ -95,6 +95,7 @@ const C = doc.components;
 
 const tagDefs = {
   Auth: 'Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.',
+  System: 'Liveness/health and build version; no credential needed.',
   Search: 'Global search across registry entities, filtered by the caller\'s permissions.',
   Access: 'Users, roles, companies and API keys.',
   Assets: 'The asset registry: CRUD, search, scan resolution and history.',
@@ -261,6 +262,23 @@ S_.AssetTagTemplate = obj({
   use_category_prefix: bool({ default: true }),
   example: str({ readOnly: true, description: 'A sample tag produced by the template (counter 42).' }),
 }, [], { additionalProperties: false });
+S_.HealthResponse = obj({
+  status: en(['ok', 'degraded']),
+  checks: obj({
+    db: obj({
+      status: en(['ok', 'error']),
+      latencyMs: { type: 'number', minimum: 0, description: 'Round trip of the database probe (only when `ok`).' },
+      error: str({ description: 'Why the probe failed (only when `error`).' }),
+    }, ['status']),
+  }, ['db']),
+  uptimeSeconds: { type: 'number', minimum: 0 },
+}, ['status', 'checks', 'uptimeSeconds'], { description: 'Health of the API process and its database. `200` when `ok`, `503` (same shape) when `degraded`.' });
+S_.VersionResponse = obj({
+  name: str({ description: 'Package name of the API build.' }),
+  version: str({ description: 'Semantic version of the build.' }),
+  commit: str({ description: 'Git commit the image was built from (`dev` for local runs).' }),
+  role: str({ description: 'Process role: `api`, `worker`, `scheduler` or `migrate`.' }),
+}, ['name', 'version', 'commit', 'role']);
 S_.Problem = obj({
   type: str({ format: 'uri-reference', description: 'Problem type URI.' }),
   title: str(),
@@ -599,6 +617,7 @@ S_.HistoryEvent = obj({
   event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']),
   actor_type: en(['user', 'api_key', 'integration', 'system']),
   actor_id: nuuid(),
+  actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display; null for system events or when the user no longer exists.' },
   assignment_id: nuuid(),
   transfer_id: nuuid(),
   summary: nstr(),
@@ -865,9 +884,12 @@ S_.MfaEnrolment = obj({
   provisioning_uri: str({ description: '`otpauth://totp/...` URI that the QR code encodes.' }),
 }, ['secret', 'provisioning_uri'], { description: 'A pending (not yet active) TOTP factor. It becomes active only after `POST /v1/auth/mfa/enrol/confirm`. Calling enrol again before confirming replaces the pending secret.' });
 S_.MfaConfirmRequest = obj({ code: str({ pattern: '^[0-9 ]{6,8}$', description: 'Current 6-digit TOTP code (spaces ignored).' }) }, ['code'], { additionalProperties: false });
-S_.MfaRecoveryCodes = obj({
-  recovery_codes: arr(str(), { minItems: 10, maxItems: 10, description: 'Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.' }),
-}, ['recovery_codes']);
+const RECOVERY_CODES = arr(str(), { minItems: 10, maxItems: 10, description: 'Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.' });
+S_.MfaRecoveryCodes = obj({ recovery_codes: RECOVERY_CODES }, ['recovery_codes']);
+S_.MfaEnrolmentConfirmed = obj({
+  recovery_codes: RECOVERY_CODES,
+  csrf_token: str({ description: 'The session is rotated on activation, so the CSRF token changes: store this one and send it as `X-CSRF-Token` on the next cookie-authenticated mutation.' }),
+}, ['recovery_codes', 'csrf_token']);
 S_.ReauthRequest = {
   type: 'object',
   description: 'Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.',
@@ -1119,10 +1141,10 @@ addOp('/v1/auth/mfa/enrol', 'post', {
 });
 addOp('/v1/auth/mfa/enrol/confirm', 'post', {
   tag: 'Auth', id: 'confirmMfaEnrolment', summary: 'Confirm TOTP enrolment', selfService: true, idem: 'none', hasId: false,
-  description: 'Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled.' + SECRET_NOTE,
+  description: 'Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. The session id is rotated (new cookie) and the response carries the new `csrf_token`. Works on a limited session. Attempts are throttled.' + SECRET_NOTE,
   body: jsonBody(S('MfaConfirmRequest')),
   problems: { 403: SELF_403, 409: { codes: ['conflict', 'mfa-already-enrolled'], text: 'No enrolment is pending (call enrol first) or a factor is already active.' }, 422: { codes: ['mfa-invalid-code', 'validation'], text: 'The code does not match. `errors[]` pointer `/code`.' }, 429: THROTTLED },
-  success: { 200: okResp(200, 'Factor active; recovery codes.', S('MfaRecoveryCodes'), { replay: false }) },
+  success: { 200: okResp(200, 'Factor active; recovery codes and the new CSRF token.', S('MfaEnrolmentConfirmed'), { replay: false }) },
 });
 addOp('/v1/auth/mfa/recovery-codes/regenerate', 'post', {
   tag: 'Auth', id: 'regenerateRecoveryCodes', summary: 'Regenerate recovery codes', selfService: true, idem: 'none', hasId: false,
@@ -1342,6 +1364,22 @@ addOp('/v1/assets/{id}/restore', 'post', {
   tag: 'Assets', id: 'restoreAsset', summary: 'Restore an archived asset', perm: 'asset:delete', params: [ID], ifMatch: true,
   success: { 200: okResp(200, 'Restored asset.', S('Asset'), { etag: true }) },
 });
+// Public probes (no credential, not rate limited). `/healthz` and `/readyz` are the unversioned orchestrator probes and stay out of the contract.
+const probeOk = (description, schema) => ({ description, headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S(schema) } } });
+doc.paths['/v1/health'] = { get: {
+  tags: ['System'], operationId: 'getHealth', summary: 'Health with a database round trip', security: [],
+  description: 'Liveness plus a database round trip (through PgBouncer when so configured). No credential needed. `503` with the same body shape when the database does not answer.',
+  responses: {
+    200: probeOk('Healthy.', 'HealthResponse'),
+    429: R('TooManyRequests'),
+    503: { description: 'Degraded: the database check failed (same body).', headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('HealthResponse') } } },
+  },
+} };
+doc.paths['/v1/version'] = { get: {
+  tags: ['System'], operationId: 'getVersion', summary: 'Build version', security: [],
+  description: 'Name, version, commit and process role of the running build. No credential needed.',
+  responses: { 200: probeOk('The build.', 'VersionResponse'), 429: R('TooManyRequests') },
+} };
 addOp('/v1/assets/{id}/clone', 'post', {
   tag: 'Assets', id: 'cloneAsset', summary: 'Clone an asset', perm: 'asset:create', params: [ID],
   description: 'Creates `count` copies of the asset with fresh tags (the numbering template, or the explicit `asset_tags`) and a cleared serial. `copy_fields` chooses what is copied (default: all of `name`, `model_id`, `status_id`, `vendor_id`, `location_id`, `parent_asset_id`, `purchase_date`, `purchase_cost`, `order_number`, `warranty_end`, `notes`, `custom_data`). All or nothing: one transaction, one audit record and outbox event per copy.\n\nAdded by M1-REG-09 (not part of the first contract draft).',

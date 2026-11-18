@@ -712,7 +712,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm TOTP enrolment
-         * @description Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted.
+         * @description Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. The session id is rotated (new cookie) and the response carries the new `csrf_token`. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted.
          */
         post: operations["confirmMfaEnrolment"];
         delete?: never;
@@ -1079,6 +1079,26 @@ export interface paths {
          * @description Requires permission `catalog:manage`.
          */
         patch: operations["updateCustomFieldDef"];
+        trace?: never;
+    };
+    "/v1/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health with a database round trip
+         * @description Liveness plus a database round trip (through PgBouncer when so configured). No credential needed. `503` with the same body shape when the database does not answer.
+         */
+        get: operations["getHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/imports": {
@@ -2111,6 +2131,26 @@ export interface paths {
         patch: operations["updateVendor"];
         trace?: never;
     };
+    "/v1/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Build version
+         * @description Name, version, commit and process role of the running build. No credential needed.
+         */
+        get: operations["getVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2170,6 +2210,32 @@ export interface components {
             use_category_prefix?: boolean;
             /** @description A sample tag produced by the template (counter 42). */
             readonly example?: string;
+        };
+        /** @description Health of the API process and its database. `200` when `ok`, `503` (same shape) when `degraded`. */
+        HealthResponse: {
+            /** @enum {string} */
+            status: "ok" | "degraded";
+            checks: {
+                db: {
+                    /** @enum {string} */
+                    status: "ok" | "error";
+                    /** @description Round trip of the database probe (only when `ok`). */
+                    latencyMs?: number;
+                    /** @description Why the probe failed (only when `error`). */
+                    error?: string;
+                };
+            };
+            uptimeSeconds: number;
+        };
+        VersionResponse: {
+            /** @description Package name of the API build. */
+            name: string;
+            /** @description Semantic version of the build. */
+            version: string;
+            /** @description Git commit the image was built from (`dev` for local runs). */
+            commit: string;
+            /** @description Process role: `api`, `worker`, `scheduler` or `migrate`. */
+            role: string;
         };
         /** @description RFC 9457 problem details. */
         Problem: {
@@ -3465,6 +3531,12 @@ export interface components {
             actor_type: "user" | "api_key" | "integration" | "system";
             /** Format: uuid */
             actor_id?: string | null;
+            /** @description Who did it, resolved for display; null for system events or when the user no longer exists. */
+            actor?: {
+                /** Format: uuid */
+                id: string;
+                display_name: string;
+            } | null;
             /** Format: uuid */
             assignment_id?: string | null;
             /** Format: uuid */
@@ -3987,6 +4059,12 @@ export interface components {
         MfaRecoveryCodes: {
             /** @description Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated. */
             recovery_codes: string[];
+        };
+        MfaEnrolmentConfirmed: {
+            /** @description Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated. */
+            recovery_codes: string[];
+            /** @description The session is rotated on activation, so the CSRF token changes: store this one and send it as `X-CSRF-Token` on the next cookie-authenticated mutation. */
+            csrf_token: string;
         };
         /** @description Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout. */
         ReauthRequest: {
@@ -6278,7 +6356,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Factor active; recovery codes. */
+            /** @description Factor active; recovery codes and the new CSRF token. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -6288,7 +6366,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MfaRecoveryCodes"];
+                    "application/json": components["schemas"]["MfaEnrolmentConfirmed"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -7740,6 +7818,38 @@ export interface operations {
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Healthy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            /** @description Degraded: the database check failed (same body). */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
         };
     };
     listImports: {
@@ -10638,6 +10748,28 @@ export interface operations {
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The build. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionResponse"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };

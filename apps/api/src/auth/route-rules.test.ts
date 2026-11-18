@@ -71,13 +71,9 @@ describe('route access rules', async () => {
     for (const r of extra) {
       expect(r.rule, `${r.method} ${r.path}`).toEqual({ kind: 'public' });
     }
-    expect(extra.map((r) => r.path).sort()).toEqual([
-      '/healthz',
-      '/readyz',
-      '/v1/health',
-      '/v1/openapi.json',
-      '/v1/version',
-    ]);
+    // /v1/health and /v1/version are in the contract (System tag); only the orchestrator probes
+    // and the contract document itself are outside it.
+    expect(extra.map((r) => r.path).sort()).toEqual(['/healthz', '/readyz', '/v1/openapi.json']);
   });
 
   it('implements every Auth and Access operation of the contract', () => {

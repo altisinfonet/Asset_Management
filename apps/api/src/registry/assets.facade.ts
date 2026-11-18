@@ -13,7 +13,6 @@ import {
   decodeCursor,
   encodeCursor,
   parseFields,
-  parseSort,
   problem,
   runBulk,
 } from '../platform/index.js';
@@ -29,6 +28,7 @@ import {
   ASSET_FIELDS,
   type AssetDto,
   type AssetRow,
+  assertCursorValues,
   assetCountSql,
   assetDto,
   assetListSql,
@@ -162,6 +162,7 @@ export class AssetsFacade extends RegistryBase {
     };
     const binding = bindingFor(terms, filters);
     const values = q.cursor ? decodeCursor(q.cursor, sortTerms, binding) : undefined;
+    if (values) assertCursorValues(terms, values);
 
     return this.tx(auth, async (trx) => {
       const cf = await this.customFieldFilters(trx, cfRaw);

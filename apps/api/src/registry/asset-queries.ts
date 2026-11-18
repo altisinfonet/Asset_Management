@@ -212,6 +212,32 @@ export function orderBySql(terms: SortTerm[]): Prisma.Sql {
   );
 }
 
+const CURSOR_SHAPE: Record<string, RegExp> = {
+  timestamptz: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00$/,
+  date: /^\d{4}-\d{2}-\d{2}$/,
+  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  text: /^[\s\S]{0,300}$/,
+};
+
+/**
+ * A cursor is not signed (tenant isolation never depends on it), so a client can forge one that
+ * carries the right sort/filter binding but a value PostgreSQL cannot cast: reject it as an invalid
+ * cursor (400) instead of letting the cast fail as a 500.
+ */
+export function assertCursorValues(terms: SortTerm[], values: Array<string | number | Date>): void {
+  terms.forEach((term, i) => {
+    const shape = CURSOR_SHAPE[sortSpecFor(term.key).cast]!;
+    const v = values[i];
+    if (typeof v !== 'string' || !shape.test(v)) {
+      throw new ApiProblem({
+        code: 'invalid-cursor',
+        detail: 'The cursor is not valid for this list. Start again without a cursor.',
+        errors: [{ pointer: 'query:cursor', message: 'invalid cursor', code: 'invalid_cursor' }],
+      });
+    }
+  });
+}
+
 /** Keyset condition "strictly after the cursor row" over the sort terms, as SQL. */
 export function keysetSql(terms: SortTerm[], values: Array<string | number | Date>): Prisma.Sql {
   const alternatives = terms.map((term, i) => {

@@ -1,0 +1,34 @@
+# gitleaks configuration (M1-CI-03). Extends the built-in ruleset; only DOCUMENTED false positives
+# are allowed here. Every entry says why it is safe. Add a new entry only after confirming the value
+# is not a real credential, and prefer a narrow `regexes` entry over a whole-path entry.
+#
+# Run locally: see docs/engineering/ci.md ("Secret scanning").
+# CI runs: gitleaks detect --baseline-path .gitleaks-baseline.json (see .github/workflows/security.yml).
+title = "asset-tracker gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "spikes/ holds throwaway spike code with local test passwords (dummy values, never deployed)"
+paths = ['''(^|/)spikes/''']
+
+[[allowlists]]
+description = "docker/secrets/master_key.dev is the DUMMY dev envelope-encryption key used by docker compose only; real installs generate their own (docker-compose.yml, docs/engineering/developer-guide.md)"
+paths = ['''(^|/)docker/secrets/master_key\.dev$''']
+
+[[allowlists]]
+description = "Test fixture: a fake Idempotency-Key header value in a unit test"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)apps/api/src/platform/idempotency\.test\.ts$''']
+regexes = ['''a-perfectly-fine-key-1''']
+
+[[allowlists]]
+description = "False positive: the prose 'auth guide, pagination/idempotency/ETag guides' in a backlog story is matched as an API key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)docs/05_backlog\.md$''']
+regexes = ['''auth guide''']

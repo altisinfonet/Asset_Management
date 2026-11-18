@@ -1,0 +1,69 @@
+# Security scanning (M1-CI-03): dependency audit with an expiring allow-list, and secret scanning.
+# The container image scan (Trivy) and the SBOM are jobs of ci.yml (they scan the image CI built once);
+# CodeQL is codeql.yml. Exceptions: .github/security/ and .gitleaks.toml (expiring, CODEOWNERS-reviewed).
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Daily: a new advisory against an unchanged lockfile must fail something, not wait for the next PR.
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Toolchain only: `pnpm audit` reads pnpm-lock.yaml, no install is needed.
+      - uses: ./.github/actions/setup
+        with:
+          install: 'false'
+      # Production dependencies (what ships in the image) are never allow-listed: any high/critical fails.
+      - name: Audit production dependencies (no exceptions)
+        run: pnpm audit --prod --audit-level high
+      # Everything incl. dev tooling, with the expiring allow-list .github/security/audit-allowlist.json.
+      - name: Audit all dependencies (expiring allow-list)
+        run: node scripts/ci/audit.mjs
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Commits: the PR's own commits (base..head), or the whole history on pushes to main and on the
+      # schedule. .gitleaks-baseline.json accepts the findings that were reviewed as false positives
+      # when the scan was introduced; .gitleaks.toml carries the documented allow-list.
+      - name: Scan commits
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          log_opts=()
+          if [ -n "$PR_BASE" ]; then log_opts=(--log-opts "$PR_BASE..$PR_HEAD"); fi
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            "$GITLEAKS_IMAGE" detect --source /repo --config /repo/.gitleaks.toml \
+            --baseline-path /repo/.gitleaks-baseline.json --redact --verbose --exit-code 1 "${log_opts[@]}"
+      # Working tree (files that are not committed yet cannot appear here in CI, but a rule change or a
+      # file the history scan's range does not cover can).
+      - name: Scan working tree
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" detect --no-git --source /repo \
+            --config /repo/.gitleaks.toml --redact --verbose --exit-code 1

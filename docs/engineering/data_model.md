@@ -17,7 +17,7 @@ Contents: 1 Summary, 2 Tenancy rules, 3 Entity catalogue, 4 ER diagram, 5 Permis
 | `audit_log` and `asset_history` partitions (monthly) created at install | 2 x (12 + 1 default) = 26 |
 | Views (all `security_invoker`) | 3 |
 | RLS policies | 59 (33 tables + 26 partitions as defence in depth) |
-| API operations (OpenAPI 3.1, all under `/v1`) | 114 on 65 paths |
+| API operations (OpenAPI 3.1, all under `/v1`) | 132 on 82 paths |
 
 Roles: `app_owner` (owner and migrator, LOGIN, no superuser, no BYPASSRLS) and `app_user` (runtime, owns nothing, no BYPASSRLS, no DDL). Two more roles are planned for M4 (ED-05, ED-06; section 2, item 12).
 
@@ -621,8 +621,9 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 
 | API tag (operations) | Tables |
 |---|---|
-| Auth (4) | identity.login_identity, credential, mfa_factor, mfa_recovery_code, session, external_identity, tenant_directory; app.user_account |
-| Access (10): users, roles, companies, api-keys | app.user_account, role, role_assignment, invitation, company, api_key; identity.api_key_lookup, invitation_token |
+| Auth (16): login, MFA verify, logout, me, password policy, password forgot/reset, invitation lookup/accept, MFA enrol/confirm/recovery-codes/disable, my sessions (list, revoke one, revoke others) (ED-14) | identity.login_identity, credential, mfa_factor, mfa_recovery_code, session, invitation_token, external_identity, tenant_directory; app.user_account, invitation. Password-reset tokens need a hashed single-use token table (`identity.password_reset_token`, not yet in `schema.sql`; see ED-14) |
+| Access (15): users, roles, companies, api-keys, invitation resend/revoke, user sessions list/revoke, MFA reset | app.user_account, role, role_assignment, invitation, company, api_key; identity.api_key_lookup, invitation_token, session, mfa_factor, mfa_recovery_code |
+| Search (1): `GET /v1/search` (M1: asset, model, category) | app.asset, asset_model, category (trigram indexes); person and location from M2 |
 | Assets (9) incl. scan resolve, history, assignments | app.asset, asset_history, assignment, attachment |
 | Custody (3): checkout, checkin, transfer | app.assignment, transfer, asset, asset_history, audit_log, outbox_event, idempotency_key. Responses carry the updated asset and the assignment (ED-13) |
 | Categories, Manufacturers, Vendors, Models, Status labels, Custom fields (5 each) | app.category, manufacturer, vendor, asset_model, status_label, custom_field_def |
@@ -634,7 +635,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Imports (8) | app.import_job, import_row, attachment |
 | Attachments (5), Audit (1) | app.attachment, audit_log |
 
-The OpenAPI file has 114 operations on 65 paths (47 GET, 35 POST, 15 PATCH, 17 DELETE).
+The OpenAPI file has 132 operations on 82 paths (52 GET, 42 POST, 15 PATCH, 23 DELETE).
 
 ## 10. Verification
 
@@ -708,7 +709,7 @@ So both layers work for `asset_history` exactly as they do for `audit_log`: the 
 
 ### 10.4 OpenAPI lint
 
-`npx -y @redocly/cli@2.79.0 lint docs/engineering/openapi.yaml` (built-in `recommended` ruleset): **"Your API description is valid", 0 errors, 0 warnings.** `redocly stats`: 114 operations, 65 paths, 116 schemas, 62 parameters, 20 tags, 146 references. The file is generated from a script kept outside the repository, so the YAML is regular but verbose; this update added `Assignment.quantity_returned`, the `CustodyResult` schema, `asset` in `TransferResult`, and changed the check-out, check-in, transfer and loaner check-out responses (ED-11, ED-13).
+`npx -y @redocly/cli@2.79.0 lint docs/engineering/openapi.yaml` (built-in `recommended` ruleset): **"Your API description is valid", 0 errors, 0 warnings.** `redocly stats`: 114 operations, 65 paths, 116 schemas, 62 parameters, 20 tags, 146 references (before ED-14; now 132 operations, 82 paths, 132 schemas, 65 parameters, 21 tags, 162 references, lint still 0 errors and 0 warnings). The file is generated from a script kept outside the repository, so the YAML is regular but verbose; this update added `Assignment.quantity_returned`, the `CustodyResult` schema, `asset` in `TransferResult`, and changed the check-out, check-in, transfer and loaner check-out responses (ED-11, ED-13).
 
 ### 10.5 Mermaid validation
 

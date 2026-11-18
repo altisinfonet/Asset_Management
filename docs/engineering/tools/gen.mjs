@@ -44,6 +44,14 @@ const doc = {
       '- **Browser / web app:** server-side session in the `__Host-at_session` cookie (HttpOnly, Secure, SameSite=Lax). Mutating requests made with the cookie must send the `X-CSRF-Token` header (value returned by login and `GET /v1/auth/me`).',
       '- **Integrations / scripts / mobile:** `Authorization: Bearer <api key>`. Keys are scoped (`resource:action`), can expire and are stored hashed. A key can never exceed the permissions of the role that created it.',
       '- The tenant is derived **only** from the credential, never from a header or body field. A resource id that belongs to another tenant returns `404`, exactly like a missing id.',
+      '- **Session lifetime:** every cookie session has an idle timeout and an absolute timeout (`GET /v1/auth/me` returns `session.idle_expires_at` and `session.absolute_expires_at`). A request on an expired or revoked session returns `401` with code `session-expired`.',
+      '- **Unauthenticated endpoints** (login, MFA verify, password forgot/reset, password policy, invitation lookup/accept) take no cookie and no CSRF header, and are throttled per IP and per account (`429`, `Retry-After`). Invitation accept and password reset tokens are single-use and stored hashed.',
+      '',
+      '## Account security',
+      '- **Password policy:** minimum 12 and maximum 128 characters, no composition rules, Unicode NFKC-normalised, and a breached-password check (bundled offline list always on; an optional online k-anonymity provider can be enabled). A rejected password returns `422` with an `errors[]` entry at pointer `/password` (code `too-short`, `too-long` or `breached`). Clients read the live limits from `GET /v1/auth/password-policy` instead of hardcoding them (schema `PasswordPolicy`).',
+      '- **MFA enrolment enforcement:** when the tenant requires MFA for the user\'s role and the user has not enrolled, the session is *limited*: `GET /v1/auth/me` returns `mfa_enrolment_required: true` and every other endpoint except `/v1/auth/logout` and `/v1/auth/mfa/enrol*` answers `403` with code `mfa-enrolment-required`. Completing `POST /v1/auth/mfa/enrol/confirm` lifts the limit.',
+      '- **Re-authentication:** regenerating recovery codes and disabling MFA need the current password or a current TOTP code in the body (`ReauthRequest`); a wrong value returns `403` `reauth-failed` (never `401`, which clients treat as "session gone").',
+      '- **Self-service endpoints** (`/v1/auth/sessions`, `/v1/auth/mfa/*`) need a browser session, not an API key, and no permission beyond being signed in (marked `x-self-service: true`).',
       '',
       '## Permissions',
       'Each operation lists the permission it needs in `x-permission` (`resource:action`). Built-in roles: `tenant_admin` (`*`), `asset_manager`, `technician`, `auditor`, `viewer`. Role assignments can be scoped to the tenant, a company or a location subtree; reads and writes outside the scope behave as `404`.',
@@ -58,7 +66,7 @@ const doc = {
       'List endpoints use **cursor pagination**: `limit` (1-200, default 50) and an opaque `cursor`; the response carries `page.next_cursor` and `page.has_more`. `page.total` is only returned with `include_total=true` (it costs a count). Cursors are bound to the `sort` and filters that produced them. `sort` is a comma-separated list, `-` prefix for descending. Filters are plain query parameters; array filters are comma-separated; custom fields filter with `cf[<key>]=<value>`.',
       '',
       '## Errors',
-      'Errors are RFC 9457 `application/problem+json` with a stable machine `code`, the `request_id` (also in the `X-Request-Id` header) and, for validation failures, an `errors[]` array of JSON-pointer + message.',
+      'Errors are RFC 9457 `application/problem+json` with a stable machine `code`, the `request_id` (also in the `X-Request-Id` header) and, for validation failures, an `errors[]` array of JSON-pointer + message. The catalogue of codes is the `x-problem-codes` extension at the root of this document (code, HTTP status, meaning) and the `ProblemCode` schema; every error response lists the codes it can carry in its own `x-problem-codes` array. The set grows over time: clients must branch on `code` for the ones they know and fall back to the HTTP status for the rest.',
       '',
       '## Rate limits',
       'Per tenant by plan tier. Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; `429` adds `Retry-After`.',
@@ -86,7 +94,8 @@ const doc = {
 const C = doc.components;
 
 const tagDefs = {
-  Auth: 'Login, MFA, logout and the current principal.',
+  Auth: 'Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.',
+  Search: 'Global search across registry entities, filtered by the caller\'s permissions.',
   Access: 'Users, roles, companies and API keys.',
   Assets: 'The asset registry: CRUD, search, scan resolution and history.',
   Custody: 'Check-out, check-in and transfer of assets.',
@@ -137,22 +146,82 @@ C.parameters = {
   CsrfToken: { name: 'X-CSRF-Token', in: 'header', required: false, description: 'Required for mutating requests authenticated with the session cookie; ignored for API keys.', schema: str() },
 };
 
-const problemResponse = (description, example) => ({
-  description,
+// Catalogue of problem `code` values: code -> [HTTP statuses, meaning]. Published as the root `x-problem-codes`
+// extension and as the `ProblemCode` schema; each response lists the subset it can carry in its own `x-problem-codes`.
+const PROBLEM_CODES = {
+  'bad-request': [[400], 'Malformed request: bad JSON, bad query parameter, invalid cursor.'],
+  'idempotency-key-required': [[400], 'The operation needs an Idempotency-Key header and none was sent.'],
+  'idempotency-key-invalid': [[400], 'The Idempotency-Key header is not 8-255 visible ASCII characters.'],
+  unauthorized: [[401], 'No credential, or the credential is not valid (generic).'],
+  'invalid-credentials': [[401], 'Wrong email or password. Never reveals which one, or whether the account exists.'],
+  'mfa-invalid-code': [[401, 422], 'The TOTP or recovery code is wrong, already used, or outside its window. 401 on the login challenge, 422 when confirming an enrolment.'],
+  'mfa-challenge-expired': [[401], 'The MFA challenge from login is expired or already consumed; sign in again.'],
+  'session-expired': [[401], 'The session hit its idle or absolute timeout, or was revoked; sign in again.'],
+  forbidden: [[403], 'Authenticated, but the principal lacks the required permission (or the request needs a browser session).'],
+  'csrf-invalid': [[403], 'A cookie-authenticated mutation is missing a valid X-CSRF-Token.'],
+  'mfa-enrolment-required': [[403], 'The tenant requires MFA and the user has not enrolled; only enrolment endpoints and logout work until then.'],
+  'mfa-required-by-policy': [[403], 'The action (disabling MFA) is not allowed because tenant policy enforces MFA for this user.'],
+  'reauth-failed': [[403], 'The password or TOTP code sent to re-authenticate a sensitive action is wrong.'],
+  'not-found': [[404], 'The resource does not exist, belongs to another tenant, or is outside the caller\'s scope.'],
+  'token-invalid': [[404], 'The password-reset token is unknown or already used.'],
+  'invitation-not-found': [[404], 'The invitation token is unknown, already accepted or revoked.'],
+  'method-not-allowed': [[405], 'The path exists but not for this HTTP method.'],
+  conflict: [[409], 'State conflict: uniqueness violation, or the resource is in the wrong state for this action.'],
+  'idempotency-key-in-flight': [[409], 'A request with the same Idempotency-Key is still running.'],
+  'cannot-revoke-current': [[409], 'The current session cannot be revoked here; use sign out.'],
+  'mfa-already-enrolled': [[409], 'The user already has an active TOTP factor; disable it first.'],
+  'asset-already-checked-out': [[409], 'The asset is already checked out.'],
+  'asset-not-checked-out': [[409], 'The asset has no open check-out to return.'],
+  'insufficient-stock': [[409], 'Not enough quantity on hand.'],
+  'no-loaner-available': [[409], 'The loaner pool has no available member.'],
+  'import-stale-dry-run': [[409], 'The dry run being committed is not the one reviewed.'],
+  'token-expired': [[410], 'The password-reset token has expired; request a new one.'],
+  'invitation-expired': [[410], 'The invitation has expired; ask an administrator to resend it.'],
+  'precondition-failed': [[412], '`If-Match` does not match the current version.'],
+  'payload-too-large': [[413], 'The request body exceeds the size limit.'],
+  'unsupported-media-type': [[415], 'The Content-Type is not supported.'],
+  validation: [[422], 'Validation failed; see errors[] (JSON pointer + message + field code).'],
+  'idempotency-key-reuse': [[422], 'The Idempotency-Key was already used with a different request body.'],
+  'precondition-required': [[428], '`If-Match` is required for this operation.'],
+  'account-locked': [[429], 'Too many failed sign-in or re-authentication attempts; locked until Retry-After elapses.'],
+  'too-many-requests': [[429], 'Rate limit exceeded; wait for Retry-After.'],
+  internal: [[500], 'Unexpected server error; quote request_id.'],
+  unavailable: [[503], 'A dependency is down or the service is starting.'],
+};
+doc['x-problem-codes'] = Object.fromEntries(Object.entries(PROBLEM_CODES).map(([code, [status, description]]) => [code, { status, description }]));
+const codeList = (codes) => codes.map((c) => `\`${c}\``).join(', ');
+
+const problemResponse = (description, example, codes = []) => ({
+  description: codes.length ? `${description} Codes: ${codeList(codes)}.` : description,
   headers: { 'X-Request-Id': H('RequestId') },
   content: { 'application/problem+json': { schema: S('Problem'), ...(example ? { example } : {}) } },
+  ...(codes.length ? { 'x-problem-codes': codes } : {}),
 });
 C.responses = {
-  BadRequest: problemResponse('Malformed request (bad JSON, bad query parameter, invalid cursor).', { type: 'https://api.assettracker.test/problems/bad-request', title: 'Bad request', status: 400, code: 'bad-request', detail: 'Query parameter "limit" must be between 1 and 200.', request_id: '01JABCDEF0123456789' }),
-  Unauthorized: { ...problemResponse('Missing, invalid or expired credentials.'), headers: { 'X-Request-Id': H('RequestId'), 'WWW-Authenticate': { description: 'Authentication scheme.', schema: str() } } },
-  Forbidden: problemResponse('Authenticated, but the principal lacks the required permission (or MFA is required).'),
-  NotFound: problemResponse('The resource does not exist **or belongs to another tenant or is outside the caller\'s scope**.'),
-  Conflict: problemResponse('State conflict: uniqueness violation, asset already checked out, insufficient stock, or an Idempotency-Key request still in flight.'),
-  PreconditionFailed: problemResponse('`If-Match` does not match the current version; re-read and retry.'),
-  PreconditionRequired: problemResponse('`If-Match` header is required for this operation.'),
-  Unprocessable: problemResponse('Validation failed (see `errors[]`), or an Idempotency-Key was reused with a different body.', { type: 'https://api.assettracker.test/problems/validation', title: 'Validation failed', status: 422, code: 'validation', errors: [{ pointer: '/asset_tag', message: 'must not contain whitespace', code: 'pattern' }], request_id: '01JABCDEF0123456789' }),
-  TooManyRequests: { ...problemResponse('Rate limit exceeded.'), headers: { 'X-Request-Id': H('RequestId'), 'Retry-After': H('RetryAfter'), 'RateLimit-Limit': H('RateLimitLimit'), 'RateLimit-Remaining': H('RateLimitRemaining'), 'RateLimit-Reset': H('RateLimitReset') } },
+  BadRequest: problemResponse('Malformed request (bad JSON, bad query parameter, invalid cursor).', { type: 'https://api.assettracker.test/problems/bad-request', title: 'Bad request', status: 400, code: 'bad-request', detail: 'Query parameter "limit" must be between 1 and 200.', request_id: '01JABCDEF0123456789' }, ['bad-request', 'idempotency-key-required', 'idempotency-key-invalid']),
+  Unauthorized: { ...problemResponse('Missing, invalid or expired credentials.', undefined, ['unauthorized', 'session-expired']), headers: { 'X-Request-Id': H('RequestId'), 'WWW-Authenticate': { description: 'Authentication scheme.', schema: str() } } },
+  Forbidden: problemResponse('Authenticated, but the principal lacks the required permission (or MFA enrolment is required).', undefined, ['forbidden', 'csrf-invalid', 'mfa-enrolment-required']),
+  NotFound: problemResponse('The resource does not exist **or belongs to another tenant or is outside the caller\'s scope**.', undefined, ['not-found']),
+  Conflict: problemResponse('State conflict: uniqueness violation, asset already checked out, insufficient stock, or an Idempotency-Key request still in flight.', undefined, ['conflict', 'idempotency-key-in-flight']),
+  PreconditionFailed: problemResponse('`If-Match` does not match the current version; re-read and retry.', undefined, ['precondition-failed']),
+  PreconditionRequired: problemResponse('`If-Match` header is required for this operation.', undefined, ['precondition-required']),
+  Unprocessable: problemResponse('Validation failed (see `errors[]`), or an Idempotency-Key was reused with a different body.', { type: 'https://api.assettracker.test/problems/validation', title: 'Validation failed', status: 422, code: 'validation', errors: [{ pointer: '/asset_tag', message: 'must not contain whitespace', code: 'pattern' }], request_id: '01JABCDEF0123456789' }, ['validation', 'idempotency-key-reuse']),
+  TooManyRequests: { ...problemResponse('Rate limit exceeded.', undefined, ['too-many-requests']), headers: { 'X-Request-Id': H('RequestId'), 'Retry-After': H('RetryAfter'), 'RateLimit-Limit': H('RateLimitLimit'), 'RateLimit-Remaining': H('RateLimitRemaining'), 'RateLimit-Reset': H('RateLimitReset') } },
 };
+
+// Specific problem responses for one operation: `problems: { 401: ['invalid-credentials'], ... }` in addOp. The description
+// and `x-problem-codes` list exactly the codes that status can carry there.
+const STATUS_TEXT = { 400: 'Malformed request.', 401: 'Not authenticated.', 403: 'Forbidden.', 404: 'Not found.', 409: 'Conflict.', 410: 'Gone.', 422: 'Validation failed.', 429: 'Throttled; see Retry-After.' };
+function specificProblem(status, codes, text) {
+  const first = codes[0];
+  const base = status === '429' ? C.responses.TooManyRequests : status === '401' ? C.responses.Unauthorized : { headers: { 'X-Request-Id': H('RequestId') } };
+  return {
+    description: `${text ?? STATUS_TEXT[status]} Codes: ${codeList(codes)}.`,
+    headers: base.headers,
+    content: { 'application/problem+json': { schema: S('Problem'), example: { type: `https://api.assettracker.test/problems/${first}`, title: first.replace(/-/g, ' '), status: Number(status), code: first, request_id: '01JABCDEF0123456789' } } },
+    'x-problem-codes': codes,
+  };
+}
 
 // ---------------------------------------------------------------- common schemas
 const S_ = C.schemas;
@@ -162,11 +231,20 @@ S_.Problem = obj({
   status: int({ minimum: 400, maximum: 599 }),
   detail: str(),
   instance: str({ format: 'uri-reference' }),
-  code: str({ description: 'Stable machine-readable code, e.g. `validation`, `asset-already-checked-out`.' }),
+  code: S('ProblemCode'),
   request_id: str(),
   errors: arr(S('FieldError')),
 }, ['type', 'title', 'status'], { description: 'RFC 9457 problem details.' });
-S_.FieldError = obj({ pointer: str({ description: 'JSON pointer into the request body, or `query:<name>`.' }), message: str(), code: str() }, ['pointer', 'message']);
+S_.ProblemCode = str({
+  description: 'Stable machine-readable problem code. The set is open (new codes may appear): branch on codes you know and fall back to the HTTP status. The full catalogue (code, HTTP status, meaning) is the root `x-problem-codes` extension of this document; each error response lists its own subset in `x-problem-codes`.',
+  examples: ['validation', 'invalid-credentials', 'mfa-enrolment-required', 'asset-already-checked-out'],
+  'x-known-values': Object.keys(PROBLEM_CODES),
+});
+S_.FieldError = obj({
+  pointer: str({ description: 'JSON pointer into the request body, or `query:<name>`.' }),
+  message: str(),
+  code: str({ description: 'Per-field code, e.g. `pattern`, `required`; for passwords `too-short`, `too-long`, `breached`.' }),
+}, ['pointer', 'message']);
 S_.PageInfo = obj({
   next_cursor: nstr({ description: 'Pass as `cursor` to get the next page; null on the last page.' }),
   has_more: bool(),
@@ -694,13 +772,92 @@ S_.MfaVerifyRequest = obj({
 }, ['challenge_id', 'method', 'code'], { additionalProperties: false });
 S_.Me = obj({
   user: S('User'),
-  tenant: obj({ id: uuid(), name: str(), plan: str(), base_currency: str(), cell: str() }, ['id', 'name', 'base_currency']),
+  tenant: obj({
+    id: uuid(), name: str(), plan: str(), base_currency: str(), cell: str(),
+    branding: obj({
+      logo_url: nstr({ format: 'uri', description: 'Absolute URL of the tenant logo. Always null until tenant branding ships (M4+).' }),
+      accent_color: nstr({ pattern: '^#[0-9a-fA-F]{6}$', description: 'Accent colour as `#rrggbb`. Always null until tenant branding ships (M4+).' }),
+    }, ['logo_url', 'accent_color'], { description: 'Tenant branding for the web shell. Always present; both fields are null in M1-M3 (clients use the default theme).' }),
+  }, ['id', 'name', 'base_currency', 'branding']),
   default_company_id: uuid(),
   permissions: arr(str(), { description: 'Effective permissions of the principal (role permissions, or the API key scopes).' }),
   role_assignments: arr(S('RoleAssignment')),
   auth: obj({ method: en(['session', 'api_key']), mfa_verified: bool(), api_key_id: nuuid(), scopes: arr(str()) }, ['method']),
+  mfa_enrolment_required: bool({ description: 'True when tenant policy requires MFA for this user and the user has not enrolled yet. The session is then *limited*: every endpoint except `/v1/auth/me`, `/v1/auth/logout` and `/v1/auth/mfa/enrol*` returns 403 `mfa-enrolment-required`. Always false for API keys.' }),
+  session: {
+    oneOf: [S('SessionExpiry'), { type: 'null' }],
+    description: 'Lifetime of the current browser session; null when authenticated with an API key.',
+  },
   csrf_token: str({ description: 'Only for cookie sessions.' }),
-}, ['user', 'tenant', 'permissions', 'auth']);
+}, ['user', 'tenant', 'permissions', 'auth', 'mfa_enrolment_required', 'session']);
+S_.SessionExpiry = obj({
+  idle_expires_at: dt({ description: 'The session ends at this time unless there is activity before it; each authenticated request pushes it forward, never beyond `absolute_expires_at`.' }),
+  absolute_expires_at: dt({ description: 'Hard end of the session regardless of activity.' }),
+}, ['idle_expires_at', 'absolute_expires_at']);
+S_.PasswordPolicy = obj({
+  min_length: int({ description: 'Minimum length in Unicode code points after NFKC normalisation.', examples: [12] }),
+  max_length: int({ description: 'Maximum length in Unicode code points (bounds hashing cost).', examples: [128] }),
+  composition_rules: bool({ description: 'Always false: no required character classes. Length and the breach check are the policy.' }),
+  breached_check: obj({
+    enabled: bool(),
+    sources: arr(en(['local_list', 'online_k_anonymity']), { description: 'Always includes `local_list` (bundled, works offline and in self-hosted installs). `online_k_anonymity` is present only when the operator enabled the optional provider; only a hash prefix ever leaves the server.' }),
+  }, ['enabled', 'sources']),
+  rejection_codes: arr(en(['too-short', 'too-long', 'breached']), { description: 'Field codes returned in `errors[].code` at pointer `/password` on a 422.' }),
+}, ['min_length', 'max_length', 'composition_rules', 'breached_check'], { description: 'The password rules enforced by `POST /v1/auth/password/reset` and `POST /v1/auth/invitations/accept`. Defaults: min 12, max 128, breached-password check on (bundled local list; optional online k-anonymity provider). Clients read this instead of hardcoding limits.' });
+S_.Password = str({ format: 'password', minLength: 12, maxLength: 128, description: 'New password. Policy: 12-128 characters, no composition rules, NFKC-normalised, rejected if found in the breached-password list. A violation returns 422 with `errors[]` pointer `/password` and code `too-short`, `too-long` or `breached`. Live limits: `GET /v1/auth/password-policy`.' });
+S_.ForgotPasswordRequest = obj({ email: str({ format: 'email' }) }, ['email'], { additionalProperties: false });
+S_.ResetPasswordRequest = obj({
+  token: str({ description: 'Single-use token from the reset email link.' }),
+  password: S('Password'),
+}, ['token', 'password'], { additionalProperties: false });
+S_.InvitationInfo = obj({
+  email: str({ format: 'email' }),
+  display_name: str({ description: 'Name the administrator entered; the invitee may change it on accept.' }),
+  tenant_name: str(),
+  role_name: str({ description: 'Display name of the invited role (for example "Asset Manager").' }),
+  expires_at: dt(),
+  mfa_enrolment_required: bool({ description: 'The tenant requires MFA for this role: after accepting, the new session is limited until the user enrols (see `Me.mfa_enrolment_required`).' }),
+}, ['email', 'display_name', 'tenant_name', 'expires_at', 'mfa_enrolment_required'], { description: 'What the accept-invitation screen shows before the user picks a password. Contains no secret.' });
+S_.AcceptInvitationRequest = obj({
+  token: str({ description: 'Single-use invitation token from the email link.' }),
+  password: S('Password'),
+  display_name: str({ minLength: 1, maxLength: 200 }),
+}, ['token', 'password', 'display_name'], { additionalProperties: false });
+S_.MfaEnrolment = obj({
+  secret: str({ description: 'Base32 TOTP shared secret, for manual entry.' }),
+  provisioning_uri: str({ description: '`otpauth://totp/...` URI that the QR code encodes.' }),
+}, ['secret', 'provisioning_uri'], { description: 'A pending (not yet active) TOTP factor. It becomes active only after `POST /v1/auth/mfa/enrol/confirm`. Calling enrol again before confirming replaces the pending secret.' });
+S_.MfaConfirmRequest = obj({ code: str({ pattern: '^[0-9 ]{6,8}$', description: 'Current 6-digit TOTP code (spaces ignored).' }) }, ['code'], { additionalProperties: false });
+S_.MfaRecoveryCodes = obj({
+  recovery_codes: arr(str(), { minItems: 10, maxItems: 10, description: 'Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.' }),
+}, ['recovery_codes']);
+S_.ReauthRequest = {
+  type: 'object',
+  description: 'Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.',
+  properties: {
+    password: str({ format: 'password', maxLength: 1024 }),
+    totp_code: str({ pattern: '^[0-9 ]{6,8}$' }),
+  },
+  anyOf: [{ required: ['password'] }, { required: ['totp_code'] }],
+  additionalProperties: false,
+};
+S_.SessionInfo = obj({
+  id: uuid('Session id (not the cookie token).'),
+  created_at: dt(),
+  last_seen_at: dt(),
+  ip: nstr({ description: 'IP address the session was last seen from.' }),
+  user_agent: nstr({ description: 'Raw or summarised user agent.' }),
+  current: bool({ description: 'True for the session making this request.' }),
+}, ['id', 'created_at', 'last_seen_at', 'ip', 'user_agent', 'current']);
+S_.SessionInfoList = obj({ data: arr(S('SessionInfo')) }, ['data']);
+S_.SearchResult = obj({
+  type: en(['asset', 'model', 'category', 'person', 'location']),
+  id: uuid(),
+  label: str({ description: 'Primary text, e.g. asset tag + name, model name, category name.' }),
+  sublabel: nstr({ description: 'Secondary text, e.g. serial number or model; null if none.' }),
+  href_hint: str({ description: 'App-relative path the web client may navigate to (for example `/assets/view?id=<uuid>`). A hint only: clients own routing and may build the URL from `type` and `id`.' }),
+}, ['type', 'id', 'label', 'sublabel', 'href_hint']);
+S_.SearchResultList = obj({ data: arr(S('SearchResult'), { description: 'Grouped by type in the order of the `types` parameter (default: asset, model, category, person, location), best match first within a group; at most `limit` per type.' }) }, ['data']);
 S_.RoleAssignment = obj({
   id: ro(uuid()),
   role_id: uuid(),
@@ -759,6 +916,7 @@ function addOp(path, method, o) {
   const {
     tag, id, summary, description, perm, params = [], body, success, mutate = method !== 'get',
     ifMatch = false, ifMatchOptional = false, idem = null, hasId = /\{/.test(path), anon = false, extraErrors = [], conflict = mutate,
+    problems = {}, noAuthError = false, selfService = false, extensions = {},
   } = o;
   const parameters = [...params];
   if (mutate && !anon) {
@@ -780,6 +938,11 @@ function addOp(path, method, o) {
   if (body) responses['422'] = R('Unprocessable');
   for (const e of extraErrors) responses[String(e)] = R({ 404: 'NotFound', 409: 'Conflict', 422: 'Unprocessable' }[e]);
   responses['429'] = R('TooManyRequests');
+  if (noAuthError) delete responses['401'];
+  for (const [st, spec] of Object.entries(problems)) {
+    const { codes, text } = Array.isArray(spec) ? { codes: spec } : spec;
+    responses[st] = specificProblem(st, codes, text);
+  }
   const operation = {
     tags: [tag],
     operationId: id,
@@ -787,6 +950,8 @@ function addOp(path, method, o) {
     description: [description, perm ? `Requires permission \`${perm}\`.` : null].filter(Boolean).join('\n\n'),
     ...(anon ? { security: [] } : {}),
     ...(perm ? { 'x-permission': perm } : {}),
+    ...(selfService ? { 'x-self-service': true } : {}),
+    ...extensions,
     parameters: parameters.length ? parameters : undefined,
     requestBody: body,
     responses: Object.fromEntries(Object.entries(responses).sort(([a], [b]) => a.localeCompare(b))),
@@ -795,6 +960,8 @@ function addOp(path, method, o) {
   (doc.paths[path] ??= {})[method] = operation;
 }
 
+const THROTTLED = { codes: ['account-locked', 'too-many-requests'], text: 'Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`.' };
+const ANON = { 400: ['bad-request'], 422: ['validation'], 429: THROTTLED };
 const qp = (name, schema, description) => ({ name, in: 'query', description, schema });
 const arrQ = (name, itemSchema, description) => ({ name, in: 'query', description, style: 'form', explode: false, schema: arr(itemSchema) });
 const sortParam = (fields, def) => ({
@@ -845,12 +1012,14 @@ function crud({ tag, base, name, plural, singular, permBase, readPerm, writePerm
 addOp('/v1/auth/login', 'post', {
   tag: 'Auth', id: 'login', summary: 'Sign in with email and password', anon: true, mutate: true, idem: 'none', conflict: false,
   description: 'Creates a server-side session and sets the `__Host-at_session` cookie. If the account has MFA the response is `mfa_required` and no session is created until `POST /v1/auth/mfa/verify`. Throttled per email and per IP.',
+  problems: { 401: { codes: ['invalid-credentials'], text: 'Wrong email or password (same answer for an unknown account).' }, 429: THROTTLED },
   body: jsonBody(S('LoginRequest'), true, { email: 'alice@example.org', password: 'correct horse battery staple' }),
   success: { 200: { description: 'Authenticated, or a next step is required.', headers: { 'Set-Cookie': H('SetCookie'), 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('LoginResponse') } } } },
 });
 addOp('/v1/auth/mfa/verify', 'post', {
   tag: 'Auth', id: 'verifyMfa', summary: 'Complete an MFA challenge', anon: true, mutate: true, idem: 'none', conflict: false,
   description: 'Exchanges a pending MFA challenge for a session (TOTP, WebAuthn/passkey or a one-time recovery code).',
+  problems: { 401: { codes: ['mfa-invalid-code', 'mfa-challenge-expired'], text: 'The code is wrong (also: a TOTP code replayed inside its window) or the challenge is gone.' }, 429: THROTTLED },
   body: jsonBody(S('MfaVerifyRequest')),
   success: { 200: { description: 'Session created.', headers: { 'Set-Cookie': H('SetCookie'), 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('LoginResponse') } } } },
 });
@@ -861,8 +1030,109 @@ addOp('/v1/auth/logout', 'post', {
 });
 addOp('/v1/auth/me', 'get', {
   tag: 'Auth', id: 'getMe', summary: 'Current principal', hasId: false,
-  description: 'The authenticated user (or the user that owns the API key), tenant, effective permissions and role scopes.',
+  description: 'The authenticated user (or the user that owns the API key), tenant (with branding), effective permissions and role scopes, plus, for cookie sessions, the session lifetime (`session`) and whether the user must still enrol in MFA (`mfa_enrolment_required`). This is one of the few endpoints that still works on a *limited* session (MFA enrolment pending), so the web app calls it first to decide where to route.',
+  problems: { 401: { codes: ['unauthorized', 'session-expired'], text: 'No session, or it expired or was revoked.' } },
   success: { 200: okResp(200, 'The principal.', S('Me'), { replay: false }) },
+});
+
+// ---- password policy, reset, invitations (unauthenticated)
+addOp('/v1/auth/password-policy', 'get', {
+  tag: 'Auth', id: 'getPasswordPolicy', summary: 'Password policy', anon: true, noAuthError: true, hasId: false,
+  description: 'Public. The rules the server enforces for new passwords (minimum 12, maximum 128, breached-password check), so clients and forms do not hardcode them. The values can differ per deployment (self-hosted operators may enable the online breach provider).',
+  problems: { 429: THROTTLED },
+  success: { 200: okResp(200, 'The policy.', S('PasswordPolicy'), { replay: false }) },
+});
+addOp('/v1/auth/password/forgot', 'post', {
+  tag: 'Auth', id: 'forgotPassword', summary: 'Request a password-reset email', anon: true, noAuthError: true, mutate: true, idem: 'none', conflict: false, hasId: false,
+  description: 'Always answers `202`, whether or not an account exists for the email, so it cannot be used to discover accounts; the response time does not depend on it either. If an active account matches, a single-use reset link (token stored hashed, short expiry) is emailed. Throttled per IP and per email. `422` only for a malformed email.',
+  body: jsonBody(S('ForgotPasswordRequest'), true, { email: 'alice@example.org' }),
+  problems: ANON,
+  success: { 202: okResp(202, 'Accepted. If the account exists an email is on its way.', null, { replay: false }) },
+});
+addOp('/v1/auth/password/reset', 'post', {
+  tag: 'Auth', id: 'resetPassword', summary: 'Set a new password with a reset token', anon: true, noAuthError: true, mutate: true, idem: 'none', conflict: false, hasId: false,
+  description: 'Consumes a single-use reset token and sets the new password (policy: see `PasswordPolicy` and `GET /v1/auth/password-policy`). On success **every session of the user is revoked** and no session is created: the user signs in again. Failure modes: `404 token-invalid` (unknown or already used), `410 token-expired`, `422` with `errors[]` at pointer `/password` (code `too-short`, `too-long` or `breached`); a rejected password does not consume the token.',
+  body: jsonBody(S('ResetPasswordRequest')),
+  problems: { ...ANON, 404: { codes: ['token-invalid'], text: 'The reset token is unknown or was already used.' }, 410: { codes: ['token-expired'], text: 'The reset token has expired; request a new link.' }, 422: { codes: ['validation'], text: 'Password rejected: `errors[]` pointer `/password`, code `too-short`, `too-long` or `breached`.' } },
+  success: { 204: okResp(204, 'Password changed; all sessions revoked.', null, { replay: false }) },
+});
+addOp('/v1/auth/invitations/{token}', 'get', {
+  tag: 'Auth', id: 'getInvitation', summary: 'Look up an invitation', anon: true, noAuthError: true,
+  description: 'Shows what an invitation link is for, before the invitee chooses a password. Does not consume the token. Throttled per IP.',
+  params: [{ name: 'token', in: 'path', required: true, description: 'Invitation token from the email link.', schema: str({ minLength: 16, maxLength: 256 }) }],
+  problems: { 404: { codes: ['invitation-not-found'], text: 'Unknown token, or the invitation was already accepted or revoked.' }, 410: { codes: ['invitation-expired'], text: 'The invitation expired; an administrator can resend it.' }, 429: THROTTLED },
+  success: { 200: okResp(200, 'The invitation.', S('InvitationInfo'), { replay: false }) },
+});
+addOp('/v1/auth/invitations/accept', 'post', {
+  tag: 'Auth', id: 'acceptInvitation', summary: 'Accept an invitation and set a password', anon: true, noAuthError: true, mutate: true, idem: 'none', conflict: false, hasId: false,
+  description: 'Consumes the single-use invitation token, activates the account with the chosen password and display name, and signs the user in (cookie + `csrf_token`, same as login, `status` is `authenticated`). If the tenant requires MFA for the role (`InvitationInfo.mfa_enrolment_required`) the new session is *limited* until MFA enrolment is confirmed (`Me.mfa_enrolment_required`). A rejected password does not consume the token.',
+  body: jsonBody(S('AcceptInvitationRequest')),
+  problems: { ...ANON, 404: { codes: ['invitation-not-found'], text: 'Unknown token, or the invitation was already accepted or revoked.' }, 410: { codes: ['invitation-expired'], text: 'The invitation expired; an administrator can resend it.' }, 422: { codes: ['validation'], text: 'Password rejected: `errors[]` pointer `/password`, code `too-short`, `too-long` or `breached`.' } },
+  success: { 200: { description: 'Account activated and signed in.', headers: { 'Set-Cookie': H('SetCookie'), 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('LoginResponse') } } } },
+});
+
+// ---- MFA (TOTP) self-service
+const SELF_403 = { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session (not an API key) with a valid `X-CSRF-Token`.' };
+const SECRET_NOTE = ' The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted.';
+addOp('/v1/auth/mfa/enrol', 'post', {
+  tag: 'Auth', id: 'startMfaEnrolment', summary: 'Start TOTP enrolment', selfService: true, idem: 'none', hasId: false,
+  description: 'Creates a pending TOTP factor (secret stored envelope-encrypted) and returns the secret and the `otpauth://` URI for the QR code. Works on a *limited* session (MFA enrolment pending). Not active until `POST /v1/auth/mfa/enrol/confirm`; calling it again replaces the pending secret.' + SECRET_NOTE,
+  problems: { 403: SELF_403, 409: { codes: ['mfa-already-enrolled'], text: 'A TOTP factor is already active; disable it first.' } },
+  success: { 200: okResp(200, 'Pending factor.', S('MfaEnrolment'), { replay: false }) },
+});
+addOp('/v1/auth/mfa/enrol/confirm', 'post', {
+  tag: 'Auth', id: 'confirmMfaEnrolment', summary: 'Confirm TOTP enrolment', selfService: true, idem: 'none', hasId: false,
+  description: 'Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled.' + SECRET_NOTE,
+  body: jsonBody(S('MfaConfirmRequest')),
+  problems: { 403: SELF_403, 409: { codes: ['conflict', 'mfa-already-enrolled'], text: 'No enrolment is pending (call enrol first) or a factor is already active.' }, 422: { codes: ['mfa-invalid-code', 'validation'], text: 'The code does not match. `errors[]` pointer `/code`.' }, 429: THROTTLED },
+  success: { 200: okResp(200, 'Factor active; recovery codes.', S('MfaRecoveryCodes'), { replay: false }) },
+});
+addOp('/v1/auth/mfa/recovery-codes/regenerate', 'post', {
+  tag: 'Auth', id: 'regenerateRecoveryCodes', summary: 'Regenerate recovery codes', selfService: true, idem: 'none', hasId: false,
+  description: 'Replaces all recovery codes with ten new ones (the old ones stop working) and returns them once. Requires recent re-authentication: the current password or a current TOTP code in the body.' + SECRET_NOTE,
+  body: jsonBody(S('ReauthRequest')),
+  problems: { 403: { codes: ['forbidden', 'csrf-invalid', 'reauth-failed'], text: 'Not a browser session, bad CSRF token, or the re-authentication value is wrong.' }, 409: { codes: ['conflict'], text: 'MFA is not enabled for this user.' }, 422: { codes: ['validation'], text: 'Neither `password` nor `totp_code` was sent.' }, 429: THROTTLED },
+  success: { 200: okResp(200, 'New recovery codes.', S('MfaRecoveryCodes'), { replay: false }) },
+});
+addOp('/v1/auth/mfa', 'delete', {
+  tag: 'Auth', id: 'disableMfa', summary: 'Disable MFA', selfService: true, hasId: false,
+  description: "Removes the user's own TOTP factor and recovery codes. Requires re-authentication (password or current TOTP code in the body) and revokes all the user's **other** sessions. Forbidden while tenant policy enforces MFA for this user (`403 mfa-required-by-policy`); an administrator can reset a lost factor with `DELETE /v1/users/{id}/mfa`.",
+  body: jsonBody(S('ReauthRequest')),
+  problems: { 403: { codes: ['mfa-required-by-policy', 'reauth-failed', 'forbidden', 'csrf-invalid'], text: 'Tenant policy enforces MFA for this user, the re-authentication value is wrong, or the request is not a valid browser-session mutation.' }, 409: { codes: ['conflict'], text: 'MFA is not enabled for this user.' }, 422: { codes: ['validation'], text: 'Neither `password` nor `totp_code` was sent.' }, 429: THROTTLED },
+  success: { 204: okResp(204, 'MFA disabled.') },
+});
+
+// ---- browser sessions (devices)
+addOp('/v1/auth/sessions', 'get', {
+  tag: 'Auth', id: 'listMySessions', summary: 'List my active sessions', selfService: true, hasId: false,
+  description: "The caller's unrevoked, unexpired browser sessions (devices), newest activity first, with the current one flagged. Not paginated (a user has few live sessions).",
+  problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
+  success: { 200: okResp(200, 'Active sessions.', S('SessionInfoList'), { replay: false }) },
+});
+addOp('/v1/auth/sessions', 'delete', {
+  tag: 'Auth', id: 'revokeOtherSessions', summary: 'Sign out everywhere else', selfService: true, hasId: false,
+  description: 'Revokes every session of the caller except the current one. Revoked sessions fail on their next request with `401 session-expired`.',
+  problems: { 403: SELF_403 },
+  success: { 204: okResp(204, 'Other sessions revoked.') },
+});
+addOp('/v1/auth/sessions/{id}', 'delete', {
+  tag: 'Auth', id: 'revokeMySession', summary: 'Revoke one of my sessions', selfService: true, params: [ID],
+  description: "Revokes one of the caller's own sessions. The current session cannot be revoked here (use `POST /v1/auth/logout`). An unknown id, or one that belongs to another user, is `404`.",
+  problems: { 403: SELF_403, 404: ['not-found'], 409: { codes: ['cannot-revoke-current'], text: 'That is the current session; use sign out.' } },
+  success: { 204: okResp(204, 'Revoked.') },
+});
+
+// ---------------------------------------------------------------- SEARCH
+addOp('/v1/search', 'get', {
+  tag: 'Search', id: 'search', summary: 'Search across the registry', perm: 'search:read', hasId: false,
+  description: "One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.\n\n**Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.",
+  params: [
+    { name: 'q', in: 'query', required: true, description: 'Search text (1-200 characters).', schema: str({ minLength: 1, maxLength: 200 }) },
+    arrQ('types', en(['asset', 'model', 'category', 'person', 'location']), 'Comma-separated entity types to search. Default: every type available in this release.'),
+    { name: 'limit', in: 'query', description: 'Maximum results **per type**.', schema: int({ minimum: 1, maximum: 50, default: 5 }) },
+  ],
+  extensions: { 'x-permission-by-type': { asset: 'asset:read', model: 'catalog:read', category: 'catalog:read', person: 'person:read', location: 'location:read' } },
+  success: { 200: okResp(200, 'Grouped results (empty array when nothing matches).', S('SearchResultList'), { replay: false }) },
 });
 
 // ---------------------------------------------------------------- ACCESS
@@ -888,6 +1158,32 @@ addOp('/v1/users/{id}', 'delete', {
   tag: 'Access', id: 'archiveUser', summary: 'Disable and archive a user', perm: 'user:manage', params: [ID], ifMatch: true,
   description: 'Revokes all sessions, disables login and archives the account; the linked `Person` and the audit trail are kept.',
   success: { 204: okResp(204, 'Archived.') },
+});
+addOp('/v1/users/{id}/invitation/resend', 'post', {
+  tag: 'Access', id: 'resendUserInvitation', summary: "Resend a user's invitation", perm: 'user:manage', params: [ID],
+  description: 'For a user still in status `invited`: invalidates the previous link, issues a fresh single-use token with a new expiry and emails it. Also the way to recover from `410 invitation-expired`. `409 conflict` if the user has no pending or expired invitation (already active or disabled).',
+  success: { 204: okResp(204, 'New invitation sent.') },
+});
+addOp('/v1/users/{id}/invitation', 'delete', {
+  tag: 'Access', id: 'revokeUserInvitation', summary: "Revoke a user's pending invitation", perm: 'user:manage', params: [ID],
+  description: 'Marks the invitation `revoked` (the link then answers `404 invitation-not-found`) and archives the never-activated account. `409 conflict` if the user already accepted. The action is audited.',
+  success: { 204: okResp(204, 'Invitation revoked.') },
+});
+addOp('/v1/users/{id}/sessions', 'get', {
+  tag: 'Access', id: 'listUserSessions', summary: "List a user's active sessions", perm: 'user:manage', params: [ID],
+  description: 'Administrator view of the same device list as `GET /v1/auth/sessions` (`current` is always false). Not paginated.',
+  success: { 200: okResp(200, 'Active sessions.', S('SessionInfoList'), { replay: false }) },
+});
+addOp('/v1/users/{id}/sessions/{session_id}', 'delete', {
+  tag: 'Access', id: 'revokeUserSession', summary: 'Revoke one session of a user', perm: 'user:manage',
+  params: [ID, { name: 'session_id', in: 'path', required: true, description: 'Session id.', schema: uuid() }],
+  description: "Revokes a single session of another user (the user's whole set is also revoked by role change, deactivation and password reset). Audited.",
+  success: { 204: okResp(204, 'Revoked.') },
+});
+addOp('/v1/users/{id}/mfa', 'delete', {
+  tag: 'Access', id: 'resetUserMfa', summary: "Reset a user's MFA", perm: 'user:manage', params: [ID],
+  description: 'For a user who lost their device and recovery codes: removes all MFA factors and recovery codes and revokes all their sessions. If tenant policy requires MFA the user must enrol again at the next sign-in. You cannot reset your own MFA this way (`409 conflict`; use `DELETE /v1/auth/mfa`). Audited.',
+  success: { 204: okResp(204, 'MFA reset.') },
 });
 addOp('/v1/roles', 'get', { tag: 'Access', id: 'listRoles', summary: 'List roles', perm: 'role:read', hasId: false, description: 'Built-in roles in the MVP (custom roles arrive in v2).', success: { 200: okResp(200, 'All roles of the tenant.', S('RoleList'), { replay: false }) } });
 addOp('/v1/companies', 'get', { tag: 'Access', id: 'listCompanies', summary: 'List companies', perm: 'company:read', hasId: false, description: 'Every tenant has a default company; multi-company management UI arrives in v2.', success: { 200: okResp(200, 'All companies of the tenant.', S('CompanyList'), { replay: false }) } });

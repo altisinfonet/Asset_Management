@@ -1,6 +1,17 @@
-import { ApiError, createApiClient, type ApiClient } from '@assettracker/api-client';
+import {
+  ApiError,
+  createApiClient,
+  createTypedClient,
+  ETagStore,
+  ifMatch,
+  type ApiClient,
+  type TypedClient,
+} from '@assettracker/api-client';
 import type { TranslationKey } from '@/i18n/messages/en';
-import { reportUnauthorized } from '@/lib/auth/session-events';
+import { getCsrfToken } from '@/lib/auth/http';
+import { reportMfaEnrolmentRequired, reportUnauthorized } from '@/lib/auth/session-events';
+
+export { ETagStore, ifMatch };
 
 /**
  * Thin web wrapper around `@assettracker/api-client`.
@@ -93,43 +104,21 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
   return { kind: 'unknown', messageKey: 'error.unknown', fieldErrors: [] };
 }
 
-/** Per-resource ETag memory (`GET` responses), keyed by request path. */
-export class ETagStore {
-  private readonly etags = new Map<string, string>();
-  private lastFailedRequestId: string | undefined;
-
-  record(path: string, response: Response): void {
-    const etag = response.headers.get('etag');
-    if (etag) this.etags.set(path, etag);
-    if (!response.ok) this.lastFailedRequestId = response.headers.get('x-request-id') ?? undefined;
-  }
-
-  /** ETag to send as `If-Match` when writing `path`; undefined when it was never read. */
-  etagFor(path: string): string | undefined {
-    return this.etags.get(path);
-  }
-
-  forget(path: string): void {
-    this.etags.delete(path);
-  }
-
-  /** Request id of the most recent failed call (fallback when the body has none). */
-  get failedRequestId(): string | undefined {
-    return this.lastFailedRequestId;
-  }
-}
-
-/** Headers for a conditional write. */
-export function ifMatch(etag: string | undefined): Record<string, string> {
-  return etag ? { 'If-Match': etag } : {};
-}
-
 export interface WebApi {
+  /** Health / version probes (not part of the registry contract). */
   client: ApiClient;
+  /** The typed REST client generated from docs/engineering/openapi.yaml. */
+  http: TypedClient;
   etags: ETagStore;
   /** Convert a thrown value to a `UiError`, filling the request id from the last failed response. */
   toUiError: (err: unknown) => UiError;
 }
+
+/**
+ * Endpoints whose `401` is an expected answer (wrong password, session bootstrap, sign-out), not
+ * an ended session, so it is not broadcast to the auth provider.
+ */
+const EXPECTED_401 = /^\/v1\/auth\/(login|logout|me|mfa\/verify|password\/|invitations)/;
 
 export function createWebApi(fetchImpl?: typeof fetch): WebApi {
   const etags = new ETagStore();
@@ -144,6 +133,19 @@ export function createWebApi(fetchImpl?: typeof fetch): WebApi {
   };
   return {
     client: createApiClient({ baseUrl: '', fetch: tracked }),
+    http: createTypedClient({
+      fetch: fetchImpl,
+      etags,
+      getCsrfToken,
+      onResponse: ({ pathname, response, problemCode }) => {
+        // An ended session answers 401 anywhere; the auth provider reacts.
+        if (response.status === 401 && !EXPECTED_401.test(pathname)) reportUnauthorized();
+        // A limited session (tenant requires MFA, user not enrolled) answers 403 everywhere else.
+        if (response.status === 403 && problemCode === 'mfa-enrolment-required') {
+          reportMfaEnrolmentRequired();
+        }
+      },
+    }),
     etags,
     toUiError: (err) => toUiError(err, etags.failedRequestId),
   };

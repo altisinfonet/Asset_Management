@@ -19,6 +19,9 @@ import {
   MOCK_TENANTS,
   MOCK_TOTP_CODE,
 } from './fixtures';
+import { problem, requireSession } from './http';
+import { roleIdFor } from './registry-fixtures';
+import { registryHandlers } from './registry-handlers';
 import {
   availableRecoveryCodes,
   findUser,
@@ -40,46 +43,13 @@ import {
 
 const MIN_PASSWORD = 12;
 
-function requestId(): string {
-  return `mock-${Math.random().toString(16).slice(2, 10)}`;
-}
-
-function problem(
-  status: number,
-  code: string,
-  title: string,
-  extra: {
-    errors?: Array<{ pointer: string; message: string; code?: string }>;
-    headers?: Record<string, string>;
-  } = {},
-) {
-  const id = requestId();
-  return HttpResponse.json(
-    {
-      type: `https://assettracker.test/problems/${code}`,
-      title,
-      status,
-      code,
-      request_id: id,
-      ...(extra.errors ? { errors: extra.errors } : {}),
-    },
-    {
-      status,
-      headers: {
-        'content-type': 'application/problem+json',
-        'x-request-id': id,
-        ...extra.headers,
-      },
-    },
-  );
-}
-
 function toUser(user: MockUser): User {
   return {
     id: user.id,
     email: user.email,
     display_name: user.display_name,
     status: 'active',
+    role_assignments: [{ role_id: roleIdFor(user.role), scope_type: 'tenant' }],
     mfa_enabled: user.mfa,
   };
 }
@@ -93,9 +63,17 @@ function buildMe(user: MockUser): Me {
       id: '0190a6b2-0000-7000-8000-0000000000aa',
       name: user.tenantName,
       base_currency: 'USD',
+      branding: { logo_url: null, accent_color: null },
     },
     permissions: user.permissions,
     auth: { method: 'session', mfa_verified: session?.mfaVerified ?? false },
+    // Like the real API: a limited session still gets a 200 here (so the client learns its CSRF
+    // token and that it must enrol); every other endpoint answers 403 mfa-enrolment-required.
+    mfa_enrolment_required: !!session?.limited,
+    session: {
+      idle_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      absolute_expires_at: new Date(Date.now() + 12 * 3_600_000).toISOString(),
+    },
     csrf_token: session?.csrf,
   };
 }
@@ -114,30 +92,6 @@ function startSession(user: MockUser, mfaVerified: boolean): LoginResponse {
     };
   });
   return { status: 'authenticated', csrf_token: csrf, user: toUser(user) };
-}
-
-type Guard = { ok: true; user: MockUser } | { ok: false; response: ReturnType<typeof problem> };
-
-/** Session check shared by authenticated endpoints: 401, CSRF on mutations, limited sessions. */
-function requireSession(
-  request: Request,
-  options: { mutation?: boolean; allowLimited?: boolean } = {},
-): Guard {
-  const session = loadState().session;
-  const user = session ? findUser(session.email) : undefined;
-  if (!session || !user) {
-    return { ok: false, response: problem(401, 'unauthenticated', 'Authentication required') };
-  }
-  if (options.mutation && request.headers.get('x-csrf-token') !== session.csrf) {
-    return { ok: false, response: problem(403, 'csrf-invalid', 'CSRF token missing or invalid') };
-  }
-  if (session.limited && !options.allowLimited) {
-    return {
-      ok: false,
-      response: problem(403, 'mfa-enrolment-required', 'Two-step verification is required'),
-    };
-  }
-  return { ok: true, user };
 }
 
 function passwordProblems(password: unknown) {
@@ -201,6 +155,8 @@ function invitationFor(token: string): InvitationRecord | 'expired' | undefined 
 
 export const handlers: HttpHandler[] = [
   // ---- not auth, but the dashboard and the API-status tile call them --------------------
+  ...registryHandlers,
+
   http.get('/v1/health', () =>
     HttpResponse.json({
       status: 'ok',
@@ -280,7 +236,7 @@ export const handlers: HttpHandler[] = [
   }),
 
   http.get('/v1/auth/me', ({ request }) => {
-    const guard = requireSession(request);
+    const guard = requireSession(request, { allowLimited: true });
     return guard.ok ? HttpResponse.json(buildMe(guard.user)) : guard.response;
   }),
 
@@ -405,7 +361,8 @@ export const handlers: HttpHandler[] = [
         state.session.csrf = rotatedCsrf;
       }
     });
-    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES, csrf_token: rotatedCsrf });
+    // The contract returns only the codes; the client re-reads /me for the rotated CSRF token.
+    return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES });
   }),
 
   // ---- proposed: device list ---------------------------------------------------------------

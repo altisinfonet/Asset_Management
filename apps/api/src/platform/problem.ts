@@ -35,16 +35,32 @@ export const PROBLEM_CATALOG = {
   'idempotency-key-invalid': { status: 400, title: 'Invalid Idempotency-Key' },
   'idempotency-key-required': { status: 400, title: 'Idempotency-Key required' },
   unauthorized: { status: 401, title: 'Authentication required' },
+  // Auth contract (openapi x-problem-codes, M1-AUTH). `mfa-invalid-code` is 401 on the login
+  // challenge and 422 when confirming an enrolment (the throw site passes `status: 422`).
+  'invalid-credentials': { status: 401, title: 'Invalid credentials' },
+  'mfa-invalid-code': { status: 401, title: 'Invalid verification code' },
+  'mfa-challenge-expired': { status: 401, title: 'MFA challenge expired' },
+  'session-expired': { status: 401, title: 'Session expired' },
   forbidden: { status: 403, title: 'Forbidden' },
+  'csrf-invalid': { status: 403, title: 'CSRF token invalid' },
+  'mfa-enrolment-required': { status: 403, title: 'MFA enrolment required' },
+  'mfa-required-by-policy': { status: 403, title: 'MFA is required by policy' },
+  'reauth-failed': { status: 403, title: 'Re-authentication failed' },
   'not-found': { status: 404, title: 'Not found' },
+  'token-invalid': { status: 404, title: 'Token invalid' },
+  'invitation-not-found': { status: 404, title: 'Invitation not found' },
   'method-not-allowed': { status: 405, title: 'Method not allowed' },
   conflict: { status: 409, title: 'Conflict' },
+  'cannot-revoke-current': { status: 409, title: 'Cannot revoke the current session' },
+  'mfa-already-enrolled': { status: 409, title: 'MFA already enrolled' },
   'idempotency-key-in-flight': {
     status: 409,
     title: 'Request with this Idempotency-Key in flight',
   },
   'precondition-failed': { status: 412, title: 'Precondition failed' },
   'payload-too-large': { status: 413, title: 'Payload too large' },
+  'token-expired': { status: 410, title: 'Token expired' },
+  'invitation-expired': { status: 410, title: 'Invitation expired' },
   'unsupported-media-type': { status: 415, title: 'Unsupported media type' },
   validation: { status: 422, title: 'Validation failed' },
   'idempotency-key-reuse': {
@@ -53,6 +69,7 @@ export const PROBLEM_CATALOG = {
   },
   'precondition-required': { status: 428, title: 'Precondition required' },
   'too-many-requests': { status: 429, title: 'Too many requests' },
+  'account-locked': { status: 429, title: 'Account locked' },
   internal: { status: 500, title: 'Internal server error' },
   unavailable: { status: 503, title: 'Service unavailable' },
 } as const;
@@ -61,6 +78,8 @@ export type ProblemCode = keyof typeof PROBLEM_CATALOG;
 
 export interface ProblemInit {
   code: ProblemCode;
+  /** Overrides the catalogue status for the few codes documented with two (`mfa-invalid-code`: 401 / 422). */
+  status?: number;
   detail?: string;
   errors?: FieldError[];
   /** Extra response headers (`Retry-After`, `WWW-Authenticate`, ...). */
@@ -79,7 +98,8 @@ export class ApiProblem extends HttpException {
   readonly extraHeaders: Record<string, string>;
 
   constructor(init: ProblemInit) {
-    const { status, title } = PROBLEM_CATALOG[init.code];
+    const { status: catalogStatus, title } = PROBLEM_CATALOG[init.code];
+    const status = init.status ?? catalogStatus;
     super({ code: init.code, title, detail: init.detail, errors: init.errors }, status);
     this.code = init.code;
     this.detail = init.detail;

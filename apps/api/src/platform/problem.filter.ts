@@ -89,7 +89,7 @@ export class ProblemFilter implements ExceptionFilter {
         exception.code,
         exception.detail,
         exception.errors,
-        undefined,
+        exception.getStatus(),
         exception.extraHeaders,
       );
     }

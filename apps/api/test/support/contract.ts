@@ -72,3 +72,13 @@ export function ruleOf(op: ContractOperation): AccessRule {
   if (op.selfService) return { kind: 'self-service' };
   return { kind: 'authenticated' };
 }
+
+/** The contract's root `x-problem-codes` catalogue: code -> HTTP statuses it can carry. */
+export function loadProblemCodes(): Record<string, number[]> {
+  const doc = yaml.load(readFileSync(CONTRACT, 'utf8')) as {
+    'x-problem-codes': Record<string, { status: number[] }>;
+  };
+  return Object.fromEntries(
+    Object.entries(doc['x-problem-codes']).map(([code, v]) => [code, v.status]),
+  );
+}

@@ -31,7 +31,56 @@ const envSchema = z
     IDEMPOTENCY_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(3_000),
 
     S3_ENDPOINT: z.url().optional(),
+
+    /** SMTP relay, e.g. `smtp://mailpit:1025` (dev) or `smtps://user:pass@smtp.example.com:465`. */
     SMTP_URL: z.string().min(1).optional(),
+    /** RFC 5322 From header of every outgoing mail. */
+    MAIL_FROM: z.string().min(3).default('Asset Tracker <no-reply@assettracker.local>'),
+
+    /**
+     * `scheduler` role only: owner role (app_owner), DIRECT to Postgres. Runs the single pg-boss
+     * maintenance instance (supervise) and the owner-only maintenance jobs. Falls back to
+     * MIGRATOR_DATABASE_URL.
+     */
+    MAINTENANCE_DATABASE_URL: postgresUrl.optional(),
+
+    /** Self-hosted KeyProvider: 32-byte master key, base64. Prefer the *_FILE form (Docker secret). */
+    MASTER_KEY: z.string().min(1).optional(),
+    MASTER_KEY_FILE: z.string().min(1).optional(),
+    MASTER_KEY_ID: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]{1,32}$/)
+      .default('mk1'),
+    /** Previous master key, kept while data keys are re-wrapped after a rotation. */
+    MASTER_KEY_PREVIOUS: z.string().min(1).optional(),
+    MASTER_KEY_PREVIOUS_FILE: z.string().min(1).optional(),
+    MASTER_KEY_PREVIOUS_ID: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]{1,32}$/)
+      .optional(),
+
+    /** Background jobs (pg-boss). Polling only: LISTEN/NOTIFY does not work behind PgBouncer. */
+    JOBS_POLL_SECONDS: z.coerce.number().min(1).max(2).default(1),
+    JOBS_LOCAL_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+    /** Max concurrently running jobs of one tenant per worker process (fairness). */
+    JOBS_TENANT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(2),
+    JOBS_POOL_MAX: z.coerce.number().int().min(1).max(20).default(4),
+
+    /** Outbox relay (worker role). */
+    OUTBOX_RELAY_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(2_000),
+    OUTBOX_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(8),
+
+    /** Scheduler cron producers re-evaluate this often (jobs are deduplicated per time slot). */
+    SCHEDULER_TICK_SECONDS: z.coerce.number().int().min(1).max(3600).default(15),
+
+    /** Internal operations server: /metrics (all roles), /healthz and /readyz (worker, scheduler). */
+    OPS_PORT: z.coerce.number().int().min(1).max(65535).default(9464),
+    OPS_HOST: z.string().min(1).default('0.0.0.0'),
+    OPS_ENABLED: z.stringbool().default(true),
+
+    /** OpenTelemetry tracing is off unless an OTLP endpoint is configured. */
+    OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+    OTEL_SERVICE_NAME: z.string().min(1).default('assettracker'),
 
     APP_VERSION: z.string().min(1).optional(),
     GIT_SHA: z.string().min(1).default('dev'),
@@ -45,12 +94,25 @@ const envSchema = z
           message: 'required when APP_ROLE=migrate',
         });
       }
-    } else if (!env.DATABASE_URL) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['DATABASE_URL'],
-        message: `required when APP_ROLE=${env.APP_ROLE}`,
-      });
+    } else {
+      if (!env.DATABASE_URL) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['DATABASE_URL'],
+          message: `required when APP_ROLE=${env.APP_ROLE}`,
+        });
+      }
+      if (
+        env.APP_ROLE === 'scheduler' &&
+        !env.MAINTENANCE_DATABASE_URL &&
+        !env.MIGRATOR_DATABASE_URL
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MAINTENANCE_DATABASE_URL'],
+          message: 'required when APP_ROLE=scheduler (owner role, direct connection)',
+        });
+      }
     }
   });
 

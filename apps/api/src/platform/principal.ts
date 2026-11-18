@@ -1,5 +1,6 @@
 import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
+import type { ActorType } from '../context/request-context.js';
 import { problem } from './problem.js';
 
 /**
@@ -11,6 +12,8 @@ export interface RequestPrincipal {
   tenantId: string;
   /** user id or api key id: the scope of an Idempotency-Key and `app.actor_id` of the transaction. */
   principalId: string;
+  /** Who this is, for the audit trail (`audit_log.actor_type`). Defaults to `user` when absent. */
+  actorType?: ActorType;
 }
 
 declare module 'fastify' {

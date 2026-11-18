@@ -67,9 +67,9 @@ jobs:
           retention-days: 7
 
   web-e2e:
-    # Optional until the Compose e2e suite (M1-WEB-11) replaces it: deep-link / refresh / back-forward
-    # cases against the static export (ADR-0002). Not a required check.
-    name: Web routing e2e (optional)
+    # Deep-link / refresh / back-forward cases against the static export (ADR-0002), on the MOCK API.
+    # Not a required check; the required end-to-end check is `web-e2e-real` below (real stack).
+    name: Web routing e2e (mock API, optional)
     runs-on: ubuntu-latest
     needs: check
     continue-on-error: true
@@ -280,6 +280,61 @@ jobs:
           COMPOSE_PROJECT: ci-smoke
         run: scripts/ci/compose-smoke.sh
 
+  # ------------------------------------------------------------------ M1-WEB-11
+  # The web app against the REAL stack: the compose stack from the image built above (api, worker,
+  # scheduler, Postgres 18 + PgBouncer, Mailpit, MinIO, demo seed) and the production static export
+  # (no mock code in it) served with `/v1` proxied to the API. One signed-in story with Playwright:
+  # sign in (password + TOTP), category + custom field, asset, edit and a 412, list filter, bulk
+  # archive / restore, palette search, tag numbering, invite a user (mail read from Mailpit), sign out.
+  web-e2e-real:
+    name: Web e2e (real stack)
+    runs-on: ubuntu-latest
+    needs: [check, image, compose-smoke]
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT: ci-e2e
+      BUILD_IMAGE: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          filter: '@assettracker/web...'
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-static-export
+          path: apps/web/out
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/api-image.tar"
+      - name: Start the stack (same image as the smoke test)
+        run: |
+          docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" up -d
+          for i in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:3000/readyz >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "api did not become ready" >&2
+          docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" ps -a
+          exit 1
+      - run: pnpm --filter @assettracker/web exec playwright install --with-deps chromium
+      - name: Playwright (project real)
+        run: pnpm --filter @assettracker/web test:e2e:real
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" logs --no-color --tail=200
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-e2e-real-traces
+          path: apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker/compose.ci.yml -p "$COMPOSE_PROJECT" down -v --remove-orphans
+
   image-scan:
     name: Image scan (Trivy) and SBOM
     runs-on: ubuntu-latest
@@ -329,7 +384,7 @@ jobs:
     # M1-CI-04: on merge to main, push the image tagged with the git SHA to GHCR (dev registry).
     name: Publish image to GHCR (main only)
     runs-on: ubuntu-latest
-    needs: [check, api-e2e, compose-smoke, image-scan]
+    needs: [check, api-e2e, compose-smoke, web-e2e-real, image-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 10
     permissions:
@@ -362,7 +417,7 @@ jobs:
     name: CI gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [check, api-e2e, image, compose-smoke, image-scan]
+    needs: [check, api-e2e, image, compose-smoke, web-e2e-real, image-scan]
     timeout-minutes: 5
     permissions:
       contents: read

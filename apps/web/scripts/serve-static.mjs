@@ -14,10 +14,12 @@
  *   --fallback=index    unknown paths get `index.html` (what `serve -s` does)
  *   --fallback=none     unknown paths get `404.html` with status 404 (a plain static host)
  *   --redirect-slash    redirect `/dir` to `/dir/` like Caddy `file_server` (query string preserved)
+ *   --proxy=URL         forward `/v1/*` to the API at URL (what CloudFront / Caddy do in production), so
+ *                       the page and the API share one origin; used by the real-stack e2e suite
  *
- * Usage: node scripts/serve-static.mjs [outDir] [--port=4173] [--fallback=404|index|none]
+ * Usage: node scripts/serve-static.mjs [outDir] [--port=4173] [--fallback=404|index|none] [--proxy=http://localhost:3000]
  */
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,14 +49,19 @@ async function isFile(p) {
 }
 
 /**
- * @param {{ root: string, fallback?: '404' | 'index' | 'none', redirectSlash?: boolean }} options
+ * @param {{ root: string, fallback?: '404' | 'index' | 'none', redirectSlash?: boolean, proxy?: string }} options
  */
-export function createStaticServer({ root, fallback = '404', redirectSlash = false }) {
+export function createStaticServer({ root, fallback = '404', redirectSlash = false, proxy }) {
   const absRoot = path.resolve(root);
+  const upstream = proxy ? new URL(proxy) : undefined;
 
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
+      if (upstream && (url.pathname === '/v1' || url.pathname.startsWith('/v1/'))) {
+        forward(upstream, req, res);
+        return;
+      }
       const pathname = decodeURIComponent(url.pathname);
       const rel = path.normalize(pathname).replace(/^([/\\])+/, '');
       const target = path.join(absRoot, rel);
@@ -105,6 +112,39 @@ export function createStaticServer({ root, fallback = '404', redirectSlash = fal
   });
 }
 
+/**
+ * Streams the request to the API and the answer back untouched (status, headers incl. Set-Cookie,
+ * body). `host` is rewritten to the upstream's, `x-forwarded-*` tell the API what the browser used.
+ * @param {URL} upstream
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ */
+function forward(upstream, req, res) {
+  const proxied = httpRequest(
+    {
+      hostname: upstream.hostname,
+      port: upstream.port || 80,
+      method: req.method,
+      path: req.url,
+      headers: {
+        ...req.headers,
+        host: upstream.host,
+        'x-forwarded-host': req.headers.host ?? '',
+        'x-forwarded-proto': 'http',
+      },
+    },
+    (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      upstreamRes.pipe(res);
+    },
+  );
+  proxied.on('error', (err) => {
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
+    res.end(`API unreachable: ${err.message}`);
+  });
+  req.pipe(proxied);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flag = (/** @type {string} */ name, /** @type {string} */ dflt) =>
@@ -112,12 +152,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const root = args.find((a) => !a.startsWith('--')) ?? 'out';
   const port = Number(flag('port', '4173'));
   const fallback = /** @type {'404' | 'index' | 'none'} */ (flag('fallback', '404'));
+  const proxy = flag('proxy', '') || undefined;
   const server = createStaticServer({
     root,
     fallback,
     redirectSlash: args.includes('--redirect-slash'),
+    proxy,
   });
   server.listen(port, () => {
-    console.log(`serving ${path.resolve(root)} on http://localhost:${port} (fallback=${fallback})`);
+    console.log(
+      `serving ${path.resolve(root)} on http://localhost:${port} (fallback=${fallback}${proxy ? `, /v1 -> ${proxy}` : ''})`,
+    );
   });
 }

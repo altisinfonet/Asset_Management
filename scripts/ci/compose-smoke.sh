@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Compose smoke test (M1-CI-04): bring the stack up, wait for /readyz, hit /v1/health (and check that
-# the internal ops port is NOT published), tear everything down. Works on Linux, macOS and Git Bash.
+# Compose smoke test (M1-CI-04): bring the stack up, wait for /readyz, hit /v1/health, sign in as a seeded
+# demo user and make one authenticated call (and check that the internal ops port is NOT published), tear everything down. Works on Linux, macOS and Git Bash.
 #
 #   scripts/ci/compose-smoke.sh                 # builds the api image (once) if it is missing, then runs
 #   COMPOSE_PROJECT=atw3c API_PORT=3130 scripts/ci/compose-smoke.sh
@@ -84,6 +84,24 @@ curl -fsS "$BASE_URL/healthz" >/dev/null || fail "GET /healthz failed"
 code="$(http_code "$BASE_URL/v1/auth/me")"
 [ "$code" = "401" ] || fail "GET /v1/auth/me without a session returned $code, expected 401"
 log "auth guard: unauthenticated /v1/auth/me -> 401"
+
+# 4b. One authenticated round trip: sign in as the seeded demo Viewer (password only, no MFA), read the
+# asset list of its tenant. Proves the seed, sessions, tenant isolation setup and the registry
+# routes work in the real image, not only that the process is up. The session cookie is sent by hand
+# (curl's cookie jar would drop a Secure cookie on plain http).
+DEMO_PASSWORD="${DEMO_PASSWORD:-Demo-Passw0rd-2026}"
+login="$(curl -sS --max-time 10 -i -X POST "$BASE_URL/v1/auth/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"viewer@acme.example\",\"password\":\"$DEMO_PASSWORD\"}" | tr -d '\r')"
+case "$login" in "HTTP/1.1 200"*) ;; *) fail "demo login did not answer 200: $(printf '%s' "$login" | head -n1)" ;; esac
+cookie="$(printf '%s\n' "$login" | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-at_session=[^;]*\).*/\1/p' | head -n1)"
+[ -n "$cookie" ] || fail "demo login set no session cookie"
+me="$(curl -fsS --max-time 10 -H "Cookie: $cookie" "$BASE_URL/v1/auth/me")" || fail "GET /v1/auth/me with the demo session failed"
+case "$me" in *'viewer@acme.example'*) ;; *) fail "/v1/auth/me is not the demo viewer: $me" ;; esac
+assets="$(curl -fsS --max-time 10 -H "Cookie: $cookie" "$BASE_URL/v1/assets?limit=3&include_total=true")" || fail "GET /v1/assets with the demo session failed"
+case "$assets" in *'"asset_tag"'*) ;; *) fail "/v1/assets returned no assets: $assets" ;; esac
+total="$(printf '%s' "$assets" | sed -n 's/.*"total":\([0-9]*\).*/\1/p')"
+[ "${total:-0}" -ge 1 ] || fail "/v1/assets total is '$total', expected the seeded demo assets"
+log "authenticated: demo viewer signed in, /v1/assets total=$total"
 
 # 5. M1-OPS-01: /metrics must stay on the internal ops port and not be published or served publicly.
 code="$(http_code "$BASE_URL/metrics")"

@@ -117,18 +117,24 @@ export function ColumnsDialog({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <ul
-          aria-label={t('assets.columnsDialog.title')}
-          className="flex max-h-72 flex-col gap-1 overflow-auto"
-        >
-          {visible.filter((c) => !c.custom).map(row)}
+        <div className="flex max-h-72 flex-col gap-1 overflow-auto">
+          <ul aria-label={t('assets.columnsDialog.title')} className="flex flex-col gap-1">
+            {visible.filter((c) => !c.custom).map(row)}
+          </ul>
           {visible.some((c) => c.custom) ? (
-            <li role="presentation" className="mt-2 text-xs font-semibold text-muted">
-              {t('assets.columnsDialog.customFields')}
-            </li>
+            <>
+              <h3 className="mt-2 text-xs font-semibold text-muted">
+                {t('assets.columnsDialog.customFields')}
+              </h3>
+              <ul
+                aria-label={t('assets.columnsDialog.customFields')}
+                className="flex flex-col gap-1"
+              >
+                {visible.filter((c) => c.custom).map(row)}
+              </ul>
+            </>
           ) : null}
-          {visible.filter((c) => c.custom).map(row)}
-        </ul>
+        </div>
         <DialogFooter>
           <Button onClick={() => onChange([...DEFAULT_COLUMNS])}>
             {t('assets.columnsDialog.reset')}

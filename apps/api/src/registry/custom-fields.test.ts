@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type FieldDef,
   coerceValue,
+  hasNestedQuantifier,
   mergeCustomData,
   missingRequired,
   validateDefinition,
@@ -178,5 +179,28 @@ describe('validateDefinition', () => {
     expect(
       validateDefinition({ dataType: 'boolean', options: null, validation: { min: 1 } })[0]!.code,
     ).toBe('unknown-field');
+  });
+});
+
+describe('hasNestedQuantifier (ReDoS guard)', () => {
+  it.each(['^(a+)+$', '(a|aa)*', '^(.*a){10,}$', '((ab)+c*)+', '^(\\d+\\.?)*$'])(
+    'rejects %s',
+    (p) => {
+      expect(hasNestedQuantifier(p)).toBe(true);
+      expect(
+        validateDefinition({ dataType: 'text', options: null, validation: { pattern: p } })[0]
+          ?.code,
+      ).toBe('unsafe');
+    },
+  );
+  it.each([
+    '^v\\d+\\.\\d+$',
+    '^[A-Z]{2}-\\d+$',
+    '^([0-9a-f]{2}:){5}[0-9a-f]{2}$',
+    '^(abc)?x+$',
+    '^[a+]+$',
+    '^\\(a+\\)$',
+  ])('accepts %s', (p) => {
+    expect(hasNestedQuantifier(p)).toBe(false);
   });
 });

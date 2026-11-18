@@ -153,7 +153,8 @@ export abstract class CatalogService<
       return await this.tx(auth, async (trx) => {
         const delegate = this.cfg.delegate(trx);
         const row = await delegate.findUnique({ where: { id } });
-        if (!row) throw problem.notFound(`${this.cfg.label} not found.`);
+        // An archived row is gone for the API client: no edits (it could also be made the default label).
+        if (!row || row.archived_at) throw problem.notFound(`${this.cfg.label} not found.`);
         assertIfMatch(ifMatch, row.version);
         const changes = await this.cfg.prepareUpdate(trx, auth, row, body);
         if (Object.keys(changes).length === 0) {

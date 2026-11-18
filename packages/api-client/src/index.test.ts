@@ -37,9 +37,7 @@ describe('health and version helpers', () => {
   });
 
   it('reads the version', async () => {
-    const client = clientFor(() =>
-      json({ name: 'api', version: '1', commit: 'abc', role: 'api' }),
-    );
+    const client = clientFor(() => json({ name: 'api', version: '1', commit: 'abc', role: 'api' }));
     expect((await getVersion(client)).role).toBe('api');
   });
 });

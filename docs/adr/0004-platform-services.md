@@ -74,7 +74,7 @@ All implementations are bound in one place, `PortsModule` (`src/platform/ports.m
 
 All five ports were implemented as-is. Points the next author should know:
 
-1. `JobQueue.enqueue` returns `Promise<string>`, but a deduplicated enqueue (same singleton key in the same slot) has no job id. The adapter returns `''` for that case; `Promise<string | null>` would be more honest. Callers must treat `''` as "already queued".
+1. `JobQueue.enqueue` returns `Promise<string | null>`: a deduplicated enqueue (same singleton key in the same slot) has no job id and resolves to `null` (it used to be `''`, which is falsy too, so `if (id)` callers behave the same). Callers must treat `null` as "already queued".
 2. `MailSender.send(message)` has no `tx` parameter; the implementation uses the ambient `withTenantTx` transaction (`currentTenantTx()`), which is what makes the mail transactional. It cannot send outside a tenant transaction (section 1).
 3. `AuditEntry.meta` has no column of its own: it is stored as `diff.meta`.
 4. `SecretBox.encrypt/decrypt` take a single `context` string; use `<tenant_id>:<purpose>` consistently (the mail module uses `<tenant_id>:mail:<mail_id>`).

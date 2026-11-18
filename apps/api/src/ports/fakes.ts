@@ -26,7 +26,7 @@ export class FakeOutbox implements OutboxPublisher {
 
 export class FakeJobQueue implements JobQueue {
   readonly jobs: { name: string; payload: Record<string, unknown> }[] = [];
-  async enqueue(name: string, payload: Record<string, unknown>): Promise<string> {
+  async enqueue(name: string, payload: Record<string, unknown>): Promise<string | null> {
     this.jobs.push({ name, payload });
     return String(this.jobs.length);
   }

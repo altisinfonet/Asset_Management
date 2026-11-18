@@ -143,7 +143,7 @@ describe('PgBossJobQueue guards', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('sends with priority class, tenant group and dedupe window; returns "" for a deduplicated send', async () => {
+  it('sends with priority class, tenant group and dedupe window; returns null for a deduplicated send', async () => {
     send.mockResolvedValueOnce('id-1' as never);
     expect(
       await queue.enqueue('tenant.heartbeat', { tenantId: A, bucket: 5 }, { singletonKey: 'k' }),
@@ -159,9 +159,9 @@ describe('PgBossJobQueue guards', () => {
       }),
     );
     send.mockResolvedValueOnce(null as never);
-    expect(await queue.enqueue('tenant.heartbeat', { tenantId: A }, { singletonKey: 'k' })).toBe(
-      '',
-    );
+    expect(
+      await queue.enqueue('tenant.heartbeat', { tenantId: A }, { singletonKey: 'k' }),
+    ).toBeNull();
   });
 });
 

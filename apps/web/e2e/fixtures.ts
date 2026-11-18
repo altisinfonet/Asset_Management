@@ -1,5 +1,6 @@
 import { expect, test as base, type Locator, type Page } from '@playwright/test';
 import { MOCK_ACCOUNTS } from '../src/mocks/fixtures';
+import { uid } from '../src/mocks/registry-fixtures';
 
 /**
  * e2e runs against the static export built with the mock API (`pnpm build:mock`). Every app screen
@@ -60,6 +61,18 @@ export async function gotoApp(page: Page, url: string): Promise<void> {
  */
 export function alerts(page: Page): Locator {
   return page.getByRole('alert').filter({ hasText: /\S/ });
+}
+
+/** Id of seeded asset number `n` in the mock registry (`AT-00124` is `assetId(124)`). */
+export const assetId = (n: number) => uid('asset', n);
+
+/**
+ * Wait until nothing on the page is loading: no busy region (tables, skeleton screens) and no
+ * skeleton blocks. Use before axe or screenshots so they see the real screen, not its placeholder.
+ */
+export async function settled(page: Page): Promise<void> {
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await expect(page.locator('[data-skeleton]')).toHaveCount(0);
 }
 
 export { expect };

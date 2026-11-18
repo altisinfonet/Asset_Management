@@ -46,7 +46,7 @@ export interface MockState {
 const KEY = 'at-mock-state';
 
 const ACME = MOCK_TENANTS[0].name;
-const VIEWER_PERMISSIONS = ['asset:read', 'catalog:read', 'location:read'];
+const VIEWER_PERMISSIONS = ['asset:read', 'catalog:read', 'location:read', 'search:read'];
 
 export const SEED_USERS: Record<string, MockUser> = {
   [MOCK_ACCOUNTS.owner]: {
@@ -73,6 +73,23 @@ export const SEED_USERS: Record<string, MockUser> = {
     display_name: 'Vera Viewer',
     role: 'viewer',
     permissions: VIEWER_PERMISSIONS,
+    mfa: false,
+    tenantName: ACME,
+  },
+  [MOCK_ACCOUNTS.manager]: {
+    id: '0190a6b2-0000-7000-8000-000000000007',
+    email: MOCK_ACCOUNTS.manager,
+    display_name: 'Sam Lee',
+    role: 'asset_manager',
+    permissions: [
+      'asset:*',
+      'catalog:manage',
+      'catalog:read',
+      'location:read',
+      'role:read',
+      'search:read',
+      'user:read',
+    ],
     mfa: false,
     tenantName: ACME,
   },
@@ -151,9 +168,17 @@ export function updateState(change: (state: MockState) => void): MockState {
   return state;
 }
 
+const resetHooks = new Set<() => void>();
+
+/** Other mock stores (the registry) register here so one reset clears everything. */
+export function onMockReset(hook: () => void): void {
+  resetHooks.add(hook);
+}
+
 /** Back to the seed data (unit tests call this between cases). */
 export function resetMockState(): void {
   memory = undefined;
+  for (const hook of resetHooks) hook();
   try {
     globalThis.localStorage?.removeItem(KEY);
   } catch {

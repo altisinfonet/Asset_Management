@@ -1,3 +1,4 @@
+import { ApiError } from './errors.js';
 import {
   healthResponseSchema,
   versionResponseSchema,
@@ -9,17 +10,6 @@ export interface ApiClientOptions {
   /** Base URL of the API. Empty string means same-origin (the production default). */
   baseUrl?: string;
   fetch?: typeof fetch;
-}
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly body?: unknown,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
 }
 
 export interface ApiClient {
@@ -48,3 +38,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 }
 
 export type { HealthResponse, VersionResponse } from '@assettracker/schemas';
+
+export { ApiError } from './errors.js';
+export { ETagStore, ifMatch } from './etag-store.js';
+export { createTypedClient } from './typed.js';
+export type { TypedClient, TypedClientOptions } from './typed.js';
+export type { components, operations, paths } from './generated/schema.js';

@@ -44,6 +44,9 @@ export async function startApp(
     ARGON2_MEMORY_KIB: '64',
     ARGON2_TIME_COST: '1',
     WEB_BASE_URL: 'http://web.test',
+    // app.inject connects from loopback; trusting only it lets each test client pick its address
+    // through X-Forwarded-For (per-IP throttling must not couple unrelated tests).
+    TRUST_PROXY: '127.0.0.1',
     IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
     ...extra,
   });

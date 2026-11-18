@@ -24,6 +24,14 @@ export interface SelectProps {
   'aria-label'?: string;
   'aria-describedby'?: string;
   className?: string;
+  /** `md` is the 36px form control; `sm` is the 28px dense control (24px inside a compact table). */
+  size?: 'md' | 'sm';
+  /**
+   * `outline` always shows the border (forms, filters). `ghost` hides border and fill at rest and shows
+   * them on hover and focus; the chevron stays visible so it still reads as a control. Use `size="sm"
+   * variant="ghost"` for selects inside table cells.
+   */
+  variant?: 'outline' | 'ghost';
 }
 
 /**
@@ -36,6 +44,8 @@ export function Select({
   invalid,
   id,
   className,
+  size = 'md',
+  variant = 'outline',
   'aria-label': ariaLabel,
   'aria-describedby': describedBy,
   ...root
@@ -48,8 +58,14 @@ export function Select({
         aria-describedby={describedBy}
         aria-invalid={invalid || undefined}
         className={cn(
-          'flex min-h-(--size-control) w-full items-center justify-between gap-2 rounded-md border border-border-strong bg-surface px-3 text-md text-text sm:text-base',
-          'data-[placeholder]:text-muted disabled:cursor-not-allowed disabled:bg-sunken disabled:text-muted',
+          'flex items-center justify-between rounded-md border text-text',
+          size === 'sm'
+            ? 'min-h-(--size-control-dense) gap-1.5 px-2 text-sm in-data-[density=compact]:min-h-6'
+            : 'min-h-(--size-control) gap-2 px-3 text-md sm:text-base',
+          variant === 'ghost'
+            ? 'w-auto border-transparent bg-transparent hover:border-border-strong hover:bg-sunken disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-muted disabled:hover:bg-transparent'
+            : 'w-full border-border-strong bg-surface disabled:cursor-not-allowed disabled:bg-sunken disabled:text-muted',
+          'data-[placeholder]:text-muted',
           'aria-invalid:border-danger aria-invalid:border-2',
           className,
         )}

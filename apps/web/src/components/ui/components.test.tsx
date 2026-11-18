@@ -99,6 +99,66 @@ describe('Field, Input, Select, Checkbox', () => {
   });
 });
 
+describe('Select size and variant', () => {
+  const OPTIONS = [
+    { value: 'a', label: 'Alpha' },
+    { value: 'b', label: 'Beta' },
+  ];
+
+  it('defaults to the 36px outline control', () => {
+    render(<Select aria-label="Plain" options={OPTIONS} defaultValue="a" />);
+    const trigger = screen.getByRole('combobox', { name: 'Plain' });
+    expect(trigger.className).toContain('min-h-(--size-control)');
+    expect(trigger.className).toContain('border-border-strong');
+    expect(trigger.className).toContain('w-full');
+  });
+
+  it('sm + ghost is the dense borderless table control with a visible chevron', async () => {
+    const { container } = render(
+      <Select aria-label="Role" options={OPTIONS} defaultValue="a" size="sm" variant="ghost" />,
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Role' });
+    expect(trigger.className).toContain('min-h-(--size-control-dense)');
+    expect(trigger.className).toContain('in-data-[density=compact]:min-h-6');
+    expect(trigger.className).toContain('border-transparent');
+    expect(trigger.className).toContain('hover:border-border-strong');
+    expect(trigger.className).not.toContain('w-full');
+    expect(trigger.querySelector('svg')).toBeInTheDocument(); // chevron stays
+    await expectNoA11yViolations(container);
+  });
+
+  it('a ghost select still opens from the keyboard and changes value', async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+    render(
+      <Select
+        aria-label="Role"
+        options={OPTIONS}
+        defaultValue="a"
+        size="sm"
+        variant="ghost"
+        onValueChange={onValueChange}
+      />,
+    );
+    screen.getByRole('combobox', { name: 'Role' }).focus();
+    await user.keyboard('{Enter}');
+    await user.click(await screen.findByRole('option', { name: 'Beta' }));
+    expect(onValueChange).toHaveBeenCalledWith('b');
+  });
+
+  it('a disabled ghost select has no hover affordance and does not open', async () => {
+    const user = userEvent.setup();
+    render(
+      <Select aria-label="Role" options={OPTIONS} defaultValue="a" size="sm" variant="ghost" disabled />,
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Role' });
+    expect(trigger).toBeDisabled();
+    expect(trigger.className).toContain('disabled:hover:bg-transparent');
+    await user.click(trigger);
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+  });
+});
+
 describe('Dialog', () => {
   function Example() {
     return (

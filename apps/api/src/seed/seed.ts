@@ -384,7 +384,7 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     data: { status: 'active' },
   });
   const people = [
-    { local: 'admin', name: 'Demo Admin', roleKey: 'asset_manager' },
+    { local: 'admin', name: 'Demo Asset Manager', roleKey: 'asset_manager' },
     { local: 'technician', name: 'Demo Technician', roleKey: 'technician' },
     { local: 'viewer', name: 'Demo Viewer', roleKey: 'viewer' },
   ];

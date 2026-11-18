@@ -172,6 +172,7 @@ export function DataTable<T>({
         role={interactive ? 'grid' : undefined}
         aria-label={label}
         aria-multiselectable={selectable || undefined}
+        data-density={density}
         className="w-full border-separate border-spacing-0 text-sm"
       >
         <thead>

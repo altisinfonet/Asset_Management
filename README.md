@@ -54,10 +54,10 @@ node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://l
 
 Open http://localhost:3001 and sign in. Every demo user has the password `Demo-Passw0rd-2026`:
 
-| User                                                                                                      | Role                                         |
-| --------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `owner@acme.example`, `owner@globex.example`                                                              | Owner, asks for a 6-digit authenticator code |
-| `admin@acme.example`, `technician@acme.example`, `viewer@acme.example` (and the same at `globex.example`) | Admin, Technician, Viewer, password only     |
+| User                                                                                                      | Role                                                                              |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `owner@acme.example`, `owner@globex.example`                                                              | Owner, asks for a 6-digit authenticator code                                      |
+| `admin@acme.example`, `technician@acme.example`, `viewer@acme.example` (and the same at `globex.example`) | Asset manager, Technician, Viewer, password only (full Administrator = the Owner) |
 
 The Owner's TOTP secret is `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP` (add it to any authenticator app, or compute the
 code with `apps/api/src/auth/totp.ts`). Mail (invitations, password reset) arrives in Mailpit,

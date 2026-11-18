@@ -189,7 +189,9 @@ function UsersTable({
             disabled={!manage || u.status === 'disabled'}
             onValueChange={(roleId) => void changeRole(u, roleId)}
             options={roles.map((r) => ({ value: r.id, label: r.name }))}
-            className="min-w-44"
+            size="sm"
+            variant="ghost"
+            className="-ml-2 min-w-40"
           />
         ),
       },

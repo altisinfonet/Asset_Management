@@ -57,6 +57,9 @@ ENV NODE_ENV=production \
     APP_VERSION=${APP_VERSION}
 WORKDIR /app
 COPY --from=build --chown=node:node /out/ ./
+# The image never runs npm/npx (ENTRYPOINT is node); the CLI bundled in the base image only adds CVEs
+# (brace-expansion, undici inside /usr/local/lib/node_modules/npm) and attack surface. Removed.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Non-root (uid 1000 from the base image); no secrets or shell tooling are added.
 USER node
 EXPOSE 3000

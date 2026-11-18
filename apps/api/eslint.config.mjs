@@ -2,11 +2,51 @@ import tseslint from 'typescript-eslint';
 import { base } from '../../eslint.config.mjs';
 
 /**
- * Dependency boundary (M1-TEN-02, ADR 0001): the database client is reachable only inside `tenancy`
- * (and `db`, the owner-path migrator and maintenance code). Every other module goes through
- * TenancyService / TenantRepository, so tenant context cannot be bypassed by a stray query.
- * Type-only imports are fine. Tests may use the driver directly (fixtures, raw clients).
+ * Dependency boundaries (ADR 0001, ADR 0003; architecture 4 "Boundary rules"), enforced with ESLint
+ * `no-restricted-imports` (no extra tool):
+ *
+ *  1. The database client is reachable only inside `tenancy` (and `db`, the owner-path migrator
+ *     and maintenance code). Every other module goes through TenancyService / TenantRepository,
+ *     so tenant context cannot be bypassed by a stray query. Type-only imports are fine.
+ *  2. A module is used through its facade: `src/<module>/index.ts`. Importing another module's
+ *     internals (`../tenancy/tenant-tx.js`) fails lint.
+ *  3. The platform kernel never imports a domain module or an application entry point.
+ * Tests may use the driver and module internals directly (fixtures, raw clients).
  */
+
+/** Modules with a public facade (`index.ts`). */
+export const FACADE_MODULES = ['tenancy', 'platform', 'control-plane', 'identity'];
+/** Platform kernel directories (may import each other's facades, never domain/application code). */
+export const KERNEL_DIRS = [
+  'platform',
+  'tenancy',
+  'control-plane',
+  'identity',
+  'config',
+  'logging',
+  'ids',
+  'db',
+  'context',
+];
+/** Domain modules (architecture 4); they depend on the kernel, never the other way round. */
+export const DOMAIN_DIRS = [
+  'registry',
+  'lifecycle',
+  'tagging',
+  'licenses',
+  'maintenance',
+  'finance',
+  'importer',
+  'connectors',
+  'discovery',
+  'reporting',
+  'workflow',
+  'relationships',
+  'ai',
+];
+/** Application-level code that wires modules together. */
+export const APP_DIRS = ['bootstrap', 'seed', 'cli', 'health'];
+
 export const DRIVER_PACKAGES = [
   '@prisma/client',
   '@prisma/client/*',
@@ -22,8 +62,12 @@ export const DRIVER_PACKAGES = [
 /** The generated Prisma client (apps/api/src/generated/prisma), by any relative path. */
 export const GENERATED_CLIENT_PATTERNS = ['**/generated/prisma', '**/generated/prisma/**'];
 
-const BOUNDARY_MESSAGE =
+const DRIVER_MESSAGE =
   'The database client may only be imported inside src/tenancy (and src/db). Use TenancyService.withTenantTx / TenantRepository.';
+const INTERNALS_MESSAGE =
+  'Import a module only through its facade (src/<module>/index.ts), never its internals.';
+const KERNEL_MESSAGE =
+  'The platform kernel must not import domain modules or application entry points (dependencies point downward).';
 
 /**
  * `$queryRawUnsafe` / `$executeRawUnsafe` take a plain string: SQL injection by construction.
@@ -32,11 +76,44 @@ const BOUNDARY_MESSAGE =
 const UNSAFE_RAW_SELECTOR =
   'MemberExpression[property.name=/RawUnsafe$/], MemberExpression[computed=true][property.value=/RawUnsafe$/]';
 
+const dirs = (list) => list.flatMap((d) => [`**/${d}`, `**/${d}/**`]);
+
+/** `no-restricted-imports` options for a file group. */
+function restricted({ driver, kernel }) {
+  const patterns = [
+    ...FACADE_MODULES.map((m) => ({
+      group: [`**/${m}/*`, `!**/${m}/index.js`],
+      allowTypeImports: false,
+      message: INTERNALS_MESSAGE,
+    })),
+  ];
+  if (kernel) {
+    patterns.push({ group: dirs([...DOMAIN_DIRS, ...APP_DIRS]), message: KERNEL_MESSAGE });
+  }
+  const paths = [];
+  if (driver) {
+    paths.push(
+      ...DRIVER_PACKAGES.filter((p) => !p.includes('*')).map((name) => ({
+        name,
+        allowTypeImports: true,
+        message: DRIVER_MESSAGE,
+      })),
+    );
+    patterns.push({
+      group: [...DRIVER_PACKAGES.filter((p) => p.includes('*')), ...GENERATED_CLIENT_PATTERNS],
+      allowTypeImports: true,
+      message: DRIVER_MESSAGE,
+    });
+  }
+  return ['error', { paths, patterns }];
+}
+
+const srcOf = (list) => list.map((d) => `src/${d}/**/*.ts`);
+const testFiles = ['src/**/*.test.ts'];
+
 export default tseslint.config(
   ...base,
-  {
-    ignores: ['src/generated/**'],
-  },
+  { ignores: ['src/generated/**'] },
   {
     files: ['src/**/*.ts', 'test/**/*.ts'],
     rules: {
@@ -50,30 +127,28 @@ export default tseslint.config(
       ],
     },
   },
+  // Kernel code that must not touch the database client: platform, control-plane, identity, config, ...
+  {
+    files: srcOf(KERNEL_DIRS.filter((d) => !['tenancy', 'db'].includes(d))),
+    ignores: testFiles,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': restricted({ driver: true, kernel: true }),
+    },
+  },
+  // tenancy and db own the client; they still obey the facade and downward-dependency rules.
+  {
+    files: srcOf(['tenancy', 'db']),
+    ignores: testFiles,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': restricted({ driver: false, kernel: true }),
+    },
+  },
+  // Everything else under src: domain modules, bootstrap, seed, cli, health, entry points.
   {
     files: ['src/**/*.ts'],
-    ignores: ['src/tenancy/**', 'src/db/**', 'src/**/*.test.ts'],
+    ignores: [...testFiles, ...srcOf(KERNEL_DIRS)],
     rules: {
-      '@typescript-eslint/no-restricted-imports': [
-        'error',
-        {
-          paths: DRIVER_PACKAGES.filter((p) => !p.includes('*')).map((name) => ({
-            name,
-            allowTypeImports: true,
-            message: BOUNDARY_MESSAGE,
-          })),
-          patterns: [
-            {
-              group: [
-                ...DRIVER_PACKAGES.filter((p) => p.includes('*')),
-                ...GENERATED_CLIENT_PATTERNS,
-              ],
-              allowTypeImports: true,
-              message: BOUNDARY_MESSAGE,
-            },
-          ],
-        },
-      ],
+      '@typescript-eslint/no-restricted-imports': restricted({ driver: true, kernel: false }),
     },
   },
 );

@@ -133,3 +133,88 @@ describe('unsafe raw SQL is banned (ADR 0001)', () => {
     expect(await unsafe('src/orders/a.ts', code)).toEqual([]);
   });
 });
+
+describe('module boundaries (M1-PLAT-01, ADR 0003)', () => {
+  const eslint = new ESLint({ cwd: apiRoot });
+  const restricted = async (filePath: string, code: string) => {
+    const [result] = await eslint.lintText(code, { filePath: join(apiRoot, filePath) });
+    return result!.messages.filter((m) => m.ruleId === '@typescript-eslint/no-restricted-imports');
+  };
+
+  it("importing another module's internals fails lint; the facade passes", async () => {
+    const internals = await restricted(
+      'src/registry/assets.service.ts',
+      "import { withTenantTx } from '../tenancy/tenant-tx.js';\nexport const x = withTenantTx;\n",
+    );
+    expect(internals).toHaveLength(1);
+    expect(internals[0]?.message).toMatch(/facade/);
+
+    for (const m of ['platform/etag', 'identity/tokens', 'control-plane/entitlements']) {
+      expect(
+        await restricted(
+          'src/registry/a.ts',
+          `import { x } from '../${m}.js';\nexport const y = x;\n`,
+        ),
+        m,
+      ).toHaveLength(1);
+    }
+    for (const m of ['tenancy', 'platform', 'identity', 'control-plane']) {
+      expect(
+        await restricted(
+          'src/registry/a.ts',
+          `import { x } from '../${m}/index.js';\nexport const y = x;\n`,
+        ),
+        m,
+      ).toEqual([]);
+    }
+  });
+
+  it('a module may use its own files freely', async () => {
+    expect(
+      await restricted(
+        'src/tenancy/tenancy.service.ts',
+        "import { x } from './tenant-tx.js';\nexport const y = x;\n",
+      ),
+    ).toEqual([]);
+  });
+
+  it('the platform kernel never imports a domain module or an application entry point', async () => {
+    const domain = await restricted(
+      'src/platform/etag.ts',
+      "import { x } from '../registry/index.js';\nexport const y = x;\n",
+    );
+    expect(domain).toHaveLength(1);
+    expect(domain[0]?.message).toMatch(/kernel/);
+    expect(
+      await restricted(
+        'src/tenancy/a.ts',
+        "import { x } from '../bootstrap/bootstrap-tenant.js';\nexport const y = x;\n",
+      ),
+    ).toHaveLength(1);
+    expect(
+      await restricted(
+        'src/identity/a.ts',
+        "import { x } from '../seed/seed.js';\nexport const y = x;\n",
+      ),
+    ).toHaveLength(1);
+    // The other direction (application code using the kernel) is the normal one.
+    expect(
+      await restricted(
+        'src/bootstrap/a.ts',
+        "import { x } from '../identity/index.js';\nexport const y = x;\n",
+      ),
+    ).toEqual([]);
+  });
+
+  it('the kernel (except tenancy and db) cannot import the database client either', async () => {
+    expect(
+      await restricted('src/platform/a.ts', "import pg from 'pg';\nexport const x = pg;\n"),
+    ).toHaveLength(1);
+    expect(
+      await restricted(
+        'src/identity/a.ts',
+        "import { PrismaClient } from '@prisma/client';\nexport const x = PrismaClient;\n",
+      ),
+    ).toHaveLength(1);
+  });
+});

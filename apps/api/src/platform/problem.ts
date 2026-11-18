@@ -1,0 +1,168 @@
+import { HttpException } from '@nestjs/common';
+
+/**
+ * Error format of the public API (M1-PLAT-02): RFC 9457 `application/problem+json` with a stable
+ * machine `code`, the request id and, for validation failures, `errors[]`
+ * (docs/engineering/openapi.yaml: schemas `Problem` and `FieldError`).
+ */
+export const PROBLEM_CONTENT_TYPE = 'application/problem+json; charset=utf-8';
+
+/** Default base of the `type` URIs; overridable (PROBLEM_TYPE_BASE) for a self-hosted install. */
+export const DEFAULT_PROBLEM_TYPE_BASE = 'https://api.assettracker.test/problems';
+
+export interface FieldError {
+  /** JSON pointer into the request body (`/asset_tag`), `query:<name>` or `path:<name>`. */
+  pointer: string;
+  message: string;
+  code?: string;
+}
+
+export interface ProblemBody {
+  type: string;
+  title: string;
+  status: number;
+  code: string;
+  detail?: string;
+  instance?: string;
+  request_id?: string;
+  errors?: FieldError[];
+}
+
+/** Every stable problem code with its status and title. Codes are API surface: never rename one. */
+export const PROBLEM_CATALOG = {
+  'bad-request': { status: 400, title: 'Bad request' },
+  'invalid-cursor': { status: 400, title: 'Invalid cursor' },
+  'idempotency-key-invalid': { status: 400, title: 'Invalid Idempotency-Key' },
+  'idempotency-key-required': { status: 400, title: 'Idempotency-Key required' },
+  unauthorized: { status: 401, title: 'Authentication required' },
+  forbidden: { status: 403, title: 'Forbidden' },
+  'not-found': { status: 404, title: 'Not found' },
+  'method-not-allowed': { status: 405, title: 'Method not allowed' },
+  conflict: { status: 409, title: 'Conflict' },
+  'idempotency-key-in-flight': {
+    status: 409,
+    title: 'Request with this Idempotency-Key in flight',
+  },
+  'precondition-failed': { status: 412, title: 'Precondition failed' },
+  'payload-too-large': { status: 413, title: 'Payload too large' },
+  'unsupported-media-type': { status: 415, title: 'Unsupported media type' },
+  validation: { status: 422, title: 'Validation failed' },
+  'idempotency-key-reuse': {
+    status: 422,
+    title: 'Idempotency-Key reused with a different request',
+  },
+  'precondition-required': { status: 428, title: 'Precondition required' },
+  'too-many-requests': { status: 429, title: 'Too many requests' },
+  internal: { status: 500, title: 'Internal server error' },
+  unavailable: { status: 503, title: 'Service unavailable' },
+} as const;
+
+export type ProblemCode = keyof typeof PROBLEM_CATALOG;
+
+export interface ProblemInit {
+  code: ProblemCode;
+  detail?: string;
+  errors?: FieldError[];
+  /** Extra response headers (`Retry-After`, `WWW-Authenticate`, ...). */
+  headers?: Record<string, string>;
+}
+
+/**
+ * Throw this from any controller, pipe, guard or service to answer with a problem document. It
+ * extends HttpException so Nest's own machinery (interceptors, `@Catch(HttpException)`) still sees
+ * a normal HTTP error; the global filter renders it.
+ */
+export class ApiProblem extends HttpException {
+  readonly code: ProblemCode;
+  readonly detail?: string;
+  readonly errors?: FieldError[];
+  readonly extraHeaders: Record<string, string>;
+
+  constructor(init: ProblemInit) {
+    const { status, title } = PROBLEM_CATALOG[init.code];
+    super({ code: init.code, title, detail: init.detail, errors: init.errors }, status);
+    this.code = init.code;
+    this.detail = init.detail;
+    this.errors = init.errors;
+    this.extraHeaders = init.headers ?? {};
+    this.message = init.detail ?? title;
+  }
+}
+
+/** Shorthands used across the API. */
+export const problem = {
+  badRequest: (detail: string, errors?: FieldError[]) =>
+    new ApiProblem({ code: 'bad-request', detail, errors }),
+  validation: (errors: FieldError[], detail = 'The request body failed validation.') =>
+    new ApiProblem({ code: 'validation', detail, errors }),
+  notFound: (detail = 'The resource does not exist.') =>
+    new ApiProblem({ code: 'not-found', detail }),
+  conflict: (detail: string) => new ApiProblem({ code: 'conflict', detail }),
+  unauthorized: (detail = 'Authentication is required.', scheme = 'Bearer') =>
+    new ApiProblem({ code: 'unauthorized', detail, headers: { 'WWW-Authenticate': scheme } }),
+  forbidden: (detail = 'You do not have permission to do this.') =>
+    new ApiProblem({ code: 'forbidden', detail }),
+  preconditionFailed: (detail: string) => new ApiProblem({ code: 'precondition-failed', detail }),
+  preconditionRequired: (detail: string) =>
+    new ApiProblem({ code: 'precondition-required', detail }),
+};
+
+/** Problem `code` for a status the framework produced on its own (404 route, 413 body, ...). */
+export function codeForStatus(status: number): ProblemCode {
+  switch (status) {
+    case 400:
+      return 'bad-request';
+    case 401:
+      return 'unauthorized';
+    case 403:
+      return 'forbidden';
+    case 404:
+      return 'not-found';
+    case 405:
+      return 'method-not-allowed';
+    case 409:
+      return 'conflict';
+    case 412:
+      return 'precondition-failed';
+    case 413:
+      return 'payload-too-large';
+    case 415:
+      return 'unsupported-media-type';
+    case 422:
+      return 'validation';
+    case 428:
+      return 'precondition-required';
+    case 429:
+      return 'too-many-requests';
+    case 503:
+      return 'unavailable';
+    default:
+      return status >= 500 ? 'internal' : 'bad-request';
+  }
+}
+
+/** Builds the response document. `base` is the `type` URI prefix without a trailing slash. */
+export function toProblemBody(
+  code: ProblemCode,
+  opts: {
+    base?: string;
+    detail?: string;
+    errors?: FieldError[];
+    requestId?: string;
+    instance?: string;
+    status?: number;
+    title?: string;
+  } = {},
+): ProblemBody {
+  const entry = PROBLEM_CATALOG[code];
+  return {
+    type: `${(opts.base ?? DEFAULT_PROBLEM_TYPE_BASE).replace(/\/+$/, '')}/${code}`,
+    title: opts.title ?? entry.title,
+    status: opts.status ?? entry.status,
+    code,
+    ...(opts.detail ? { detail: opts.detail } : {}),
+    ...(opts.instance ? { instance: opts.instance } : {}),
+    ...(opts.requestId ? { request_id: opts.requestId } : {}),
+    ...(opts.errors && opts.errors.length > 0 ? { errors: opts.errors } : {}),
+  };
+}

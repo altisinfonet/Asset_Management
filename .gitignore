@@ -3,6 +3,7 @@ node_modules/
 .pnpm-store/
 
 # builds
+apps/api/openapi.generated.json
 dist/
 build/
 out/

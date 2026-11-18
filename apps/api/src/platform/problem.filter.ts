@@ -71,6 +71,7 @@ export class ProblemFilter implements ExceptionFilter {
       errors?: FieldError[],
       status?: number,
       headers: Record<string, string> = {},
+      extensions?: Record<string, unknown>,
     ): Rendered => ({
       status: status ?? toProblemBody(code).status,
       body: toProblemBody(code, {
@@ -80,6 +81,7 @@ export class ProblemFilter implements ExceptionFilter {
         requestId,
         status,
         instance: url?.split('?')[0],
+        extensions,
       }),
       headers,
     });
@@ -91,6 +93,7 @@ export class ProblemFilter implements ExceptionFilter {
         exception.errors,
         exception.getStatus(),
         exception.extraHeaders,
+        exception.extensions,
       );
     }
     if (exception instanceof ZodError) {

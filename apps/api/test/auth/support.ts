@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
+import type { Type } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { createApiApp } from '../../src/app.js';
 import { bootstrapTenant } from '../../src/bootstrap/bootstrap-tenant.js';
 import { loadConfig } from '../../src/config/env.js';
 import { base32Decode, hotp, totpStep } from '../../src/auth/totp.js';
 import { dbEnabled, env, jobsSchema, newTenancy, withClient } from '../support/db.js';
+import { observe } from '../support/contract-observer.js';
 import { testPorts, TestPortsModule } from '../support/test-ports.js';
 import type { TenancyService } from '../../src/tenancy/index.js';
 
@@ -33,7 +35,7 @@ export const newPassword = () => `Pw-${randomBytes(9).toString('base64url')}-ok`
  */
 export async function startApp(
   extra: Record<string, string> = {},
-  options: { realPorts?: boolean } = {},
+  options: { realPorts?: boolean; ports?: Type<unknown> } = {},
 ) {
   const config = loadConfig({
     NODE_ENV: 'test',
@@ -51,7 +53,10 @@ export async function startApp(
     IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
     ...extra,
   });
-  const app = await createApiApp(config, options.realPorts ? [] : [TestPortsModule]);
+  const app = await createApiApp(
+    config,
+    options.realPorts ? [] : [options.ports ?? TestPortsModule],
+  );
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
   return { app, config };
@@ -74,7 +79,7 @@ export class Client {
   }
 
   async request(
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     url: string,
     opts: {
       body?: unknown;
@@ -103,6 +108,7 @@ export class Client {
       headers,
       ...(opts.body !== undefined ? { payload: opts.body as object } : {}),
     });
+    observe(method, url, res.statusCode);
     const set = res.headers['set-cookie'];
     const lines = Array.isArray(set) ? set : set ? [set] : [];
     for (const line of lines) {

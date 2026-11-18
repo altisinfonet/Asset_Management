@@ -134,6 +134,7 @@ describe('role x operation matrix', () => {
   });
 
   // Explicit expectations: a change to the bundles has to touch this table, not just the sources.
+  const ALL = ['tenant_admin', 'asset_manager', 'technician', 'auditor', 'viewer'];
   const allowed: Record<string, string[]> = {
     // operationId -> roles that may call it
     listUsers: ['tenant_admin', 'asset_manager', 'auditor'],
@@ -151,6 +152,43 @@ describe('role x operation matrix', () => {
     checkoutAsset: ['tenant_admin', 'asset_manager', 'technician'],
     checkinAsset: ['tenant_admin', 'asset_manager', 'technician'],
     listAuditLog: ['tenant_admin', 'asset_manager', 'auditor'],
+    // registry (M1-REG): reads for everybody, catalogue writes for managers, asset writes by permission
+    getAsset: ALL,
+    resolveScan: ALL,
+    search: ALL,
+    listCategories: ALL,
+    getCategory: ALL,
+    listManufacturers: ALL,
+    listModels: ALL,
+    listStatusLabels: ALL,
+    listVendors: ALL,
+    listCustomFields: ALL,
+    getAssetTagTemplate: ALL,
+    updateAsset: ['tenant_admin', 'asset_manager', 'technician'],
+    bulkUpdateAssets: ['tenant_admin', 'asset_manager', 'technician'],
+    restoreAsset: ['tenant_admin', 'asset_manager'],
+    bulkArchiveAssets: ['tenant_admin', 'asset_manager'],
+    bulkRestoreAssets: ['tenant_admin', 'asset_manager'],
+    cloneAsset: ['tenant_admin', 'asset_manager'],
+    createCategory: ['tenant_admin', 'asset_manager'],
+    updateCategory: ['tenant_admin', 'asset_manager'],
+    archiveCategory: ['tenant_admin', 'asset_manager'],
+    createManufacturer: ['tenant_admin', 'asset_manager'],
+    updateManufacturer: ['tenant_admin', 'asset_manager'],
+    archiveManufacturer: ['tenant_admin', 'asset_manager'],
+    createAssetModel: ['tenant_admin', 'asset_manager'],
+    updateAssetModel: ['tenant_admin', 'asset_manager'],
+    archiveAssetModel: ['tenant_admin', 'asset_manager'],
+    createStatusLabel: ['tenant_admin', 'asset_manager'],
+    updateStatusLabel: ['tenant_admin', 'asset_manager'],
+    archiveStatusLabel: ['tenant_admin', 'asset_manager'],
+    createVendor: ['tenant_admin', 'asset_manager'],
+    updateVendor: ['tenant_admin', 'asset_manager'],
+    archiveVendor: ['tenant_admin', 'asset_manager'],
+    createCustomFieldDef: ['tenant_admin', 'asset_manager'],
+    updateCustomFieldDef: ['tenant_admin', 'asset_manager'],
+    archiveCustomFieldDef: ['tenant_admin', 'asset_manager'],
+    putAssetTagTemplate: ['tenant_admin', 'asset_manager'],
   };
   it.each(Object.entries(allowed))('%s is allowed for exactly %j', (operationId, expectedRoles) => {
     const op = operations.find((o) => o.operationId === operationId);

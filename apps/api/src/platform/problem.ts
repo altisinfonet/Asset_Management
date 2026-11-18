@@ -26,6 +26,8 @@ export interface ProblemBody {
   instance?: string;
   request_id?: string;
   errors?: FieldError[];
+  /** RFC 9457 extension members (for example `usage`: counts of what blocks a delete). */
+  [extension: string]: unknown;
 }
 
 /** Every stable problem code with its status and title. Codes are API surface: never rename one. */
@@ -82,6 +84,8 @@ export interface ProblemInit {
   status?: number;
   detail?: string;
   errors?: FieldError[];
+  /** RFC 9457 extension members rendered next to the standard ones (never override them). */
+  extensions?: Record<string, unknown>;
   /** Extra response headers (`Retry-After`, `WWW-Authenticate`, ...). */
   headers?: Record<string, string>;
 }
@@ -95,6 +99,7 @@ export class ApiProblem extends HttpException {
   readonly code: ProblemCode;
   readonly detail?: string;
   readonly errors?: FieldError[];
+  readonly extensions?: Record<string, unknown>;
   readonly extraHeaders: Record<string, string>;
 
   constructor(init: ProblemInit) {
@@ -104,6 +109,7 @@ export class ApiProblem extends HttpException {
     this.code = init.code;
     this.detail = init.detail;
     this.errors = init.errors;
+    this.extensions = init.extensions;
     this.extraHeaders = init.headers ?? {};
     this.message = init.detail ?? title;
   }
@@ -172,10 +178,12 @@ export function toProblemBody(
     instance?: string;
     status?: number;
     title?: string;
+    extensions?: Record<string, unknown>;
   } = {},
 ): ProblemBody {
   const entry = PROBLEM_CATALOG[code];
   return {
+    ...(opts.extensions ?? {}),
     type: `${(opts.base ?? DEFAULT_PROBLEM_TYPE_BASE).replace(/\/+$/, '')}/${code}`,
     title: opts.title ?? entry.title,
     status: opts.status ?? entry.status,

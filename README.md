@@ -46,7 +46,9 @@ To use the web app on top of that stack:
 
 ```bash
 docker compose --profile web up -d            # Next.js dev server on http://localhost:3001, /v1 proxied to the api
-# or the production build: pnpm --filter @assettracker/web build, then
+# or the production build (turbo builds the workspace packages first; a plain
+# `pnpm --filter @assettracker/web build` can pick up a stale packages/*/dist):
+pnpm turbo run build --filter=@assettracker/web
 node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000
 ```
 

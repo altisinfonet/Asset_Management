@@ -1312,4 +1312,106 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect((await a().get('/v1/scan/resolve')).status).toBe(400);
     });
   });
+
+  describe('regressions found in review', () => {
+    it('sorting assets descending does not change the cursor of other lists (shared id tiebreaker)', async () => {
+      const first = await a().get('/v1/categories?limit=1');
+      expect(first.body.page.next_cursor).toBeTruthy();
+      await a().get('/v1/assets?limit=2'); // default sort -created_at
+      const next = await a().get(`/v1/categories?limit=1&cursor=${first.body.page.next_cursor}`);
+      expect(next.status, next.raw).toBe(200);
+    });
+
+    it('crafted input is a 4xx, never a 500: NUL bytes, year 0000, impossible dates in a cursor', async () => {
+      const cat = await category();
+      for (const url of [
+        '/v1/assets?q=%00',
+        '/v1/assets?tag=%00',
+        '/v1/scan/resolve?code=%00',
+        '/v1/search?q=%00',
+        '/v1/assets?warranty_end_before=0000-01-01',
+        '/v1/assets?updated_since=0000-01-01T00:00:00Z',
+      ]) {
+        const res = await a().get(url);
+        expect(res.status, url).toBe(400);
+      }
+      for (const body of [
+        { category_id: cat.id, name: 'a\u0000b' },
+        { category_id: cat.id, purchase_date: '0000-01-01' },
+        { category_id: cat.id, custom_data: { x: 'a\u0000b' } },
+      ]) {
+        expect((await a().post('/v1/assets', body)).status).toBe(422);
+      }
+      const page = await a().get(`/v1/assets?category_id=${cat.id}&limit=1`);
+      await a().post('/v1/assets', { category_id: cat.id });
+      await a().post('/v1/assets', { category_id: cat.id });
+      const real = (await a().get(`/v1/assets?category_id=${cat.id}&limit=1`)).body.page
+        .next_cursor;
+      expect(page.status).toBe(200);
+      for (const forgedValue of [
+        '2024-13-45T00:00:00.000000+00',
+        '0000-01-01T00:00:00.000000+00',
+      ]) {
+        const forged = JSON.parse(Buffer.from(real, 'base64url').toString('utf8'));
+        forged.k[0] = forgedValue;
+        const res = await a().get(
+          `/v1/assets?category_id=${cat.id}&limit=1&cursor=${Buffer.from(JSON.stringify(forged)).toString('base64url')}`,
+        );
+        expect(res.status, forgedValue).toBe(400);
+      }
+    });
+
+    it('a custom field list keeps both the text filter and the category filter', async () => {
+      const cat = await category();
+      await a().post('/v1/custom-fields', {
+        category_id: cat.id,
+        key: 'zq_alpha',
+        label: 'Alpha',
+        data_type: 'text',
+      });
+      await a().post('/v1/custom-fields', {
+        category_id: cat.id,
+        key: 'zq_beta',
+        label: 'Beta',
+        data_type: 'text',
+      });
+      const res = await a().get(`/v1/custom-fields?category_id=${cat.id}&q=alpha`);
+      expect(res.body.data.map((d: { key: string }) => d.key)).toEqual(['zq_alpha']);
+    });
+
+    it('archived catalogue rows cannot be edited (an archived status label cannot become the default)', async () => {
+      const label = await a().post('/v1/status-labels', {
+        name: unique('Old'),
+        state_type: 'deployable',
+      });
+      expect(
+        (await a().del(`/v1/status-labels/${label.body.id}`, undefined, im(label))).status,
+      ).toBe(204);
+      const res = await a().patch(
+        `/v1/status-labels/${label.body.id}`,
+        { is_default: true },
+        im('*'),
+      );
+      expect(res.status).toBe(404);
+      const labels = (await a().get('/v1/status-labels')).body.data;
+      expect(labels.filter((l: { is_default: boolean }) => l.is_default)).toHaveLength(1);
+    });
+
+    it('a tag containing "/" resolves as itself; a label URL still yields its last segment', async () => {
+      const cat = await category();
+      const slash = await a().post('/v1/assets', {
+        category_id: cat.id,
+        asset_tag: unique('SITE').toUpperCase() + '/001',
+      });
+      expect(slash.status, slash.raw).toBe(201);
+      const res = await a().get(
+        `/v1/scan/resolve?code=${encodeURIComponent(slash.body.asset_tag)}`,
+      );
+      expect(res.body.asset.id).toBe(slash.body.id);
+      const url = await a().get(
+        `/v1/scan/resolve?code=${encodeURIComponent(`https://x.example/a/${slash.body.label_code}`)}`,
+      );
+      expect(url.body.asset.id).toBe(slash.body.id);
+    });
+  });
 });

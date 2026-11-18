@@ -212,6 +212,17 @@ export function orderBySql(terms: SortTerm[]): Prisma.Sql {
   );
 }
 
+/** The text must be a date / timestamp PostgreSQL can cast (month 13 and year 0000 pass the shape). */
+function isRealDateTime(v: string, cast: string): boolean {
+  const iso = cast === 'date' ? `${v}T00:00:00Z` : v.replace(/\+00$/, 'Z');
+  const d = new Date(iso);
+  return (
+    !Number.isNaN(d.getTime()) &&
+    d.getUTCFullYear() >= 1 &&
+    d.toISOString().slice(0, 10) === v.slice(0, 10)
+  );
+}
+
 const CURSOR_SHAPE: Record<string, RegExp> = {
   timestamptz: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00$/,
   date: /^\d{4}-\d{2}-\d{2}$/,
@@ -228,7 +239,11 @@ export function assertCursorValues(terms: SortTerm[], values: Array<string | num
   terms.forEach((term, i) => {
     const shape = CURSOR_SHAPE[sortSpecFor(term.key).cast]!;
     const v = values[i];
-    if (typeof v !== 'string' || !shape.test(v)) {
+    const cast = sortSpecFor(term.key).cast;
+    const parses =
+      typeof v === 'string' &&
+      (cast === 'text' ? !v.includes('\u0000') : cast === 'uuid' || isRealDateTime(v, cast));
+    if (typeof v !== 'string' || !shape.test(v) || !parses) {
       throw new ApiProblem({
         code: 'invalid-cursor',
         detail: 'The cursor is not valid for this list. Start again without a cursor.',
@@ -342,9 +357,10 @@ export function assetSortTerms(sort: string | undefined): SortTerm[] {
   });
   // The unique tiebreaker follows the direction of the first sort key (newest first stays newest
   // first on ties, matching the asset_created_idx index order).
+  // (parseSort hands out a shared constant for the tiebreaker: replace it, never mutate it.)
   const idTerm = terms.at(-1);
   if (idTerm && idTerm.key === 'id' && !/(^|,)[-+]?id(,|$)/.test(sort ?? '')) {
-    idTerm.direction = terms[0]!.direction;
+    terms[terms.length - 1] = { ...idTerm, direction: terms[0]!.direction };
   }
   return terms;
 }

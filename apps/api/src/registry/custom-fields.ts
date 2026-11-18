@@ -244,6 +244,43 @@ const escapePointer = (s: string) => s.replace(/~/g, '~0').replace(/\//g, '~1');
 
 // ----------------------------------------------------------------------- definition validation
 
+/**
+ * Patterns run on the single Node thread, against admin-defined regular expressions: refuse the
+ * classic catastrophic shapes, a group that is itself quantified (`+ * {n,}`) and contains a
+ * quantifier or an alternation, e.g. `(a+)+`, `(a|aa)*`, `(.*a){10,}`. A heuristic, backed by the
+ * 200-character pattern cap and the 2,000-character input cap.
+ */
+export function hasNestedQuantifier(pattern: string): boolean {
+  const stack: Array<{ quantified: boolean; alternation: boolean }> = [];
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!;
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (ch === ']') inClass = false;
+      continue;
+    }
+    if (ch === '[') inClass = true;
+    else if (ch === '(') stack.push({ quantified: false, alternation: false });
+    else if (ch === '|' && stack.length > 0) stack.at(-1)!.alternation = true;
+    else if (ch === '+' || ch === '*' || (ch === '{' && /^\{\d+,\d*\}/.test(pattern.slice(i)))) {
+      if (stack.length > 0) stack.at(-1)!.quantified = true;
+    } else if (ch === ')') {
+      const group = stack.pop();
+      const next = pattern[i + 1];
+      const repeats =
+        next === '+' || next === '*' || (next === '{' && /^\{\d+,\d*\}/.test(pattern.slice(i + 1)));
+      if (group && repeats && (group.quantified || group.alternation)) return true;
+      // the enclosing group inherits "contains a quantifier" from a quantified inner group
+      if (group && repeats && stack.length > 0) stack.at(-1)!.quantified = true;
+    }
+  }
+  return false;
+}
+
 const VALIDATION_KEYS: Record<FieldType, readonly string[]> = {
   text: ['min_length', 'max_length', 'pattern'],
   long_text: ['min_length', 'max_length', 'pattern'],
@@ -337,6 +374,14 @@ export function validateDefinition(def: {
         } else {
           try {
             new RegExp(value, 'u');
+            if (hasNestedQuantifier(value)) {
+              errors.push({
+                pointer,
+                message:
+                  'a quantified group may not contain another quantifier (catastrophic backtracking)',
+                code: 'unsafe',
+              });
+            }
           } catch {
             errors.push({ pointer, message: 'is not a valid regular expression', code: 'format' });
           }

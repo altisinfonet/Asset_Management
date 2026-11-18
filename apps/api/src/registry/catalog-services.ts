@@ -570,11 +570,13 @@ export class CustomFieldsService extends CatalogService<
       defaultSort: 'position',
     },
     filter: (q) => ({
-      ...(q.q ? { OR: [{ key: contains(q.q) }, { label: contains(q.q) }] } : {}),
-      // A category's fields are its own plus the global ones.
-      ...(q.category_id
-        ? { OR: [{ category_id: q.category_id as string }, { category_id: null }] }
-        : {}),
+      AND: [
+        q.q ? { OR: [{ key: contains(q.q) }, { label: contains(q.q) }] } : {},
+        // A category's fields are its own plus the global ones.
+        q.category_id
+          ? { OR: [{ category_id: q.category_id as string }, { category_id: null }] }
+          : {},
+      ],
     }),
     cursorFilters: (q) => ({ q: q.q, c: q.category_id }),
     prepareCreate: async (trx, _auth, b) => {

@@ -7,15 +7,22 @@ import { listQuerySchema } from '../platform/index.js';
  * field is unchanged), so defaults are applied by the services on create only.
  */
 
+/** A string without NUL bytes (PostgreSQL text and jsonb cannot store them: it would be a 500). */
+function str() {
+  return z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
+}
 export const uuidParam = z.uuid();
 
 /** `exclude` (default) | `include` | `only`. */
 export const archivedParam = z.enum(['exclude', 'include', 'only']).default('exclude');
 export type ArchivedFilter = z.output<typeof archivedParam>;
 
-const trimmed = (min: number, max: number) => z.string().trim().min(min).max(max);
-const nullableText = (max: number) => z.string().trim().max(max).nullable();
-const isoDate = z.iso.date();
+const trimmed = (min: number, max: number) => str().trim().min(min).max(max);
+const nullableText = (max: number) => str().trim().max(max).nullable();
+/** A calendar date PostgreSQL accepts (year 0000 passes the format check but not the database). */
+const isoDate = z.iso
+  .date()
+  .refine((v) => new Date(`${v}T00:00:00Z`).getUTCFullYear() >= 1, 'year must be 1 or later');
 const csv = <T extends z.ZodType<unknown, string>>(item: T) =>
   z
     .string()
@@ -31,7 +38,7 @@ const csv = <T extends z.ZodType<unknown, string>>(item: T) =>
 // ---------------------------------------------------------------------------------- categories
 
 export const CATEGORY_KINDS = ['asset', 'accessory', 'consumable', 'component', 'license'] as const;
-const tagPrefix = z.string().regex(/^[A-Z0-9-]{1,12}$/, 'must be 1-12 of A-Z, 0-9 and -');
+const tagPrefix = str().regex(/^[A-Z0-9-]{1,12}$/, 'must be 1-12 of A-Z, 0-9 and -');
 
 export const categoryCreateSchema = z.strictObject({
   name: trimmed(1, 100),
@@ -49,7 +56,7 @@ export type CategoryCreate = z.output<typeof categoryCreateSchema>;
 export type CategoryUpdate = z.output<typeof categoryUpdateSchema>;
 
 export const categoryListSchema = listQuerySchema.extend({
-  q: z.string().min(1).max(200).optional(),
+  q: str().min(1).max(200).optional(),
   archived: archivedParam,
   kind: z.enum(CATEGORY_KINDS).optional(),
 });
@@ -70,7 +77,7 @@ export type ManufacturerCreate = z.output<typeof manufacturerCreateSchema>;
 export type ManufacturerUpdate = z.output<typeof manufacturerUpdateSchema>;
 
 export const nameListSchema = listQuerySchema.extend({
-  q: z.string().min(1).max(200).optional(),
+  q: str().min(1).max(200).optional(),
   archived: archivedParam,
 });
 
@@ -105,7 +112,7 @@ export type ModelCreate = z.output<typeof modelCreateSchema>;
 export type ModelUpdate = z.output<typeof modelUpdateSchema>;
 
 export const modelListSchema = listQuerySchema.extend({
-  q: z.string().min(1).max(200).optional(),
+  q: str().min(1).max(200).optional(),
   archived: archivedParam,
   category_id: z.uuid().optional(),
   manufacturer_id: z.uuid().optional(),
@@ -123,7 +130,7 @@ export const STATE_TYPES = [
 ] as const;
 export type StateType = (typeof STATE_TYPES)[number];
 
-const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'must be a #rrggbb colour');
+const color = str().regex(/^#[0-9a-fA-F]{6}$/, 'must be a #rrggbb colour');
 export const statusLabelCreateSchema = z.strictObject({
   name: trimmed(1, 100),
   state_type: z.enum(STATE_TYPES),
@@ -156,10 +163,10 @@ export const FIELD_TYPES = [
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
-const fieldKey = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/, 'must match ^[a-z][a-z0-9_]{0,62}$');
+const fieldKey = str().regex(/^[a-z][a-z0-9_]{0,62}$/, 'must match ^[a-z][a-z0-9_]{0,62}$');
 const fieldOption = z.strictObject({
-  value: z.string().min(1).max(100),
-  label: z.string().min(1).max(100).optional(),
+  value: str().min(1).max(100),
+  label: str().min(1).max(100).optional(),
 });
 
 export const customFieldCreateSchema = z.strictObject({
@@ -169,7 +176,7 @@ export const customFieldCreateSchema = z.strictObject({
   data_type: z.enum(FIELD_TYPES),
   required: z.boolean().optional(),
   options: z.array(fieldOption).max(500).nullable().optional(),
-  validation: z.record(z.string(), z.unknown()).nullable().optional(),
+  validation: z.record(str(), z.unknown()).nullable().optional(),
   help_text: nullableText(1000).optional(),
   position: z.number().int().min(0).max(100_000).optional(),
   show_in_list: z.boolean().optional(),
@@ -179,7 +186,7 @@ export type CustomFieldCreate = z.output<typeof customFieldCreateSchema>;
 export type CustomFieldUpdate = z.output<typeof customFieldUpdateSchema>;
 
 export const customFieldListSchema = listQuerySchema.extend({
-  q: z.string().min(1).max(200).optional(),
+  q: str().min(1).max(200).optional(),
   archived: archivedParam,
   category_id: z.uuid().optional(),
 });
@@ -200,7 +207,7 @@ export type AssetTagTemplate = z.output<typeof assetTagTemplateSchema>;
 
 const money = z.strictObject({
   amount_minor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  currency: z.string().regex(/^[A-Z]{3}$/, 'must be an ISO 4217 code such as USD'),
+  currency: str().regex(/^[A-Z]{3}$/, 'must be an ISO 4217 code such as USD'),
 });
 const assetTag = z
   .string()
@@ -208,7 +215,9 @@ const assetTag = z
   .max(64)
   .regex(/^\S+$/, 'must not contain whitespace')
   .refine((v) => !/\p{Cc}/u.test(v), 'must not contain control characters');
-const customData = z.record(z.string().min(1).max(63), z.unknown());
+const customData = z
+  .record(str().min(1).max(63), z.unknown())
+  .refine((v) => !JSON.stringify(v).includes('\\u0000'), 'must not contain NUL characters');
 
 export const assetUpdateSchema = z.strictObject({
   asset_tag: assetTag.optional(),
@@ -297,10 +306,10 @@ export const M2_ONLY_ASSET_FILTERS = [
 ] as const;
 
 export const assetListSchema = listQuerySchema.extend({
-  q: z.string().min(1).max(200).optional(),
+  q: str().min(1).max(200).optional(),
   archived: archivedParam,
-  tag: z.string().min(1).max(200).optional(),
-  serial: z.string().min(1).max(200).optional(),
+  tag: str().min(1).max(200).optional(),
+  serial: str().min(1).max(200).optional(),
   status_id: csv(z.uuid()).optional(),
   state_type: csv(z.enum(STATE_TYPES)).optional(),
   category_id: csv(z.uuid()).optional(),
@@ -314,19 +323,22 @@ export const assetListSchema = listQuerySchema.extend({
   warranty_end_after: isoDate.optional(),
   purchase_date_from: isoDate.optional(),
   purchase_date_to: isoDate.optional(),
-  updated_since: z.iso.datetime({ offset: true }).optional(),
+  updated_since: z.iso
+    .datetime({ offset: true })
+    .refine((v) => new Date(v).getUTCFullYear() >= 1, 'year must be 1 or later')
+    .optional(),
   expand: csv(z.enum(ASSET_EXPANDS)).optional(),
 });
 export type AssetListQuery = z.output<typeof assetListSchema>;
 
 export const assetGetSchema = z.object({ expand: csv(z.enum(ASSET_EXPANDS)).optional() });
 
-export const scanResolveSchema = z.object({ code: z.string().min(1).max(200) });
+export const scanResolveSchema = z.object({ code: str().min(1).max(200) });
 
 export const SEARCH_TYPES = ['asset', 'model', 'category', 'person', 'location'] as const;
 export type SearchType = (typeof SEARCH_TYPES)[number];
 export const searchSchema = z.object({
-  q: z.string().trim().min(1).max(200),
+  q: str().trim().min(1).max(200),
   types: csv(z.enum(SEARCH_TYPES)).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(5),
 });

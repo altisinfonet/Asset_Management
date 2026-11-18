@@ -275,15 +275,24 @@ export class AssetsFacade extends RegistryBase {
 
   /** `GET /v1/scan/resolve`: the opaque QR `label_code` or a Code128 `asset_tag`. */
   async resolveScan(auth: AuthContext, rawCode: string) {
-    const code = rawCode.includes('/')
-      ? (rawCode.split('?')[0]!.split('/').filter(Boolean).pop() ?? rawCode)
-      : rawCode.trim();
+    // The whole code first (a tag may contain "/"); a label URL then yields its last path segment.
+    const whole = rawCode.trim();
+    const candidates = [whole];
+    if (/^(https?:\/\/|\/)/i.test(whole)) {
+      const last = whole.split(/[?#]/)[0]!.split('/').filter(Boolean).pop();
+      if (last && last !== whole) candidates.push(last);
+    }
     return this.tx(auth, async (trx) => {
       let matchType: 'label_code' | 'asset_tag' = 'label_code';
-      let [row] = await loadAssetRows(trx, Prisma.sql`a.label_code = ${code}`, 1);
-      if (!row) {
-        matchType = 'asset_tag';
-        [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
+      let row: AssetRow | undefined;
+      for (const code of candidates) {
+        matchType = 'label_code';
+        [row] = await loadAssetRows(trx, Prisma.sql`a.label_code = ${code}`, 1);
+        if (!row) {
+          matchType = 'asset_tag';
+          [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
+        }
+        if (row) break;
       }
       if (!row) throw problem.notFound('No asset matches this code.');
       const allowed: string[] = [];

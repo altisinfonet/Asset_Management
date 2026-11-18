@@ -4,6 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { Logger } from 'nestjs-pino';
 import { AppModule, type AppModuleOptions } from './app.module.js';
 import type { AppConfig } from './config/env.js';
+import { toFastifyTrustProxy } from './config/trust-proxy.js';
 import { registerHttpObservability } from './observability/index.js';
 import { REQUEST_ID_HEADER, resolveRequestId } from './platform/index.js';
 
@@ -19,7 +20,7 @@ export async function createApiApp(
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register(config, extraImports, moduleOptions),
     new FastifyAdapter({
-      trustProxy: true,
+      trustProxy: toFastifyTrustProxy(config.TRUST_PROXY),
       // Request id: reuse a safe incoming X-Request-Id (ALB/CloudFront trace id, client UUID),
       // otherwise mint a UUID. Fastify's own header handling is off: it would echo any string.
       requestIdHeader: false,

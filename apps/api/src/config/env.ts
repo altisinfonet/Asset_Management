@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseTrustProxy } from './trust-proxy.js';
 
 export const APP_ROLES = ['api', 'worker', 'scheduler', 'migrate'] as const;
 export type AppRole = (typeof APP_ROLES)[number];
@@ -31,6 +32,23 @@ const envSchema = z
     IDEMPOTENCY_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(3_000),
 
     S3_ENDPOINT: z.url().optional(),
+
+    /**
+     * Which reverse proxies' `X-Forwarded-For` the API believes (see `trust-proxy.ts`): `false`
+     * (default: nobody), a hop count, or a comma list of proxy IPs/CIDRs. Per-IP throttling and
+     * audit rows use the resulting client address, so production must NOT leave this open.
+     */
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((value, ctx) => {
+        try {
+          return parseTrustProxy(value);
+        } catch (err) {
+          ctx.addIssue({ code: 'custom', message: (err as Error).message });
+          return z.NEVER;
+        }
+      }),
 
     /** SMTP relay, e.g. `smtp://mailpit:1025` (dev) or `smtps://user:pass@smtp.example.com:465`. */
     SMTP_URL: z.string().min(1).optional(),

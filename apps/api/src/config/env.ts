@@ -25,6 +25,11 @@ const envSchema = z
     /** `migrate` role only: also create the demo tenants (dev; refused when NODE_ENV=production). */
     SEED_DEMO_DATA: z.stringbool().default(false),
 
+    /** Prefix of the `type` URI in problem+json documents (`<base>/<code>`). */
+    PROBLEM_TYPE_BASE: z.url().default('https://api.assettracker.test/problems'),
+    /** How long a duplicate Idempotency-Key request waits for the first before answering 409. */
+    IDEMPOTENCY_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(3_000),
+
     S3_ENDPOINT: z.url().optional(),
     SMTP_URL: z.string().min(1).optional(),
 

@@ -1326,7 +1326,7 @@ Frontend per environment (proposed): the web static build is promoted like the A
 
 ### 8.5 Migrations strategy
 
-- **Tool:** SQL-first, versioned migrations run by the `migrate` role (tool such as node-pg-migrate or Atlas, chosen with the Kysely/Drizzle decision; open). Migrations run as the `migrator` role, which owns the tables; the app role cannot alter schema (plan 6.1).
+- **Tool:** SQL-first, versioned migrations run by the `migrate` role (the repo's own SQL runner; decided in ADR 0001: Prisma Client for queries, SQL migrations as the source of truth, no Prisma Migrate). Migrations run as the `migrator` role, which owns the tables; the app role cannot alter schema (plan 6.1).
 - **Order in every deploy:** run `migrate` as a one-off ECS task **before** updating services. A failed migration stops the pipeline; services remain on the previous version.
 - **Expand/contract** (plan 6.13): old and new code run side by side during a rolling deploy, so each migration is backward compatible with the previous release. Breaking changes are split across releases: add (expand) -> backfill and dual-write -> switch reads -> remove (contract) in a later release.
 - **Locking safety:** `lock_timeout` and `statement_timeout` on migrations, `CREATE INDEX CONCURRENTLY`, batched backfills.

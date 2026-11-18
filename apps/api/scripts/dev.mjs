@@ -1,10 +1,20 @@
 // Dev runner: tsc in watch mode plus `node --watch` on the compiled output (cross-platform).
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const tscBin = require.resolve('typescript/bin/tsc');
+
+// The Prisma client is generated code (gitignored): make sure it exists before compiling.
+const generated = spawnSync(
+  process.execPath,
+  [require.resolve('prisma/build/index.js'), 'generate'],
+  {
+    stdio: 'inherit',
+  },
+);
+if (generated.status !== 0) process.exit(generated.status ?? 1);
 
 const tsc = spawn(
   process.execPath,

@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { uuidv7 } from '../../src/ids/uuidv7.js';
-import { sql, TenancyService, type Tx } from '../../src/tenancy/index.js';
+import { sqlStateOf, TenancyService, type Tx } from '../../src/tenancy/index.js';
 
 /**
  * Shared e2e plumbing. Environment:
@@ -68,7 +68,7 @@ export async function sqlState(p: Promise<unknown>): Promise<string | undefined>
     await p;
     return undefined;
   } catch (err) {
-    return (err as { code?: string }).code ?? `non-pg: ${String(err)}`;
+    return sqlStateOf(err) ?? `non-pg: ${String(err)}`;
   }
 }
 
@@ -99,64 +99,52 @@ export async function createFixtureTenant(
   const id = uuidv7();
   const slug = `iso-${label.toLowerCase()}-${id.slice(-10)}`;
   return tenancy.withTenantTx({ tenantId: id, requestId: `fixture-${label}` }, async (trx: Tx) => {
-    await sql`select app.provision_tenant(${id}::uuid, ${`Isolation ${label}`}, ${slug})`.execute(
-      trx,
-    );
-    const company = await trx.selectFrom('app.company').select('id').executeTakeFirstOrThrow();
-    const status = await trx
-      .selectFrom('app.status_label')
-      .select('id')
-      .where('is_default', '=', true)
-      .executeTakeFirstOrThrow();
+    await trx.$executeRaw`select app.provision_tenant(${id}::uuid, ${`Isolation ${label}`}, ${slug})`;
+    const company = await trx.company.findFirstOrThrow({ select: { id: true } });
+    const status = await trx.status_label.findFirstOrThrow({
+      where: { is_default: true },
+      select: { id: true },
+    });
     const categoryId = uuidv7();
-    await trx
-      .insertInto('app.category')
-      .values({ id: categoryId, tenant_id: id, name: 'Laptops', tag_prefix: 'ISO' })
-      .execute();
+    await trx.category.create({
+      data: { id: categoryId, tenant_id: id, name: 'Laptops', tag_prefix: 'ISO' },
+    });
     const assetIds: string[] = [];
     const assetTags: string[] = [];
     for (let i = 1; i <= FIXTURE_ASSETS; i++) {
       const tag = `ISO-${String(i).padStart(3, '0')}`;
       const assetId = uuidv7();
-      await trx
-        .insertInto('app.asset')
-        .values({
+      await trx.asset.create({
+        data: {
           id: assetId,
           tenant_id: id,
+          company_id: company.id,
           asset_tag: tag,
           name: `${label} laptop ${i}`,
           serial: `SER-${String(i).padStart(3, '0')}`,
           category_id: categoryId,
           status_id: status.id,
           custom_data: { owner_label: label },
-        })
-        .execute();
+        },
+      });
       assetIds.push(assetId);
       assetTags.push(tag);
     }
     for (const action of ['asset.create', 'asset.update']) {
-      await trx
-        .insertInto('app.audit_log')
-        .values({
-          id: uuidv7(),
-          tenant_id: id,
-          actor_type: 'system',
-          action,
-          entity_type: 'asset',
-          entity_id: assetIds[0]!,
-        })
-        .execute();
+      // audit_log is a partitioned table: tagged-template raw SQL.
+      await trx.$executeRaw`
+        insert into app.audit_log (id, tenant_id, actor_type, action, entity_type, entity_id)
+        values (${uuidv7()}::uuid, ${id}::uuid, 'system', ${action}, 'asset', ${assetIds[0]!}::uuid)`;
     }
-    await trx
-      .insertInto('app.outbox_event')
-      .values({
+    await trx.outbox_event.create({
+      data: {
         id: uuidv7(),
         tenant_id: id,
         event_type: 'asset.created',
         aggregate_type: 'asset',
         aggregate_id: assetIds[0]!,
-      })
-      .execute();
+      },
+    });
     return {
       id,
       slug,

@@ -2,7 +2,7 @@ import type { ModuleMetadata } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Logger } from 'nestjs-pino';
-import { AppModule } from './app.module.js';
+import { AppModule, type AppModuleOptions } from './app.module.js';
 import type { AppConfig } from './config/env.js';
 import { runWithRequestContext } from './context/request-context.js';
 import { REQUEST_ID_HEADER, resolveRequestId } from './platform/index.js';
@@ -14,9 +14,10 @@ export const UNVERSIONED_ROUTES = ['healthz', 'readyz'];
 export async function createApiApp(
   config: AppConfig,
   extraImports: ModuleMetadata['imports'] = [],
+  moduleOptions: AppModuleOptions = {},
 ): Promise<NestFastifyApplication> {
   const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule.register(config, extraImports),
+    AppModule.register(config, extraImports, moduleOptions),
     new FastifyAdapter({
       trustProxy: true,
       // Request id: reuse a safe incoming X-Request-Id (ALB/CloudFront trace id, client UUID),

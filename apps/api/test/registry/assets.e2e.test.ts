@@ -563,13 +563,20 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
         name: unique('C'),
         tag_prefix: 'PAR-',
       });
-      const results = await Promise.all(
-        Array.from({ length: 100 }, (_, i) =>
-          a()
-            .clone()
-            .post('/v1/assets', { category_id: cat.id, name: `p${i}` }),
-        ),
-      );
+      // 100 creates, 25 in flight at a time: the app pool has 10 connections and every create queues
+      // on the counter row, so under a loaded suite the last of 100 at once could outwait the pool.
+      const results: Awaited<ReturnType<Client['post']>>[] = [];
+      for (let wave = 0; wave < 4; wave++) {
+        results.push(
+          ...(await Promise.all(
+            Array.from({ length: 25 }, (_, i) =>
+              a()
+                .clone()
+                .post('/v1/assets', { category_id: cat.id, name: `p${wave * 25 + i}` }),
+            ),
+          )),
+        );
+      }
       expect(
         results.every((r) => r.status === 201),
         JSON.stringify(results.find((r) => r.status !== 201)?.body),

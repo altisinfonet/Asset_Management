@@ -16,6 +16,8 @@ export interface MockUser {
   mfa: boolean;
   /** The tenant requires MFA and this user has not enrolled: the session starts limited. */
   mfaRequired?: boolean;
+  /** Tenant policy enforces MFA for this (enrolled) user: `DELETE /v1/auth/mfa` is refused. */
+  mfaPolicy?: boolean;
   tenantName: string;
 }
 
@@ -36,6 +38,12 @@ export interface MockState {
   /** Accounts created by accepting an invitation. */
   users: Record<string, MockUser>;
   mfaEnrolled: string[];
+  /** Accounts whose MFA was turned off through the API (overrides a seeded or enrolled factor). */
+  mfaDisabled: string[];
+  /** The current recovery-code set after an enrolment or a regeneration (default: the seed codes). */
+  recoveryCodes?: string[];
+  /** Failed re-authentications since the last success (the real API shares the login lockout). */
+  reauthFailures: number;
   usedTokens: string[];
   usedRecoveryCodes: string[];
   revokedSessions: string[];
@@ -65,6 +73,16 @@ export const SEED_USERS: Record<string, MockUser> = {
     role: 'tenant_admin',
     permissions: ['*'],
     mfa: true,
+    tenantName: ACME,
+  },
+  [MOCK_ACCOUNTS.mfaEnforced]: {
+    id: '0190a6b2-0000-7000-8000-000000000008',
+    email: MOCK_ACCOUNTS.mfaEnforced,
+    display_name: 'Enzo Enforced',
+    role: 'tenant_admin',
+    permissions: ['*'],
+    mfa: true,
+    mfaPolicy: true,
     tenantName: ACME,
   },
   [MOCK_ACCOUNTS.viewer]: {
@@ -128,6 +146,8 @@ function fresh(): MockState {
     passwords: {},
     users: {},
     mfaEnrolled: [],
+    mfaDisabled: [],
+    reauthFailures: 0,
     usedTokens: [],
     usedRecoveryCodes: [],
     revokedSessions: [],
@@ -191,7 +211,8 @@ export function findUser(email: string): MockUser | undefined {
   const key = email.trim().toLowerCase();
   const base = state.users[key] ?? SEED_USERS[key];
   if (!base) return undefined;
-  return { ...base, mfa: base.mfa || state.mfaEnrolled.includes(key) };
+  const mfa = !state.mfaDisabled.includes(key) && (base.mfa || state.mfaEnrolled.includes(key));
+  return { ...base, mfa };
 }
 
 export function passwordFor(email: string): string | undefined {
@@ -202,8 +223,8 @@ export function passwordFor(email: string): string | undefined {
 }
 
 export function availableRecoveryCodes(): string[] {
-  const used = loadState().usedRecoveryCodes;
-  return MOCK_RECOVERY_CODES.filter((code) => !used.includes(code));
+  const { usedRecoveryCodes: used, recoveryCodes } = loadState();
+  return (recoveryCodes ?? MOCK_RECOVERY_CODES).filter((code) => !used.includes(code));
 }
 
 let counter = 0;

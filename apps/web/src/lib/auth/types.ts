@@ -19,3 +19,10 @@ export type MfaEnrolment = Schemas['MfaEnrolment'];
 /** Ten single-use recovery codes, shown exactly once, and the rotated CSRF token. */
 export type MfaEnrolmentResult = Schemas['MfaEnrolmentConfirmed'];
 export type SessionInfo = Schemas['SessionInfo'];
+/** Ten fresh recovery codes (the old set stops working). */
+export type MfaRecoveryCodes = Schemas['MfaRecoveryCodes'];
+/**
+ * Proof of a recent sign-in for a sensitive action: the current password OR a current TOTP code.
+ * Written by hand because the generator renders the contract's `anyOf` as `unknown`.
+ */
+export type ReauthRequest = { password: string } | { totp_code: string };

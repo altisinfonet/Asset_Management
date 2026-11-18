@@ -168,6 +168,74 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'security: two-step verification on',
+    session: MOCK_ACCOUNTS.mfaOwner,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await expect(page.getByRole('button', { name: 'Turn off', exact: true })).toBeVisible();
+      await expect(page.getByRole('table', { name: 'Signed-in devices' })).toBeVisible();
+    },
+  },
+  {
+    name: 'security: turn off dialog',
+    session: MOCK_ACCOUNTS.mfaOwner,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await page.getByRole('button', { name: 'Turn off', exact: true }).click();
+      await expect(
+        page.getByRole('dialog', { name: 'Turn off two-step verification?' }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: 'security: turn off dialog with a wrong code',
+    session: MOCK_ACCOUNTS.mfaOwner,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await page.getByRole('button', { name: 'Turn off', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Turn off two-step verification?' });
+      await dialog.getByRole('tab', { name: 'Authenticator code' }).click();
+      await dialog.getByLabel(/^Authentication code/).fill('000000');
+      await dialog.getByRole('button', { name: 'Turn off two-step verification' }).click();
+      await expect(dialog.getByText(/That code is not correct/)).toBeVisible();
+    },
+  },
+  {
+    name: 'security: turn off blocked by policy',
+    session: MOCK_ACCOUNTS.mfaEnforced,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await page.getByRole('button', { name: 'Turn off', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Turn off two-step verification?' });
+      await dialog.getByLabel(/^Current password/).fill(MOCK_PASSWORD);
+      await dialog.getByRole('button', { name: 'Turn off two-step verification' }).click();
+      await expect(
+        dialog.getByText('Your organisation requires two-step verification'),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: 'security: new recovery codes, re-authenticate',
+    session: MOCK_ACCOUNTS.mfaOwner,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await page.getByRole('button', { name: 'New recovery codes' }).click();
+      await expect(page.getByRole('dialog', { name: 'Get new recovery codes?' })).toBeVisible();
+    },
+  },
+  {
+    name: 'security: new recovery codes shown',
+    session: MOCK_ACCOUNTS.mfaOwner,
+    open: async (page) => {
+      await page.goto('/account/security');
+      await page.getByRole('button', { name: 'New recovery codes' }).click();
+      const ask = page.getByRole('dialog', { name: 'Get new recovery codes?' });
+      await ask.getByLabel(/^Current password/).fill(MOCK_PASSWORD);
+      await ask.getByRole('button', { name: 'Get new codes' }).click();
+      await expect(page.getByTestId('recovery-codes')).toBeVisible();
+    },
+  },
+  {
     name: 'permission denied (403)',
     session: MOCK_ACCOUNTS.viewer,
     open: async (page) => {

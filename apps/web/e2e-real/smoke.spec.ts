@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
-import { choose, DEMO_PASSWORD, runId, signInAsOwner, waitForMail } from './support';
+import {
+  choose,
+  DEMO_OWNER_TOTP_SECRET,
+  DEMO_PASSWORD,
+  runId,
+  signInAsOwner,
+  totp,
+  waitForMail,
+} from './support';
 
 /**
  * M1-WEB-11: the web app against the REAL stack (compose api + Postgres + worker + Mailpit), no mock.
@@ -319,6 +327,54 @@ test('invites a user; the invitation mail arrives in Mailpit', async () => {
   const mail = await waitForMail(INVITEE);
   expect(mail.Subject).toMatch(/invit/i);
   expect(mail.Text).toMatch(/\/invitations?\/|invitation/i);
+});
+
+test('regenerates the recovery codes: wrong code is a 403 on the field, then a TOTP re-auth shows ten codes', async () => {
+  await page.goto('/account/security');
+  await expect(page.getByText('On', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New recovery codes' }).click();
+  const ask = page.getByRole('dialog', { name: 'Get new recovery codes?' });
+  await ask.getByRole('tab', { name: 'Authenticator code' }).click();
+  const input = ask.getByLabel(/^Authentication code/);
+
+  // a wrong value is 403 reauth-failed shown on the field: the session survives (a 401 would sign out)
+  await input.fill('000000');
+  await ask.getByRole('button', { name: 'Get new codes' }).click();
+  await expect(ask.getByText(/That code is not correct/)).toBeVisible();
+  await expect(ask).toBeVisible();
+
+  // The sign-in consumed the current TOTP step (replay protection), so ask for the next step's code;
+  // wait out the step and retry if even that was already used.
+  const codes = page.getByRole('dialog', { name: 'Your new recovery codes' });
+  let shown = false;
+  for (const attempt of [0, 1]) {
+    await input.fill(totp(DEMO_OWNER_TOTP_SECRET, 1));
+    await ask.getByRole('button', { name: 'Get new codes' }).click();
+    shown = await expect(codes)
+      .toBeVisible({ timeout: 5_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (shown) break;
+    if (attempt === 0) await page.waitForTimeout(31_000);
+  }
+  expect(shown).toBe(true);
+
+  const items = codes.getByTestId('recovery-codes').getByRole('listitem');
+  await expect(items).toHaveCount(10);
+  for (const text of await items.allTextContents()) {
+    expect(text).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){3}$/);
+  }
+  // the gate: Close needs "I have saved these codes"
+  const close = codes.getByRole('button', { name: 'Close' });
+  await expect(close).toBeDisabled();
+  await codes.getByRole('checkbox', { name: 'I have saved these codes' }).click();
+  await close.click();
+  await expect(codes).toBeHidden();
+  // still signed in and MFA still on
+  await expect(page.getByText('On', { exact: true })).toBeVisible();
+  expect(await page.evaluate(async () => (await fetch('/v1/auth/me')).status)).toBe(200);
 });
 
 test('signs out; the session is gone and an app URL bounces to the login', async () => {

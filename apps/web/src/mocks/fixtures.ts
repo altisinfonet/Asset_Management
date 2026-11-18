@@ -23,11 +23,27 @@ export const MOCK_NEW_RECOVERY_CODES = [
   'B9KI-4CQU',
 ];
 
+/** What `POST /v1/auth/mfa/recovery-codes/regenerate` returns (distinct from the enrolment set). */
+export const MOCK_REGENERATED_RECOVERY_CODES = [
+  'W2PA-7HNX',
+  'C8VK-3MZD',
+  'F5QT-9RJB',
+  'Y4LS-6GEU',
+  'N7XD-2KAW',
+  'J3BH-8TCP',
+  'S9ZM-5VQF',
+  'E6RG-4NYL',
+  'U2WK-7DHX',
+  'M8AT-3PSC',
+];
+
 export const MOCK_ACCOUNTS = {
   /** Owner, no MFA: login goes straight to the dashboard. */
   owner: 'alice@example.org',
   /** Owner with TOTP enrolled: login asks for a code (123456) or a recovery code. */
   mfaOwner: 'mfa@example.org',
+  /** Owner with TOTP whose organisation enforces MFA: "Turn off" answers 403 `mfa-required-by-policy`. */
+  mfaEnforced: 'enforced@example.org',
   /** Asset Manager: manages assets and the catalogue, but cannot see Users. */
   manager: 'manager@example.org',
   /** Read-only role: no Settings in the navigation, 403 screens on admin pages. */

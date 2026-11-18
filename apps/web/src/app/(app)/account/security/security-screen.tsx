@@ -14,18 +14,27 @@ import { useI18n } from '@/i18n';
 import { toUiError, type UiError } from '@/lib/api';
 import { authApi } from '@/lib/auth/auth-api';
 import { useAuth } from '@/lib/auth/auth-context';
-import type { SessionInfo } from '@/lib/auth/types';
+import type { ReauthRequest, SessionInfo } from '@/lib/auth/types';
 import { routes } from '@/lib/routes';
+import { NewRecoveryCodesDialog } from './new-recovery-codes-dialog';
+import { ReauthDialog } from './reauth-dialog';
 
 type Load =
   | { kind: 'loading' }
   | { kind: 'ready'; sessions: SessionInfo[] }
   | { kind: 'error'; error: UiError };
 
+type OpenDialog = 'off' | 'codes' | null;
+
 /**
- * Account security: whether two-step verification is on (with a way to set it up) and the list
- * of signed-in devices with a revoke button each (M1-WEB-03). Revoked sessions fail on their
- * next request (M1-AUTH-03). The current device is signed out with "Sign out", not revoked here.
+ * Account security: whether two-step verification is on, with "Turn off" and "New recovery codes"
+ * (each re-authenticates with the password or an authenticator code) or "Set up" when it is off,
+ * and the list of signed-in devices with a revoke button each (M1-WEB-03). Revoked sessions fail on
+ * their next request (M1-AUTH-03). The current device is signed out with "Sign out", not revoked here.
+ *
+ * `GET /v1/auth/me` does not say whether the tenant enforces MFA for an enrolled user, so "Turn off"
+ * is offered and the API's `403 mfa-required-by-policy` is explained; once seen, the button is
+ * disabled for the rest of the visit.
  */
 export function SecurityScreen() {
   const { t, formatDateTime } = useI18n();
@@ -33,6 +42,10 @@ export function SecurityScreen() {
   const auth = useAuth();
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<OpenDialog>(null);
+  const [newCodes, setNewCodes] = useState<string[] | null>(null);
+  const [policyLocked, setPolicyLocked] = useState(false);
+  const [justTurnedOff, setJustTurnedOff] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -68,6 +81,26 @@ export function SecurityScreen() {
 
   const mfaEnabled = auth.me?.user.mfa_enabled === true;
 
+  const turnOff = async (reauth: ReauthRequest) => {
+    await authApi.disableMfa(reauth);
+    // The API signed out every OTHER device and kept this one; re-read the principal for the status.
+    await auth.refresh();
+    // ... so the device list shrinks too (best effort: the list is only informational).
+    void authApi
+      .listSessions()
+      .then((sessions) => setLoad({ kind: 'ready', sessions }))
+      .catch(() => undefined);
+    setJustTurnedOff(true);
+    setDialog(null);
+    toast({ variant: 'success', title: t('security.mfaOffDone') });
+  };
+
+  const regenerate = async (reauth: ReauthRequest) => {
+    const result = await authApi.regenerateRecoveryCodes(reauth);
+    setDialog(null);
+    setNewCodes(result.recovery_codes);
+  };
+
   return (
     <>
       <PageTitle title={t('security.title')} />
@@ -90,12 +123,31 @@ export function SecurityScreen() {
                 {mfaEnabled ? t('security.mfaOnDescription') : t('security.mfaOffDescription')}
               </p>
             </div>
-            {mfaEnabled ? null : (
+            {mfaEnabled ? (
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => setDialog('codes')}>{t('security.mfaNewCodes')}</Button>
+                <Button
+                  className="text-danger-text"
+                  disabled={policyLocked}
+                  aria-describedby={policyLocked ? 'security-mfa-policy' : undefined}
+                  onClick={() => setDialog('off')}
+                >
+                  {t('security.mfaTurnOff')}
+                </Button>
+              </div>
+            ) : (
               <Button asChild variant="primary">
-                <Link href={routes.mfaEnrol(routes.security)}>{t('security.setUp')}</Link>
+                <Link href={routes.mfaEnrol(routes.security)}>
+                  {justTurnedOff ? t('security.setUpAgain') : t('security.setUp')}
+                </Link>
               </Button>
             )}
           </div>
+          {mfaEnabled && policyLocked ? (
+            <p id="security-mfa-policy" className="mt-3 text-sm text-muted">
+              {t('security.mfaPolicyLocked')}
+            </p>
+          ) : null}
         </section>
 
         <section
@@ -180,6 +232,36 @@ export function SecurityScreen() {
           ) : null}
         </section>
       </div>
+
+      <ReauthDialog
+        open={dialog === 'off'}
+        onOpenChange={(open) => !open && setDialog(null)}
+        title={t('security.offTitle')}
+        description={t('security.offDescription')}
+        details={
+          <ul className="list-disc pl-5 text-base text-muted">
+            <li>{t('security.offImpactCodes')}</li>
+            <li>{t('security.offImpactDevices')}</li>
+          </ul>
+        }
+        confirmLabel={t('security.offConfirm')}
+        confirmVariant="danger"
+        onSubmit={turnOff}
+        onPolicyBlocked={() => setPolicyLocked(true)}
+        policyTitle={t('security.mfaPolicyTitle')}
+        policyBody={t('security.mfaPolicyBody')}
+      />
+      <ReauthDialog
+        open={dialog === 'codes'}
+        onOpenChange={(open) => !open && setDialog(null)}
+        title={t('security.newCodesTitle')}
+        description={t('security.newCodesDescription')}
+        confirmLabel={t('security.newCodesConfirm')}
+        onSubmit={regenerate}
+        policyTitle={t('security.mfaPolicyTitle')}
+        policyBody={t('security.mfaPolicyBody')}
+      />
+      <NewRecoveryCodesDialog codes={newCodes} onClose={() => setNewCodes(null)} />
     </>
   );
 }

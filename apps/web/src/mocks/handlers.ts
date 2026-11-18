@@ -14,6 +14,7 @@ import {
   MOCK_ACCOUNTS,
   MOCK_INVITATIONS,
   MOCK_NEW_RECOVERY_CODES,
+  MOCK_REGENERATED_RECOVERY_CODES,
   MOCK_RESET_TOKENS,
   MOCK_SECRET,
   MOCK_TENANTS,
@@ -151,6 +152,93 @@ function invitationFor(token: string): InvitationRecord | 'expired' | undefined 
     };
   }
   return undefined;
+}
+
+const REAUTH_MAX_FAILURES = 5;
+
+type ReauthCheck = { ok: true; user: MockUser } | { ok: false; response: Response };
+
+/**
+ * What `DELETE /v1/auth/mfa` and `POST /v1/auth/mfa/recovery-codes/regenerate` check, in the API's
+ * order: session + CSRF (no limited session), body shape (422 `validation`), MFA enabled (409),
+ * lockout (429 `account-locked`), then the password or TOTP code (403 `reauth-failed`, never 401).
+ */
+async function checkReauth(request: Request): Promise<ReauthCheck> {
+  const guard = requireSession(request, { mutation: true });
+  if (!guard.ok) return guard;
+  const body = (await request.json().catch(() => null)) as {
+    password?: unknown;
+    totp_code?: unknown;
+  } | null;
+  const errors: Array<{ pointer: string; message: string; code?: string }> = [];
+  const known = new Set(['password', 'totp_code']);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    errors.push({
+      pointer: '/password',
+      message: 'Send the current password or a current TOTP code.',
+    });
+  } else {
+    if (Object.keys(body).some((key) => !known.has(key))) {
+      errors.push({ pointer: '/', message: 'Unrecognised key.' });
+    }
+    if (
+      body.password !== undefined &&
+      (typeof body.password !== 'string' || body.password.length > 1024)
+    ) {
+      errors.push({ pointer: '/password', message: 'must be a string of at most 1024 characters' });
+    }
+    if (
+      body.totp_code !== undefined &&
+      !(typeof body.totp_code === 'string' && /^[0-9 ]{6,8}$/.test(body.totp_code))
+    ) {
+      errors.push({ pointer: '/totp_code', message: 'must be a 6-digit code' });
+    }
+    if (body.password === undefined && body.totp_code === undefined && errors.length === 0) {
+      errors.push({
+        pointer: '/password',
+        message: 'Send the current password or a current TOTP code.',
+      });
+    }
+  }
+  if (errors.length > 0) {
+    return { ok: false, response: problem(422, 'validation', 'Validation failed', { errors }) };
+  }
+  const { user } = guard;
+  if (!user.mfa) {
+    return {
+      ok: false,
+      response: problem(409, 'conflict', 'MFA is not enabled for this user', {
+        detail: 'MFA is not enabled for this user.',
+      }),
+    };
+  }
+  if (loadState().reauthFailures >= REAUTH_MAX_FAILURES) {
+    return {
+      ok: false,
+      response: problem(429, 'account-locked', 'Too many attempts', {
+        headers: { 'retry-after': '90' },
+      }),
+    };
+  }
+  const ok =
+    typeof body?.password === 'string'
+      ? body.password === passwordFor(user.email)
+      : String(body?.totp_code).replace(/\s+/g, '') === MOCK_TOTP_CODE;
+  if (!ok) {
+    updateState((state) => {
+      state.reauthFailures += 1;
+    });
+    return {
+      ok: false,
+      response: problem(403, 'reauth-failed', 'The password or code is incorrect', {
+        detail: 'The password or code you sent to confirm this action is incorrect.',
+      }),
+    };
+  }
+  updateState((state) => {
+    state.reauthFailures = 0;
+  });
+  return { ok: true, user };
 }
 
 export const handlers: HttpHandler[] = [
@@ -313,6 +401,7 @@ export const handlers: HttpHandler[] = [
       permissions: found.permissions,
       mfa: false,
       mfaRequired: found.mfa_enrolment_required,
+      mfaPolicy: found.mfa_enrolment_required,
       tenantName: found.tenant_name,
     };
     updateState((state) => {
@@ -353,6 +442,9 @@ export const handlers: HttpHandler[] = [
     updateState((state) => {
       const email = guard.user.email;
       if (!state.mfaEnrolled.includes(email)) state.mfaEnrolled.push(email);
+      state.mfaDisabled = state.mfaDisabled.filter((e) => e !== email);
+      // Activating replaces every recovery code with a fresh set, like the API.
+      state.recoveryCodes = [...MOCK_NEW_RECOVERY_CODES];
       state.pendingEnrolment = false;
       if (state.session) {
         state.session.limited = false;
@@ -362,6 +454,42 @@ export const handlers: HttpHandler[] = [
       }
     });
     return HttpResponse.json({ recovery_codes: MOCK_NEW_RECOVERY_CODES, csrf_token: rotatedCsrf });
+  }),
+
+  // ---- MFA management: re-authenticate, then regenerate recovery codes or turn MFA off ----------
+  http.post('/v1/auth/mfa/recovery-codes/regenerate', async ({ request }) => {
+    const checked = await checkReauth(request);
+    if (!checked.ok) return checked.response;
+    updateState((state) => {
+      state.recoveryCodes = [...MOCK_REGENERATED_RECOVERY_CODES];
+      state.usedRecoveryCodes = [];
+    });
+    return HttpResponse.json({ recovery_codes: MOCK_REGENERATED_RECOVERY_CODES });
+  }),
+
+  http.delete('/v1/auth/mfa', async ({ request }) => {
+    const checked = await checkReauth(request);
+    if (!checked.ok) return checked.response;
+    // Re-authentication comes first (like the API): a wrong value never reveals the policy.
+    if (checked.user.mfaPolicy || checked.user.mfaRequired) {
+      return problem(
+        403,
+        'mfa-required-by-policy',
+        'Two-step verification is required for your account',
+        { detail: 'Multi-factor authentication is required for your account by tenant policy.' },
+      );
+    }
+    const email = checked.user.email;
+    updateState((state) => {
+      state.mfaEnrolled = state.mfaEnrolled.filter((e) => e !== email);
+      if (!state.mfaDisabled.includes(email)) state.mfaDisabled.push(email);
+      state.recoveryCodes = [];
+      // Every OTHER session of the user is revoked; this one stays (no rotation, no new CSRF token).
+      for (const id of ['sess-phone', 'sess-laptop']) {
+        if (!state.revokedSessions.includes(id)) state.revokedSessions.push(id);
+      }
+    });
+    return new HttpResponse(null, { status: 204 });
   }),
 
   // ---- proposed: device list ---------------------------------------------------------------

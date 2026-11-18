@@ -22,10 +22,11 @@ describe('UsersScreen role column', () => {
     expect(select.querySelector('svg')).toBeInTheDocument();
 
     // the table announces its density so the control can shrink to 24px in compact rows
-    expect(within(row).getByRole('combobox', { name: /Role of/ }).closest('table')).toHaveAttribute(
-      'data-density',
-      'comfortable',
-    );
+    expect(
+      within(row)
+        .getByRole('combobox', { name: /Role of/ })
+        .closest('table'),
+    ).toHaveAttribute('data-density', 'comfortable');
 
     // the tab strip must not grow a vertical scrollbar (its triggers are 36px in a 36px list)
     const tabList = screen.getByRole('tablist');

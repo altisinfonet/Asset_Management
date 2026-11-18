@@ -149,7 +149,14 @@ describe('Select size and variant', () => {
   it('a disabled ghost select has no hover affordance and does not open', async () => {
     const user = userEvent.setup();
     render(
-      <Select aria-label="Role" options={OPTIONS} defaultValue="a" size="sm" variant="ghost" disabled />,
+      <Select
+        aria-label="Role"
+        options={OPTIONS}
+        defaultValue="a"
+        size="sm"
+        variant="ghost"
+        disabled
+      />,
     );
     const trigger = screen.getByRole('combobox', { name: 'Role' });
     expect(trigger).toBeDisabled();

@@ -1,14 +1,14 @@
 'use client';
 
 import QRCode from 'qrcode';
-import { Copy, Download } from 'lucide-react';
+import { Copy } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AuthCard, AuthLayout } from '@/components/auth/auth-layout';
 import { FormError } from '@/components/auth/form-error';
+import { RecoveryCodes } from '@/components/auth/recovery-codes';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -132,17 +132,6 @@ export function EnrolScreen() {
     if (await copyText(text)) toast({ variant: 'success', title: t('mfaEnrol.copied') });
   };
 
-  const downloadCodes = (codes: string[]) => {
-    const url = URL.createObjectURL(
-      new Blob([`${codes.join('\n')}\n`], { type: 'text/plain;charset=utf-8' }),
-    );
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'asset-tracker-recovery-codes.txt';
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <AuthLayout>
       {phase.kind === 'loading' || !hasSession ? (
@@ -233,30 +222,7 @@ export function EnrolScreen() {
           wide
           focusHeading
         >
-          <ul
-            aria-label={t('mfaEnrol.recoveryList')}
-            data-testid="recovery-codes"
-            className="grid grid-cols-2 gap-2 rounded-md bg-sunken p-3 font-tag text-base"
-          >
-            {phase.codes.map((recoveryCode) => (
-              <li key={recoveryCode}>{recoveryCode}</li>
-            ))}
-          </ul>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => void copy(phase.codes.join('\n'))}>
-              <Copy aria-hidden className="size-4" />
-              {t('mfaEnrol.copyAll')}
-            </Button>
-            <Button onClick={() => downloadCodes(phase.codes)}>
-              <Download aria-hidden className="size-4" />
-              {t('mfaEnrol.download')}
-            </Button>
-          </div>
-          <Checkbox
-            label={t('mfaEnrol.saved')}
-            checked={saved}
-            onCheckedChange={(value) => setSaved(value === true)}
-          />
+          <RecoveryCodes codes={phase.codes} saved={saved} onSavedChange={setSaved} />
           <Button
             variant="primary"
             disabled={!saved}

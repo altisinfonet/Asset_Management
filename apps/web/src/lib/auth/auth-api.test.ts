@@ -6,6 +6,7 @@ import {
   MOCK_INVITATIONS,
   MOCK_PASSWORD,
   MOCK_RECOVERY_CODES,
+  MOCK_REGENERATED_RECOVERY_CODES,
   MOCK_RESET_TOKENS,
   MOCK_TOTP_CODE,
 } from '@/mocks/fixtures';
@@ -219,5 +220,113 @@ describe('auth API against the mock contract', () => {
     server.use(http.get('/v1/auth/me', () => HttpResponse.html('<html></html>')));
     const err = await failure(authApi.getMe());
     expect(toUiError(err).kind).toBe('server');
+  });
+});
+
+describe('MFA management against the mock contract', () => {
+  async function signInWithMfa(email: string) {
+    const first = await authApi.login({ email, password: MOCK_PASSWORD });
+    await authApi.verifyMfa({
+      challenge_id: first.mfa!.challenge_id,
+      method: 'totp',
+      code: MOCK_TOTP_CODE,
+    });
+  }
+
+  it('regenerating recovery codes needs the password or a TOTP code and returns ten new codes', async () => {
+    await signInWithMfa(MOCK_ACCOUNTS.mfaOwner);
+    const wrong = await failure(authApi.regenerateRecoveryCodes({ password: 'nope' }));
+    // 403 reauth-failed, never 401 (a 401 would read as "session gone")
+    expect(wrong.status).toBe(403);
+    expect(wrong.code).toBe('reauth-failed');
+
+    const byPassword = await authApi.regenerateRecoveryCodes({ password: MOCK_PASSWORD });
+    expect(byPassword.recovery_codes).toEqual(MOCK_REGENERATED_RECOVERY_CODES);
+    const byCode = await authApi.regenerateRecoveryCodes({
+      totp_code: ` ${MOCK_TOTP_CODE}`.trim(),
+    });
+    expect(byCode.recovery_codes).toHaveLength(10);
+
+    // the old codes stop working at the sign-in challenge, the new ones work
+    await authApi.logout();
+    const challenge = await authApi.login({
+      email: MOCK_ACCOUNTS.mfaOwner,
+      password: MOCK_PASSWORD,
+    });
+    const old = await failure(
+      authApi.verifyMfa({
+        challenge_id: challenge.mfa!.challenge_id,
+        method: 'recovery_code',
+        code: MOCK_RECOVERY_CODES[0]!,
+      }),
+    );
+    expect(old.code).toBe('mfa-invalid-code');
+    await expect(
+      authApi.verifyMfa({
+        challenge_id: challenge.mfa!.challenge_id,
+        method: 'recovery_code',
+        code: MOCK_REGENERATED_RECOVERY_CODES[0]!,
+      }),
+    ).resolves.toMatchObject({ status: 'authenticated' });
+  });
+
+  it('validates the re-authentication body like the API (422) and refuses without MFA (409)', async () => {
+    await signInWithMfa(MOCK_ACCOUNTS.mfaOwner);
+    const empty = await failure(authApi.disableMfa({} as never));
+    expect(empty.status).toBe(422);
+    expect(empty.code).toBe('validation');
+    const shortCode = await failure(authApi.disableMfa({ totp_code: '12' }));
+    expect(toUiError(shortCode).fieldErrors[0]?.pointer).toBe('/totp_code');
+
+    await authApi.logout();
+    await authApi.login({ email: MOCK_ACCOUNTS.owner, password: MOCK_PASSWORD });
+    const noMfa = await failure(authApi.disableMfa({ password: MOCK_PASSWORD }));
+    expect(noMfa.status).toBe(409);
+    expect(noMfa.code).toBe('conflict');
+  });
+
+  it('too many wrong values lock re-authentication (429 account-locked with Retry-After)', async () => {
+    await signInWithMfa(MOCK_ACCOUNTS.mfaOwner);
+    for (let i = 0; i < 5; i += 1) {
+      expect((await failure(authApi.disableMfa({ totp_code: '000000' }))).code).toBe(
+        'reauth-failed',
+      );
+    }
+    const locked = await failure(authApi.disableMfa({ password: MOCK_PASSWORD }));
+    expect(locked.status).toBe(429);
+    expect(locked.code).toBe('account-locked');
+    expect(locked.retryAfterSeconds).toBe(90);
+  });
+
+  it('turning MFA off removes the factor, keeps this session and signs the other devices out', async () => {
+    await signInWithMfa(MOCK_ACCOUNTS.mfaOwner);
+    const before = getCsrfToken();
+    await expect(authApi.disableMfa({ password: MOCK_PASSWORD })).resolves.toBeUndefined();
+    // no rotation: the same CSRF token still works and the session is still there
+    expect(getCsrfToken()).toBe(before);
+    expect((await authApi.getMe()).user.mfa_enabled).toBe(false);
+    const devices = await authApi.listSessions();
+    expect(devices.map((d) => d.id)).not.toContain('sess-phone');
+    // signing in no longer asks for a code
+    await authApi.logout();
+    const next = await authApi.login({ email: MOCK_ACCOUNTS.mfaOwner, password: MOCK_PASSWORD });
+    expect(next.status).toBe('authenticated');
+    // and a second removal is a conflict
+    const again = await failure(authApi.disableMfa({ password: MOCK_PASSWORD }));
+    expect(again.status).toBe(409);
+  });
+
+  it('the policy-enforced account re-authenticates first, then gets 403 mfa-required-by-policy', async () => {
+    await signInWithMfa(MOCK_ACCOUNTS.mfaEnforced);
+    // a wrong value never reveals the policy
+    expect((await failure(authApi.disableMfa({ password: 'nope' }))).code).toBe('reauth-failed');
+    const blocked = await failure(authApi.disableMfa({ password: MOCK_PASSWORD }));
+    expect(blocked.status).toBe(403);
+    expect(blocked.code).toBe('mfa-required-by-policy');
+    expect((await authApi.getMe()).user.mfa_enabled).toBe(true);
+    // recovery codes can still be regenerated
+    await expect(
+      authApi.regenerateRecoveryCodes({ password: MOCK_PASSWORD }),
+    ).resolves.toMatchObject({ recovery_codes: expect.any(Array) });
   });
 });

@@ -8,7 +8,9 @@ import type {
   Me,
   MfaEnrolment,
   MfaEnrolmentResult,
+  MfaRecoveryCodes,
   MfaVerifyRequest,
+  ReauthRequest,
   SessionInfo,
 } from './types';
 
@@ -18,7 +20,9 @@ import type {
  * CSRF header, an idempotency key and turns failures into `ApiError`s.
  *
  * `confirmMfaEnrolment` rotates the session: the response carries the new `csrf_token`, stored here
- * before the next mutation.
+ * before the next mutation. `disableMfa` and `regenerateRecoveryCodes` need re-authentication in the
+ * body (`ReauthRequest`); neither rotates the session or returns a CSRF token. Disabling revokes the
+ * user's OTHER sessions and keeps this one.
  */
 const http = () => getApi().http;
 
@@ -86,6 +90,17 @@ export const authApi = {
     // Becoming MFA-verified rotates the session; the old CSRF token is dead.
     setCsrfToken(result.csrf_token);
     return result;
+  },
+
+  async regenerateRecoveryCodes(reauth: ReauthRequest): Promise<MfaRecoveryCodes> {
+    const { data } = await http().POST('/v1/auth/mfa/recovery-codes/regenerate', {
+      body: reauth,
+    });
+    return data as MfaRecoveryCodes;
+  },
+
+  async disableMfa(reauth: ReauthRequest): Promise<void> {
+    await http().DELETE('/v1/auth/mfa', { body: reauth });
   },
 
   async listSessions(signal?: AbortSignal): Promise<SessionInfo[]> {

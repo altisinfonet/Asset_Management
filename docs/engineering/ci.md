@@ -7,7 +7,7 @@ a required check on `main`, it stays one (`docs/05_backlog.md` 9.3).
 
 | File                              | Triggers                                              | Jobs                                                                                                   |
 | --------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `.github/workflows/ci.yml`        | PR, push to `main`, weekly (Mon 04:17 UTC), manual    | `check`, `web-e2e` (optional), `api-e2e` (Postgres 16 and 18), `image`, `compose-smoke`, `image-scan`, `publish` (main only), `ci-gate` |
+| `.github/workflows/ci.yml`        | PR, push to `main`, weekly (Mon 04:17 UTC), manual    | `check`, `web-e2e` (mock API, optional), `api-e2e` (Postgres 16 and 18), `image`, `compose-smoke`, `web-e2e-real`, `image-scan`, `publish` (main only), `ci-gate` |
 | `.github/workflows/security.yml`  | PR, push to `main`, daily (03:41 UTC), manual         | `dependency-audit`, `secret-scan`                                                                      |
 | `.github/workflows/codeql.yml`    | PR, push to `main`, weekly (Wed), manual              | CodeQL for `javascript-typescript` and `actions`                                                       |
 | `.github/workflows/perf.yml`      | nightly (01:30 UTC), manual                           | `perf` (performance budgets)                                                                           |

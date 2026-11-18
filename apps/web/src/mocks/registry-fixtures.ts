@@ -32,8 +32,11 @@ export interface RegistryData {
   assets: MockAsset[];
   users: MockUserRecord[];
   history: S['HistoryEvent'][];
-  /** Next tag number per category id. */
+  /** Next tag number per full tag prefix (template prefix + category prefix), as the API counts. */
   tagCounters: Record<string, number>;
+  /** The tenant's tag numbering template and its settings version (the ETag of the template). */
+  tagTemplate: { prefix: string; width: number; use_category_prefix: boolean };
+  settingsVersion: number;
 }
 
 const KIND_CODE = {
@@ -428,7 +431,7 @@ export function buildSeed(): RegistryData {
         actor_type: 'user',
         summary: 'Created',
       });
-      tagCounters[category.id] = n + 1;
+      tagCounters[category.tag_prefix || 'AT-'] = n + 1;
     }
   }
 
@@ -514,5 +517,7 @@ export function buildSeed(): RegistryData {
     users,
     history,
     tagCounters,
+    tagTemplate: { prefix: '', width: 5, use_category_prefix: true },
+    settingsVersion: 1,
   };
 }

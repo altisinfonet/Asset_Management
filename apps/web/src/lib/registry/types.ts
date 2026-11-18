@@ -26,6 +26,11 @@ export type Role = S['Role'];
 export type RoleAssignment = S['RoleAssignment'];
 export type SessionInfo = S['SessionInfo'];
 export type PageInfo = S['PageInfo'];
+export type AssetTagTemplate = S['AssetTagTemplate'];
+export type BulkAssetResult = S['BulkAssetResult'];
+export type BulkAssetUpdate = S['BulkAssetUpdate'];
+/** The changes a bulk edit applies to every selected asset. */
+export type BulkChanges = BulkAssetUpdate['changes'];
 
 export const CUSTOM_FIELD_TYPES: readonly CustomFieldType[] = [
   'text',

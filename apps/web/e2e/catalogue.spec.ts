@@ -87,7 +87,9 @@ test.describe('categories and custom fields (M1-WEB-05)', () => {
     const dialog = page.getByRole('dialog', { name: 'Archive Laptop?' });
     await expect(dialog.getByRole('status')).toContainText('assets use this category');
     await dialog.getByRole('button', { name: 'Archive' }).click();
-    await expect(dialog.getByRole('alert')).toContainText('Used by');
+    await expect(dialog.getByRole('alert')).toContainText(
+      'Still in use by 40 assets, 3 models, 2 custom fields',
+    );
     await expect(dialog).toBeVisible();
   });
 
@@ -148,7 +150,7 @@ test.describe('models, manufacturers, status labels, tag numbering, vendors (M1-
     await page.getByRole('button', { name: 'Archive ThinkPad T14' }).click();
     const confirm = page.getByRole('dialog', { name: 'Archive ThinkPad T14?' });
     await confirm.getByRole('button', { name: 'Archive' }).click();
-    await expect(confirm.getByRole('alert')).toContainText('Used by');
+    await expect(confirm.getByRole('alert')).toContainText('Still in use by');
   });
 
   test('status labels: create, rename only (state type is fixed), default and ordering', async ({
@@ -189,6 +191,29 @@ test.describe('models, manufacturers, status labels, tag numbering, vendors (M1-
     await expect(page.getByRole('row', { name: /Laptop/ })).toContainText('NB-00042');
   });
 
+  test('tag numbering template: edit prefix, width and the category prefix; new assets follow it', async ({
+    page,
+  }) => {
+    await page.goto('/settings/tags');
+    await expect(page.getByTestId('tag-template-summary')).toContainText('5 digits');
+    await page.getByRole('button', { name: 'Edit template' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Tag numbering template' });
+    await dialog.getByLabel(/^Prefix/).fill('ACME-');
+    await dialog.getByLabel('Digits in the counter').fill('4');
+    await expect(dialog.getByTestId('tag-template-preview')).toContainText('ACME-LAP-0042');
+    await dialog.getByRole('checkbox', { name: /category prefix/ }).click();
+    await expect(dialog.getByTestId('tag-template-preview')).toContainText('ACME-0042');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByTestId('tag-template-example')).toHaveText('ACME-0042');
+    // the per-category table follows the template
+    await expect(page.getByRole('row', { name: /Laptop/ })).toContainText('ACME-0042');
+
+    await page.goto('/assets/new');
+    await choose(page, /^Category/, 'Tablet');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByTestId('asset-tag')).toHaveText('ACME-0001');
+  });
+
   test('vendors: create, validate the email inline, archive a vendor in use is refused', async ({
     page,
   }) => {
@@ -206,6 +231,6 @@ test.describe('models, manufacturers, status labels, tag numbering, vendors (M1-
     await page.getByRole('button', { name: 'Archive CDW' }).click();
     const confirm = page.getByRole('dialog', { name: 'Archive CDW?' });
     await confirm.getByRole('button', { name: 'Archive' }).click();
-    await expect(confirm.getByRole('alert')).toContainText('Used by');
+    await expect(confirm.getByRole('alert')).toContainText('Still in use by');
   });
 });

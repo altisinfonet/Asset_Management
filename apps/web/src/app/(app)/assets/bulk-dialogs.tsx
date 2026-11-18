@@ -16,8 +16,11 @@ import { Select } from '@/components/ui/select';
 import { useT } from '@/i18n';
 import type { BulkItem, BulkResult } from '@/lib/registry/bulk';
 import type { Lookups } from '@/lib/registry/queries';
+import { uiErrorText } from '@/lib/error-text';
 
-export type BulkEditPatch = { status_id: string } | { location_id: string };
+/** What a bulk edit may change (the contract's `changes` of `POST /v1/assets/bulk-update`). */
+export type BulkEditPatch = { status_id: string } | { category_id: string } | { vendor_id: string };
+type BulkField = 'status_id' | 'category_id' | 'vendor_id';
 
 /** "Edit N assets" (wireframe WEB-07): choose a field and a value, preview the tags, apply. */
 export function BulkEditDialog({
@@ -36,12 +39,16 @@ export function BulkEditDialog({
   onApply: (patch: BulkEditPatch) => void;
 }) {
   const t = useT();
-  const [field, setField] = useState<'status_id' | 'location_id'>('status_id');
+  const [field, setField] = useState<BulkField>('status_id');
   const [value, setValue] = useState('');
+  const active = <T extends { id: string; name: string; archived_at?: string | null }>(list: T[]) =>
+    list.filter((x) => !x.archived_at).map((x) => ({ value: x.id, label: x.name }));
   const options =
     field === 'status_id'
-      ? lookups.statuses.filter((s) => !s.archived_at).map((s) => ({ value: s.id, label: s.name }))
-      : lookups.locations.map((l) => ({ value: l.id, label: lookups.locationLabel(l.id) }));
+      ? active(lookups.statuses)
+      : field === 'category_id'
+        ? active(lookups.categories)
+        : active(lookups.vendors);
   const preview = items
     .slice(0, 5)
     .map((i) => i.label)
@@ -65,7 +72,8 @@ export function BulkEditDialog({
               }}
               options={[
                 { value: 'status_id', label: t('assets.columns.status') },
-                { value: 'location_id', label: t('assets.columns.location') },
+                { value: 'category_id', label: t('assets.columns.category') },
+                { value: 'vendor_id', label: t('assets.columns.vendor') },
               ]}
             />
           )}
@@ -99,7 +107,13 @@ export function BulkEditDialog({
             disabled={!value}
             loading={progress !== null}
             onClick={() =>
-              onApply(field === 'status_id' ? { status_id: value } : { location_id: value })
+              onApply(
+                field === 'status_id'
+                  ? { status_id: value }
+                  : field === 'category_id'
+                    ? { category_id: value }
+                    : { vendor_id: value },
+              )
             }
           >
             {t('assets.bulk.apply', { count: items.length })}
@@ -143,7 +157,7 @@ export function BulkResultsDialog({
                 className="rounded-md bg-danger-subtle p-2 text-sm text-danger-text"
               >
                 <span className="font-tag font-medium">{r.item.label}</span>{' '}
-                {r.error?.detail ?? (r.error ? t(r.error.messageKey) : '')}
+                {r.error ? uiErrorText(t, r.error) : ''}
                 {r.error?.requestId ? (
                   <span className="block font-tag text-xs">
                     {t('access.requestId', { id: r.error.requestId })}

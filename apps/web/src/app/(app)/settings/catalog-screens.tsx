@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import {
@@ -21,6 +21,7 @@ import {
   manufacturersApi,
   modelsApi,
   statusApi,
+  tagTemplateApi,
   vendorsApi,
 } from '@/lib/registry/api';
 import {
@@ -39,7 +40,7 @@ import {
   type StatusLabel,
   type Vendor,
 } from '@/lib/registry/types';
-import { formatTag } from '@/lib/registry/tags';
+import { DEFAULT_TAG_TEMPLATE, formatTag, type TagTemplate } from '@/lib/registry/tags';
 
 const str = (value: unknown): string => String(value ?? '').trim();
 const orNull = (value: unknown): string | null => str(value) || null;
@@ -480,10 +481,24 @@ export function StatusLabelsScreen() {
 
 // ---- tag numbering ---------------------------------------------------------------------------------------------
 
+const TEMPLATE_KEY = ['settings', 'asset-tag-template'] as const;
+
+/** The template a template form holds (width falls back to the default while it is being typed). */
+function templateOf(values: Record<string, string | boolean>): TagTemplate {
+  const width = Number(values.width);
+  return {
+    prefix: str(values.prefix),
+    width:
+      Number.isInteger(width) && width >= 1 && width <= 12 ? width : DEFAULT_TAG_TEMPLATE.width,
+    use_category_prefix: values.use_category_prefix === true,
+  };
+}
+
 /**
- * Tag numbering: assets get `<category prefix><number>` when no tag is typed. The contract only
- * has the per-category `tag_prefix` (no tenant template with a counter width), so this screen
- * edits the prefixes and shows a live example; typing a tag always overrides the template.
+ * Tag numbering: when no tag is typed, an asset gets `<template prefix><category prefix><counter>`.
+ * The tenant template (prefix, counter width, whether the category prefix is added) is
+ * `GET/PUT /v1/settings/asset-tag-template`; the per-category prefix is edited in the table.
+ * Typing a tag always overrides the numbering; existing tags are never renamed.
  */
 export function TagNumberingScreen() {
   const t = useT();
@@ -492,7 +507,24 @@ export function TagNumberingScreen() {
   const categories = useCategories();
   const invalidate = useInvalidateLookups();
   const editor = useEditor(categoriesApi.get);
+  const queryClient = useQueryClient();
+  const templateQuery = useQuery({
+    queryKey: TEMPLATE_KEY,
+    queryFn: () => tagTemplateApi.get(),
+    enabled: can('catalog:read'),
+  });
+  const loaded = templateQuery.data?.value;
+  const template = useMemo<TagTemplate>(
+    () => ({
+      prefix: loaded?.prefix ?? DEFAULT_TAG_TEMPLATE.prefix,
+      width: loaded?.width ?? DEFAULT_TAG_TEMPLATE.width,
+      use_category_prefix: loaded?.use_category_prefix ?? DEFAULT_TAG_TEMPLATE.use_category_prefix,
+    }),
+    [loaded],
+  );
   const [example, setExample] = useState('');
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateExample, setTemplateExample] = useState('');
   const editing = editor.target?.kind === 'edit' ? editor.target.versioned : undefined;
 
   const columns = useMemo<DataTableColumn<Category>[]>(
@@ -508,7 +540,7 @@ export function TagNumberingScreen() {
         id: 'example',
         header: t('tags.columns.example'),
         mono: true,
-        cell: (r) => formatTag(r.tag_prefix, 42),
+        cell: (r) => formatTag(template, r.tag_prefix, 42),
       },
       {
         id: 'actions',
@@ -521,7 +553,7 @@ export function TagNumberingScreen() {
               size="sm"
               aria-label={t('tags.editLabel', { name: r.name })}
               onClick={() => {
-                setExample(formatTag(r.tag_prefix, 42));
+                setExample(formatTag(template, r.tag_prefix, 42));
                 void editor.openEdit(r.id);
               }}
             >
@@ -530,7 +562,7 @@ export function TagNumberingScreen() {
           ) : null,
       },
     ],
-    [t, manage, editor],
+    [t, manage, editor, template],
   );
 
   return (
@@ -543,6 +575,44 @@ export function TagNumberingScreen() {
       <Banner tone="info" className="mb-4">
         {t('tags.override')}
       </Banner>
+      <section
+        aria-labelledby="tag-template-heading"
+        className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4"
+      >
+        <div>
+          <h2 id="tag-template-heading" className="text-sm font-semibold">
+            {t('tags.template.title')}
+          </h2>
+          {templateQuery.error ? (
+            <p className="text-base text-danger-text">{t('common.loadFailed')}</p>
+          ) : (
+            <p className="text-base text-muted" data-testid="tag-template-summary">
+              {t('tags.template.summary', {
+                prefix: template.prefix || t('tags.template.none'),
+                width: template.width,
+                category: template.use_category_prefix
+                  ? t('tags.template.categoryOn')
+                  : t('tags.template.categoryOff'),
+              })}{' '}
+              {t('tags.example')}{' '}
+              <span className="font-tag" data-testid="tag-template-example">
+                {loaded?.example ?? formatTag(template, 'LAP-', 42)}
+              </span>
+            </p>
+          )}
+        </div>
+        {manage ? (
+          <Button
+            disabled={!templateQuery.data}
+            onClick={() => {
+              setTemplateExample(formatTag(template, 'LAP-', 42));
+              setTemplateOpen(true);
+            }}
+          >
+            {t('tags.template.edit')}
+          </Button>
+        ) : null}
+      </section>
       {categories.error ? (
         <Banner tone="danger">{t('common.loadFailed')}</Banner>
       ) : (
@@ -555,6 +625,50 @@ export function TagNumberingScreen() {
           empty={<Hash aria-hidden className="m-6 size-6 text-muted" />}
         />
       )}
+      <FormDialog
+        open={templateOpen}
+        onOpenChange={setTemplateOpen}
+        title={t('tags.template.editTitle')}
+        description={t('tags.template.editDescription')}
+        fields={[
+          {
+            name: 'prefix',
+            label: t('tags.template.prefix'),
+            kind: 'text',
+            mono: true,
+            hint: t('tags.template.prefixHint'),
+          },
+          {
+            name: 'width',
+            label: t('tags.template.width'),
+            kind: 'number',
+            required: true,
+            min: 1,
+            max: 12,
+          },
+          {
+            name: 'use_category_prefix',
+            label: t('tags.template.useCategoryPrefix'),
+            kind: 'checkbox',
+          },
+        ]}
+        initial={{
+          prefix: template.prefix,
+          width: String(template.width),
+          use_category_prefix: template.use_category_prefix,
+        }}
+        onChange={(values) => setTemplateExample(formatTag(templateOf(values), 'LAP-', 42))}
+        footerNote={
+          <p className="text-base" data-testid="tag-template-preview">
+            {t('tags.example')} <span className="font-tag">{templateExample}</span>
+          </p>
+        }
+        submitLabel={t('common.save')}
+        onSubmit={async (values) => {
+          const saved = await tagTemplateApi.put(templateOf(values), templateQuery.data?.etag);
+          queryClient.setQueryData(TEMPLATE_KEY, saved);
+        }}
+      />
       <FormDialog
         open={editing !== undefined}
         onOpenChange={(open) => !open && editor.close()}
@@ -570,7 +684,7 @@ export function TagNumberingScreen() {
           },
         ]}
         initial={{ tag_prefix: editing?.value.tag_prefix ?? '' }}
-        onChange={(values) => setExample(formatTag(str(values.tag_prefix), 42))}
+        onChange={(values) => setExample(formatTag(template, str(values.tag_prefix), 42))}
         footerNote={
           <p className="text-base" data-testid="tag-example">
             {t('tags.example')} <span className="font-tag">{example}</span>

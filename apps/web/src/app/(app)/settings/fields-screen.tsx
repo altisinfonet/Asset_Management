@@ -38,6 +38,7 @@ import {
   type CustomFieldDef,
   type CustomFieldType,
 } from '@/lib/registry/types';
+import { uiErrorText } from '@/lib/error-text';
 
 interface Draft {
   label: string;
@@ -458,10 +459,7 @@ function FieldBuilderDialog({
         </DialogHeader>
         <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-col gap-4">
           {formError ? (
-            <FormError
-              message={formError.detail ?? t(formError.messageKey)}
-              requestId={formError.requestId}
-            />
+            <FormError message={uiErrorText(t, formError)} requestId={formError.requestId} />
           ) : null}
           <Field label={t('fields.form.label')} required error={errors.label}>
             {(c) => (

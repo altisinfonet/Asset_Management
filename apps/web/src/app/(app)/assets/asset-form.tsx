@@ -31,6 +31,7 @@ import { describeProblem, emptyRaw, type RawValue } from '@/lib/registry/custom-
 import type { Lookups } from '@/lib/registry/queries';
 import type { Asset, Versioned } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
+import { uiErrorText } from '@/lib/error-text';
 
 const NONE = '__none__';
 
@@ -234,7 +235,7 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
         const map: Record<string, string> = {};
         for (const fe of ui.fieldErrors) map[pointerToKey(fe.pointer)] = fe.message;
         if (Object.keys(map).length > 0) reportErrors(map);
-        else setFormError(ui.detail ?? t(ui.messageKey));
+        else setFormError(uiErrorText(t, ui));
         if (ui.kind === 'conflict' && map.asset_tag) void checkDuplicate('tag', state.asset_tag);
       }
     } finally {

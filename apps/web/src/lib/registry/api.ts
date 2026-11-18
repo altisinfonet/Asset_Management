@@ -1,10 +1,13 @@
-import type { operations } from '@assettracker/api-client';
+import { ApiError, type operations } from '@assettracker/api-client';
 import { getApi } from '@/lib/api';
 import type {
   Asset,
   AssetCreate,
   AssetModel,
+  AssetTagTemplate,
   AssetUpdate,
+  BulkAssetResult,
+  BulkChanges,
   Category,
   CategoryCreate,
   CategoryUpdate,
@@ -37,6 +40,23 @@ type Query<K extends keyof operations> = operations[K]['parameters'] extends {
 }
   ? Q
   : never;
+
+/** An empty page: what a list that the API does not serve yet looks like to the screens. */
+const emptyPage = <T>(): Page<T> => ({ data: [], page: { next_cursor: null, has_more: false } });
+
+/**
+ * M2 endpoints (locations, asset history) are in the contract but not served by the M1 API: they
+ * answer `404`. The screens that read them treat that as "nothing yet" instead of a failure, so the
+ * same build works against the M1 API and against the later one.
+ */
+async function orEmptyWhenNotServed<T>(read: () => Promise<Page<T>>): Promise<Page<T>> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return emptyPage<T>();
+    throw err;
+  }
+}
 
 const versioned = <T>(value: T, path: string): Versioned<T> => ({ value, etag: etagFor(path) });
 
@@ -91,14 +111,31 @@ export const assetsApi = {
     });
     return versioned(data as Asset, `/v1/assets/${id}`);
   },
+  /** `POST /v1/assets/bulk-update`: the same changes to up to 100 assets; one result per id. */
+  async bulkUpdate(ids: string[], changes: BulkChanges): Promise<BulkAssetResult> {
+    const { data } = await http().POST('/v1/assets/bulk-update', { body: { ids, changes } });
+    return data as BulkAssetResult;
+  },
+  /** `POST /v1/assets/bulk-archive` (up to 100 ids). */
+  async bulkArchive(ids: string[]): Promise<BulkAssetResult> {
+    const { data } = await http().POST('/v1/assets/bulk-archive', { body: { ids } });
+    return data as BulkAssetResult;
+  },
+  /** `POST /v1/assets/bulk-restore` (up to 100 ids). */
+  async bulkRestore(ids: string[]): Promise<BulkAssetResult> {
+    const { data } = await http().POST('/v1/assets/bulk-restore', { body: { ids } });
+    return data as BulkAssetResult;
+  },
   async history(
     id: string,
     query: { cursor?: string; limit?: number },
   ): Promise<Page<HistoryEvent>> {
-    const { data } = await http().GET('/v1/assets/{id}/history', {
-      params: { path: { id }, query },
+    return orEmptyWhenNotServed(async () => {
+      const { data } = await http().GET('/v1/assets/{id}/history', {
+        params: { path: { id }, query },
+      });
+      return data as Page<HistoryEvent>;
     });
-    return data as Page<HistoryEvent>;
   },
 };
 
@@ -109,6 +146,29 @@ export async function search(q: string, signal?: AbortSignal): Promise<SearchRes
   });
   return (data as { data: SearchResult[] }).data;
 }
+
+// ---- asset tag numbering template ---------------------------------------------------------------
+
+const TAG_TEMPLATE_PATH = '/v1/settings/asset-tag-template';
+
+export const tagTemplateApi = {
+  async get(): Promise<Versioned<AssetTagTemplate>> {
+    const { data } = await http().GET(TAG_TEMPLATE_PATH);
+    return versioned(data as AssetTagTemplate, TAG_TEMPLATE_PATH);
+  },
+  /** Replaces the template; `example` is read-only and is never sent back. */
+  async put(
+    template: Pick<AssetTagTemplate, 'prefix' | 'width' | 'use_category_prefix'>,
+    etag?: string,
+  ): Promise<Versioned<AssetTagTemplate>> {
+    const ifMatch = await freshEtag(etag, () => tagTemplateApi.get());
+    const { data } = await http().PUT(TAG_TEMPLATE_PATH, {
+      params: { header: { 'If-Match': ifMatch } },
+      body: template,
+    });
+    return versioned(data as AssetTagTemplate, TAG_TEMPLATE_PATH);
+  },
+};
 
 // ---- categories ---------------------------------------------------------------------------------
 
@@ -310,8 +370,10 @@ export const vendorsApi = {
 
 export const locationsApi = {
   async list(query: Query<'listLocations'> = {}): Promise<Page<Location>> {
-    const { data } = await http().GET('/v1/locations', { params: { query } });
-    return data as Page<Location>;
+    return orEmptyWhenNotServed(async () => {
+      const { data } = await http().GET('/v1/locations', { params: { query } });
+      return data as Page<Location>;
+    });
   },
 };
 

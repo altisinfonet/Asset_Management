@@ -64,6 +64,7 @@ import { routes } from '@/lib/routes';
 import { useDebounced } from '@/lib/use-debounced';
 import { BulkEditDialog, BulkResultsDialog, type BulkEditPatch } from './bulk-dialogs';
 import { ColumnsDialog } from './columns-dialog';
+import { uiErrorText } from '@/lib/error-text';
 
 const ALL = '__all__';
 const DEFAULT_VIEW = '__default__';
@@ -276,7 +277,7 @@ export function AssetsTable() {
 
   const applyEdit = async (patch: BulkEditPatch) => {
     setProgress({ done: 0, total: selectedItems.length });
-    const outcome = await runBulk(selectedItems, (item) => assetsApi.update(item.id, patch), {
+    const outcome = await runBulk(selectedItems, (ids) => assetsApi.bulkUpdate(ids, patch), {
       onProgress: (done, totalCount) => setProgress({ done, total: totalCount }),
     });
     setBulkEditOpen(false);
@@ -288,7 +289,7 @@ export function AssetsTable() {
     const restoring = state.archived === 'only';
     const outcome = await runBulk(
       selectedItems,
-      (item) => (restoring ? assetsApi.restore(item.id) : assetsApi.archive(item.id)),
+      (ids) => (restoring ? assetsApi.bulkRestore(ids) : assetsApi.bulkArchive(ids)),
       { onProgress: (done, totalCount) => setProgress({ done, total: totalCount }) },
     );
     await finishBulk(
@@ -727,9 +728,7 @@ function QuickView({
             )
           ) : null}
           {detail.error ? (
-            <Banner tone="danger">
-              {getApi().toUiError(detail.error).detail ?? t('common.loadFailed')}
-            </Banner>
+            <Banner tone="danger">{uiErrorText(t, getApi().toUiError(detail.error))}</Banner>
           ) : null}
         </DrawerBody>
         <DrawerFooter>

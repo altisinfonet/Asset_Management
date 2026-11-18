@@ -1,9 +1,8 @@
 import type { components } from '@assettracker/api-client';
 import { http, HttpResponse, type HttpHandler } from 'msw';
-import { checkIfMatch, etagOf, problem, requireSession } from './http';
+import { checkIfMatch, etagOf, problem, problemBody, requireSession } from './http';
 import {
   MOCK_ROLES,
-  formatTag,
   newResourceId,
   roleIdFor,
   type MockAsset,
@@ -100,7 +99,7 @@ function paginate<T extends { id: string; archived_at?: string | null; _v: numbe
       if (decoded.f !== fingerprint || !Number.isInteger(decoded.o)) throw new Error('stale');
       offset = decoded.o;
     } catch {
-      return problem(400, 'bad-request', 'Invalid cursor');
+      return problem(400, 'invalid-cursor', 'Invalid cursor');
     }
   }
 
@@ -162,7 +161,7 @@ interface ResourceConfig<T extends { id: string; archived_at?: string | null }> 
   build: (body: Body, id: string, data: RegistryData) => T;
   merge: (existing: Rec<T>, body: Body, data: RegistryData) => Partial<T>;
   /** Why an archive is refused (returns a sentence with counts), or undefined when allowed. */
-  inUse?: (record: Rec<T>, data: RegistryData) => string | undefined;
+  inUse?: (record: Rec<T>, data: RegistryData) => InUse | undefined;
   /** Hook after a write (e.g. keep exactly one default status label). */
   afterWrite?: (record: Rec<T>, data: RegistryData) => void;
 }
@@ -253,7 +252,7 @@ function resource<T extends { id: string; archived_at?: string | null }>(
       const stale = checkIfMatch(request, existing._v);
       if (stale) return stale;
       const reason = config.inUse?.(existing, registry());
-      if (reason) return problem(409, 'conflict', 'The record is in use', { detail: reason });
+      if (reason) return problem(409, 'conflict', 'The record is in use', reason);
       mutateRegistry((data) => {
         const target = config.collection(data).find((r) => r.id === existing.id)!;
         target.archived_at = nowIso();
@@ -262,6 +261,19 @@ function resource<T extends { id: string; archived_at?: string | null }>(
       return new HttpResponse(null, { status: 204 });
     }),
   ];
+}
+
+/** What a refused delete answers: the API's sentence and the `usage` counts (zeros included). */
+type InUse = { detail: string; usage?: Record<string, number> };
+
+/** Mirrors the API's `inUse()`: `409 conflict` listing what references the record. */
+function inUse(label: string, usage: Record<string, number>): InUse | undefined {
+  const parts = Object.entries(usage)
+    .filter(([, n]) => n > 0)
+    .map(([what, n]) => `${what}: ${n}`);
+  return parts.length
+    ? { detail: `${label} is in use (${parts.join(', ')}) and cannot be deleted.`, usage }
+    : undefined;
 }
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -295,7 +307,11 @@ const categoryHandlers = resource<S['Category']>({
   },
   validate: (body, data, existing) => {
     const errors = requireName(body, existing);
-    if (typeof body.tag_prefix === 'string' && !/^[A-Za-z0-9_-]{0,12}$/.test(body.tag_prefix)) {
+    if (
+      typeof body.tag_prefix === 'string' &&
+      body.tag_prefix !== '' &&
+      !/^[A-Z0-9-]{1,12}$/.test(body.tag_prefix)
+    ) {
       errors.push({
         pointer: '/tag_prefix',
         message: 'use letters, digits, - or _',
@@ -328,13 +344,14 @@ const categoryHandlers = resource<S['Category']>({
     ...(body.description !== undefined ? { description: text(body.description) ?? null } : {}),
   }),
   inUse: (category, data) => {
-    const assets = activeAssets(data).filter((a) => a.category_id === category.id).length;
+    const assets = data.assets.filter((a) => a.category_id === category.id).length;
     const models = data.models.filter(
       (m) => !m.archived_at && m.category_id === category.id,
     ).length;
-    return assets + models > 0
-      ? `Used by ${plural(assets, 'asset', 'assets')} and ${plural(models, 'model', 'models')}.`
-      : undefined;
+    const customFields = data.customFields.filter(
+      (f) => !f.archived_at && f.category_id === category.id,
+    ).length;
+    return inUse('Category', { assets, models, custom_fields: customFields });
   },
 });
 
@@ -386,7 +403,7 @@ const manufacturerHandlers = resource<S['Manufacturer']>({
   }),
   inUse: (m, data) => {
     const models = data.models.filter((x) => !x.archived_at && x.manufacturer_id === m.id).length;
-    return models > 0 ? `Used by ${plural(models, 'model', 'models')}.` : undefined;
+    return inUse('Manufacturer', { models });
   },
 });
 
@@ -457,8 +474,8 @@ const vendorHandlers = resource<S['Vendor']>({
     return out;
   },
   inUse: (v, data) => {
-    const assets = activeAssets(data).filter((a) => a.vendor_id === v.id).length;
-    return assets > 0 ? `Used by ${plural(assets, 'asset', 'assets')}.` : undefined;
+    const assets = data.assets.filter((a) => a.vendor_id === v.id).length;
+    return inUse('Vendor', { assets });
   },
 });
 
@@ -538,8 +555,8 @@ const modelHandlers = resource<S['AssetModel']>({
     return out;
   },
   inUse: (m, data) => {
-    const assets = activeAssets(data).filter((a) => a.model_id === m.id).length;
-    return assets > 0 ? `Used by ${plural(assets, 'asset', 'assets')}.` : undefined;
+    const assets = data.assets.filter((a) => a.model_id === m.id).length;
+    return inUse('Model', { assets });
   },
 });
 
@@ -605,9 +622,13 @@ const statusHandlers = resource<S['StatusLabel']>({
     ...(body.is_default !== undefined ? { is_default: body.is_default === true } : {}),
   }),
   inUse: (s, data) => {
-    if (s.is_default) return 'This is the default label for new assets.';
-    const assets = activeAssets(data).filter((a) => a.status_id === s.id).length;
-    return assets > 0 ? `Used by ${plural(assets, 'asset', 'assets')}.` : undefined;
+    if (s.is_default) {
+      return {
+        detail: `"${s.name}" is the default status of new assets: make another label the default first.`,
+      };
+    }
+    const assets = data.assets.filter((a) => a.status_id === s.id).length;
+    return inUse('Status label', { assets });
   },
   // Exactly one default: setting one clears the others.
   afterWrite: (record, data) => {
@@ -973,6 +994,120 @@ function pushHistory(
   });
 }
 
+// ---- asset writes shared by the single and the bulk endpoints ----------------------------------
+
+/** Applies a validated PATCH body to an asset (inside `mutateRegistry`) and writes its history. */
+function applyAssetPatch(data: RegistryData, id: string, body: Body, actorId: string): MockAsset {
+  const target = data.assets.find((a) => a.id === id)!;
+  const before = { status: target.status_id, location: target.location_id };
+  const simple = [
+    'name',
+    'serial',
+    'order_number',
+    'notes',
+    'purchase_date',
+    'warranty_end',
+  ] as const;
+  for (const key of simple)
+    if (body[key] !== undefined) (target as Record<string, unknown>)[key] = text(body[key]) ?? null;
+  if (body.asset_tag !== undefined && text(body.asset_tag))
+    target.asset_tag = text(body.asset_tag)!;
+  if (body.category_id !== undefined) target.category_id = body.category_id as string;
+  if (body.model_id !== undefined) target.model_id = body.model_id as string | null;
+  if (body.status_id !== undefined) target.status_id = body.status_id as string;
+  if (body.location_id !== undefined) target.location_id = body.location_id as string | null;
+  if (body.vendor_id !== undefined) target.vendor_id = body.vendor_id as string | null;
+  if (body.purchase_cost !== undefined)
+    target.purchase_cost = body.purchase_cost as S['Money'] | null;
+  if (body.custom_data !== undefined) {
+    const merged = { ...target.custom_data } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(body.custom_data as Record<string, unknown>)) {
+      if (v === null || v === '') delete merged[k];
+      else merged[k] = v;
+    }
+    target.custom_data = merged;
+  }
+  target.updated_at = nowIso();
+  target._v += 1;
+  pushHistory(data, target, 'updated', 'Updated', actorId);
+  if (target.status_id !== before.status) {
+    const from = data.statusLabels.find((s) => s.id === before.status)?.name;
+    const to = data.statusLabels.find((s) => s.id === target.status_id)?.name;
+    pushHistory(data, target, 'status_changed', `Status ${from} -> ${to}`, actorId);
+  }
+  if (target.location_id !== before.location) {
+    pushHistory(data, target, 'location_changed', 'Location changed', actorId);
+  }
+  return target;
+}
+
+function setAssetArchived(
+  data: RegistryData,
+  id: string,
+  archive: boolean,
+  actorId: string,
+): MockAsset {
+  const target = data.assets.find((a) => a.id === id)!;
+  target.archived_at = archive ? nowIso() : null;
+  target._v += 1;
+  pushHistory(
+    data,
+    target,
+    archive ? 'archived' : 'restored',
+    archive ? 'Archived' : 'Restored',
+    actorId,
+  );
+  return target;
+}
+
+const BULK_MAX = 100;
+
+/** The `ids` of a bulk body (de-duplicated, as the API does), or the 422 answer for a bad one. */
+function bulkIds(body: Body | null): string[] | Response {
+  const ids = body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.some((i) => typeof i !== 'string')) {
+    return validation([
+      { pointer: '/ids', message: 'must contain at least 1 id', code: 'too_small' },
+    ]);
+  }
+  if (ids.length > BULK_MAX) {
+    return problem(422, 'validation', 'Validation failed', {
+      detail: `A bulk request accepts at most ${BULK_MAX} items.`,
+      errors: [
+        {
+          pointer: '/ids',
+          message: `must contain at most ${BULK_MAX} items (got ${ids.length})`,
+          code: 'too_big',
+        },
+      ],
+    });
+  }
+  return [...new Set(ids as string[])];
+}
+
+type ItemOutcome = MockAsset | { problem: ReturnType<typeof problemBody> };
+const itemProblem = (
+  status: number,
+  code: string,
+  title: string,
+  extra: Parameters<typeof problemBody>[3] = {},
+): ItemOutcome => ({ problem: problemBody(status, code, title, extra) });
+
+/** `200 { results[], summary }`: one result per id in request order (`index`, `status`, `data` | `error`). */
+function bulkResponse(ids: string[], run: (id: string) => ItemOutcome) {
+  const results = ids.map((id, index) => {
+    const out = run(id);
+    return 'problem' in out
+      ? { index, status: out.problem.status, error: out.problem }
+      : { index, status: 200, data: expandAsset(out, []) };
+  });
+  const failed = results.filter((r) => 'error' in r).length;
+  return HttpResponse.json({
+    results,
+    summary: { total: results.length, succeeded: results.length - failed, failed },
+  });
+}
+
 function expandAsset(asset: MockAsset, expand: string[]): Record<string, unknown> {
   const data = registry();
   const { _v: _ignored, ...pub } = asset;
@@ -1063,6 +1198,78 @@ function allowedActions(asset: MockAsset): string[] {
   return asset.archived_at ? [] : ['update'];
 }
 
+// ---- GET/PUT /v1/settings/asset-tag-template (ETag = tenant settings version) --------------------
+
+const tagTemplateView = (data: RegistryData) => {
+  const { prefix, width, use_category_prefix } = data.tagTemplate;
+  const example = prefix + (use_category_prefix ? 'LAP-' : '') + String(42).padStart(width, '0');
+  return { prefix, width, use_category_prefix, example };
+};
+
+const tagTemplateHandlers: HttpHandler[] = [
+  http.get('/v1/settings/asset-tag-template', ({ request }) => {
+    const guard = requireSession(request, { permission: 'catalog:read' });
+    if (!guard.ok) return guard.response;
+    const data = registry();
+    return HttpResponse.json(tagTemplateView(data), {
+      headers: { ETag: etagOf(data.settingsVersion) },
+    });
+  }),
+
+  http.put('/v1/settings/asset-tag-template', async ({ request }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'catalog:manage' });
+    if (!guard.ok) return guard.response;
+    const stale = checkIfMatch(request, registry().settingsVersion);
+    if (stale) return stale;
+    const body = await readBody(request);
+    if (!body) return problem(400, 'bad-request', 'Malformed JSON body');
+    // Strict like the API: only these three members; `example` is read-only and rejected.
+    const errors: FieldError[] = [];
+    for (const key of Object.keys(body)) {
+      if (!['prefix', 'width', 'use_category_prefix'].includes(key)) {
+        errors.push({ pointer: `/${key}`, message: 'is not allowed', code: 'unrecognized_keys' });
+      }
+    }
+    const prefix = body.prefix ?? '';
+    if (typeof prefix !== 'string' || !/^[A-Z0-9-]{0,12}$/.test(prefix)) {
+      errors.push({
+        pointer: '/prefix',
+        message: 'must be up to 12 of A-Z, 0-9 and -',
+        code: 'invalid_format',
+      });
+    }
+    const width = body.width ?? 5;
+    if (typeof width !== 'number' || !Number.isInteger(width) || width < 1 || width > 12) {
+      errors.push({
+        pointer: '/width',
+        message: 'must be a whole number from 1 to 12',
+        code: 'invalid_type',
+      });
+    }
+    const useCategory = body.use_category_prefix ?? true;
+    if (typeof useCategory !== 'boolean') {
+      errors.push({
+        pointer: '/use_category_prefix',
+        message: 'must be true or false',
+        code: 'invalid_type',
+      });
+    }
+    if (errors.length > 0) return validation(errors);
+    const data = mutateRegistry((d) => {
+      d.tagTemplate = {
+        prefix: prefix as string,
+        width: width as number,
+        use_category_prefix: useCategory as boolean,
+      };
+      d.settingsVersion += 1;
+      return d;
+    });
+    return HttpResponse.json(tagTemplateView(data), {
+      headers: { ETag: etagOf(data.settingsVersion) },
+    });
+  }),
+];
+
 const assetHandlers: HttpHandler[] = [
   http.get('/v1/assets', ({ request }) => {
     const guard = requireSession(request, { permission: 'asset:read' });
@@ -1105,12 +1312,16 @@ const assetHandlers: HttpHandler[] = [
       const category = data.categories.find((c) => c.id === body.category_id)!;
       let tag = text(body.asset_tag);
       if (!tag) {
-        // Auto-numbering from the category prefix; skips numbers already taken.
-        let n = data.tagCounters[category.id] ?? 1;
+        // Auto-numbering from the tenant template and the category prefix; skips numbers taken.
+        const template = data.tagTemplate;
+        const prefix =
+          template.prefix + (template.use_category_prefix ? (category.tag_prefix ?? '') : '');
+        let n = data.tagCounters[prefix] ?? 1;
         const taken = new Set(data.assets.map((a) => a.asset_tag.toLowerCase()));
-        while (taken.has(formatTag(category.tag_prefix, n).toLowerCase())) n += 1;
-        tag = formatTag(category.tag_prefix, n);
-        data.tagCounters[category.id] = n + 1;
+        const numbered = (k: number) => prefix + String(k).padStart(template.width, '0');
+        while (taken.has(numbered(n).toLowerCase())) n += 1;
+        tag = numbered(n);
+        data.tagCounters[prefix] = n + 1;
       }
       const defaultStatus = data.statusLabels.find((s) => s.is_default && !s.archived_at)!;
       const stamp = nowIso();
@@ -1156,6 +1367,11 @@ const assetHandlers: HttpHandler[] = [
     if (!existing) return problem(404, 'not-found', 'Not found');
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
+    if (existing.archived_at) {
+      return problem(409, 'conflict', 'The asset is archived', {
+        detail: 'The asset is archived. Restore it before changing it.',
+      });
+    }
     const body = await readBody(request);
     if (!body) return problem(400, 'bad-request', 'Malformed JSON body');
     const outcome = validateAssetBody(body, registry(), existing);
@@ -1165,50 +1381,7 @@ const assetHandlers: HttpHandler[] = [
         errors: [{ pointer: outcome.pointer, message: outcome.conflict, code: 'unique' }],
       });
     }
-    const asset = mutateRegistry((data) => {
-      const target = data.assets.find((a) => a.id === existing.id)!;
-      const before = { status: target.status_id, location: target.location_id };
-      const simple = [
-        'name',
-        'serial',
-        'order_number',
-        'notes',
-        'purchase_date',
-        'warranty_end',
-      ] as const;
-      for (const key of simple)
-        if (body[key] !== undefined)
-          (target as Record<string, unknown>)[key] = text(body[key]) ?? null;
-      if (body.asset_tag !== undefined && text(body.asset_tag))
-        target.asset_tag = text(body.asset_tag)!;
-      if (body.category_id !== undefined) target.category_id = body.category_id as string;
-      if (body.model_id !== undefined) target.model_id = body.model_id as string | null;
-      if (body.status_id !== undefined) target.status_id = body.status_id as string;
-      if (body.location_id !== undefined) target.location_id = body.location_id as string | null;
-      if (body.vendor_id !== undefined) target.vendor_id = body.vendor_id as string | null;
-      if (body.purchase_cost !== undefined)
-        target.purchase_cost = body.purchase_cost as S['Money'] | null;
-      if (body.custom_data !== undefined) {
-        const merged = { ...target.custom_data } as Record<string, unknown>;
-        for (const [k, v] of Object.entries(body.custom_data as Record<string, unknown>)) {
-          if (v === null || v === '') delete merged[k];
-          else merged[k] = v;
-        }
-        target.custom_data = merged;
-      }
-      target.updated_at = nowIso();
-      target._v += 1;
-      pushHistory(data, target, 'updated', 'Updated', guard.user.id);
-      if (target.status_id !== before.status) {
-        const from = data.statusLabels.find((s) => s.id === before.status)?.name;
-        const to = data.statusLabels.find((s) => s.id === target.status_id)?.name;
-        pushHistory(data, target, 'status_changed', `Status ${from} -> ${to}`, guard.user.id);
-      }
-      if (target.location_id !== before.location) {
-        pushHistory(data, target, 'location_changed', 'Location changed', guard.user.id);
-      }
-      return target;
-    });
+    const asset = mutateRegistry((data) => applyAssetPatch(data, existing.id, body, guard.user.id));
     return oneAsset(asset);
   }),
 
@@ -1220,12 +1393,7 @@ const assetHandlers: HttpHandler[] = [
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
     if (existing.archived_at) return problem(409, 'conflict', 'The asset is already archived');
-    mutateRegistry((data) => {
-      const target = data.assets.find((a) => a.id === existing.id)!;
-      target.archived_at = nowIso();
-      target._v += 1;
-      pushHistory(data, target, 'archived', 'Archived', guard.user.id);
-    });
+    mutateRegistry((data) => setAssetArchived(data, existing.id, true, guard.user.id));
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -1237,14 +1405,83 @@ const assetHandlers: HttpHandler[] = [
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
     if (!existing.archived_at) return problem(409, 'conflict', 'The asset is not archived');
-    const asset = mutateRegistry((data) => {
-      const target = data.assets.find((a) => a.id === existing.id)!;
-      target.archived_at = null;
-      target._v += 1;
-      pushHistory(data, target, 'restored', 'Restored', guard.user.id);
-      return target;
-    });
+    const asset = mutateRegistry((data) =>
+      setAssetArchived(data, existing.id, false, guard.user.id),
+    );
     return oneAsset(asset);
+  }),
+
+  // Bulk: up to 100 ids, `200` with one result per id; a failing item never rolls back the others.
+  http.post('/v1/assets/bulk-update', async ({ request }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'asset:update' });
+    if (!guard.ok) return guard.response;
+    const body = await readBody(request);
+    const ids = bulkIds(body);
+    if (!Array.isArray(ids)) return ids;
+    const changes = body?.changes;
+    const allowed = ['status_id', 'category_id', 'model_id', 'vendor_id', 'custom_data'];
+    if (
+      typeof changes !== 'object' ||
+      changes === null ||
+      Array.isArray(changes) ||
+      Object.keys(changes).length === 0 ||
+      Object.keys(changes).some((k) => !allowed.includes(k))
+    ) {
+      return validation([
+        {
+          pointer: '/changes',
+          message: `must change at least one of ${allowed.join(', ')} and nothing else`,
+          code: 'invalid',
+        },
+      ]);
+    }
+    return bulkResponse(ids, (id) => {
+      const existing = registry().assets.find((a) => a.id === id);
+      if (!existing) return itemProblem(404, 'not-found', 'Not found');
+      if (existing.archived_at) {
+        return itemProblem(409, 'conflict', 'The asset is archived', {
+          detail: 'The asset is archived. Restore it before changing it.',
+        });
+      }
+      const outcome = validateAssetBody(changes as Body, registry(), existing);
+      if (Array.isArray(outcome) && outcome.length > 0) {
+        return itemProblem(422, 'validation', 'Validation failed', { errors: outcome });
+      }
+      if (!Array.isArray(outcome)) {
+        return itemProblem(409, 'conflict', outcome.conflict, {
+          errors: [{ pointer: outcome.pointer, message: outcome.conflict, code: 'unique' }],
+        });
+      }
+      return mutateRegistry((data) => applyAssetPatch(data, id, changes as Body, guard.user.id));
+    });
+  }),
+
+  http.post('/v1/assets/bulk-archive', async ({ request }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'asset:delete' });
+    if (!guard.ok) return guard.response;
+    const ids = bulkIds(await readBody(request));
+    if (!Array.isArray(ids)) return ids;
+    return bulkResponse(ids, (id) => {
+      const existing = registry().assets.find((a) => a.id === id);
+      if (!existing) return itemProblem(404, 'not-found', 'Not found');
+      if (existing.archived_at) {
+        return itemProblem(409, 'conflict', 'The asset is already archived');
+      }
+      return mutateRegistry((data) => setAssetArchived(data, id, true, guard.user.id));
+    });
+  }),
+
+  http.post('/v1/assets/bulk-restore', async ({ request }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'asset:delete' });
+    if (!guard.ok) return guard.response;
+    const ids = bulkIds(await readBody(request));
+    if (!Array.isArray(ids)) return ids;
+    return bulkResponse(ids, (id) => {
+      const existing = registry().assets.find((a) => a.id === id);
+      if (!existing) return itemProblem(404, 'not-found', 'Not found');
+      if (!existing.archived_at) return itemProblem(409, 'conflict', 'The asset is not archived');
+      return mutateRegistry((data) => setAssetArchived(data, id, false, guard.user.id));
+    });
   }),
 
   http.get('/v1/assets/:id/history', ({ request, params }) => {
@@ -1642,6 +1879,7 @@ export const registryHandlers: HttpHandler[] = [
   ...modelHandlers,
   ...vendorHandlers,
   ...locationHandlers,
+  ...tagTemplateHandlers,
   ...assetHandlers,
   searchHandler,
   ...userHandlers,

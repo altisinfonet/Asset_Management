@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { useT } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
+import { uiErrorText } from '@/lib/error-text';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -78,9 +79,7 @@ export function ConfirmDialog({
           )}
         </DialogHeader>
         {children}
-        {error ? (
-          <FormError message={error.detail ?? t(error.messageKey)} requestId={error.requestId} />
-        ) : null}
+        {error ? <FormError message={uiErrorText(t, error)} requestId={error.requestId} /> : null}
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
           <Button

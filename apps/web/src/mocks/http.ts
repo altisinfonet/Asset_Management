@@ -11,36 +11,44 @@ export function requestId(): string {
   return `mock-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-export function problem(
+export interface ProblemExtra {
+  errors?: Array<{ pointer: string; message: string; code?: string }>;
+  headers?: Record<string, string>;
+  detail?: string;
+  /** RFC 9457 extension of a 409: what still references the record (`{ assets: 3 }`). */
+  usage?: Record<string, number>;
+}
+
+/** The JSON body of a problem document (also used inside bulk results). */
+export function problemBody(
   status: number,
   code: string,
   title: string,
-  extra: {
-    errors?: Array<{ pointer: string; message: string; code?: string }>;
-    headers?: Record<string, string>;
-    detail?: string;
-  } = {},
+  extra: ProblemExtra = {},
+  id = requestId(),
 ) {
+  return {
+    type: `https://assettracker.test/problems/${code}`,
+    title,
+    status,
+    code,
+    request_id: id,
+    ...(extra.detail ? { detail: extra.detail } : {}),
+    ...(extra.errors ? { errors: extra.errors } : {}),
+    ...(extra.usage ? { usage: extra.usage } : {}),
+  };
+}
+
+export function problem(status: number, code: string, title: string, extra: ProblemExtra = {}) {
   const id = requestId();
-  return HttpResponse.json(
-    {
-      type: `https://assettracker.test/problems/${code}`,
-      title,
-      status,
-      code,
-      request_id: id,
-      ...(extra.detail ? { detail: extra.detail } : {}),
-      ...(extra.errors ? { errors: extra.errors } : {}),
+  return HttpResponse.json(problemBody(status, code, title, extra, id), {
+    status,
+    headers: {
+      'content-type': 'application/problem+json',
+      'x-request-id': id,
+      ...extra.headers,
     },
-    {
-      status,
-      headers: {
-        'content-type': 'application/problem+json',
-        'x-request-id': id,
-        ...extra.headers,
-      },
-    },
-  );
+  });
 }
 
 export type Guard = { ok: true; user: MockUser } | { ok: false; response: Response };

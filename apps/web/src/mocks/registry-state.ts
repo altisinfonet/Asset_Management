@@ -16,6 +16,9 @@ export function registry(): RegistryData {
     const raw = globalThis.localStorage?.getItem(KEY);
     if (raw) {
       memory = JSON.parse(raw) as RegistryData;
+      // State saved by an older build lacks the numbering template.
+      memory.tagTemplate ??= { prefix: '', width: 5, use_category_prefix: true };
+      memory.settingsVersion ??= 1;
       return memory;
     }
   } catch {

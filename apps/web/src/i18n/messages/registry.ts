@@ -424,7 +424,7 @@ export const registryMessages = {
   },
   tags: {
     description:
-      'Assets get a tag from the category prefix and a running number when you do not type one.',
+      'Assets get a tag from the template, the category prefix and a running number when you do not type one.',
     override:
       'Typing a tag when creating an asset always overrides the automatic number. Changing a prefix never renames existing tags.',
     tableLabel: 'Tag numbering by category',
@@ -434,9 +434,23 @@ export const registryMessages = {
     editDescription: 'Applies to assets created from now on.',
     form: {
       prefix: 'Prefix',
-      prefixHint: 'Letters, digits, - or _, up to 12 characters.',
+      prefixHint: 'Capital letters A-Z, digits and -, up to 12 characters.',
     },
     example: 'Example:',
+    template: {
+      title: 'Numbering template',
+      summary: 'Prefix {prefix}, {width} digits, {category}.',
+      none: '(none)',
+      categoryOn: 'then the category prefix',
+      categoryOff: 'without the category prefix',
+      edit: 'Edit template',
+      editTitle: 'Tag numbering template',
+      editDescription: 'Applies to assets created from now on; existing tags are never renamed.',
+      prefix: 'Prefix',
+      prefixHint: 'Capital letters A-Z, digits and -, up to 12 characters. May be empty.',
+      width: 'Digits in the counter',
+      useCategoryPrefix: 'Add the category prefix after the template prefix',
+    },
   },
   vendors: {
     description: 'Suppliers and repair vendors.',

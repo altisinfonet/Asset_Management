@@ -94,7 +94,7 @@ describe.skipIf(!dbEnabled)(`connection reuse and pooling (${mode})`, () => {
       while (!stop) {
         await tenancy.withTenantTx({ tenantId: A.id }, async (trx) => {
           await sleep(5);
-          await trx.selectFrom('app.asset').select('id').execute();
+          await trx.asset.findMany({ select: { id: true } });
         });
       }
     })();

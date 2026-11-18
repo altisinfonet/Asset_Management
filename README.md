@@ -107,8 +107,8 @@ Configuration is validated at start-up with zod (`apps/api/src/config/env.ts`); 
 with `TenancyService.withTenantTx({ tenantId }, fn)`, which opens a transaction and runs
 `set_config('app.tenant_id' | 'app.actor_id' | 'app.request_id', $n, true)` first (never a
 session-level `SET`, which leaks through a transaction pooler). Repositories extend
-`TenantRepository`, whose query builder only exists inside that transaction. Data access is Kysely
-(ADR 0001); only `src/tenancy` and `src/db` may import the driver (ESLint).
+`TenantRepository`, whose Prisma transaction client only exists inside that transaction. Data access is Prisma 7 (driver adapter, SQL migrations stay the source of truth, `pnpm --filter @assettracker/api db:pull` regenerates `schema.prisma`)
+(ADR 0001); only `src/tenancy` and `src/db` may import the database client (ESLint).
 
 Operator CLI (after `pnpm build`):
 

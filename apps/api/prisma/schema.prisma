@@ -1,0 +1,682 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  previewFeatures     = ["partialIndexes"]
+  importFileExtension = "js"
+  moduleFormat        = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["app", "identity"]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model api_key {
+  id             String           @id @db.Uuid
+  tenant_id      String           @db.Uuid
+  name           String
+  key_prefix     String
+  scopes         String[]         @default([])
+  expires_at     DateTime?        @db.Timestamptz(6)
+  last_used_at   DateTime?        @db.Timestamptz(6)
+  last_used_ip   String?          @db.Inet
+  revoked_at     DateTime?        @db.Timestamptz(6)
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime         @default(now()) @db.Timestamptz(6)
+  created_by     String?          @db.Uuid
+  version        Int              @default(1)
+  tenant         tenant           @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  api_key_lookup api_key_lookup[]
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, key_prefix])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model asset {
+  id                  String       @id @db.Uuid
+  tenant_id           String       @db.Uuid
+  company_id          String       @db.Uuid
+  asset_tag           String
+  label_code          String       @default(dbgenerated("replace((gen_random_uuid())::text, '-'::text, ''::text)"))
+  name                String?
+  serial              String?
+  category_id         String       @db.Uuid
+  category_kind       String       @default("asset")
+  model_id            String?      @db.Uuid
+  status_id           String       @db.Uuid
+  location_id         String?      @db.Uuid
+  vendor_id           String?      @db.Uuid
+  parent_asset_id     String?      @db.Uuid
+  purchase_date       DateTime?    @db.Date
+  purchase_cost_minor BigInt?
+  currency            String?
+  order_number        String?
+  warranty_end        DateTime?    @db.Date
+  notes               String?
+  custom_data         Json         @default("{}")
+  external_source     String?
+  external_id         String?
+  created_at          DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime     @default(now()) @db.Timestamptz(6)
+  created_by          String?      @db.Uuid
+  updated_by          String?      @db.Uuid
+  archived_at         DateTime?    @db.Timestamptz(6)
+  version             Int          @default(1)
+  category            category     @relation(fields: [tenant_id, category_id, category_kind], references: [tenant_id, id, kind], onDelete: NoAction, onUpdate: NoAction)
+  company             company      @relation(fields: [tenant_id, company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant              tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  asset_model         asset_model? @relation(fields: [tenant_id, model_id, category_id], references: [tenant_id, id, category_id], onDelete: NoAction, onUpdate: NoAction)
+  asset               asset?       @relation("assetToasset", fields: [tenant_id, parent_asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  other_asset         asset[]      @relation("assetToasset")
+  status_label        status_label @relation(fields: [tenant_id, status_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  vendor              vendor?      @relation(fields: [tenant_id, vendor_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, external_source, external_id])
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, label_code])
+  @@index([tenant_id, category_id, id(sort: Desc)], map: "asset_category_idx", where: raw("(archived_at IS NULL)"))
+  @@index([tenant_id, company_id], map: "asset_company_idx")
+  @@index([tenant_id, location_id, id(sort: Desc)], map: "asset_location_idx", where: raw("(archived_at IS NULL)"))
+  @@index([tenant_id, model_id], map: "asset_model_idx", where: raw("(model_id IS NOT NULL)"))
+  @@index([tenant_id, parent_asset_id], map: "asset_parent_idx", where: raw("(parent_asset_id IS NOT NULL)"))
+  @@index([tenant_id, status_id, id(sort: Desc)], map: "asset_status_idx", where: raw("(archived_at IS NULL)"))
+  @@index([tenant_id, updated_at(sort: Desc), id(sort: Desc)], map: "asset_updated_idx")
+  @@index([tenant_id, vendor_id], map: "asset_vendor_idx", where: raw("(vendor_id IS NOT NULL)"))
+  @@index([tenant_id, warranty_end], map: "asset_warranty_idx", where: raw("((warranty_end IS NOT NULL) AND (archived_at IS NULL))"))
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model asset_model {
+  id                          String        @id @db.Uuid
+  tenant_id                   String        @db.Uuid
+  category_id                 String        @db.Uuid
+  category_kind               String        @default("asset")
+  manufacturer_id             String?       @db.Uuid
+  name                        String
+  model_number                String?
+  default_depreciation_months Int?
+  eol_date                    DateTime?     @db.Date
+  notes                       String?
+  created_at                  DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime      @default(now()) @db.Timestamptz(6)
+  created_by                  String?       @db.Uuid
+  updated_by                  String?       @db.Uuid
+  archived_at                 DateTime?     @db.Timestamptz(6)
+  version                     Int           @default(1)
+  asset                       asset[]
+  category                    category      @relation(fields: [tenant_id, category_id, category_kind], references: [tenant_id, id, kind], onDelete: NoAction, onUpdate: NoAction)
+  tenant                      tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  manufacturer                manufacturer? @relation(fields: [tenant_id, manufacturer_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id, category_id])
+  @@unique([tenant_id, id])
+  @@index([tenant_id, category_id], map: "asset_model_category_idx")
+  @@index([tenant_id, manufacturer_id], map: "asset_model_manufacturer_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model asset_tag_counter {
+  tenant_id  String @db.Uuid
+  prefix     String
+  last_value BigInt @default(0)
+  tenant     tenant @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, prefix])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model attachment {
+  id           String    @id @db.Uuid
+  tenant_id    String    @db.Uuid
+  entity_type  String
+  entity_id    String    @db.Uuid
+  kind         String    @default("document")
+  storage_key  String
+  filename     String
+  content_type String
+  size_bytes   BigInt
+  sha256       String?
+  scan_status  String    @default("pending")
+  uploaded_at  DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  created_by   String?   @db.Uuid
+  archived_at  DateTime? @db.Timestamptz(6)
+  version      Int       @default(1)
+  tenant       tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, storage_key])
+  @@index([tenant_id, entity_type, entity_id, id(sort: Desc)], map: "attachment_entity_idx", where: raw("(archived_at IS NULL)"))
+  @@schema("app")
+}
+
+/// This table is a partition table and requires additional setup for migrations. Visit https://pris.ly/d/partition-tables for more info.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model audit_log {
+  id            String   @db.Uuid
+  tenant_id     String   @db.Uuid
+  at            DateTime @default(now()) @db.Timestamptz(6)
+  actor_type    String
+  actor_user_id String?  @db.Uuid
+  actor_ref     String?  @db.Uuid
+  action        String
+  entity_type   String
+  entity_id     String?  @db.Uuid
+  diff          Json?
+  ip            String?  @db.Inet
+  user_agent    String?
+  request_id    String?
+
+  @@id([id, at])
+  @@index([tenant_id, actor_user_id, at(sort: Desc)], map: "audit_log_actor_idx", where: raw("(actor_user_id IS NOT NULL)"))
+  @@index([tenant_id, entity_type, entity_id, at(sort: Desc)], map: "audit_log_entity_idx")
+  @@index([tenant_id, at(sort: Desc), id(sort: Desc)], map: "audit_log_tenant_time_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model category {
+  id               String             @id @db.Uuid
+  tenant_id        String             @db.Uuid
+  name             String
+  kind             String             @default("asset")
+  tag_prefix       String?
+  description      String?
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  created_by       String?            @db.Uuid
+  updated_by       String?            @db.Uuid
+  archived_at      DateTime?          @db.Timestamptz(6)
+  version          Int                @default(1)
+  asset            asset[]
+  asset_model      asset_model[]
+  tenant           tenant             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  custom_field_def custom_field_def[]
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, id, kind])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model company {
+  id              String            @id @db.Uuid
+  tenant_id       String            @unique(map: "company_one_default_uq", where: raw("is_default")) @db.Uuid
+  name            String
+  code            String?
+  is_default      Boolean           @default(false)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  created_by      String?           @db.Uuid
+  updated_by      String?           @db.Uuid
+  archived_at     DateTime?         @db.Timestamptz(6)
+  version         Int               @default(1)
+  asset           asset[]
+  tenant          tenant            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  role_assignment role_assignment[]
+
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model custom_field_def {
+  id           String    @id @db.Uuid
+  tenant_id    String    @db.Uuid
+  category_id  String?   @db.Uuid
+  key          String
+  label        String
+  data_type    String
+  required     Boolean   @default(false)
+  options      Json?
+  validation   Json?
+  help_text    String?
+  position     Int       @default(0)
+  show_in_list Boolean   @default(false)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  created_by   String?   @db.Uuid
+  updated_by   String?   @db.Uuid
+  archived_at  DateTime? @db.Timestamptz(6)
+  version      Int       @default(1)
+  category     category? @relation(fields: [tenant_id, category_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant       tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, category_id, key], map: "custom_field_def_key_uq", where: raw("(archived_at IS NULL)"))
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model idempotency_key {
+  tenant_id        String   @db.Uuid
+  principal_id     String   @db.Uuid
+  key              String
+  method           String
+  path             String
+  request_hash     String
+  state            String   @default("in_flight")
+  response_status  Int?
+  response_headers Json?
+  response_body    Json?
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  expires_at       DateTime @default(dbgenerated("(now() + '24:00:00'::interval)")) @db.Timestamptz(6)
+  tenant           tenant   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, principal_id, key])
+  @@index([tenant_id, expires_at], map: "idempotency_key_expiry_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model invitation {
+  id               String             @id @db.Uuid
+  tenant_id        String             @db.Uuid
+  user_id          String?            @db.Uuid
+  email            String
+  role_id          String             @db.Uuid
+  status           String             @default("pending")
+  expires_at       DateTime           @db.Timestamptz(6)
+  accepted_at      DateTime?          @db.Timestamptz(6)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  created_by       String?            @db.Uuid
+  version          Int                @default(1)
+  tenant           tenant             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  role             role               @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  user_account     user_account?      @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  invitation_token invitation_token[]
+
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model manufacturer {
+  id            String        @id @db.Uuid
+  tenant_id     String        @db.Uuid
+  name          String
+  url           String?
+  support_url   String?
+  support_email String?
+  support_phone String?
+  notes         String?
+  created_at    DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime      @default(now()) @db.Timestamptz(6)
+  created_by    String?       @db.Uuid
+  updated_by    String?       @db.Uuid
+  archived_at   DateTime?     @db.Timestamptz(6)
+  version       Int           @default(1)
+  asset_model   asset_model[]
+  tenant        tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model outbox_event {
+  id             String    @id @db.Uuid
+  tenant_id      String    @db.Uuid
+  event_type     String
+  aggregate_type String
+  aggregate_id   String    @db.Uuid
+  payload        Json      @default("{}")
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  published_at   DateTime? @db.Timestamptz(6)
+  attempts       Int       @default(0)
+  tenant         tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, id], map: "outbox_event_pending_idx", where: raw("(published_at IS NULL)"))
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model role {
+  id              String            @id @db.Uuid
+  tenant_id       String            @db.Uuid
+  key             String
+  name            String
+  description     String?
+  permissions     String[]          @default([])
+  is_builtin      Boolean           @default(false)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  version         Int               @default(1)
+  invitation      invitation[]
+  tenant          tenant            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  role_assignment role_assignment[]
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, key])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model role_assignment {
+  id                String       @id @db.Uuid
+  tenant_id         String       @db.Uuid
+  user_id           String       @db.Uuid
+  role_id           String       @db.Uuid
+  scope_type        String       @default("tenant")
+  scope_company_id  String?      @db.Uuid
+  scope_location_id String?      @db.Uuid
+  created_at        DateTime     @default(now()) @db.Timestamptz(6)
+  created_by        String?      @db.Uuid
+  tenant            tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  role              role         @relation(fields: [tenant_id, role_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  company           company?     @relation(fields: [tenant_id, scope_company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  user_account      user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, user_id, role_id, scope_type, scope_company_id, scope_location_id], map: "role_assignment_uq")
+  @@index([tenant_id, user_id], map: "role_assignment_user_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model status_label {
+  id          String    @id @db.Uuid
+  tenant_id   String    @unique(map: "status_label_one_default_uq", where: raw("(is_default AND (archived_at IS NULL))")) @db.Uuid
+  name        String
+  state_type  String
+  color       String?
+  description String?
+  position    Int       @default(0)
+  is_default  Boolean   @default(false)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime  @default(now()) @db.Timestamptz(6)
+  created_by  String?   @db.Uuid
+  updated_by  String?   @db.Uuid
+  archived_at DateTime? @db.Timestamptz(6)
+  version     Int       @default(1)
+  asset       asset[]
+  tenant      tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model tenant {
+  id                String              @id @db.Uuid
+  name              String
+  plan              String              @default("free")
+  status            String              @default("active")
+  cell              String              @default("us-1")
+  base_currency     String              @default("USD")
+  settings          Json                @default("{}")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  version           Int                 @default(1)
+  api_key           api_key[]
+  asset             asset[]
+  asset_model       asset_model[]
+  asset_tag_counter asset_tag_counter[]
+  attachment        attachment[]
+  category          category[]
+  company           company?
+  custom_field_def  custom_field_def[]
+  idempotency_key   idempotency_key[]
+  invitation        invitation[]
+  manufacturer      manufacturer[]
+  outbox_event      outbox_event[]
+  role              role[]
+  role_assignment   role_assignment[]
+  status_label      status_label?
+  user_account      user_account[]
+  vendor            vendor[]
+  tenant_directory  tenant_directory?
+
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model user_account {
+  id                String              @id @db.Uuid
+  tenant_id         String              @db.Uuid
+  email             String
+  display_name      String
+  status            String              @default("invited")
+  locale            String?
+  timezone          String?
+  mfa_enabled       Boolean             @default(false)
+  last_login_at     DateTime?           @db.Timestamptz(6)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  created_by        String?             @db.Uuid
+  updated_by        String?             @db.Uuid
+  archived_at       DateTime?           @db.Timestamptz(6)
+  version           Int                 @default(1)
+  invitation        invitation[]
+  role_assignment   role_assignment[]
+  tenant            tenant              @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  credential        credential?
+  external_identity external_identity[]
+  login_identity    login_identity?
+  mfa_factor        mfa_factor[]
+  mfa_recovery_code mfa_recovery_code[]
+  session           session[]
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, status], map: "user_account_status_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model vendor {
+  id            String    @id @db.Uuid
+  tenant_id     String    @db.Uuid
+  name          String
+  contact_name  String?
+  contact_email String?
+  phone         String?
+  url           String?
+  address       String?
+  notes         String?
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
+  created_by    String?   @db.Uuid
+  updated_by    String?   @db.Uuid
+  archived_at   DateTime? @db.Timestamptz(6)
+  version       Int       @default(1)
+  asset         asset[]
+  tenant        tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model api_key_lookup {
+  key_prefix String  @id
+  key_hash   Bytes
+  tenant_id  String  @db.Uuid
+  api_key_id String  @db.Uuid
+  api_key    api_key @relation(fields: [tenant_id, api_key_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model credential {
+  tenant_id           String       @db.Uuid
+  user_id             String       @db.Uuid
+  password_hash       String
+  must_change         Boolean      @default(false)
+  failed_attempts     Int          @default(0)
+  locked_until        DateTime?    @db.Timestamptz(6)
+  password_changed_at DateTime     @default(now()) @db.Timestamptz(6)
+  user_account        user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, user_id])
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model external_identity {
+  provider     String
+  subject      String
+  tenant_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([provider, subject, tenant_id])
+  @@index([tenant_id, user_id], map: "external_identity_user_idx")
+  @@schema("identity")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model invitation_token {
+  token_hash    Bytes      @id
+  tenant_id     String     @db.Uuid
+  invitation_id String     @db.Uuid
+  expires_at    DateTime   @db.Timestamptz(6)
+  invitation    invitation @relation(fields: [tenant_id, invitation_id], references: [tenant_id, id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model login_identity {
+  tenant_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  email_lower  String
+  status       String       @default("active")
+  user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, user_id])
+  @@unique([tenant_id, email_lower])
+  @@index([email_lower], map: "login_identity_email_idx")
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model mfa_factor {
+  id               String       @id @db.Uuid
+  tenant_id        String       @db.Uuid
+  user_id          String       @db.Uuid
+  type             String
+  label            String?
+  secret_encrypted Bytes?
+  credential_id    Bytes?       @unique(map: "mfa_factor_webauthn_uq", where: raw("(credential_id IS NOT NULL)"))
+  public_key       Bytes?
+  sign_count       BigInt       @default(0)
+  confirmed_at     DateTime?    @db.Timestamptz(6)
+  last_used_at     DateTime?    @db.Timestamptz(6)
+  created_at       DateTime     @default(now()) @db.Timestamptz(6)
+  user_account     user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, user_id], map: "mfa_factor_user_idx")
+  @@schema("identity")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model mfa_recovery_code {
+  id           String       @id @db.Uuid
+  tenant_id    String       @db.Uuid
+  user_id      String       @db.Uuid
+  code_hash    Bytes
+  used_at      DateTime?    @db.Timestamptz(6)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  user_account user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenant_id, user_id], map: "mfa_recovery_code_user_idx", where: raw("(used_at IS NULL)"))
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model security_event {
+  id         String   @id @db.Uuid
+  at         DateTime @default(now()) @db.Timestamptz(6)
+  event_type String
+  tenant_id  String?  @db.Uuid
+  subject    String?
+  ip         String?  @db.Inet
+  user_agent String?
+  request_id String?
+  detail     Json     @default("{}")
+
+  @@index([at(sort: Desc), id(sort: Desc)], map: "security_event_at_idx")
+  @@index([subject, at(sort: Desc)], map: "security_event_subject_idx", where: raw("(subject IS NOT NULL)"))
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model session {
+  id              String       @id @db.Uuid
+  token_hash      Bytes        @unique
+  tenant_id       String       @db.Uuid
+  user_id         String       @db.Uuid
+  auth_method     String
+  mfa_verified_at DateTime?    @db.Timestamptz(6)
+  created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  last_seen_at    DateTime     @default(now()) @db.Timestamptz(6)
+  idle_expires_at DateTime     @db.Timestamptz(6)
+  expires_at      DateTime     @db.Timestamptz(6)
+  revoked_at      DateTime?    @db.Timestamptz(6)
+  ip              String?      @db.Inet
+  user_agent      String?
+  user_account    user_account @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([expires_at], map: "session_expiry_idx")
+  @@index([tenant_id, user_id], map: "session_user_idx", where: raw("(revoked_at IS NULL)"))
+  @@schema("identity")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tenant_directory {
+  tenant_id  String   @id @db.Uuid
+  slug       String   @unique
+  status     String   @default("active")
+  cell       String   @default("us-1")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  tenant     tenant   @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@schema("identity")
+}

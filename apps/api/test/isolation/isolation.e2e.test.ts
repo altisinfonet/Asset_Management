@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { uuidv7 } from '../../src/ids/uuidv7.js';
 import {
   NoTenantTransactionError,
-  sql,
+  Prisma,
+  sqlStateOf,
   TenantRepository,
   type Tx,
 } from '../../src/tenancy/index.js';
@@ -86,36 +87,44 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
       [B, A],
     ] as const) {
       await tenancy.withTenantTx({ tenantId: t.id }, async (trx) => {
-        const assets = await trx
-          .selectFrom('app.asset')
-          .select(['id', 'tenant_id', 'asset_tag'])
-          .execute();
+        const assets = await trx.asset.findMany({
+          select: { id: true, tenant_id: true, asset_tag: true },
+        });
         expect(assets).toHaveLength(FIXTURE_ASSETS);
         expect(new Set(assets.map((a) => a.tenant_id))).toEqual(new Set([t.id]));
         expect(assets.map((a) => a.id).sort()).toEqual([...t.assetIds].sort());
         expect(assets.some((a) => other.assetIds.includes(a.id))).toBe(false);
 
-        for (const table of [
-          'app.category',
-          'app.status_label',
-          'app.role',
-          'app.company',
-          'app.audit_log',
-          'app.outbox_event',
-        ] as const) {
-          const rows = await trx.selectFrom(table).select('tenant_id').execute();
-          expect(rows.length, table).toBeGreaterThan(0);
-          expect(new Set(rows.map((r) => r.tenant_id)), table).toEqual(new Set([t.id]));
+        const tenantIdsByTable = {
+          category: (await trx.category.findMany({ select: { tenant_id: true } })).map(
+            (r) => r.tenant_id,
+          ),
+          status_label: (await trx.status_label.findMany({ select: { tenant_id: true } })).map(
+            (r) => r.tenant_id,
+          ),
+          role: (await trx.role.findMany({ select: { tenant_id: true } })).map((r) => r.tenant_id),
+          company: (await trx.company.findMany({ select: { tenant_id: true } })).map(
+            (r) => r.tenant_id,
+          ),
+          audit_log: (await trx.audit_log.findMany({ select: { tenant_id: true } })).map(
+            (r) => r.tenant_id,
+          ),
+          outbox_event: (await trx.outbox_event.findMany({ select: { tenant_id: true } })).map(
+            (r) => r.tenant_id,
+          ),
+        };
+        for (const [table, ids] of Object.entries(tenantIdsByTable)) {
+          expect(ids.length, table).toBeGreaterThan(0);
+          expect(new Set(ids), table).toEqual(new Set([t.id]));
         }
         // app.tenant is keyed by id: a tenant sees exactly its own registry row.
-        const tenants = await trx.selectFrom('app.tenant').select('id').execute();
+        const tenants = await trx.tenant.findMany({ select: { id: true } });
         expect(tenants.map((r) => r.id)).toEqual([t.id]);
         // Direct lookups by a foreign id come back empty, not forbidden (no existence oracle).
-        const foreign = await trx
-          .selectFrom('app.asset')
-          .select('id')
-          .where('id', '=', other.assetIds[0]!)
-          .execute();
+        const foreign = await trx.asset.findMany({
+          where: { id: other.assetIds[0]! },
+          select: { id: true },
+        });
         expect(foreign).toEqual([]);
       });
     }
@@ -149,27 +158,24 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
       try {
         await tenancy.withTenantTx({ tenantId: mine.id }, async (trx) => {
           await sleep(Math.floor(Math.random() * 12));
-          const guc = (
-            await sql<{ g: string }>`select current_setting('app.tenant_id', true) as g`.execute(
-              trx,
-            )
-          ).rows[0]!.g;
-          if (guc !== mine.id) wrongGuc++;
+          const [gucRow] = await trx.$queryRaw<
+            Array<{ g: string }>
+          >`select current_setting('app.tenant_id', true) as g`;
+          if (gucRow!.g !== mine.id) wrongGuc++;
           await sleep(Math.floor(Math.random() * 12));
-          const rows = await trx.selectFrom('app.asset').select('tenant_id').execute();
+          const rows = await trx.asset.findMany({ select: { tenant_id: true } });
           if (rows.length !== FIXTURE_ASSETS || rows.some((r) => r.tenant_id !== mine.id))
             violations++;
           if (i % 17 === 0) {
             // Deliberate WITH CHECK failure: the whole transaction must roll back.
-            await trx
-              .insertInto('app.category')
-              .values({ id: uuidv7(), tenant_id: other.id, name: `leak-${i}` })
-              .execute();
+            await trx.category.create({
+              data: { id: uuidv7(), tenant_id: other.id, name: `leak-${i}` },
+            });
           }
         });
         completed++;
       } catch (err) {
-        if (i % 17 === 0 && (err as { code?: string }).code === '42501') intendedFailures++;
+        if (i % 17 === 0 && sqlStateOf(err) === '42501') intendedFailures++;
         else throw err;
       }
     };
@@ -190,7 +196,10 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
     });
     await tenancy.withTenantTx({ tenantId: A.id }, async (trx) => {
       expect(
-        await trx.selectFrom('app.category').select('id').where('name', 'like', 'leak-%').execute(),
+        await trx.category.findMany({
+          where: { name: { startsWith: 'leak-' } },
+          select: { id: true },
+        }),
       ).toEqual([]);
     });
   });
@@ -199,17 +208,16 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
     // Insert for tenant B while acting as tenant A.
     const insertCode = await sqlState(
       tenancy.withTenantTx({ tenantId: A.id }, (trx) =>
-        trx
-          .insertInto('app.asset')
-          .values({
+        trx.asset.create({
+          data: {
             id: uuidv7(),
             tenant_id: B.id,
             company_id: A.companyId,
             asset_tag: 'FOREIGN-1',
             category_id: A.categoryId,
             status_id: A.statusId,
-          })
-          .execute(),
+          },
+        }),
       ),
     );
     expect(insertCode).toBe('42501');
@@ -217,50 +225,41 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
     // Moving an own row to tenant B is also blocked by WITH CHECK.
     const moveCode = await sqlState(
       tenancy.withTenantTx({ tenantId: A.id }, (trx) =>
-        trx
-          .updateTable('app.asset')
-          .set({ tenant_id: B.id })
-          .where('id', '=', A.assetIds[0]!)
-          .execute(),
+        trx.asset.updateMany({ where: { id: A.assetIds[0]! }, data: { tenant_id: B.id } }),
       ),
     );
     expect(moveCode).toBe('42501');
 
     // Targeting B's rows from A matches nothing.
     await tenancy.withTenantTx({ tenantId: A.id }, async (trx) => {
-      const upd = await trx
-        .updateTable('app.asset')
-        .set({ name: 'hijacked' })
-        .where('id', 'in', B.assetIds)
-        .executeTakeFirst();
-      expect(upd.numUpdatedRows).toBe(0n);
-      const del = await trx
-        .deleteFrom('app.outbox_event')
-        .where('aggregate_id', '=', B.assetIds[0]!)
-        .executeTakeFirst();
-      expect(del.numDeletedRows).toBe(0n);
+      const upd = await trx.asset.updateMany({
+        where: { id: { in: B.assetIds } },
+        data: { name: 'hijacked' },
+      });
+      expect(upd.count).toBe(0);
+      const del = await trx.outbox_event.deleteMany({ where: { aggregate_id: B.assetIds[0]! } });
+      expect(del.count).toBe(0);
     });
     await tenancy.withTenantTx({ tenantId: B.id }, async (trx) => {
-      const names = await trx.selectFrom('app.asset').select('name').execute();
+      const names = await trx.asset.findMany({ select: { name: true } });
       expect(names.some((r) => r.name === 'hijacked')).toBe(false);
-      expect(await trx.selectFrom('app.outbox_event').select('id').execute()).toHaveLength(1);
+      expect(await trx.outbox_event.findMany({ select: { id: true } })).toHaveLength(1);
     });
   });
 
   it('e2. composite foreign keys stop a row in tenant A from referencing tenant B (FK checks bypass RLS)', async () => {
     const code = await sqlState(
       tenancy.withTenantTx({ tenantId: A.id }, (trx) =>
-        trx
-          .insertInto('app.asset')
-          .values({
+        trx.asset.create({
+          data: {
             id: uuidv7(),
             tenant_id: A.id,
             company_id: A.companyId,
             asset_tag: 'CROSS-FK',
             category_id: B.categoryId, // B's category, A's tenant_id
             status_id: A.statusId,
-          })
-          .execute(),
+          },
+        }),
       ),
     );
     expect(code).toBe('23503');
@@ -269,10 +268,9 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
   it('f. security_invoker views respect RLS; a default view only bypasses on a table WITHOUT force', async () => {
     const counts = async (tenantId: string, view: string) =>
       tenancy.withTenantTx({ tenantId }, async (trx) => {
-        const { rows } = await sql<{ n: number; t: number }>`
-          select count(*)::int as n, count(distinct tenant_id)::int as t from ${sql.table(view)}`.execute(
-          trx,
-        );
+        // `view` is one of the fixed names below, never user input: Prisma.raw splices an identifier.
+        const rows = await trx.$queryRaw<Array<{ n: number; t: number }>>`
+          select count(*)::int as n, count(distinct tenant_id)::int as t from ${Prisma.raw(view)}`;
         return rows[0]!;
       });
 
@@ -299,7 +297,7 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
       ).toBeGreaterThanOrEqual(4); // control: without FORCE the owner sees everything
     });
     await owner.withTenantTx({ tenantId: A.id }, async (trx) => {
-      const rows = await trx.selectFrom('app.asset').select('tenant_id').execute();
+      const rows = await trx.asset.findMany({ select: { tenant_id: true } });
       expect(rows).toHaveLength(FIXTURE_ASSETS);
       expect(new Set(rows.map((r) => r.tenant_id))).toEqual(new Set([A.id]));
     });
@@ -357,56 +355,35 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
   it('M1-TEN-02: data, audit row and outbox row roll back together; commit together on success', async () => {
     const assetId = uuidv7();
     const insertAll = async (trx: Tx) => {
-      await trx
-        .insertInto('app.asset')
-        .values({
+      await trx.asset.create({
+        data: {
           id: assetId,
           tenant_id: A.id,
+          company_id: A.companyId,
           asset_tag: `ATOMIC-${assetId.slice(-6)}`,
           category_id: A.categoryId,
           status_id: A.statusId,
-        })
-        .execute();
-      await trx
-        .insertInto('app.audit_log')
-        .values({
-          id: uuidv7(),
-          tenant_id: A.id,
-          actor_type: 'system',
-          action: 'asset.create',
-          entity_type: 'asset',
-          entity_id: assetId,
-        })
-        .execute();
-      await trx
-        .insertInto('app.outbox_event')
-        .values({
+        },
+      });
+      // audit_log is partitioned: tagged-template raw SQL.
+      await trx.$executeRaw`
+        insert into app.audit_log (id, tenant_id, actor_type, action, entity_type, entity_id)
+        values (${uuidv7()}::uuid, ${A.id}::uuid, 'system', 'asset.create', 'asset', ${assetId}::uuid)`;
+      await trx.outbox_event.create({
+        data: {
           id: uuidv7(),
           tenant_id: A.id,
           event_type: 'asset.created',
           aggregate_type: 'asset',
           aggregate_id: assetId,
-        })
-        .execute();
+        },
+      });
     };
     const counts = () =>
       tenancy.withTenantTx({ tenantId: A.id }, async (trx) => ({
-        asset: (await trx.selectFrom('app.asset').select('id').where('id', '=', assetId).execute())
-          .length,
-        audit: (
-          await trx
-            .selectFrom('app.audit_log')
-            .select('id')
-            .where('entity_id', '=', assetId)
-            .execute()
-        ).length,
-        outbox: (
-          await trx
-            .selectFrom('app.outbox_event')
-            .select('id')
-            .where('aggregate_id', '=', assetId)
-            .execute()
-        ).length,
+        asset: await trx.asset.count({ where: { id: assetId } }),
+        audit: await trx.audit_log.count({ where: { entity_id: assetId } }),
+        outbox: await trx.outbox_event.count({ where: { aggregate_id: assetId } }),
       }));
 
     await expect(
@@ -424,11 +401,10 @@ describe.skipIf(!dbEnabled)(`tenant isolation (${mode})`, () => {
   it('M1-TEN-02: TenantRepository works inside withTenantTx only', async () => {
     class AssetRepository extends TenantRepository {
       byTag(tag: string) {
-        return this.db
-          .selectFrom('app.asset')
-          .select(['id', 'tenant_id'])
-          .where('asset_tag', '=', tag)
-          .execute();
+        return this.db.asset.findMany({
+          where: { asset_tag: tag },
+          select: { id: true, tenant_id: true },
+        });
       }
       tenant() {
         return this.context.tenantId;

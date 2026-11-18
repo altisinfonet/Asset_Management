@@ -149,7 +149,8 @@ C.parameters = {
 // Catalogue of problem `code` values: code -> [HTTP statuses, meaning]. Published as the root `x-problem-codes`
 // extension and as the `ProblemCode` schema; each response lists the subset it can carry in its own `x-problem-codes`.
 const PROBLEM_CODES = {
-  'bad-request': [[400], 'Malformed request: bad JSON, bad query parameter, invalid cursor.'],
+  'bad-request': [[400], 'Malformed request: bad JSON, bad query parameter.'],
+  'invalid-cursor': [[400], 'The cursor is not valid for this list: it is garbled, or it was issued for a different sort or filter. Start again without a cursor.'],
   'idempotency-key-required': [[400], 'The operation needs an Idempotency-Key header and none was sent.'],
   'idempotency-key-invalid': [[400], 'The Idempotency-Key header is not 8-255 visible ASCII characters.'],
   unauthorized: [[401], 'No credential, or the credential is not valid (generic).'],
@@ -225,6 +226,41 @@ function specificProblem(status, codes, text) {
 
 // ---------------------------------------------------------------- common schemas
 const S_ = C.schemas;
+// Registry additions (M1-REG-06 / M1-REG-09); listed first to keep the published schema order stable.
+const BULK_MAX = 100;
+const bulkIds = () => arr({ type: 'string', format: 'uuid' }, { minItems: 1, maxItems: BULK_MAX });
+S_.AssetCloneRequest = obj({
+  count: int({ minimum: 1, maximum: 100, default: 1 }),
+  copy_fields: arr(en(['name', 'model_id', 'status_id', 'vendor_id', 'location_id', 'parent_asset_id', 'purchase_date', 'purchase_cost', 'order_number', 'warranty_end', 'notes', 'custom_data']), { description: 'Fields to copy from the source. Default - all of them.' }),
+  asset_tags: arr(str({ minLength: 1, maxLength: 64, pattern: '^\\S+$' }), { description: 'One explicit tag per copy; omit to generate them from the numbering template.' }),
+}, [], { additionalProperties: false });
+S_.AssetCloneResult = obj({ data: arr(S('Asset')) }, ['data']);
+S_.BulkAssetIds = obj({ ids: bulkIds() }, ['ids'], { additionalProperties: false });
+S_.BulkAssetUpdate = obj({
+  ids: bulkIds(),
+  changes: obj({
+    status_id: uuid(),
+    category_id: uuid(),
+    model_id: nuuid(),
+    vendor_id: nuuid(),
+    custom_data: S('CustomData'),
+  }, [], { description: 'At least one of these. `custom_data` merges per key (`null` removes a key).', additionalProperties: false }),
+}, ['ids', 'changes'], { additionalProperties: false });
+S_.BulkAssetResult = obj({
+  results: arr(obj({
+    index: int(),
+    status: int({ description: 'HTTP status the single-asset operation would have returned.' }),
+    data: S('Asset'),
+    error: S('Problem'),
+  }, ['index', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary']);
+S_.AssetTagTemplate = obj({
+  prefix: str({ pattern: '^[A-Z0-9-]{0,12}$', default: '' }),
+  width: int({ minimum: 1, maximum: 12, default: 5, description: 'Zero-padded width of the counter.' }),
+  use_category_prefix: bool({ default: true }),
+  example: str({ readOnly: true, description: 'A sample tag produced by the template (counter 42).' }),
+}, [], { additionalProperties: false });
 S_.Problem = obj({
   type: str({ format: 'uri-reference', description: 'Problem type URI.' }),
   title: str(),
@@ -234,6 +270,7 @@ S_.Problem = obj({
   code: S('ProblemCode'),
   request_id: str(),
   errors: arr(S('FieldError')),
+  usage: { type: 'object', description: 'Extension member of a `409` that refuses to delete or change something still in use: what references it (for example `{"assets": 12, "models": 3}`).', additionalProperties: int() },
 }, ['type', 'title', 'status'], { description: 'RFC 9457 problem details.' });
 S_.ProblemCode = str({
   description: 'Stable machine-readable problem code. The set is open (new codes may appear): branch on codes you know and fall back to the HTTP status. The full catalogue (code, HTTP status, meaning) is the root `x-problem-codes` extension of this document; each error response lists its own subset in `x-problem-codes`.',
@@ -1304,6 +1341,42 @@ addOp('/v1/assets/{id}', 'delete', {
 addOp('/v1/assets/{id}/restore', 'post', {
   tag: 'Assets', id: 'restoreAsset', summary: 'Restore an archived asset', perm: 'asset:delete', params: [ID], ifMatch: true,
   success: { 200: okResp(200, 'Restored asset.', S('Asset'), { etag: true }) },
+});
+addOp('/v1/assets/{id}/clone', 'post', {
+  tag: 'Assets', id: 'cloneAsset', summary: 'Clone an asset', perm: 'asset:create', params: [ID],
+  description: 'Creates `count` copies of the asset with fresh tags (the numbering template, or the explicit `asset_tags`) and a cleared serial. `copy_fields` chooses what is copied (default: all of `name`, `model_id`, `status_id`, `vendor_id`, `location_id`, `parent_asset_id`, `purchase_date`, `purchase_cost`, `order_number`, `warranty_end`, `notes`, `custom_data`). All or nothing: one transaction, one audit record and outbox event per copy.\n\nAdded by M1-REG-09 (not part of the first contract draft).',
+  body: jsonBody(S('AssetCloneRequest'), false),
+  success: { 201: okResp(201, 'The copies.', S('AssetCloneResult')) },
+});
+const BULK_NOTE = 'At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.\n\nAdded by M1-REG-09 (not part of the first contract draft).';
+addOp('/v1/assets/bulk-update', 'post', {
+  tag: 'Assets', id: 'bulkUpdateAssets', summary: 'Edit many assets', perm: 'asset:update', hasId: false, conflict: false,
+  description: 'Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetUpdate')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/assets/bulk-archive', 'post', {
+  tag: 'Assets', id: 'bulkArchiveAssets', summary: 'Archive many assets', perm: 'asset:delete', hasId: false, conflict: false,
+  description: 'Soft-deletes the listed assets (same rules as `DELETE /v1/assets/{id}`).\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetIds')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/assets/bulk-restore', 'post', {
+  tag: 'Assets', id: 'bulkRestoreAssets', summary: 'Restore many assets', perm: 'asset:delete', hasId: false, conflict: false,
+  description: 'Restores the listed archived assets.\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetIds')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/settings/asset-tag-template', 'get', {
+  tag: 'Assets', id: 'getAssetTagTemplate', summary: 'Get the asset tag numbering template', perm: 'catalog:read',
+  description: 'The template used to generate asset tags when `POST /v1/assets` omits `asset_tag`: `prefix` + the category `tag_prefix` (when `use_category_prefix`) + a counter zero-padded to `width`. Counters are per tenant and per full prefix; tags are never reused.\n\nAdded by M1-REG-06 (not part of the first contract draft).',
+  success: { 200: okResp(200, 'The template.', S('AssetTagTemplate'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/asset-tag-template', 'put', {
+  tag: 'Assets', id: 'putAssetTagTemplate', summary: 'Replace the asset tag numbering template', perm: 'catalog:manage', ifMatch: true, conflict: false,
+  description: 'Existing tags are never rewritten. `If-Match` is the ETag of `GET` (the tenant settings version).',
+  body: jsonBody(S('AssetTagTemplate')),
+  success: { 200: okResp(200, 'The new template.', S('AssetTagTemplate'), { etag: true }) },
 });
 addOp('/v1/assets/{id}/history', 'get', {
   tag: 'Assets', id: 'listAssetHistory', summary: 'Chain of custody and lifecycle events', perm: 'asset:read',

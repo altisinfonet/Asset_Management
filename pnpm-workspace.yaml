@@ -5,6 +5,8 @@ packages:
 # Needed by `pnpm deploy` (apps/api/Dockerfile) so workspace packages are copied, not symlinked.
 allowBuilds:
   '@swc/core': false
+  # msw's postinstall only prints a notice (we copy the service worker ourselves).
+  msw: false
 
 injectWorkspacePackages: true
 

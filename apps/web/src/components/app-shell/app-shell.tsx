@@ -1,11 +1,25 @@
 'use client';
 
-import { ChevronRight, LogOut, Menu, ScanLine, Search, User } from 'lucide-react';
+import {
+  ChevronRight,
+  History,
+  Keyboard,
+  LogOut,
+  Menu,
+  Package,
+  ScanLine,
+  Search,
+  ShieldCheck,
+  User,
+} from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { useAuth } from '@/lib/auth/auth-context';
+import { hasAnyPermission } from '@/lib/auth/permissions';
+import { isAssetCode, pushRecent, readRecent, type RecentEntry } from '@/lib/recent-items';
 import { routes } from '@/lib/routes';
 import { useTheme } from '@/lib/theme';
 import { Button, IconButton } from '@/components/ui/button';
@@ -25,8 +39,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
 import { NAV_ITEMS, normalizePathname, type NavItem } from './nav-config';
+import { ShortcutsDialog } from './shortcuts-dialog';
 import { Brand, SidebarCollapseButton, SidebarNav } from './sidebar';
 import { ThemeToggle } from './theme-toggle';
+import { useShortcuts, type GoToTarget } from './use-shortcuts';
 
 const SIDEBAR_KEY = 'at-sidebar';
 
@@ -46,10 +62,25 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
   const router = useRouter();
   const pathname = normalizePathname(usePathname());
   const { setTheme } = useTheme();
+  const auth = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteSearch, setPaletteSearch] = useState('');
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [recent, setRecent] = useState<RecentEntry[]>([]);
   const scanRef = useRef<HTMLInputElement>(null);
+
+  // Role-aware navigation: hide what the signed-in user has no permission for.
+  const permissions = auth.me?.permissions;
+  const visibleItems = useMemo(
+    () =>
+      navItems.filter(
+        (item) =>
+          !item.permission || (permissions && hasAnyPermission(permissions, item.permission)),
+      ),
+    [navItems, permissions],
+  );
 
   useEffect(() => {
     try {
@@ -71,8 +102,31 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
     });
   };
 
-  const togglePalette = useCallback(() => setPaletteOpen((open) => !open), []);
+  const setPalette = useCallback((open: boolean) => {
+    setPaletteOpen(open);
+    if (open) setRecent(readRecent());
+    else setPaletteSearch('');
+  }, []);
+  const togglePalette = useCallback(() => setPalette(!paletteOpen), [paletteOpen, setPalette]);
   useCommandPaletteHotkey(togglePalette);
+
+  const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
+  const goTo = useCallback(
+    (target: GoToTarget) => {
+      const href =
+        target === 'dashboard'
+          ? routes.dashboard
+          : target === 'assets'
+            ? routes.assets
+            : routes.settings();
+      // Only navigate to screens this user can see in the menu.
+      if (visibleItems.some((candidate) => candidate.available && candidate.href === href)) {
+        router.push(href);
+      }
+    },
+    [router, visibleItems],
+  );
+  useShortcuts({ onHelp: openShortcuts, onGoTo: goTo });
 
   // `/` focuses the scan field unless the user is already typing somewhere.
   useEffect(() => {
@@ -88,24 +142,90 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const groups = useMemo<CommandPaletteGroup[]>(
-    () => [
-      {
-        id: 'go-to',
-        heading: t('palette.goTo'),
-        items: navItems
-          .filter((item) => item.available)
-          .map((item) => ({
-            id: `go-${item.id}`,
-            label: t(item.labelKey),
-            icon: item.icon,
-            onSelect: () => router.push(item.href),
-          })),
+  const openAssetByCode = useCallback(
+    (code: string) => {
+      pushRecent({ type: 'asset', code });
+      router.push(routes.assetByCode(code));
+    },
+    [router],
+  );
+
+  const onSignOut = useCallback(async () => {
+    await auth.signOut();
+    router.replace(routes.loginWith({ reason: 'signed_out' }));
+  }, [auth, router]);
+
+  const groups = useMemo<CommandPaletteGroup[]>(() => {
+    const available = visibleItems.filter((item) => item.available);
+    const goToItems = available.map((item) => ({
+      id: `go-${item.id}`,
+      label: t(item.labelKey),
+      icon: item.icon,
+      onSelect: () => {
+        pushRecent({ type: 'page', id: item.id });
+        router.push(item.href);
       },
+    }));
+
+    const list: CommandPaletteGroup[] = [];
+    const code = paletteSearch.trim();
+    if (!code) {
+      const recentItems = recent.flatMap((entry) => {
+        if (entry.type === 'asset') {
+          return [
+            {
+              id: `recent-asset-${entry.code}`,
+              label: t('palette.openAsset', { code: entry.code }),
+              icon: History,
+              onSelect: () => openAssetByCode(entry.code),
+            },
+          ];
+        }
+        const item = available.find((candidate) => candidate.id === entry.id);
+        return item
+          ? [
+              {
+                id: `recent-page-${item.id}`,
+                label: t(item.labelKey),
+                icon: History,
+                onSelect: () => {
+                  pushRecent({ type: 'page', id: item.id });
+                  router.push(item.href);
+                },
+              },
+            ]
+          : [];
+      });
+      if (recentItems.length > 0) {
+        list.push({ id: 'recent', heading: t('palette.recent'), items: recentItems });
+      }
+    }
+
+    list.push(
+      { id: 'go-to', heading: t('palette.goTo'), items: goToItems },
       {
         id: 'actions',
         heading: t('palette.actions'),
         items: [
+          {
+            id: 'security',
+            label: t('palette.security'),
+            icon: ShieldCheck,
+            onSelect: () => router.push(routes.security),
+          },
+          {
+            id: 'shortcuts',
+            label: t('palette.shortcuts'),
+            icon: Keyboard,
+            shortcut: '?',
+            onSelect: openShortcuts,
+          },
+          {
+            id: 'sign-out',
+            label: t('palette.signOut'),
+            icon: LogOut,
+            onSelect: () => void onSignOut(),
+          },
           {
             id: 'theme-light',
             label: `${t('palette.toggleTheme')}: ${t('theme.light')}`,
@@ -123,15 +243,44 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
           },
         ],
       },
-    ],
-    [navItems, router, setTheme, t],
-  );
+    );
+    // Tag quick-jump: whatever tag-like text is typed can be opened directly. It comes last so
+    // Enter prefers a real match (typing "settings" must not open an asset called settings).
+    if (code && isAssetCode(code)) {
+      list.push({
+        id: 'asset-jump',
+        heading: t('palette.assets'),
+        items: [
+          {
+            id: 'open-asset',
+            label: t('palette.openAsset', { code }),
+            icon: Package,
+            alwaysShow: true,
+            onSelect: () => openAssetByCode(code),
+          },
+        ],
+      });
+    }
+    return list;
+  }, [
+    visibleItems,
+    paletteSearch,
+    recent,
+    router,
+    setTheme,
+    t,
+    openAssetByCode,
+    openShortcuts,
+    onSignOut,
+  ]);
 
   const onScanSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const code = new FormData(event.currentTarget).get('scan');
     if (typeof code === 'string' && code.trim()) {
-      router.push(routes.assetByCode(code.trim()));
+      const trimmed = code.trim();
+      if (isAssetCode(trimmed)) pushRecent({ type: 'asset', code: trimmed });
+      router.push(routes.assetByCode(trimmed));
       event.currentTarget.reset();
     }
   };
@@ -153,9 +302,9 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
       </a>
 
       <aside className="sticky top-0 hidden h-screen flex-col border-r border-border bg-surface lg:flex">
-        <Brand collapsed={collapsed} />
+        <Brand collapsed={collapsed} tenantName={auth.me?.tenant.name} />
         <div className="flex-1 overflow-y-auto py-2">
-          <SidebarNav collapsed={collapsed} items={navItems} />
+          <SidebarNav collapsed={collapsed} items={visibleItems} />
         </div>
         <div
           className={cn(
@@ -171,9 +320,9 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
         <DrawerContent side="left" className="w-(--size-sidebar)">
           <DrawerTitle className="sr-only">{t('nav.primary')}</DrawerTitle>
           <DrawerDescription className="sr-only">{t('nav.openNavigation')}</DrawerDescription>
-          <Brand />
+          <Brand tenantName={auth.me?.tenant.name} />
           <div className="flex-1 overflow-y-auto py-2">
-            <SidebarNav items={navItems} onNavigate={() => setMobileNavOpen(false)} />
+            <SidebarNav items={visibleItems} onNavigate={() => setMobileNavOpen(false)} />
           </div>
         </DrawerContent>
       </Drawer>
@@ -224,9 +373,26 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
               <IconButton icon={User} label={t('topbar.userMenu')} />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuLabel>{t('topbar.userMenu')}</DropdownMenuLabel>
+              <DropdownMenuLabel className="flex flex-col font-normal">
+                <span className="font-medium text-text">
+                  {auth.me?.user.display_name ?? t('topbar.userMenu')}
+                </span>
+                {auth.me ? <span className="text-xs text-muted">{auth.me.user.email}</span> : null}
+              </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => router.push(routes.login)}>
+              <DropdownMenuItem asChild>
+                <Link href={routes.security}>
+                  <ShieldCheck aria-hidden className="size-4" />
+                  {t('topbar.security')}
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={openShortcuts}>
+                <Keyboard aria-hidden className="size-4" />
+                <span className="flex-1">{t('topbar.shortcuts')}</span>
+                <Kbd aria-hidden>{'?'}</Kbd>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void onSignOut()}>
                 <LogOut aria-hidden className="size-4" />
                 {t('topbar.signOut')}
               </DropdownMenuItem>
@@ -239,7 +405,14 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
         </main>
       </div>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={groups} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPalette}
+        groups={groups}
+        search={paletteSearch}
+        onSearchChange={setPaletteSearch}
+      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }
@@ -285,6 +458,9 @@ export function breadcrumbTrail(pathname: string, t: ReturnType<typeof useT>): C
   if (pathname === '/assets') return [{ label: t('nav.assets') }];
   if (pathname === '/assets/view') {
     return [{ label: t('nav.assets'), href: routes.assets }, { label: t('assetView.title') }];
+  }
+  if (pathname === '/account/security') {
+    return [{ label: t('nav.account') }, { label: t('security.title') }];
   }
   if (pathname.startsWith('/settings')) {
     const section = pathname.split('/')[2];

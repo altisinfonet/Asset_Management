@@ -18,7 +18,14 @@ interface SidebarNavProps {
 }
 
 /** Logo slot: 24px mark and wordmark, monochrome so it works in both themes. */
-export function Brand({ collapsed = false }: { collapsed?: boolean }) {
+export function Brand({
+  collapsed = false,
+  tenantName,
+}: {
+  collapsed?: boolean;
+  /** Organisation of the signed-in user, shown under the wordmark. */
+  tenantName?: string;
+}) {
   const t = useT();
   return (
     <div className="flex min-h-14 items-center gap-2 px-3">
@@ -29,9 +36,19 @@ export function Brand({ collapsed = false }: { collapsed?: boolean }) {
         <Package className="size-4" />
       </span>
       {collapsed ? (
-        <span className="sr-only">{t('app.name')}</span>
+        <span className="sr-only">
+          {t('app.name')}
+          {tenantName ? ` ${tenantName}` : ''}
+        </span>
       ) : (
-        <span className="text-lg font-semibold">{t('app.name')}</span>
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="text-lg font-semibold">{t('app.name')}</span>
+          {tenantName ? (
+            <span data-testid="tenant-name" className="truncate text-xs text-muted">
+              {tenantName}
+            </span>
+          ) : null}
+        </span>
       )}
     </div>
   );

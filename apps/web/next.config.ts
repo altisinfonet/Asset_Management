@@ -15,6 +15,12 @@ export default function config(phase: string): NextConfig {
     images: { unoptimized: true },
     trailingSlash: true,
     turbopack: { root: path.resolve(__dirname, '../..') },
+    // The mock API (MSW) is compiled in only for `dev:mock` and `build:mock`. Always defining the
+    // flag makes it a build-time constant, so the production build drops the mock import as dead
+    // code (verified by the `--built` check: no msw or mock code in out/).
+    env: { NEXT_PUBLIC_API_MOCKS: process.env.NEXT_PUBLIC_API_MOCKS === '1' ? '1' : '0' },
+    // `build:mock` writes its export to out-mock/ so it never overwrites the production `out/`.
+    ...(process.env.AT_EXPORT_DIR ? { distDir: process.env.AT_EXPORT_DIR } : {}),
   };
 
   if (phase === PHASE_DEVELOPMENT_SERVER) {

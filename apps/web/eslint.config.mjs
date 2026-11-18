@@ -7,7 +7,12 @@ const config = [
   {
     // No hard-coded user-facing strings in screens or the app shell: text comes from the
     // message catalogue (src/i18n/messages/en.ts). The design-review gallery is exempt.
-    files: ['src/app/**/*.tsx', 'src/components/app-shell/**/*.tsx', 'src/components/*.tsx'],
+    files: [
+      'src/app/**/*.tsx',
+      'src/components/app-shell/**/*.tsx',
+      'src/components/auth/**/*.tsx',
+      'src/components/*.tsx',
+    ],
     ignores: ['src/app/ui/**', '**/*.test.tsx'],
     rules: {
       'react/jsx-no-literals': [

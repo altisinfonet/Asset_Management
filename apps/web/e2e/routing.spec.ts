@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 /**
  * M1-WEB-10: deep links, hard refresh, back/forward and QR-style deep links against the static

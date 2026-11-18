@@ -325,7 +325,9 @@ test('signs out; the session is gone and an app URL bounces to the login', async
   await page.getByRole('button', { name: 'User menu' }).click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/login\/?\?reason=signed_out/);
-  await expect(page.getByRole('status')).toContainText('You have been signed out.');
+  await expect(
+    page.getByRole('status').filter({ hasText: 'You have been signed out.' }),
+  ).toBeVisible();
   await page.goto('/assets');
   await expect(page).toHaveURL(/\/login\/?\?next=/);
   const me = await page.evaluate(async () => (await fetch('/v1/auth/me')).status);

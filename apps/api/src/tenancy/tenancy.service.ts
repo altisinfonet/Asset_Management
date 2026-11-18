@@ -59,6 +59,13 @@ export class TenancyService implements OnModuleDestroy {
     return { latencyMs: Math.round((performance.now() - started) * 100) / 100 };
   }
 
+  /** Ids of the migrations recorded in the ledger (readiness: "migrations current"). */
+  async appliedMigrations(): Promise<string[]> {
+    const rows = await this.db.$queryRaw<Array<{ id: string }>>`
+      select id from public.schema_migrations order by id`;
+    return rows.map((r) => r.id);
+  }
+
   /** See {@link withTenantTx} in tenant-tx.ts. */
   withTenantTx<T>(
     ctx: TenantContext,

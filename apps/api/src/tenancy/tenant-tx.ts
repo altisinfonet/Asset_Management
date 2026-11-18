@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
+import { currentRequestId } from '../context/request-context.js';
 import type { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -86,7 +87,8 @@ export async function withTenantTx<T>(
   // Validate before touching the database: the tenant id never reaches SQL unchecked.
   const tenantId = uuid.parse(ctx.tenantId);
   const actorId = ctx.actorId === undefined ? '' : uuid.parse(ctx.actorId);
-  const reqId = ctx.requestId === undefined ? '' : requestId.parse(ctx.requestId);
+  const effectiveRequestId = ctx.requestId ?? currentRequestId();
+  const reqId = effectiveRequestId === undefined ? '' : requestId.parse(effectiveRequestId);
 
   const outer = active.getStore();
   if (outer) {
@@ -104,7 +106,7 @@ export async function withTenantTx<T>(
                                    set_config('app.actor_id', ${actorId}, true),
                                    set_config('app.request_id', ${reqId}, true)`;
       return active.run(
-        { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: ctx.requestId } },
+        { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId } },
         () => fn(trx),
       );
     },

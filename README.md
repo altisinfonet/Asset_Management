@@ -25,6 +25,8 @@ docker/pgbouncer/        PgBouncer config for dev and CI (transaction mode, `app
 
 ## Quick start
 
+New here? Start with [docs/getting-started.md](docs/getting-started.md): how to run, rebuild and test everything.
+
 ```bash
 pnpm install                      # frozen lockfile in CI: pnpm install --frozen-lockfile
 pnpm turbo run lint typecheck test build

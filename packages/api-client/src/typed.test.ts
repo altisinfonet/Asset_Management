@@ -85,6 +85,14 @@ describe('typed client', () => {
     expect(seen[1]!.headers.get('if-match')).toBe('W/"7"');
   });
 
+  it('remembers the ETag of a created resource under its Location', async () => {
+    const { client, etags } = setup(() =>
+      json({ id: 'a9' }, { status: 201, headers: { etag: 'W/"1"', location: '/v1/assets/a9' } }),
+    );
+    await client.POST('/v1/assets', { body: { category_id: 'c1' } });
+    expect(etags.etagFor('/v1/assets/a9')).toBe('W/"1"');
+  });
+
   it('throws ApiError with the problem body, request id and Retry-After', async () => {
     const { client } = setup(() =>
       json(

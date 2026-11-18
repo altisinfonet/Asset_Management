@@ -31,6 +31,7 @@ const common: PlaywrightTestConfig = {
     baseURL: `http://localhost:${port}`,
     channel: process.env.PW_CHANNEL || undefined,
     trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
 };
 

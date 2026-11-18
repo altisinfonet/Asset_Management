@@ -1,13 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
-import { choose, runId, signInAsOwner, waitForMail } from './support';
+import { choose, DEMO_PASSWORD, runId, signInAsOwner, waitForMail } from './support';
 
 /**
  * M1-WEB-11: the web app against the REAL stack (compose api + Postgres + worker + Mailpit), no mock.
  * One signed-in story on the seeded Acme tenant, in order, each step building on the previous one:
  *
- *   sign in (password + TOTP) -> category with a custom field -> asset (generated tag) -> edit and a
- *   412 conflict -> list search and filter -> bulk archive / restore -> command palette search ->
- *   tag numbering template (PUT with If-Match) -> invite a user and read the mail in Mailpit -> sign out.
+ *   sign in (password + TOTP) -> category with a custom field and a model -> asset (generated tag) ->
+ *   edit and a 412 conflict -> list search and filter -> bulk edit, archive and restore -> command
+ *   palette search -> tag numbering template (PUT with If-Match) -> 409 with usage counts -> the other
+ *   tenant (Globex) cannot reach the asset -> invite a user and read the mail in Mailpit -> sign out.
  *
  * Names, prefixes and e-mails carry a per-run suffix, so the suite can run again on the same database.
  */
@@ -15,6 +16,7 @@ const id = runId();
 const PREFIX = `E${id}-`; // category tag prefix (A-Z, 0-9, -; at most 12)
 const CATEGORY = `E2E Monitor ${id}`;
 const FIELD = `Panel brand ${id}`;
+const MODEL = `Panel ${id}`;
 const INVITEE = `e2e.${id.toLowerCase()}@acme.example`;
 
 test.describe.configure({ mode: 'serial' });
@@ -94,12 +96,21 @@ test('creates a category and a custom field for it', async () => {
   await expect(builder).toBeHidden();
   await choose(page, /^Show fields for/, CATEGORY);
   await expect(page.getByRole('row', { name: new RegExp(FIELD) })).toBeVisible();
+
+  await page.goto('/settings/models');
+  await page.getByRole('button', { name: 'New model' }).click();
+  const model = page.getByRole('dialog', { name: 'New model' });
+  await model.getByLabel(/^Model name/).fill(MODEL);
+  await choose(page, /^Category/, CATEGORY);
+  await model.getByRole('button', { name: 'Create model' }).click();
+  await expect(page.getByRole('row', { name: new RegExp(MODEL) })).toContainText(CATEGORY);
 });
 
 test('creates an asset: the tag is generated from the category prefix and the custom field is saved', async () => {
   await page.goto('/assets/new');
   await choose(page, /^Category/, CATEGORY);
   await expect(page.getByRole('group', { name: `Fields for ${CATEGORY}` })).toBeVisible();
+  await choose(page, /^Model/, MODEL);
   await page.getByLabel('Name', { exact: true }).fill(`Lobby display ${id}`);
   await page.getByLabel('Serial number').fill(`SN-${id}`);
   await page.getByLabel(new RegExp(`^${FIELD}`)).fill('Iiyama');
@@ -166,10 +177,26 @@ test('the list searches and filters; bulk archive and restore use the bulk endpo
   await choose(page, 'Category', CATEGORY);
   await expect(page.getByTestId('assets-range')).toHaveText('Showing 1-3 of 3');
 
-  // archive two of them in bulk
+  // bulk edit: two assets get another status in one request
   await page.getByRole('checkbox', { name: `Select row ${PREFIX}00002` }).click();
   await page.getByRole('checkbox', { name: `Select row ${PREFIX}00003` }).click();
   await expect(page.getByRole('status').filter({ hasText: '2 rows selected' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit 2 assets' });
+  await choose(page, 'New value', 'Pending');
+  await edit.getByRole('button', { name: 'Apply to 2 assets' }).click();
+  await expect(page.getByText('Done: 2 assets updated.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('row', { name: new RegExp(`${PREFIX}00002`) })).toContainText(
+    'Pending',
+  );
+
+  // archive the same two in bulk (the selection survives a successful action: select again if not)
+  const selected = page.getByRole('status').filter({ hasText: '2 rows selected' });
+  if (!(await selected.isVisible())) {
+    await page.getByRole('checkbox', { name: `Select row ${PREFIX}00002` }).click();
+    await page.getByRole('checkbox', { name: `Select row ${PREFIX}00003` }).click();
+  }
+  await expect(selected).toBeVisible();
   await page.getByRole('button', { name: 'Archive', exact: true }).click();
   const confirm = page.getByRole('dialog', { name: 'Archive 2 assets?' });
   await confirm.getByRole('button', { name: 'Archive' }).click();
@@ -238,8 +265,40 @@ test('archiving a category that is in use says by how many assets and models (40
   await page.getByRole('button', { name: `Archive ${CATEGORY}` }).click();
   const dialog = page.getByRole('dialog', { name: `Archive ${CATEGORY}?` });
   await dialog.getByRole('button', { name: 'Archive' }).click();
-  await expect(dialog.getByRole('alert')).toContainText('Still in use by 4 assets, 1 custom field');
+  await expect(dialog.getByRole('alert')).toContainText(
+    'Still in use by 4 assets, 1 model, 1 custom field',
+  );
   await dialog.getByRole('button', { name: 'Cancel' }).click();
+});
+
+test('the other tenant cannot reach the asset: API 404 and the not-found screen', async ({
+  browser,
+}) => {
+  const other = await (await browser.newContext()).newPage();
+  try {
+    await other.goto('/login');
+    await other.getByLabel(/^Email/).fill('viewer@globex.example');
+    await other.getByLabel(/^Password/).fill(DEMO_PASSWORD);
+    await other.getByRole('button', { name: 'Sign in' }).click();
+    await expect(other.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
+    await expect(other.getByTestId('tenant-name').first()).toHaveText('Globex');
+
+    // Acme's asset id, signed in as Globex: the same answer as for an id that does not exist
+    const status = await other.evaluate(
+      async (url) => (await fetch(url)).status,
+      `/v1/assets/${assetId}`,
+    );
+    expect(status).toBe(404);
+    const list = await other.evaluate(async (tag) => {
+      const res = await fetch(`/v1/assets?q=${encodeURIComponent(tag)}`);
+      return ((await res.json()) as { data: unknown[] }).data.length;
+    }, PREFIX);
+    expect(list).toBe(0);
+    await other.goto(`/assets/view?id=${assetId}`);
+    await expect(other.getByTestId('asset-not-found')).toBeVisible();
+  } finally {
+    await other.context().close();
+  }
 });
 
 test('invites a user; the invitation mail arrives in Mailpit', async () => {

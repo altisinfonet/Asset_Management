@@ -53,7 +53,7 @@ describe('shipped migrations', async () => {
     ]) {
       expect(tables).toContain(`app.${m1}`);
     }
-    expect(tables.filter((t) => t.startsWith('identity.'))).toHaveLength(10);
+    expect(tables.filter((t) => t.startsWith('identity.'))).toHaveLength(13);
   });
 
   it('every app table is passed through app.apply_tenant_conventions in the same migration', () => {

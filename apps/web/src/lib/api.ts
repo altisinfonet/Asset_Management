@@ -1,5 +1,6 @@
 import { ApiError, createApiClient, type ApiClient } from '@assettracker/api-client';
 import type { TranslationKey } from '@/i18n/messages/en';
+import { reportUnauthorized } from '@/lib/auth/session-events';
 
 /**
  * Thin web wrapper around `@assettracker/api-client`.
@@ -137,6 +138,8 @@ export function createWebApi(fetchImpl?: typeof fetch): WebApi {
     const response = await baseFetch(input, init);
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     etags.record(new URL(url, 'http://same-origin').pathname, response);
+    // An ended session (idle timeout, revoked) answers 401 anywhere; the auth provider reacts.
+    if (response.status === 401) reportUnauthorized();
     return response;
   };
   return {

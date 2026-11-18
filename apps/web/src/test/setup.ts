@@ -1,4 +1,16 @@
 import '@testing-library/jest-dom/vitest';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+import { server } from '@/mocks/server';
+import { resetMockState } from '@/mocks/state';
+
+// Mock API for every test (MSW, handlers derived from docs/engineering/openapi.yaml). Tests that
+// need a different answer override it with `server.use(...)`; state resets after each test.
+beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
+afterEach(() => {
+  server.resetHandlers();
+  resetMockState();
+});
+afterAll(() => server.close());
 
 // jsdom lacks several browser APIs that Radix UI and cmdk rely on.
 class ResizeObserverStub {

@@ -25,7 +25,15 @@ export interface NavItem {
    * (hide navigation to modules that are not there), but the full wireframe order is kept here.
    */
   available: boolean;
+  /**
+   * Permission(s) needed to see the item (any one of them). Role-aware navigation hides what the
+   * signed-in user cannot open; the API still enforces every request.
+   */
+  permission?: string | readonly string[];
 }
+
+/** Settings is useful to anyone who can manage the catalogue or see users. */
+export const SETTINGS_PERMISSIONS = ['catalog:manage', 'user:read'] as const;
 
 const exact = (path: string) => (pathname: string) => pathname === path;
 const prefix = (path: string) => (pathname: string) =>
@@ -48,6 +56,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Package,
     isActive: prefix('/assets'),
     available: true,
+    permission: 'asset:read',
   },
   {
     id: 'locations',
@@ -104,6 +113,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Settings,
     isActive: prefix('/settings'),
     available: true,
+    permission: SETTINGS_PERMISSIONS,
   },
 ];
 

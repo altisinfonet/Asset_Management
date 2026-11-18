@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, gotoApp, test } from './fixtures';
 
 test.describe('theme', () => {
   test('follows the OS and a manual override survives a reload without a flash', async ({
@@ -46,7 +46,7 @@ test.describe('navigation shell', () => {
   test('typing a tag in the scan field and pressing Enter opens the asset lookup', async ({
     page,
   }) => {
-    await page.goto('/assets');
+    await gotoApp(page, '/assets');
     await page.keyboard.press('/');
     await expect(page.getByPlaceholder('Scan or type tag')).toBeFocused();
     await page.keyboard.type('AT-00124');
@@ -73,17 +73,38 @@ test.describe('navigation shell', () => {
 
 test.describe('responsive layout (375, 768, 1440)', () => {
   for (const width of [375, 768, 1440]) {
-    for (const url of ['/', '/assets', '/settings/users', '/login']) {
+    for (const url of ['/', '/assets', '/settings/users', '/account/security']) {
       test(`${url} has no horizontal page scroll at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(url);
         await page.waitForLoadState('networkidle');
+        await expect(page.locator('main')).toBeVisible();
         const overflow = await page.evaluate(
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
         );
         expect(overflow).toBeLessThanOrEqual(0);
       });
     }
+    test.describe('signed-out screens', () => {
+      test.use({ session: 'none' });
+      for (const url of [
+        '/login',
+        '/forgot-password',
+        '/reset-password?token=reset-valid',
+        '/invitation?token=inv-valid',
+      ]) {
+        test(`${url} has no horizontal page scroll at ${width}px`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 900 });
+          await page.goto(url);
+          await page.waitForLoadState('networkidle');
+          await expect(page.locator('main h1')).toBeVisible();
+          const overflow = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          expect(overflow).toBeLessThanOrEqual(0);
+        });
+      }
+    });
   }
 
   test('below 1024px the sidebar becomes an off-canvas drawer', async ({ page }) => {

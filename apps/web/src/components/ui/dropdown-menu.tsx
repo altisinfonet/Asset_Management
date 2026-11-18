@@ -5,7 +5,18 @@ import { Check, Circle } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { cn } from '@/lib/cn';
 
-export const DropdownMenu = DropdownPrimitive.Root;
+/**
+ * Menu button pattern: opens on click, arrow keys move, Esc and outside click close, focus
+ * returns to the trigger. Non-modal on purpose: Radix's modal mode marks the whole page
+ * `aria-hidden` while focusable controls stay in the tab order, which axe reports as
+ * `aria-hidden-focus` (the menu closes on Tab or outside click, so nothing is trapped).
+ */
+export function DropdownMenu({
+  modal = false,
+  ...props
+}: ComponentProps<typeof DropdownPrimitive.Root>) {
+  return <DropdownPrimitive.Root modal={modal} {...props} />;
+}
 export const DropdownMenuTrigger = DropdownPrimitive.Trigger;
 export const DropdownMenuGroup = DropdownPrimitive.Group;
 export const DropdownMenuRadioGroup = DropdownPrimitive.RadioGroup;

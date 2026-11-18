@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 out/
+out-mock/
 .next/
 .turbo/
 .expo/
@@ -44,3 +45,5 @@ playwright-report/
 
 # generated Prisma client (pnpm --filter @assettracker/api generate)
 apps/api/src/generated/
+# MSW service worker copied by `pnpm dev:mock` (must never reach a production build)
+apps/web/public/mockServiceWorker.js

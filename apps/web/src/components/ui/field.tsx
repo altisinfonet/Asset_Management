@@ -54,7 +54,7 @@ export function Field({ label, children, hint, error, required, className }: Fie
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} className="flex items-start gap-1.5 text-sm text-danger-text">
+        <p id={errorId} role="alert" className="flex items-start gap-1.5 text-sm text-danger-text">
           <CircleX aria-hidden className="mt-0.5 size-4 shrink-0" />
           <span>{error}</span>
         </p>

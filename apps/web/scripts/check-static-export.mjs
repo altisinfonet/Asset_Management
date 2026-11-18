@@ -12,7 +12,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkBuilt, checkConfig, scanSource } from './lib/static-export-check.mjs';
+import { checkBuilt, checkConfig, checkMockEnv, scanSource } from './lib/static-export-check.mjs';
 
 const args = process.argv.slice(2);
 const rootIdx = args.indexOf('--root');
@@ -26,7 +26,11 @@ const built = args.includes('--built');
 const { violations: sourceViolations, usesNextImage } = scanSource(appRoot);
 const violations = built
   ? checkBuilt(appRoot)
-  : [...sourceViolations, ...(await checkConfig(appRoot, usesNextImage))];
+  : [
+      ...sourceViolations,
+      ...checkMockEnv(process.env),
+      ...(await checkConfig(appRoot, usesNextImage)),
+    ];
 
 if (violations.length > 0) {
   console.error(`static-export check FAILED (${built ? 'built output' : 'source'}):`);

@@ -33,8 +33,8 @@ import {
 } from './state';
 
 /**
- * Mock API handlers derived from docs/engineering/openapi.yaml (login, logout, me, mfa/verify)
- * plus the PROPOSED endpoints the auth screens need (see `lib/auth/auth-api.ts`). Errors are
+ * Mock API handlers derived from docs/engineering/openapi.yaml: the auth endpoints here and the
+ * registry endpoints in `registry-handlers.ts`. Errors are
  * RFC 9457 `application/problem+json` with a stable `code`, `request_id` and `errors[]`.
  *
  * The session lives in `localStorage` (see `state.ts`) because a mock cannot set the real

@@ -194,14 +194,14 @@ export const statusApi = {
   async create(
     body: StatusBody & { name: string; state_type: StatusLabel['state_type'] },
   ): Promise<StatusLabel> {
-    const { data } = await http().POST('/v1/status-labels', { body: body as never });
+    const { data } = await http().POST('/v1/status-labels', { body });
     return data as StatusLabel;
   },
   async update(id: string, body: StatusBody, etag?: string): Promise<StatusLabel> {
     const ifMatch = await freshEtag(etag, () => statusApi.get(id));
     const { data } = await http().PATCH('/v1/status-labels/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
-      body: body as never,
+      body,
     });
     return data as StatusLabel;
   },
@@ -231,14 +231,14 @@ export const manufacturersApi = {
     return versioned(data as Manufacturer, `/v1/manufacturers/${id}`);
   },
   async create(body: ManufacturerBody & { name: string }): Promise<Manufacturer> {
-    const { data } = await http().POST('/v1/manufacturers', { body: body as never });
+    const { data } = await http().POST('/v1/manufacturers', { body });
     return data as Manufacturer;
   },
   async update(id: string, body: ManufacturerBody, etag?: string): Promise<Manufacturer> {
     const ifMatch = await freshEtag(etag, () => manufacturersApi.get(id));
     const { data } = await http().PATCH('/v1/manufacturers/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
-      body: body as never,
+      body,
     });
     return data as Manufacturer;
   },
@@ -260,14 +260,14 @@ export const modelsApi = {
     return versioned(data as AssetModel, `/v1/models/${id}`);
   },
   async create(body: ModelBody & { name: string; category_id: string }): Promise<AssetModel> {
-    const { data } = await http().POST('/v1/models', { body: body as never });
+    const { data } = await http().POST('/v1/models', { body });
     return data as AssetModel;
   },
   async update(id: string, body: ModelBody, etag?: string): Promise<AssetModel> {
     const ifMatch = await freshEtag(etag, () => modelsApi.get(id));
     const { data } = await http().PATCH('/v1/models/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
-      body: body as never,
+      body,
     });
     return data as AssetModel;
   },
@@ -289,14 +289,14 @@ export const vendorsApi = {
     return versioned(data as Vendor, `/v1/vendors/${id}`);
   },
   async create(body: VendorBody & { name: string }): Promise<Vendor> {
-    const { data } = await http().POST('/v1/vendors', { body: body as never });
+    const { data } = await http().POST('/v1/vendors', { body });
     return data as Vendor;
   },
   async update(id: string, body: VendorBody, etag?: string): Promise<Vendor> {
     const ifMatch = await freshEtag(etag, () => vendorsApi.get(id));
     const { data } = await http().PATCH('/v1/vendors/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
-      body: body as never,
+      body,
     });
     return data as Vendor;
   },

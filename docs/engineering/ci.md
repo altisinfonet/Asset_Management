@@ -25,8 +25,9 @@ runs are never cancelled. Caching: the pnpm store (key = lockfile hash), the Tur
 | `Lint, typecheck, test, build`                         | Prettier, ESLint (including the module-boundary and database-client import rules), typecheck, unit tests, build of every package, web static export without forbidden features (ADR 0002) |
 | `API e2e + tenant isolation (Postgres 16)` and `(... 18)` | Migrations apply twice (second is a no-op), schema lint and role audit, Prisma `schema.prisma` has not drifted (Postgres 18), the isolation and e2e suites pass DIRECT and THROUGH PgBouncer 1.26.1 (with the negative control), with every environment variable set so that **no test is skipped** (`scripts/ci/assert-no-skips.mjs`), against Mailpit for the mail path; the bootstrap CLI and seed are idempotent |
 | `Image build (api runtime)`                            | The runtime image builds from the monorepo root, once; the same image is used by the next three jobs                                                                                   |
-| `Compose smoke`                                        | `docker compose up` with the image, `/readyz` becomes ready (database reachable, every migration applied), `GET /v1/health` is ok, unauthenticated `/v1/auth/me` is 401, `/metrics` is not served publicly and ops port 9464 is not published, worker and scheduler become healthy, `down -v` |
-| `Image scan (Trivy) and SBOM`                          | No fixable HIGH or CRITICAL vulnerability in the runtime image (Debian packages and Node packages) beyond the expiring exceptions; the CycloneDX SBOM is stored as an artifact (90 days) |
+| `Compose smoke`                                        | `docker compose up` with the image, `/readyz` becomes ready (database reachable, every migration applied), `GET /v1/health` is ok, unauthenticated `/v1/auth/me` is 401, the seeded demo Viewer signs in and reads `/v1/assets` (one authenticated call), `/metrics` is not served publicly and ops port 9464 is not published, worker and scheduler become healthy, `down -v` |
+| `Web e2e (real stack)`                                 | The production static export against the compose stack of the same image (`/v1` proxied to the API): sign in with password and TOTP, category + custom field + model, asset with a generated tag, edit and a 412, list filter, bulk edit / archive / restore, palette search, tag numbering template, 409 with usage counts, the other tenant gets 404, invitation mail in Mailpit, sign out. Playwright project `real`, `apps/web/e2e-real/`; traces are uploaded on failure |
+| `Image scan (Trivy) and SBOM`                          | No fixable HIGH or CRITICAL vulnerability in the runtime image (Debian packages and Node packages) with no exceptions (the bundled npm is removed from the image); the CycloneDX SBOM is stored as an artifact (90 days) |
 | `Publish image to GHCR (main only)`                    | On merge to `main`, pushes `ghcr.io/<owner>/<repo>/api:<sha>` and `:main` after everything above passed                                                                               |
 | `CI gate`                                              | All of the above succeeded (one stable name for branch protection) and reports the total pipeline time (target: under 15 minutes; a warning above that)                                |
 | `Dependency audit`                                     | `pnpm audit --prod` is clean (no exceptions for what ships); `scripts/ci/audit.mjs` finds no unlisted high or critical advisory and no expired exception                                |
@@ -50,8 +51,8 @@ Add these as **required** status checks (names are the job names above):
 `CI gate` aggregates the matrix and the image jobs, so Postgres 16 and 18 and the smoke test are
 enforced through it. If you prefer to see each one in the required list, also add
 `Lint, typecheck, test, build`, `API e2e + tenant isolation (Postgres 16)`, `API e2e + tenant isolation (Postgres 18)`,
-`Compose smoke` and `Image scan (Trivy) and SBOM`. `Web routing e2e (optional)` is deliberately not
-required until M1-WEB-11 replaces it with the Compose end-to-end suite. A check name only appears in the
+`Compose smoke`, `Web e2e (real stack)` and `Image scan (Trivy) and SBOM`. `Web routing e2e (mock API, optional)` is
+deliberately not required: it only checks deep links and refresh on the mock; the real-stack suite is the gate. A check name only appears in the
 picker after it has run once, so open a first PR before configuring the rule.
 
 ## 3. Security scanning (M1-CI-03)
@@ -60,7 +61,7 @@ picker after it has run once, so open a first PR before configuring the rule.
 | ----------------------------- | --------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------- |
 | SCA                           | `pnpm audit` via `scripts/ci/audit.mjs` | high and critical fail; production deps never excepted | `.github/security/audit-allowlist.json`                           |
 | Secret scanning               | gitleaks 8.30.1 (docker)          | any finding fails                                       | `.gitleaks.toml` (documented allow-list) and `.gitleaks-baseline.json` |
-| Image vulnerabilities         | Trivy 0.76.2 (docker)             | fixable HIGH and CRITICAL fail (`--ignore-unfixed`)     | `.github/security/trivy-ignore.yaml`                              |
+| Image vulnerabilities         | Trivy 0.76.2 (docker)             | fixable HIGH and CRITICAL fail (`--ignore-unfixed`)     | `.github/security/trivy-ignore.yaml` (empty: none needed today)   |
 | SBOM                          | Trivy, CycloneDX 1.7              | n/a (artifact `sbom-api-image-cyclonedx`, 90 days)      | n/a                                                               |
 | SAST                          | CodeQL, `security-extended`       | new alerts fail the PR check                            | dismiss in the Security tab with a reason                         |
 | Dependency and Action updates | Dependabot                        | n/a (PRs, grouped weekly)                               | n/a                                                               |
@@ -116,21 +117,23 @@ dependency-free (Node 22+, global `fetch`): `PERF_CONNECTIONS` (default 10) conc
 | Endpoint                          | Budget (p95, server side)  | Source                         | State today                                                             |
 | --------------------------------- | -------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
 | `GET /v1/health`                  | < 100 ms                   | proposed by this repo          | enforced                                                                |
-| `GET /v1/assets` (list)           | < 500 ms                   | backlog 9.3, plan P9           | skipped until M1-REG-07 (route answers 404)                             |
-| `GET /v1/assets?q=` (search)      | < 200 ms                   | backlog 9.3                    | skipped until the registry exists                                       |
-| `GET /v1/assets?tag=` (tag lookup)| < 150 ms                   | backlog 9.3                    | skipped until the registry exists                                       |
+| `GET /v1/assets` (list)           | < 500 ms                   | backlog 9.3, plan P9           | enforced (2 x 50,000 assets); p95 68 ms measured locally on 2026-11-18  |
+| `GET /v1/assets?q=` (search)      | < 200 ms                   | backlog 9.3                    | enforced; p95 94 ms measured locally                                    |
+| `GET /v1/assets?tag=` (tag lookup)| < 150 ms                   | backlog 9.3                    | enforced; p95 47 ms measured locally                                    |
 
 Later budgets from the backlog (check-out < 300 ms, import throughput and dry run) are added by M2-OPS-01.
-The backlog measures on **two tenants of 50,000 assets each**. That seeding is the registry stories' job:
-add an executable `scripts/ci/perf-seed.sh` (the workflow runs it when present) and set the repository
-variable `PERF_REQUIRE_REGISTRY=1` so that a registry endpoint which cannot be measured fails the night
-instead of being skipped. On a slow laptop use `PERF_BUDGET_SCALE=2`; never in CI.
+The backlog measures on **two tenants of 50,000 assets each**: `scripts/ci/perf-seed.sh` inserts them (one
+`INSERT .. SELECT generate_series` per demo tenant, idempotent, then `VACUUM ANALYZE`) and the workflow
+sets `PERF_REQUIRE_REGISTRY=1` by default, so a registry endpoint that cannot be measured fails the night
+instead of being skipped (set the repository variable `PERF_REQUIRE_REGISTRY=0` to skip them). On a slow
+laptop use `PERF_BUDGET_SCALE=2`; never in CI.
 
 Local run:
 
 ```bash
 COMPOSE_PROJECT=atperf KEEP_STACK=1 scripts/ci/compose-smoke.sh
-PERF_BASE_URL=http://127.0.0.1:3000 node scripts/ci/perf-check.mjs
+COMPOSE_PROJECT=atperf scripts/ci/perf-seed.sh                       # 2 x 50,000 (PERF_ASSETS=2000 for a quick run)
+PERF_REQUIRE_REGISTRY=1 PERF_BASE_URL=http://127.0.0.1:3000 node scripts/ci/perf-check.mjs
 docker compose -f docker-compose.yml -f docker/compose.ci.yml -p atperf down -v
 ```
 

@@ -1,6 +1,6 @@
 import { addUser, bootstrapTenant } from '../bootstrap/bootstrap-tenant.js';
 import { uuidv7 } from '../ids/uuidv7.js';
-import { sql, type TenancyService, type Tx } from '../tenancy/index.js';
+import type { Prisma, TenancyService, Tx } from '../tenancy/index.js';
 
 export interface SeedTenantSpec {
   name: string;
@@ -103,18 +103,14 @@ export async function seedDemoData(
 }
 
 async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): Promise<boolean> {
-  const existing = await trx
-    .selectFrom('app.asset')
-    .select(sql<number>`count(*)::int`.as('n'))
-    .executeTakeFirstOrThrow();
-  if (existing.n > 0) return false;
+  const existing = await trx.asset.count();
+  if (existing > 0) return false;
 
   // Users: the bootstrap admin is the Owner (activate it); add Admin, Technician and Viewer.
-  await trx
-    .updateTable('app.user_account')
-    .set({ status: 'active' })
-    .where('email', '=', `owner@${spec.domain}`)
-    .execute();
+  await trx.user_account.updateMany({
+    where: { email: `owner@${spec.domain}` },
+    data: { status: 'active' },
+  });
   const people = [
     { local: 'admin', name: 'Demo Admin', roleKey: 'asset_manager' },
     { local: 'technician', name: 'Demo Technician', roleKey: 'technician' },
@@ -129,22 +125,20 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     });
   }
 
-  const categories = await trx
-    .selectFrom('app.category')
-    .select(['id', 'name', 'tag_prefix'])
-    .execute();
+  const categories = await trx.category.findMany({
+    select: { id: true, name: true, tag_prefix: true },
+  });
   const categoryByName = new Map(categories.map((c) => [c.name, c]));
-  const statuses = await trx.selectFrom('app.status_label').select(['id', 'name']).execute();
+  const statuses = await trx.status_label.findMany({ select: { id: true, name: true } });
   const statusByName = new Map(statuses.map((s) => [s.name, s.id]));
 
   // Manufacturers and models.
   const manufacturerIds = new Map<string, string>();
   for (const name of new Set(MODELS.map((m) => m.manufacturer)))
     manufacturerIds.set(name, uuidv7());
-  await trx
-    .insertInto('app.manufacturer')
-    .values([...manufacturerIds].map(([name, id]) => ({ id, tenant_id: tenantId, name })))
-    .execute();
+  await trx.manufacturer.createMany({
+    data: [...manufacturerIds].map(([name, id]) => ({ id, tenant_id: tenantId, name })),
+  });
   const modelRows = MODELS.map((m) => ({
     id: uuidv7(),
     tenant_id: tenantId,
@@ -154,20 +148,18 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     model_number: m.model_number,
     default_depreciation_months: 36,
   }));
-  await trx.insertInto('app.asset_model').values(modelRows).execute();
+  await trx.asset_model.createMany({ data: modelRows });
 
   // Vendor.
   const vendorId = uuidv7();
-  await trx
-    .insertInto('app.vendor')
-    .values({ id: vendorId, tenant_id: tenantId, name: 'CDW', url: 'https://www.cdw.com' })
-    .execute();
+  await trx.vendor.create({
+    data: { id: vendorId, tenant_id: tenantId, name: 'CDW', url: 'https://www.cdw.com' },
+  });
 
   // Custom field definitions (applied to laptops, plus one for every category).
   const laptops = categoryByName.get('Laptops')!;
-  await trx
-    .insertInto('app.custom_field_def')
-    .values([
+  await trx.custom_field_def.createMany({
+    data: [
       {
         id: uuidv7(),
         tenant_id: tenantId,
@@ -175,7 +167,7 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
         key: 'os',
         label: 'Operating system',
         data_type: 'select',
-        options: JSON.stringify(['macOS', 'Windows', 'Linux']),
+        options: ['macOS', 'Windows', 'Linux'],
         position: 10,
         show_in_list: true,
       },
@@ -186,7 +178,7 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
         key: 'ram_gb',
         label: 'RAM (GB)',
         data_type: 'number',
-        validation: JSON.stringify({ min: 1, max: 1024 }),
+        validation: { min: 1, max: 1024 },
         position: 20,
       },
       {
@@ -198,22 +190,24 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
         data_type: 'text',
         position: 30,
       },
-    ])
-    .execute();
+    ],
+  });
 
   // 50 assets, cycling over the models. Tags come from app.next_asset_tag, so both tenants get the
   // identical sequence (LAP00001, ...); serials are identical across tenants too.
+  // The fill_default_company trigger would fill company_id, but Prisma requires the column on create.
+  const company = await trx.company.findFirstOrThrow({
+    where: { is_default: true },
+    select: { id: true },
+  });
   const assets = [];
   const osChoices = ['macOS', 'Windows', 'Linux'];
   for (let i = 0; i < ASSETS_PER_TENANT; i++) {
     const model = modelRows[i % modelRows.length]!;
     const modelDef = MODELS[i % MODELS.length]!;
     const category = categoryByName.get(modelDef.category)!;
-    const tag = (
-      await sql<{
-        tag: string;
-      }>`select app.next_asset_tag(${category.tag_prefix ?? ''}) as tag`.execute(trx)
-    ).rows[0]!.tag;
+    const [row] = await trx.$queryRaw<Array<{ tag: string }>>`
+      select app.next_asset_tag(${category.tag_prefix ?? ''}) as tag`;
     const custom: Record<string, unknown> = { cost_center: `CC-${100 + (i % 5)}` };
     if (category.id === laptops.id) {
       custom.os = osChoices[i % osChoices.length];
@@ -222,21 +216,22 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     assets.push({
       id: uuidv7(),
       tenant_id: tenantId,
-      asset_tag: tag,
+      company_id: company.id,
+      asset_tag: row!.tag,
       name: `${modelDef.name} #${i + 1}`,
       serial: `SN-${String(i + 1).padStart(4, '0')}`,
       category_id: category.id,
       model_id: model.id,
       status_id: statusByName.get(STATE_BY_INDEX[i % STATE_BY_INDEX.length]!)!,
       vendor_id: vendorId,
-      purchase_date: `2025-${String((i % 12) + 1).padStart(2, '0')}-15`,
-      purchase_cost_minor: String(50_000 + i * 2_500),
+      purchase_date: new Date(`2025-${String((i % 12) + 1).padStart(2, '0')}-15`),
+      purchase_cost_minor: BigInt(50_000 + i * 2_500),
       currency: 'USD',
-      warranty_end: `2028-${String((i % 12) + 1).padStart(2, '0')}-15`,
-      custom_data: custom,
+      warranty_end: new Date(`2028-${String((i % 12) + 1).padStart(2, '0')}-15`),
+      custom_data: custom as Prisma.InputJsonObject,
     });
   }
-  await trx.insertInto('app.asset').values(assets).execute();
+  await trx.asset.createMany({ data: assets });
 
   return true;
 }

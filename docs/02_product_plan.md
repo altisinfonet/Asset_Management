@@ -546,7 +546,7 @@ Decision 3: TypeScript end to end (one language across api/web/mobile with share
 | Repo / build | Monorepo (Turborepo + pnpm): `apps/api` (NestJS), `apps/web` (Next.js), `apps/mobile` (Expo, MVP); `packages/api-client` (generated from OpenAPI), `packages/schemas` (zod, shared validation), `packages/ui-tokens` |
 | DB | **PostgreSQL 18** (managed: AWS RDS, which supports 18, or Aurora; PostgreSQL 16 community support ends 2028-11). Self-hosted bundle `postgres:18`; BYO Postgres 16-18 supported; CI matrix 16 + 18. Primary keys are UUIDv7 generated app-side (portable and client-creatable ids); PG18's native `uuidv7()` is optional. JSONB for custom field values with GIN indexes; pg_trgm + full-text for search |
 | Pooler | PgBouncer 1.26.1+ in transaction mode, the default for Cloud and Self-hosted (RDS Proxy optional only after a staging pinning test); `max_prepared_statements` set (for example 100); see 6.1 |
-| Data access | Query builder / ORM that allows per-transaction `SET LOCAL` for RLS (Kysely or Drizzle; if Prisma, wrap in explicit transactions with tenant setting) |
+| Data access | Query builder / ORM that allows per-transaction `SET LOCAL` for RLS (decided in ADR 0001: Prisma Client 7 with the pg driver adapter, every query inside an explicit transaction that sets the tenant) |
 | Jobs / queue | Postgres-backed queue: pg-boss 12.x (Node 22.12+) at MVP behind a queue adapter so it can be swapped (single-maintainer risk, section 11); details in 6.8. Redis/BullMQ or SQS later |
 | Cache / rate limit | Redis (small) |
 | Search | Postgres FTS + trigram at MVP; OpenSearch (or Typesense) when needed |

@@ -9,8 +9,9 @@ const apiRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 async function* walk(dir: string): AsyncGenerator<string> {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) yield* walk(full);
-    else yield full;
+    if (entry.isDirectory()) {
+      if (entry.name !== 'generated') yield* walk(full); // Prisma output is not our code
+    } else yield full;
   }
 }
 
@@ -43,15 +44,19 @@ describe('no session-level tenant context (M1-TEN-02)', () => {
   });
 });
 
-describe('database driver import boundary (M1-TEN-02)', () => {
+describe('database client import boundary (M1-TEN-02, ADR 0001)', () => {
   const eslint = new ESLint({ cwd: apiRoot });
 
-  async function lint(filePath: string, code: string) {
+  async function lint(
+    filePath: string,
+    code: string,
+    ruleId = '@typescript-eslint/no-restricted-imports',
+  ) {
     const [result] = await eslint.lintText(code, { filePath: join(apiRoot, filePath) });
-    return result!.messages.filter((m) => m.ruleId === '@typescript-eslint/no-restricted-imports');
+    return result!.messages.filter((m) => m.ruleId === ruleId);
   }
 
-  it('fails lint when a domain module imports the driver (deliberate violation fixture)', async () => {
+  it('fails lint when a domain module imports the database client (deliberate violation fixtures)', async () => {
     const violation = await lint(
       'src/orders/orders.repository.ts',
       "import pg from 'pg';\nexport const x = pg;\n",
@@ -59,26 +64,72 @@ describe('database driver import boundary (M1-TEN-02)', () => {
     expect(violation).toHaveLength(1);
     expect(violation[0]?.message).toMatch(/src\/tenancy/);
 
-    expect(
-      await lint('src/orders/q.ts', "import { Kysely } from 'kysely';\nexport const k = Kysely;\n"),
-    ).toHaveLength(1);
-    expect(
-      await lint('src/orders/q2.ts', "import { sql } from 'kysely';\nexport const s = sql;\n"),
-    ).toHaveLength(1);
+    for (const [name, code] of [
+      ['a', "import { PrismaClient } from '@prisma/client';\nexport const k = PrismaClient;\n"],
+      ['b', "import { PrismaPg } from '@prisma/adapter-pg';\nexport const k = PrismaPg;\n"],
+      [
+        'c',
+        "import { PrismaClient } from '../generated/prisma/client.js';\nexport const k = PrismaClient;\n",
+      ],
+      [
+        'd',
+        "import { Prisma } from '../../generated/prisma/client.js';\nexport const k = Prisma;\n",
+      ],
+      ['e', "import { Kysely } from 'kysely';\nexport const k = Kysely;\n"],
+    ] as const) {
+      expect(await lint(`src/orders/q-${name}.ts`, code), name).toHaveLength(1);
+    }
   });
 
-  it('allows type-only imports, and the driver inside tenancy and db', async () => {
+  it('allows type-only imports, and the client inside tenancy and db', async () => {
     expect(
       await lint(
         'src/orders/types.ts',
-        "import type { Kysely } from 'kysely';\nexport type K = Kysely<unknown>;\n",
+        "import type { PrismaClient } from '@prisma/client';\nimport type { Prisma } from '../generated/prisma/client.js';\nexport type K = PrismaClient | Prisma.TransactionClient;\n",
       ),
     ).toEqual([]);
     expect(
       await lint('src/tenancy/driver.ts', "import pg from 'pg';\nexport const x = pg;\n"),
     ).toEqual([]);
+    expect(
+      await lint(
+        'src/tenancy/client.ts',
+        "import { PrismaClient } from '../generated/prisma/client.js';\nexport const x = PrismaClient;\n",
+      ),
+    ).toEqual([]);
     expect(await lint('src/db/driver.ts', "import pg from 'pg';\nexport const x = pg;\n")).toEqual(
       [],
     );
+  });
+});
+
+describe('unsafe raw SQL is banned (ADR 0001)', () => {
+  const eslint = new ESLint({ cwd: apiRoot });
+  const unsafe = async (filePath: string, code: string) => {
+    const [result] = await eslint.lintText(code, { filePath: join(apiRoot, filePath) });
+    return result!.messages.filter((m) => m.ruleId === 'no-restricted-syntax');
+  };
+
+  it('rejects $queryRawUnsafe and $executeRawUnsafe everywhere, including tenancy and tests', async () => {
+    for (const file of ['src/orders/a.ts', 'src/tenancy/b.ts', 'test/c.e2e.test.ts']) {
+      expect(
+        await unsafe(file, 'export const a = (tx) => tx.$queryRawUnsafe("select 1");\n'),
+        file,
+      ).toHaveLength(1);
+      expect(
+        await unsafe(file, 'export const b = (tx) => tx.$executeRawUnsafe("select 1");\n'),
+        file,
+      ).toHaveLength(1);
+      expect(
+        await unsafe(file, 'export const c = (tx) => tx["$queryRawUnsafe"]("select 1");\n'),
+        file,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('allows the tagged-template forms', async () => {
+    const code =
+      'export const a = (tx) => tx.$queryRaw`select 1`;\nexport const b = (tx) => tx.$executeRaw`select 1`;\n';
+    expect(await unsafe('src/orders/a.ts', code)).toEqual([]);
   });
 });

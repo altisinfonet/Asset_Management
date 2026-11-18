@@ -160,6 +160,15 @@ jobs:
       - name: Schema lint and role audit (fails on any app table without ENABLE+FORCE RLS and policy, partition grants, uuidv7 defaults, ...)
         run: pnpm --filter @assettracker/api schema:lint
 
+      # ADR 0001: SQL migrations are the source of truth, prisma/schema.prisma is generated from the
+      # migrated database and committed. Introspect the freshly migrated DB and fail on any difference.
+      # (Postgres 18 only: that is the version the committed schema was generated from.)
+      - name: Prisma schema drift check (db pull must reproduce the committed schema.prisma)
+        if: matrix.postgres == '18'
+        run: |
+          pnpm --filter @assettracker/api db:pull
+          git diff --exit-code -- apps/api/prisma/schema.prisma
+
       - name: Tenant isolation + e2e, DIRECT (app_user -> Postgres)
         env:
           ISOLATION_MODE: direct

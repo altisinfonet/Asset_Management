@@ -18,3 +18,4 @@ asset_management_systems.md
 docker-compose*.yml
 **/Dockerfile
 spikes
+apps/api/src/generated

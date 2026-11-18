@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { generateToken, hashToken } from '../identity/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
-import { sql, type TenancyService, type Tx } from '../tenancy/index.js';
+import { asBytes, isUniqueViolation, type TenancyService, type Tx } from '../tenancy/index.js';
 
 export const DEFAULT_CATEGORIES = [
   { name: 'Laptops', tag_prefix: 'LAP' },
@@ -89,48 +89,37 @@ async function bootstrapOnce(
   slug: string,
 ): Promise<BootstrapTenantResult> {
   const existing = await tenancy.withPreTenantTx((trx) =>
-    trx
-      .selectFrom('identity.tenant_directory')
-      .select('tenant_id')
-      .where('slug', '=', slug)
-      .executeTakeFirst(),
+    trx.tenant_directory.findUnique({ where: { slug }, select: { tenant_id: true } }),
   );
   const tenantId = existing?.tenant_id ?? uuidv7();
   const created = !existing;
 
   return tenancy.withTenantTx({ tenantId }, async (trx) => {
     if (created) {
-      await sql`select app.provision_tenant(${tenantId}::uuid, ${input.name}, ${slug}, ${input.baseCurrency}, 'us-1')`.execute(
-        trx,
-      );
+      await trx.$executeRaw`select app.provision_tenant(${tenantId}::uuid, ${input.name}, ${slug}, ${input.baseCurrency}, 'us-1')`;
     }
     await ensureDefaultCategories(trx, tenantId);
     const admin = await ensureAdmin(trx, tenantId, input.adminEmail, input.adminName);
 
     if (created) {
-      await trx
-        .insertInto('app.audit_log')
-        .values({
-          id: uuidv7(),
-          tenant_id: tenantId,
-          actor_type: 'system',
-          action: 'tenant.bootstrap',
-          entity_type: 'tenant',
-          entity_id: tenantId,
-          diff: JSON.stringify({ after: { name: input.name, slug, adminEmail: input.adminEmail } }),
-        })
-        .execute();
-      await trx
-        .insertInto('app.outbox_event')
-        .values({
+      // audit_log is a partitioned table: written with a tagged-template raw statement.
+      const diff = JSON.stringify({
+        after: { name: input.name, slug, adminEmail: input.adminEmail },
+      });
+      await trx.$executeRaw`
+        insert into app.audit_log (id, tenant_id, actor_type, action, entity_type, entity_id, diff)
+        values (${uuidv7()}::uuid, ${tenantId}::uuid, 'system', 'tenant.bootstrap', 'tenant',
+                ${tenantId}::uuid, ${diff}::jsonb)`;
+      await trx.outbox_event.create({
+        data: {
           id: uuidv7(),
           tenant_id: tenantId,
           event_type: 'tenant.created',
           aggregate_type: 'tenant',
           aggregate_id: tenantId,
           payload: { slug },
-        })
-        .execute();
+        },
+      });
     }
 
     return {
@@ -147,22 +136,17 @@ async function bootstrapOnce(
 export async function ensureDefaultCategories(trx: Tx, tenantId: string): Promise<void> {
   const have = new Set(
     (
-      await trx
-        .selectFrom('app.category')
-        .select('name')
-        .where('kind', '=', 'asset')
-        .where('archived_at', 'is', null)
-        .execute()
+      await trx.category.findMany({
+        where: { kind: 'asset', archived_at: null },
+        select: { name: true },
+      })
     ).map((r) => r.name.toLowerCase()),
   );
   const missing = DEFAULT_CATEGORIES.filter((c) => !have.has(c.name.toLowerCase()));
   if (missing.length === 0) return;
-  await trx
-    .insertInto('app.category')
-    .values(
-      missing.map((c) => ({ id: uuidv7(), tenant_id: tenantId, kind: 'asset' as const, ...c })),
-    )
-    .execute();
+  await trx.category.createMany({
+    data: missing.map((c) => ({ id: uuidv7(), tenant_id: tenantId, kind: 'asset', ...c })),
+  });
 }
 
 /** Adds a login-capable user with one role at tenant scope (and its login identity). Returns the user id. */
@@ -172,36 +156,32 @@ export async function addUser(
   user: { email: string; displayName: string; roleKey: string; status: 'invited' | 'active' },
 ): Promise<string> {
   const email = user.email.trim().toLowerCase();
-  const role = await trx
-    .selectFrom('app.role')
-    .select('id')
-    .where('key', '=', user.roleKey)
-    .executeTakeFirstOrThrow();
+  const role = await trx.role.findFirstOrThrow({
+    where: { key: user.roleKey },
+    select: { id: true },
+  });
   const userId = uuidv7();
-  await trx
-    .insertInto('app.user_account')
-    .values({
+  await trx.user_account.create({
+    data: {
       id: userId,
       tenant_id: tenantId,
       email,
       display_name: user.displayName,
       status: user.status,
-    })
-    .execute();
-  await trx
-    .insertInto('app.role_assignment')
-    .values({
+    },
+  });
+  await trx.role_assignment.create({
+    data: {
       id: uuidv7(),
       tenant_id: tenantId,
       user_id: userId,
       role_id: role.id,
       scope_type: 'tenant',
-    })
-    .execute();
-  await trx
-    .insertInto('identity.login_identity')
-    .values({ tenant_id: tenantId, user_id: userId, email_lower: email })
-    .execute();
+    },
+  });
+  await trx.login_identity.create({
+    data: { tenant_id: tenantId, user_id: userId, email_lower: email },
+  });
   return userId;
 }
 
@@ -211,12 +191,10 @@ async function ensureAdmin(
   email: string,
   displayName: string | undefined,
 ): Promise<{ userId: string; invitationToken?: string }> {
-  const existing = await trx
-    .selectFrom('app.user_account')
-    .select('id')
-    .where(sql<boolean>`lower(email) = ${email}`)
-    .where('archived_at', 'is', null)
-    .executeTakeFirst();
+  // lower(email) is an expression Prisma cannot filter on: a tagged-template raw query does it.
+  const [existing] = await trx.$queryRaw<Array<{ id: string }>>`
+    select id::text as id from app.user_account
+    where lower(email) = ${email} and archived_at is null limit 1`;
   if (existing) return { userId: existing.id };
 
   const userId = await addUser(trx, tenantId, {
@@ -226,37 +204,30 @@ async function ensureAdmin(
     status: 'invited',
   });
 
-  const role = await trx
-    .selectFrom('app.role')
-    .select('id')
-    .where('key', '=', 'tenant_admin')
-    .executeTakeFirstOrThrow();
+  const role = await trx.role.findFirstOrThrow({
+    where: { key: 'tenant_admin' },
+    select: { id: true },
+  });
   const invitationId = uuidv7();
   const expiresAt = new Date(Date.now() + INVITATION_TTL_DAYS * 24 * 3600 * 1000);
-  await trx
-    .insertInto('app.invitation')
-    .values({
+  await trx.invitation.create({
+    data: {
       id: invitationId,
       tenant_id: tenantId,
       user_id: userId,
       email,
       role_id: role.id,
       expires_at: expiresAt,
-    })
-    .execute();
+    },
+  });
   const invitationToken = generateToken();
-  await trx
-    .insertInto('identity.invitation_token')
-    .values({
-      token_hash: hashToken(invitationToken),
+  await trx.invitation_token.create({
+    data: {
+      token_hash: asBytes(hashToken(invitationToken)),
       tenant_id: tenantId,
       invitation_id: invitationId,
       expires_at: expiresAt,
-    })
-    .execute();
+    },
+  });
   return { userId, invitationToken };
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
 }

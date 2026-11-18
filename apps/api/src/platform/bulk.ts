@@ -81,6 +81,7 @@ export async function runBulk<I, O>(
           detail: err.detail,
           errors: err.errors,
           requestId: options.requestId,
+          extensions: err.extensions,
         }),
       });
     }

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { Type } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { createApiApp } from '../../src/app.js';
 import { bootstrapTenant } from '../../src/bootstrap/bootstrap-tenant.js';
@@ -33,7 +34,7 @@ export const newPassword = () => `Pw-${randomBytes(9).toString('base64url')}-ok`
  */
 export async function startApp(
   extra: Record<string, string> = {},
-  options: { realPorts?: boolean } = {},
+  options: { realPorts?: boolean; ports?: Type<unknown> } = {},
 ) {
   const config = loadConfig({
     NODE_ENV: 'test',
@@ -51,7 +52,10 @@ export async function startApp(
     IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
     ...extra,
   });
-  const app = await createApiApp(config, options.realPorts ? [] : [TestPortsModule]);
+  const app = await createApiApp(
+    config,
+    options.realPorts ? [] : [options.ports ?? TestPortsModule],
+  );
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
   return { app, config };
@@ -74,7 +78,7 @@ export class Client {
   }
 
   async request(
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     url: string,
     opts: {
       body?: unknown;

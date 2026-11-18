@@ -1,0 +1,37 @@
+import { render } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { ToastProvider } from '@/components/ui/toast';
+import { I18nProvider } from '@/i18n';
+import { AuthProvider } from '@/lib/auth/auth-context';
+import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
+import { findUser, updateState } from '@/mocks/state';
+
+/** Put a signed-in session into the mock API (what the HttpOnly cookie would be). */
+export function seedSession(
+  email: string = MOCK_ACCOUNTS.owner,
+  options: { limited?: boolean } = {},
+) {
+  const user = findUser(email);
+  if (!user) throw new Error(`unknown mock account ${email}`);
+  updateState((state) => {
+    state.session = {
+      id: 'sess-test',
+      email: user.email,
+      csrf: 'csrf-test',
+      mfaVerified: true,
+      limited: options.limited ?? false,
+      createdAt: new Date().toISOString(),
+    };
+  });
+}
+
+/** Render with the providers the real app has (i18n, toasts, auth bootstrap against the mock API). */
+export function renderApp(ui: ReactElement) {
+  return render(
+    <I18nProvider locale="en">
+      <ToastProvider>
+        <AuthProvider>{ui}</AuthProvider>
+      </ToastProvider>
+    </I18nProvider>,
+  );
+}

@@ -12,6 +12,8 @@
  *   - route handlers, unless GET + `dynamic = 'force-static'`
  *   - dynamic route segments without `generateStaticParams` (or with `dynamicParams = true`)
  *   - `next/image` with the default loader     (`images.unoptimized` or a custom loader is required)
+ *   - the mock API (MSW) leaking into the production build: the service worker file in `public/`,
+ *     `NEXT_PUBLIC_API_MOCKS=1` during `next build`, or mock/msw code inside `out/`
  *
  * Pure functions here are unit-tested (src/lib/static-export-check.test.ts); the CLI is
  * scripts/check-static-export.mjs.
@@ -21,6 +23,10 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 /** @typedef {{ rule: string, file?: string, message: string }} Violation */
+
+/** Strings that only exist in the mock layer (src/mocks, msw); none may appear in `out/`. */
+const MOCK_MARKERS = ['mockServiceWorker', '@mswjs', 'msw/browser', 'at-mock-state'];
+const TEXT_EXT = /\.(?:[cm]?js|html|json|txt|map|css)$/;
 
 const SOURCE_EXT = /\.(?:[cm]?[jt]sx?)$/;
 const PAGE_FILE = /^page\.[cm]?[jt]sx?$/;
@@ -72,6 +78,16 @@ export function scanSource(appRoot) {
         }
       }
     }
+  }
+
+  const worker = path.join(appRoot, 'public', 'mockServiceWorker.js');
+  if (existsSync(worker)) {
+    violations.push({
+      rule: 'mock-service-worker-in-public',
+      file: 'public/mockServiceWorker.js',
+      message:
+        'the MSW service worker in public/ would be copied into out/; delete it (dev:mock removes it on exit, build:mock never writes it there)',
+    });
   }
 
   const srcDir = path.join(appRoot, 'src');
@@ -177,6 +193,56 @@ export function scanSource(appRoot) {
 }
 
 /**
+ * The production build must not enable the mock API.
+ * @param {Record<string, string | undefined>} env
+ * @returns {Violation[]}
+ */
+export function checkMockEnv(env) {
+  if (env.NEXT_PUBLIC_API_MOCKS === '1' && !env.AT_EXPORT_DIR) {
+    return [
+      {
+        rule: 'mock-api-in-production-build',
+        message:
+          'NEXT_PUBLIC_API_MOCKS=1 would compile the mock API into out/; use `pnpm build:mock` (writes out-mock/) for mocked builds',
+      },
+    ];
+  }
+  return [];
+}
+
+/**
+ * Scan an export directory for the mock layer: the service worker file or its marker strings.
+ * @param {string} dir
+ * @returns {Violation[]}
+ */
+export function scanForMockCode(dir) {
+  /** @type {Violation[]} */
+  const violations = [];
+  for (const file of walk(dir)) {
+    const rel = path.relative(dir, file).split(path.sep).join('/');
+    if (path.basename(file) === 'mockServiceWorker.js') {
+      violations.push({
+        rule: 'mock-code-in-export',
+        file: rel,
+        message: 'MSW service worker found',
+      });
+      continue;
+    }
+    if (!TEXT_EXT.test(file)) continue;
+    const text = readFileSync(file, 'utf8');
+    const hit = MOCK_MARKERS.find((marker) => text.includes(marker));
+    if (hit) {
+      violations.push({
+        rule: 'mock-code-in-export',
+        file: rel,
+        message: `contains "${hit}": mock/msw code must never ship in the static export`,
+      });
+    }
+  }
+  return violations;
+}
+
+/**
  * Evaluate the *production build* configuration the way `next build` sees it.
  * The dev-only /v1 rewrite lives in the development-server phase and is deliberately not checked.
  * @param {string} appRoot
@@ -239,6 +305,8 @@ export function checkBuilt(appRoot) {
       });
     }
   }
+
+  violations.push(...scanForMockCode(out));
 
   const routesManifest = path.join(appRoot, '.next', 'routes-manifest.json');
   if (existsSync(routesManifest)) {

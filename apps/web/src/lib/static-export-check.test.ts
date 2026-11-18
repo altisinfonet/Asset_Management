@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { scanSource } from '../../scripts/lib/static-export-check.mjs';
+import {
+  checkMockEnv,
+  scanForMockCode,
+  scanSource,
+} from '../../scripts/lib/static-export-check.mjs';
 
 let root: string;
 
@@ -93,5 +97,36 @@ describe('static-export source scan', () => {
   it('records next/image usage so the config check can require an unoptimized or custom loader', () => {
     write('src/app/img.tsx', "import Image from 'next/image';\nexport const I = Image;\n");
     expect(scanSource(root).usesNextImage).toBe(true);
+  });
+});
+
+describe('mock API must not reach the production export', () => {
+  it('flags the MSW service worker left in public/', () => {
+    write('public/mockServiceWorker.js', '// msw');
+    expect(rules()).toContain('mock-service-worker-in-public');
+  });
+
+  it('flags NEXT_PUBLIC_API_MOCKS=1 on a production build, but allows build:mock (AT_EXPORT_DIR set)', () => {
+    expect(checkMockEnv({ NEXT_PUBLIC_API_MOCKS: '1' }).map((v) => v.rule)).toEqual([
+      'mock-api-in-production-build',
+    ]);
+    expect(checkMockEnv({ NEXT_PUBLIC_API_MOCKS: '1', AT_EXPORT_DIR: 'out-mock' })).toEqual([]);
+    expect(checkMockEnv({})).toEqual([]);
+  });
+
+  it('finds the worker file and mock marker strings inside an export directory', () => {
+    write('out/index.html', '<html></html>');
+    write('out/_next/static/chunks/app.js', 'console.log("clean")');
+    expect(scanForMockCode(path.join(root, 'out'))).toEqual([]);
+
+    write('out/mockServiceWorker.js', 'worker');
+    write('out/_next/static/chunks/mocks.js', 'localStorage.getItem("at-mock-state")');
+    write('out/_next/static/chunks/lib.js', 'import "@mswjs/interceptors"');
+    const found = scanForMockCode(path.join(root, 'out')).map((v) => v.file);
+    expect(found.sort()).toEqual([
+      '_next/static/chunks/lib.js',
+      '_next/static/chunks/mocks.js',
+      'mockServiceWorker.js',
+    ]);
   });
 });

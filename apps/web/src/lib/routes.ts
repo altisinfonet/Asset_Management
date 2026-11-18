@@ -1,9 +1,27 @@
+/** Why the user landed on the login screen (shown as a banner). */
+export type LoginReason = 'expired' | 'signed_out' | 'password_reset';
+
 /**
  * Every in-app URL is built here (ADR-0002). Detail pages are fixed paths with a query string,
  * never `/assets/<id>`, because the static export can only prerender paths known at build time.
  */
 export const routes = {
   login: '/login',
+  /** Login with a post-login destination (`next`) and/or the reason the user is here. */
+  loginWith: ({ next, reason }: { next?: string; reason?: LoginReason } = {}) => {
+    const params = new URLSearchParams();
+    if (reason) params.set('reason', reason);
+    if (next && next !== '/') params.set('next', next);
+    const query = params.toString();
+    return query ? `/login?${query}` : '/login';
+  },
+  forgotPassword: '/forgot-password',
+  resetPassword: (token: string) => `/reset-password?token=${encodeURIComponent(token)}`,
+  invitation: (token: string) => `/invitation?token=${encodeURIComponent(token)}`,
+  /** MFA enrolment (QR + recovery codes); `next` is where to go afterwards. */
+  mfaEnrol: (next?: string) =>
+    next && next !== '/' ? `/mfa/enroll?next=${encodeURIComponent(next)}` : '/mfa/enroll',
+  security: '/account/security',
   dashboard: '/',
   assets: '/assets',
   assetView: (id: string) => `/assets/view?id=${encodeURIComponent(id)}`,

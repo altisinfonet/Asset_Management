@@ -17,6 +17,8 @@ export interface CommandPaletteItem {
   shortcut?: string;
   /** Extra search terms. */
   keywords?: string[];
+  /** Always listed, whatever is typed (a "jump to <typed tag>" row is built from the query). */
+  alwaysShow?: boolean;
   onSelect: () => void;
 }
 
@@ -30,6 +32,9 @@ export interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   groups: CommandPaletteGroup[];
+  /** Controlled search text. Leave both undefined for an uncontrolled palette. */
+  search?: string;
+  onSearchChange?: (search: string) => void;
 }
 
 /**
@@ -37,7 +42,13 @@ export interface CommandPaletteProps {
  * closes, typing filters, arrows move, Enter runs. Live asset search (tag, serial, name) plugs
  * in later as another group; this shell only knows static groups.
  */
-export function CommandPalette({ open, onOpenChange, groups }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  groups,
+  search,
+  onSearchChange,
+}: CommandPaletteProps) {
   const t = useT();
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -58,6 +69,8 @@ export function CommandPalette({ open, onOpenChange, groups }: CommandPalettePro
               <Search aria-hidden className="size-4 shrink-0 text-muted" />
               <Command.Input
                 autoFocus
+                value={search}
+                onValueChange={onSearchChange}
                 placeholder={t('palette.placeholder')}
                 aria-label={t('palette.placeholder')}
                 className="min-h-12 w-full bg-transparent text-md text-text outline-none placeholder:text-muted sm:text-base"
@@ -71,13 +84,17 @@ export function CommandPalette({ open, onOpenChange, groups }: CommandPalettePro
                 <Command.Group
                   key={group.id}
                   heading={group.heading}
+                  forceMount={group.items.some((item) => item.alwaysShow)}
                   className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted"
                 >
                   {group.items.map((item) => (
                     <Command.Item
                       key={item.id}
-                      value={`${group.heading} ${item.label}`}
+                      // Always-shown rows get a value no typed text matches, so they rank last and
+                      // Enter picks a real match first.
+                      value={item.alwaysShow ? `⁣${item.id}` : `${group.heading} ${item.label}`}
                       keywords={item.keywords}
+                      forceMount={item.alwaysShow}
                       onSelect={() => {
                         onOpenChange(false);
                         item.onSelect();

@@ -11,6 +11,7 @@ export const base = tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/out/**',
+      '**/out-mock/**',
       '**/.next/**',
       '**/.turbo/**',
       '**/coverage/**',

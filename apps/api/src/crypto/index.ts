@@ -14,3 +14,4 @@ export {
   readSecret,
   type KeyProviderBootstrap,
 } from './secrets.js';
+export { createStandaloneSecretBox } from './standalone.js';

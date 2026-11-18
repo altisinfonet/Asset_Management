@@ -501,11 +501,11 @@ export class AuthService {
     for (const c of candidates) {
       const token = generateToken();
       const expiresAt = new Date(Date.now() + this.config.PASSWORD_RESET_TTL_MINUTES * 60_000);
-      const info = await this.tenancy.withTenantTx(
-        { tenantId: c.tenantId, actorId: c.userId },
-        async (trx) => {
+      // One account failing must not stop the others (and the caller's response never depends on it).
+      await this.tenancy
+        .withTenantTx({ tenantId: c.tenantId, actorId: c.userId }, async (trx) => {
           const user = await trx.user_account.findUnique({ where: { id: c.userId } });
-          if (!user || user.archived_at || user.status !== 'active') return null;
+          if (!user || user.archived_at || user.status !== 'active') return;
           // Only the newest link works.
           await trx.password_reset_token.deleteMany({ where: { user_id: user.id, used_at: null } });
           await trx.password_reset_token.create({
@@ -525,18 +525,20 @@ export class AuthService {
             where: { id: c.tenantId },
             select: { name: true },
           });
-          return { user, tenantName: tenant.name };
-        },
-      );
-      if (!info) continue;
-      await this.mailer.passwordReset({
-        to: info.user.email,
-        displayName: info.user.display_name,
-        tenantName: info.tenantName,
-        token,
-        expiresAt,
-        locale: info.user.locale,
-      });
+          // The tenant is resolved from the login candidate before this point; the mail is sent
+          // INSIDE its tenant transaction (ADR 0004) so it exists iff the token row commits.
+          await this.mailer.passwordReset({
+            to: user.email,
+            displayName: user.display_name,
+            tenantName: tenant.name,
+            token,
+            expiresAt,
+            locale: user.locale,
+          });
+        })
+        .catch((err: unknown) =>
+          this.logger.error(`password reset for one account failed: ${String(err)}`),
+        );
     }
   }
 

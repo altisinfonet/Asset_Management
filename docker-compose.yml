@@ -102,6 +102,9 @@ services:
       MIGRATOR_DATABASE_URL: postgres://app_owner:dev@postgres:5432/app
       # Dev only: create the demo tenants Acme and Globex after migrating (refused in production).
       SEED_DEMO_DATA: 'true'
+      # The demo seed encrypts the demo TOTP secrets: same master key as the api (a Docker secret file).
+      MASTER_KEY_FILE: /run/secrets/master_key
+    secrets: [master_key]
     depends_on:
       postgres:
         condition: service_healthy

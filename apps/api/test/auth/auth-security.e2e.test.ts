@@ -13,6 +13,7 @@ import {
   enrolMfa,
   freshIp,
   mailsTo,
+  mailToken,
   newPassword,
   newTenancy,
   ownerSql,
@@ -145,7 +146,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
         display_name: 'x',
         role_assignments: [{ role_id: A.roles.viewer }],
       });
-      const token = mailsTo(created.body.email, 'auth.invitation')[0]!.data.token as string;
+      const token = mailToken(mailsTo(created.body.email, 'auth.invitation')[0]!);
       await A.admin.del(`/v1/users/${created.body.id}/invitation`);
       const revoked = await new Client(app).get(`/v1/auth/invitations/${token}`);
       const unknown = await new Client(app).get(`/v1/auth/invitations/${'z'.repeat(43)}`);
@@ -801,7 +802,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
         display_name: 'N',
         role_assignments: [{ role_id: E.roles.viewer }],
       });
-      const token = mailsTo(email, 'auth.invitation')[0]!.data.token as string;
+      const token = mailToken(mailsTo(email, 'auth.invitation')[0]!);
       const info = await new Client(app).get(`/v1/auth/invitations/${token}`);
       expect(info.body.mfa_enrolment_required).toBe(true);
       const c = new Client(app);
@@ -824,7 +825,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
       const u = await createUser(app, A, 'viewer', 'tokens');
       await new Client(app).post('/v1/auth/password/forgot', { email: u.email });
       await app.get(AuthService).drain();
-      const first = mailsTo(u.email, 'auth.password-reset')[0]!.data.token as string;
+      const first = mailToken(mailsTo(u.email, 'auth.password-reset')[0]!);
       await ownerSql(
         `update identity.password_reset_token set expires_at = now() - interval '1 second' where user_id = $1`,
         [u.id],
@@ -839,10 +840,10 @@ describe.skipIf(!dbEnabled)('auth security', () => {
 
       await new Client(app).post('/v1/auth/password/forgot', { email: u.email });
       await app.get(AuthService).drain();
-      const second = mailsTo(u.email, 'auth.password-reset')[1]!.data.token as string;
+      const second = mailToken(mailsTo(u.email, 'auth.password-reset')[1]!);
       await new Client(app).post('/v1/auth/password/forgot', { email: u.email });
       await app.get(AuthService).drain();
-      const third = mailsTo(u.email, 'auth.password-reset')[2]!.data.token as string;
+      const third = mailToken(mailsTo(u.email, 'auth.password-reset')[2]!);
       expect(
         (
           await new Client(app).post('/v1/auth/password/reset', {
@@ -883,7 +884,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
       const u = await createUser(app, A, 'viewer', 'hashed');
       await new Client(app).post('/v1/auth/password/forgot', { email: u.email });
       await app.get(AuthService).drain();
-      const token = mailsTo(u.email, 'auth.password-reset')[0]!.data.token as string;
+      const token = mailToken(mailsTo(u.email, 'auth.password-reset')[0]!);
       const row = (
         await ownerSql(`select token_hash from identity.password_reset_token where user_id = $1`, [
           u.id,
@@ -906,7 +907,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
         display_name: 'R',
         role_assignments: [{ role_id: A.roles.viewer }],
       });
-      const token = mailsTo(email, 'auth.invitation')[0]!.data.token as string;
+      const token = mailToken(mailsTo(email, 'auth.invitation')[0]!);
       const bad = await new Client(app).post('/v1/auth/invitations/accept', {
         token,
         password: 'password1234',
@@ -977,7 +978,7 @@ describe.skipIf(!dbEnabled)('auth security', () => {
         display_name: 'Mgr',
         role_assignments: [{ role_id: roleId }],
       });
-      const token = mailsTo(email, 'auth.invitation')[0]!.data.token as string;
+      const token = mailToken(mailsTo(email, 'auth.invitation')[0]!);
       const mgr = new Client(app);
       const accepted = await mgr.post('/v1/auth/invitations/accept', {
         token,

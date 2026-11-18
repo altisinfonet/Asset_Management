@@ -9,7 +9,13 @@ import {
   SECRET_BOX,
 } from '../../src/ports/index.js';
 import { FakeJobQueue, FakeMailSender, FakeOutbox, FakeSecretBox } from '../../src/ports/fakes.js';
-import { currentTenantContext, currentTenantTx, type Tx } from '../../src/tenancy/index.js';
+import { parseTemplateData } from '../../src/mail/index.js';
+import {
+  currentTenantContext,
+  currentTenantTx,
+  NoTenantTransactionError,
+  type Tx,
+} from '../../src/tenancy/index.js';
 
 /**
  * Audit writer for tests: records each entry together with the tenant context it was written in and
@@ -34,10 +40,22 @@ export class CapturingAuditWriter implements AuditWriter {
   }
 }
 
+/**
+ * Mail sender for tests with the same contract as the platform one (ADR 0004): it must be called
+ * inside `withTenantTx`, and the template data must satisfy the platform template schema.
+ */
+export class CapturingMailSender extends FakeMailSender {
+  override async send(message: Parameters<FakeMailSender['send']>[0]): Promise<void> {
+    if (!currentTenantContext()) throw new NoTenantTransactionError();
+    parseTemplateData(message.template, message.data);
+    await super.send(message);
+  }
+}
+
 /** Process-wide fakes (each vitest file has its own module registry, so tests do not share them). */
 export const testPorts = {
   audit: new CapturingAuditWriter(),
-  mail: new FakeMailSender(),
+  mail: new CapturingMailSender(),
   secretBox: new FakeSecretBox(),
   jobs: new FakeJobQueue(),
   outbox: new FakeOutbox(),

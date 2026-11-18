@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
-import { createTemporarySecretBox } from '../auth/index.js';
 import { bootstrapTenant } from '../bootstrap/bootstrap-tenant.js';
+import { loadConfig } from '../config/env.js';
+import { createStandaloneSecretBox } from '../crypto/index.js';
 import { auditRoles, ensurePartitions, schemaLint, withOwnerClient } from '../db/maintenance.js';
 import { seedDemoData } from '../seed/seed.js';
 import { TenancyService } from '../tenancy/index.js';
@@ -119,7 +120,10 @@ async function main(): Promise<number> {
       try {
         const { tenants } = await seedDemoData(tenancy, {
           logger: { info: (m) => console.log(m) },
-          secretBox: createTemporarySecretBox(), // TEMPORARY: the platform SecretBox when it lands
+          secretBox: createStandaloneSecretBox(
+            loadConfig({ ...process.env, APP_ROLE: 'api' }),
+            (m) => console.warn(m),
+          ),
         });
         console.log(JSON.stringify(tenants, null, 2));
         return 0;

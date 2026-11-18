@@ -11,8 +11,8 @@ apps/
   (mobile/        Expo app, added in milestone M3)
 packages/
   schemas/        zod schemas shared by api, web and mobile
-  api-client/     typed fetch client (placeholder; to be generated from the OpenAPI document)
-  ui-tokens/      design tokens (placeholder until docs/design/tokens.json lands)
+  api-client/     typed fetch client, generated from docs/engineering/openapi.yaml (CI fails when stale)
+  ui-tokens/      design tokens generated from docs/design/tokens.json (CSS variables, Tailwind theme)
 docker/postgres/init/   roles (app_owner, app_user) and extensions for the dev database
 docker/pgbouncer/        PgBouncer config for dev and CI (transaction mode, `app_one` negative-control alias)
 ```
@@ -32,23 +32,43 @@ pnpm turbo run lint typecheck test build
 
 Everything the CI `check` job runs is `pnpm format:check` plus the command above.
 
-### Run the stack (Docker)
+### Run the stack and sign in (Docker)
 
 ```bash
-docker compose up -d --build      # postgres 18, pgbouncer, mailpit, minio, migrate, api
+docker compose up -d --build      # postgres 18, pgbouncer, mailpit, minio, migrate (+ demo seed), api, worker, scheduler
 curl http://localhost:3000/v1/health
 curl http://localhost:3000/v1/version
 docker compose down -v            # stop and delete volumes
 ```
 
-| Service    | Host port        | Notes                                                                            |
-| ---------- | ---------------- | -------------------------------------------------------------------------------- |
-| api        | 3000             | `GET /v1/health` (DB check through PgBouncer), `GET /v1/version`                 |
-| postgres   | 5433             | direct; roles `app_owner` (owner) and `app_user` (RLS-bound), password `dev`     |
-| pgbouncer  | 6432             | transaction mode, `max_prepared_statements=100`, pool size 4; `app_user` uses it |
-| mailpit    | 1025 SMTP / 8025 | UI at http://localhost:8025                                                      |
-| minio      | 9000 / 9001      | console at http://localhost:9001 (`minioadmin` / `minioadmin-dev`)               |
-| web (opt.) | 3001             | `docker compose --profile web up -d`, hot reload, `/v1` proxied to api           |
+The `migrate` service seeds two demo tenants, **Acme** and **Globex** (dev only; the seed refuses production).
+To use the web app on top of that stack:
+
+```bash
+docker compose --profile web up -d            # Next.js dev server on http://localhost:3001, /v1 proxied to the api
+# or the production build: pnpm --filter @assettracker/web build, then
+node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000
+```
+
+Open http://localhost:3001 and sign in. Every demo user has the password `Demo-Passw0rd-2026`:
+
+| User                                                                                                      | Role                                         |
+| --------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `owner@acme.example`, `owner@globex.example`                                                              | Owner, asks for a 6-digit authenticator code |
+| `admin@acme.example`, `technician@acme.example`, `viewer@acme.example` (and the same at `globex.example`) | Admin, Technician, Viewer, password only     |
+
+The Owner's TOTP secret is `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP` (add it to any authenticator app, or compute the
+code with `apps/api/src/auth/totp.ts`). Mail (invitations, password reset) arrives in Mailpit,
+http://localhost:8025. API reference: `GET http://localhost:3000/v1/openapi.json`.
+
+| Service    | Host port        | Notes                                                                                                     |
+| ---------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
+| api        | 3000             | `GET /v1/health` (DB check through PgBouncer), `GET /v1/version`                                          |
+| postgres   | 5433             | direct; roles `app_owner` (owner) and `app_user` (RLS-bound), password `dev`                              |
+| pgbouncer  | 6432             | transaction mode, `max_prepared_statements=100`, pool size 4; `app_user` uses it                          |
+| mailpit    | 1025 SMTP / 8025 | UI at http://localhost:8025                                                                               |
+| minio      | 9000 / 9001      | console at http://localhost:9001 (`minioadmin` / `minioadmin-dev`)                                        |
+| web (opt.) | 3001             | `docker compose --profile web up -d`, hot reload, `/v1` proxied to api; sign in with the demo users above |
 
 Ports are overridable in `.env` (copy `.env.example`); Postgres defaults to 5433 because 5432 is
 often in use. Migrations always use the direct `MIGRATOR_DATABASE_URL`, never PgBouncer.
@@ -90,6 +110,12 @@ dev-only `/v1` proxy exists only in the dev-server phase of `next.config.ts` (ta
   `apps/api/test/support/global-setup.ts`), so it is safe to run while the compose `worker` and
   `scheduler` are up: they poll the default `pgboss` schema and never see the suite's jobs.
 
+- `pnpm --filter @assettracker/web test:e2e` runs the mock-API Playwright suites (build included);
+  `pnpm --filter @assettracker/web build` followed by `pnpm --filter @assettracker/web test:e2e:real` runs the
+  **real-stack** smoke suite (project `real`: category, asset, edit with a 412, bulk actions, invite + Mailpit, logout)
+  against `docker compose up`; set `PW_CHANNEL=chrome` to use an installed Chrome.
+- `scripts/ci/compose-smoke.sh` (the CI smoke test), `scripts/ci/perf-seed.sh` + `scripts/ci/perf-check.mjs` (performance budgets
+  on 2 x 50,000 assets).
 - `docker compose --profile pooling run --rm pgbouncer-check` asserts the PgBouncer settings
   (transaction mode, `max_prepared_statements=100`, empty `server_reset_query`, pool size 4).
 - `pnpm --filter @assettracker/api schema:lint` runs `app.schema_lint()` plus the role audit
@@ -132,7 +158,7 @@ each file in a transaction with `lock_timeout`/`statement_timeout`, history in
 ## CI
 
 `.github/workflows/ci.yml` (`check`, `api-e2e` on Postgres 16 and 18 direct and through PgBouncer,
-`image`, `compose-smoke`, `image-scan` with SBOM, `publish`, `ci-gate`), `security.yml` (dependency
+`image`, `compose-smoke`, `web-e2e-real`, `image-scan` with SBOM, `publish`, `ci-gate`), `security.yml` (dependency
 audit, gitleaks), `codeql.yml` and the nightly `perf.yml`. Required checks, security exceptions,
 performance budgets and what only GitHub can verify: [`docs/engineering/ci.md`](docs/engineering/ci.md).
 Developer reference (setup per OS, ports, e2e modes, troubleshooting):

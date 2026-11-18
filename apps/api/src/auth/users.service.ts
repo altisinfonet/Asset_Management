@@ -256,7 +256,6 @@ export class UsersService {
     const email = lowerEmail(body.email);
     const status = body.send_invite ? 'invited' : (body.status ?? 'invited');
     const userId = uuidv7();
-    let mail: Parameters<AuthMailer['invitation']>[0] | null = null;
 
     try {
       const result = await this.tx(auth, async (trx) => {
@@ -332,7 +331,8 @@ export class UsersService {
             where: { id: auth.tenantId },
             select: { name: true },
           });
-          mail = {
+          // Inside the tenant transaction (ADR 0004): the invitation mail exists iff the user does.
+          await this.mailer.invitation({
             to: email,
             displayName: body.display_name,
             tenantName: tenant.name,
@@ -340,11 +340,10 @@ export class UsersService {
             token: issued.token,
             expiresAt: issued.expiresAt,
             invitedBy: auth.user.displayName,
-          };
+          });
         }
         return { user, grants };
       });
-      if (mail) await this.mailer.invitation(mail);
       return { user: userDto(result.user, result.grants), version: result.user.version };
     } catch (err) {
       if (isUniqueViolation(err)) throw problem.conflict('A user with this email already exists.');
@@ -613,7 +612,6 @@ export class UsersService {
   }
 
   async resendInvitation(auth: AuthContext, id: string): Promise<void> {
-    let mail: Parameters<AuthMailer['invitation']>[0] | null = null;
     await this.tx(auth, async (trx) => {
       const user = await this.loadInvitedUser(trx, id);
       const previous = await trx.invitation.findFirst({
@@ -636,7 +634,8 @@ export class UsersService {
         entityId: id,
         meta: { invitation_id: issued.invitationId, replaced: previous.id },
       });
-      mail = {
+      // Inside the tenant transaction (ADR 0004): the mail exists iff the new token does.
+      await this.mailer.invitation({
         to: user.email,
         displayName: user.display_name,
         tenantName: tenant.name,
@@ -644,9 +643,8 @@ export class UsersService {
         token: issued.token,
         expiresAt: issued.expiresAt,
         invitedBy: auth.user.displayName,
-      };
+      });
     });
-    if (mail) await this.mailer.invitation(mail);
   }
 
   async revokeInvitation(auth: AuthContext, id: string): Promise<void> {

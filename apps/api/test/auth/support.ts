@@ -27,7 +27,14 @@ export const freshIp = () =>
 export const uniq = () => randomBytes(5).toString('hex');
 export const newPassword = () => `Pw-${randomBytes(9).toString('base64url')}-ok`;
 
-export async function startApp(extra: Record<string, string> = {}) {
+/**
+ * `realPorts: true` leaves the capturing fakes out so the platform ports (PgAuditWriter,
+ * QueuedMailSender, pg-boss, EnvelopeSecretBox) serve the auth module, as in production.
+ */
+export async function startApp(
+  extra: Record<string, string> = {},
+  options: { realPorts?: boolean } = {},
+) {
   const config = loadConfig({
     NODE_ENV: 'test',
     DATABASE_URL: env.databaseUrl!,
@@ -40,7 +47,7 @@ export async function startApp(extra: Record<string, string> = {}) {
     IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
     ...extra,
   });
-  const app = await createApiApp(config, [TestPortsModule]);
+  const app = await createApiApp(config, options.realPorts ? [] : [TestPortsModule]);
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
   return { app, config };
@@ -210,7 +217,7 @@ export async function createUser(
   const password = newPassword();
   const client = new Client(app);
   const res = await client.post('/v1/auth/invitations/accept', {
-    token: mail.data.token,
+    token: mailToken(mail),
     password,
     display_name: `User ${label}`,
   });
@@ -235,6 +242,14 @@ export async function enrolMfa(
 /** The TOTP code for the current step plus `offset` steps. */
 export const codeAt = (secret: Uint8Array, offset: number) =>
   hotp(secret, totpStep(Date.now()) + offset);
+
+/** The single-use token inside a captured invitation / password-reset mail (it travels only as a link). */
+export const mailToken = (mail: { data: Record<string, unknown> }): string => {
+  const url = String(mail.data.acceptUrl ?? mail.data.resetUrl);
+  const token = new URL(url).searchParams.get('token');
+  if (!token) throw new Error(`no token in mail link ${url}`);
+  return token;
+};
 
 export const mailsTo = (email: string, template?: string) =>
   testPorts.mail.sent.filter((m) => m.to === email && (!template || m.template === template));

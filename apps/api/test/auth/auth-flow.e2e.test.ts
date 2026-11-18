@@ -14,6 +14,7 @@ import {
   env,
   freshIp,
   mailsTo,
+  mailToken,
   newPassword,
   newTenancy,
   startApp,
@@ -68,8 +69,10 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
 
       const mail = testPorts.mail.sent.slice(before).find((m) => m.to === email)!;
       expect(mail.template).toBe('auth.invitation');
-      const token = mail.data.token as string;
-      expect(mail.data.link).toBe(`http://web.test/invitation?token=${encodeURIComponent(token)}`);
+      const token = mailToken(mail);
+      expect(mail.data.acceptUrl).toBe(
+        `http://web.test/invitation?token=${encodeURIComponent(token)}`,
+      );
 
       const anon = new Client(app);
       const info = await anon.get(`/v1/auth/invitations/${token}`);
@@ -192,7 +195,7 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
       await app.get(AuthService).drain();
       for (const mail of mailsTo(email, 'auth.password-reset').slice(-2)) {
         const r = await new Client(app).post('/v1/auth/password/reset', {
-          token: mail.data.token,
+          token: mailToken(mail),
           password: pw,
         });
         expect(r.status).toBe(204);
@@ -399,7 +402,7 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
       expect(mails).toHaveLength(1);
       expect(mailsTo(`nobody-${Date.now()}@nowhere.example`)).toHaveLength(0);
 
-      const token = mails[0]!.data.token as string;
+      const token = mailToken(mails[0]!);
       const weak = await new Client(app).post('/v1/auth/password/reset', {
         token,
         password: 'aaaaaaaaaaaaaaaa',
@@ -499,10 +502,10 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
         role_assignments: [{ role_id: T.roles.viewer }],
       });
       const id = created.body.id as string;
-      const first = mailsTo(email, 'auth.invitation')[0]!.data.token as string;
+      const first = mailToken(mailsTo(email, 'auth.invitation')[0]!);
 
       expect((await T.admin.post(`/v1/users/${id}/invitation/resend`)).status).toBe(204);
-      const second = mailsTo(email, 'auth.invitation')[1]!.data.token as string;
+      const second = mailToken(mailsTo(email, 'auth.invitation')[1]!);
       expect(second).not.toBe(first);
       expect((await new Client(app).get(`/v1/auth/invitations/${first}`)).status).toBe(404); // old link is dead
       expect((await new Client(app).get(`/v1/auth/invitations/${second}`)).status).toBe(200);
@@ -533,7 +536,7 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
         display_name: 'Late',
         role_assignments: [{ role_id: T.roles.viewer }],
       });
-      const token = mailsTo(email, 'auth.invitation')[0]!.data.token as string;
+      const token = mailToken(mailsTo(email, 'auth.invitation')[0]!);
       // Age both the invitation and its token (RLS needs the tenant set in the same transaction).
       await withClient(env.migratorUrl!, async (c) => {
         await c.query('begin');
@@ -560,7 +563,7 @@ describe.skipIf(!dbEnabled)('auth flows', () => {
       expect((await T.admin.post(`/v1/users/${created.body.id}/invitation/resend`)).status).toBe(
         204,
       );
-      const fresh = mailsTo(email, 'auth.invitation')[1]!.data.token as string;
+      const fresh = mailToken(mailsTo(email, 'auth.invitation')[1]!);
       expect((await new Client(app).get(`/v1/auth/invitations/${fresh}`)).status).toBe(200);
     });
 

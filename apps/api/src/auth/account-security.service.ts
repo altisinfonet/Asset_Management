@@ -89,7 +89,14 @@ export class AccountSecurityService {
         where: { id: auth.tenantId },
         select: { name: true },
       });
-      return { ok: true as const, recoveryCodes, session, tenantName: tenant.name };
+      // Inside the tenant transaction (ADR 0004): the mail exists iff MFA was actually enabled.
+      await this.mailer.mfaEnabled({
+        to: auth.user.email,
+        displayName: auth.user.displayName,
+        tenantName: tenant.name,
+        locale: auth.user.locale,
+      });
+      return { ok: true as const, recoveryCodes, session };
     });
 
     if (!result.ok) {
@@ -104,12 +111,6 @@ export class AccountSecurityService {
       throw authProblem.mfaInvalidCode(422);
     }
     await this.throttle.reset(bucket);
-    await this.mailer.mfaEnabled({
-      to: auth.user.email,
-      displayName: auth.user.displayName,
-      tenantName: result.tenantName,
-      locale: auth.user.locale,
-    });
     return {
       body: { recovery_codes: result.recoveryCodes, csrf_token: result.session.csrfToken },
       cookie: this.sessions.cookieFor(result.session.token, result.session.absoluteExpiresAt),

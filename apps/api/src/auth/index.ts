@@ -46,7 +46,3 @@ export {
   seedDemoLogins,
   type DemoLoginsResult,
 } from './demo-credentials.js';
-export {
-  TemporaryPortBindingsModule,
-  createTemporarySecretBox,
-} from './temporary-port-bindings.js';

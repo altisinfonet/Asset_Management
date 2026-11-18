@@ -18,6 +18,9 @@
     "typecheck": {
       "dependsOn": ["^build", "db:generate"]
     },
+    "@assettracker/web#typecheck": {
+      "dependsOn": ["^build", "@assettracker/web#build"]
+    },
     "test": {
       "dependsOn": ["^build", "db:generate"]
     },

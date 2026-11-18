@@ -6,6 +6,7 @@ import { bootstrapTenant } from '../../src/bootstrap/bootstrap-tenant.js';
 import { loadConfig } from '../../src/config/env.js';
 import { base32Decode, hotp, totpStep } from '../../src/auth/totp.js';
 import { dbEnabled, env, jobsSchema, newTenancy, withClient } from '../support/db.js';
+import { observe } from '../support/contract-observer.js';
 import { testPorts, TestPortsModule } from '../support/test-ports.js';
 import type { TenancyService } from '../../src/tenancy/index.js';
 
@@ -107,6 +108,7 @@ export class Client {
       headers,
       ...(opts.body !== undefined ? { payload: opts.body as object } : {}),
     });
+    observe(method, url, res.statusCode);
     const set = res.headers['set-cookie'];
     const lines = Array.isArray(set) ? set : set ? [set] : [];
     for (const line of lines) {

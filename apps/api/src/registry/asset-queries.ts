@@ -1,4 +1,4 @@
-import { ApiProblem, type SortTerm } from '../platform/index.js';
+import { ApiProblem, type SortTerm, parseSort } from '../platform/index.js';
 import { Prisma, type Tx } from '../tenancy/index.js';
 import { isoDate } from './dto.js';
 import type { AssetListQuery } from './schemas.js';
@@ -46,14 +46,31 @@ export interface AssetRow {
 export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name, a.serial, a.category_id,
   a.model_id, a.status_id, a.location_id, a.company_id, a.vendor_id, a.parent_asset_id, a.purchase_date,
   a.purchase_cost_minor, a.currency, a.order_number, a.warranty_end, a.notes, a.custom_data,
-  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version,
-  s.name as status_name, s.state_type as status_state_type`;
+  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version`;
 
-export const ASSET_FROM = Prisma.sql`from app.asset a
-  join app.status_label s on s.tenant_id = a.tenant_id and s.id = a.status_id`;
+/**
+ * No join with the status label: it would let the planner start from the 7-row label table and
+ * scan assets per status (a bad plan for exact tag lookups). Status names are attached to the page
+ * of rows afterwards ({@link withStatus}), one query over at most a handful of labels.
+ */
+export const ASSET_FROM = Prisma.sql`from app.asset a`;
 
-/** Full-text document of an asset; the GIN index `asset_fts_idx` (migration 0031) uses this exact expression. */
-export const ASSET_FTS = Prisma.sql`to_tsvector('simple', coalesce(a.name, '') || ' ' || coalesce(a.order_number, '') || ' ' || coalesce(a.notes, ''))`;
+/** Attaches `status_name` / `status_state_type` to rows fetched without the status join. */
+export async function withStatus(
+  trx: Tx,
+  rows: Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>,
+): Promise<AssetRow[]> {
+  if (rows.length === 0) return [];
+  const labels = await trx.status_label.findMany({
+    where: { id: { in: [...new Set(rows.map((r) => r.status_id))] } },
+    select: { id: true, name: true, state_type: true },
+  });
+  const byId = new Map(labels.map((l) => [l.id, l]));
+  return rows.map((r) => {
+    const label = byId.get(r.status_id);
+    return { ...r, status_name: label?.name ?? '', status_state_type: label?.state_type ?? '' };
+  });
+}
 
 export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
   return {
@@ -123,9 +140,10 @@ export const ASSET_FIELDS = Object.keys(
 
 /** One asset (any archive state) by an arbitrary predicate. */
 export async function loadAssetRows(trx: Tx, where: Prisma.Sql, limit = 1000): Promise<AssetRow[]> {
-  return trx.$queryRaw<
-    AssetRow[]
+  const rows = await trx.$queryRaw<
+    Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>
   >`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} limit ${limit}`;
+  return withStatus(trx, rows);
 }
 
 export async function loadAsset(trx: Tx, id: string): Promise<AssetRow | null> {
@@ -160,7 +178,7 @@ const SORTS: Record<string, SortSpec> = {
     text: PG_TS.replace('%s', 'a.updated_at'),
     cast: 'timestamptz',
   },
-  asset_tag: { expr: 'lower(a.asset_tag)', text: 'lower(a.asset_tag)', cast: 'text' },
+  asset_tag: { expr: 'a.asset_tag_key', text: 'a.asset_tag_key', cast: 'text' },
   name: { expr: `coalesce(lower(a.name), '')`, text: `coalesce(lower(a.name), '')`, cast: 'text' },
   purchase_date: {
     expr: `coalesce(a.purchase_date, date '0001-01-01')`,
@@ -228,17 +246,15 @@ export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Pri
   if (q.archived === 'exclude') c.push(Prisma.sql`a.archived_at is null`);
   else if (q.archived === 'only') c.push(Prisma.sql`a.archived_at is not null`);
 
-  if (q.tag) c.push(Prisma.sql`lower(a.asset_tag) = lower(${q.tag})`);
-  if (q.serial) c.push(Prisma.sql`lower(a.serial) = lower(${q.serial})`);
-  if (q.q) {
-    const contains = `%${escapeLike(q.q)}%`;
+  if (q.tag) c.push(Prisma.sql`a.asset_tag_key = lower(${q.tag})`);
+  if (q.serial) c.push(Prisma.sql`a.serial_key = lower(${q.serial})`);
+  if (q.q) c.push(Prisma.sql`strpos(a.search_text, lower(${q.q})) > 0`);
+  if (q.status_id?.length) c.push(Prisma.sql`a.status_id in (${uuidList(q.status_id)})`);
+  if (q.state_type?.length) {
     c.push(
-      Prisma.sql`(a.asset_tag ilike ${contains} or a.serial ilike ${contains} or a.name ilike ${contains}
-        or ${ASSET_FTS} @@ websearch_to_tsquery('simple', ${q.q}))`,
+      Prisma.sql`a.status_id in (select s.id from app.status_label s where s.state_type in (${Prisma.join(q.state_type)}))`,
     );
   }
-  if (q.status_id?.length) c.push(Prisma.sql`a.status_id in (${uuidList(q.status_id)})`);
-  if (q.state_type?.length) c.push(Prisma.sql`s.state_type in (${Prisma.join(q.state_type)})`);
   if (q.category_id?.length) c.push(Prisma.sql`a.category_id in (${uuidList(q.category_id)})`);
   if (q.model_id?.length) c.push(Prisma.sql`a.model_id in (${uuidList(q.model_id)})`);
   if (q.manufacturer_id) {
@@ -285,6 +301,28 @@ export function splitCustomFieldParams(query: Record<string, unknown>): {
   return { rest, cf };
 }
 
+/** `?sort=` of the asset list: allow-listed keys, `-created_at` by default. */
+export function assetSortTerms(sort: string | undefined): SortTerm[] {
+  const terms = parseSort(sort, {
+    sortable: {
+      created_at: { kind: 'string' },
+      updated_at: { kind: 'string' },
+      asset_tag: { kind: 'string' },
+      name: { kind: 'string' },
+      purchase_date: { kind: 'string' },
+      warranty_end: { kind: 'string' },
+    },
+    defaultSort: '-created_at',
+  });
+  // The unique tiebreaker follows the direction of the first sort key (newest first stays newest
+  // first on ties, matching the asset_created_idx index order).
+  const idTerm = terms.at(-1);
+  if (idTerm && idTerm.key === 'id' && !/(^|,)[-+]?id(,|$)/.test(sort ?? '')) {
+    idTerm.direction = terms[0]!.direction;
+  }
+  return terms;
+}
+
 /** Sparse fieldset: `id` is always included. */
 export function pickFields<T extends Record<string, unknown>>(
   row: T,
@@ -294,4 +332,31 @@ export function pickFields<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = { id: row.id };
   for (const f of fields) out[f] = row[f];
   return out as Partial<T>;
+}
+
+/**
+ * The statement behind `GET /v1/assets`: filters + keyset condition + order + limit. Exported so the
+ * performance suite can EXPLAIN exactly what production runs (`.sql` / `.values` of a Prisma.Sql).
+ */
+export function assetListSql(
+  q: AssetListQuery,
+  cf: CustomFieldFilter[],
+  terms: SortTerm[],
+  cursorValues: Array<string | number | Date> | undefined,
+): Prisma.Sql {
+  const conditions = assetConditions(q, cf);
+  const where = conditions.length > 0 ? Prisma.join(conditions, ' and ') : Prisma.sql`true`;
+  const after = cursorValues ? keysetSql(terms, cursorValues) : Prisma.sql`true`;
+  const take = q.limit + 1;
+  return Prisma.sql`select ${ASSET_COLUMNS} ${sortKeySelect(terms)} ${ASSET_FROM}
+    where ${where} and ${after}
+    order by ${orderBySql(terms)}
+    limit ${take}`;
+}
+
+/** `GET /v1/assets?include_total=true`: the same filters, no cursor. */
+export function assetCountSql(q: AssetListQuery, cf: CustomFieldFilter[]): Prisma.Sql {
+  const conditions = assetConditions(q, cf);
+  const where = conditions.length > 0 ? Prisma.join(conditions, ' and ') : Prisma.sql`true`;
+  return Prisma.sql`select count(*) as n ${ASSET_FROM} where ${where}`;
 }

@@ -18,6 +18,10 @@ export interface ContractOperation {
   public: boolean;
   permission: string | null;
   selfService: boolean;
+  /** HTTP status codes the operation documents. */
+  statuses: number[];
+  /** `$ref` target (schema name) of the JSON body of each documented status, when there is one. */
+  responseSchemas: Record<number, string>;
 }
 
 const CONTRACT = join(
@@ -37,17 +41,45 @@ interface RawOperation {
   security?: unknown[];
   'x-permission'?: string;
   'x-self-service'?: boolean;
+  responses?: Record<
+    string,
+    { content?: Record<string, { schema?: { $ref?: string } }>; $ref?: string }
+  >;
+}
+
+export interface RawDocument {
+  paths: Record<string, Record<string, RawOperation>>;
+  components: {
+    schemas: Record<string, unknown>;
+    responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
+  };
+  'x-problem-codes': Record<string, { status: number[] }>;
+}
+
+let cached: RawDocument | undefined;
+export function loadDocument(): RawDocument {
+  cached ??= yaml.load(readFileSync(CONTRACT, 'utf8')) as RawDocument;
+  return cached;
 }
 
 export function loadContract(): { operations: ContractOperation[]; permissions: string[] } {
-  const doc = yaml.load(readFileSync(CONTRACT, 'utf8')) as {
-    paths: Record<string, Record<string, RawOperation>>;
-  };
+  const doc = loadDocument();
   const operations: ContractOperation[] = [];
   for (const [path, item] of Object.entries(doc.paths)) {
     for (const method of ['get', 'post', 'put', 'patch', 'delete'] as const) {
       const op = item[method];
       if (!op) continue;
+      const responseSchemas: Record<number, string> = {};
+      for (const [code, response] of Object.entries(op.responses ?? {})) {
+        const schema =
+          response.content?.['application/json']?.schema?.$ref ??
+          (response.$ref
+            ? doc.components.responses?.[response.$ref.split('/').pop()!]?.content?.[
+                'application/json'
+              ]?.schema?.$ref
+            : undefined);
+        if (schema) responseSchemas[Number(code)] = schema.split('/').pop()!;
+      }
       operations.push({
         method,
         path,
@@ -56,6 +88,8 @@ export function loadContract(): { operations: ContractOperation[]; permissions: 
         public: Array.isArray(op.security) && op.security.length === 0,
         permission: op['x-permission'] ?? null,
         selfService: op['x-self-service'] === true,
+        statuses: Object.keys(op.responses ?? {}).map(Number),
+        responseSchemas,
       });
     }
   }
@@ -75,10 +109,50 @@ export function ruleOf(op: ContractOperation): AccessRule {
 
 /** The contract's root `x-problem-codes` catalogue: code -> HTTP statuses it can carry. */
 export function loadProblemCodes(): Record<string, number[]> {
-  const doc = yaml.load(readFileSync(CONTRACT, 'utf8')) as {
-    'x-problem-codes': Record<string, { status: number[] }>;
-  };
+  const doc = loadDocument();
   return Object.fromEntries(
     Object.entries(doc['x-problem-codes']).map(([code, v]) => [code, v.status]),
   );
+}
+
+/**
+ * Operations that M1 does not implement (custody, history and assignments belong to M2): the
+ * registry route tests treat them as "not yet", everything else under the registry tags is required.
+ */
+export const M2_OPERATIONS = new Set([
+  'listAssetAssignments',
+  'checkinAsset',
+  'checkoutAsset',
+  'listAssetHistory',
+  'transferAsset',
+]);
+
+/** Tags whose operations the registry module (M1-REG) owns. */
+export const REGISTRY_TAGS = new Set([
+  'Assets',
+  'Search',
+  'Categories',
+  'Manufacturers',
+  'Models',
+  'Custom fields',
+  'Status labels',
+  'Vendors',
+]);
+
+/** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
+export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];
+
+/** Finds the contract operation a concrete request belongs to (most specific path template wins). */
+export function matchOperation(
+  operations: readonly ContractOperation[],
+  method: string,
+  url: string,
+): ContractOperation | undefined {
+  const path = url.split('?')[0]!;
+  const candidates = operations
+    .filter((o) => o.method === method.toLowerCase())
+    .filter((o) => new RegExp(`^${o.path.replace(/\{[^}]+\}/g, '[^/]+')}$`).test(path));
+  // `/v1/assets/bulk-update` also matches `/v1/assets/{id}`: prefer the template with fewer parameters.
+  candidates.sort((a, b) => (a.path.match(/\{/g)?.length ?? 0) - (b.path.match(/\{/g)?.length ?? 0));
+  return candidates[0];
 }

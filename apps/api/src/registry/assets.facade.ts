@@ -26,19 +26,17 @@ import {
 import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
 import { AssetRefs } from './asset-refs.js';
 import {
-  ASSET_COLUMNS,
   ASSET_FIELDS,
-  ASSET_FROM,
   type AssetDto,
   type AssetRow,
-  assetConditions,
+  assetCountSql,
   assetDto,
-  keysetSql,
+  assetListSql,
+  assetSortTerms,
   loadAsset,
   loadAssetRows,
-  orderBySql,
   pickFields,
-  sortKeySelect,
+  withStatus,
   splitCustomFieldParams,
 } from './asset-queries.js';
 import { AssetTagService, tagExists } from './asset-tags.js';
@@ -150,23 +148,7 @@ export class AssetsFacade extends RegistryBase {
     cfRaw: Array<{ key: string; raw: string }>,
   ): Promise<Page<Record<string, unknown>>> {
     const fields = parseFields(q.fields, ASSET_FIELDS);
-    const terms = parseSort(q.sort, {
-      sortable: {
-        created_at: { kind: 'string' },
-        updated_at: { kind: 'string' },
-        asset_tag: { kind: 'string' },
-        name: { kind: 'string' },
-        purchase_date: { kind: 'string' },
-        warranty_end: { kind: 'string' },
-      },
-      defaultSort: '-created_at',
-    });
-    // The unique tiebreaker follows the direction of the first sort key (newest first stays newest
-    // first on ties, matching the asset_created_idx index order).
-    const idTerm = terms.at(-1);
-    if (idTerm && idTerm.key === 'id' && !/(^|,)[-+]?id(,|$)/.test(q.sort ?? '')) {
-      idTerm.direction = terms[0]!.direction;
-    }
+    const terms = assetSortTerms(q.sort);
     // Every sort key travels in the cursor as the text the row carries (`k0`, `k1`, ...).
     const sortTerms = terms.map((t, i) => ({ ...t, column: `k${i}` }));
     const filters = {
@@ -183,19 +165,12 @@ export class AssetsFacade extends RegistryBase {
 
     return this.tx(auth, async (trx) => {
       const cf = await this.customFieldFilters(trx, cfRaw);
-      const conditions = assetConditions(q, cf);
-      const where = conditions.length > 0 ? Prisma.join(conditions, ' and ') : Prisma.sql`true`;
-      const after = values ? keysetSql(terms, values) : Prisma.sql`true`;
-      const take = q.limit + 1;
-
-      const rows = await trx.$queryRaw<AssetRow[]>`
-        select ${ASSET_COLUMNS} ${sortKeySelect(terms)} ${ASSET_FROM}
-         where ${where} and ${after}
-         order by ${orderBySql(terms)}
-         limit ${take}`;
+      const rows = await trx.$queryRaw<Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>>(
+        assetListSql(q, cf, terms, values),
+      );
 
       const hasMore = rows.length > q.limit;
-      const data = hasMore ? rows.slice(0, q.limit) : rows;
+      const data = await withStatus(trx, hasMore ? rows.slice(0, q.limit) : rows);
       const last = data.at(-1);
       const expansions = await this.expansions(trx, data, q.expand);
       const page: Page<Record<string, unknown>>['page'] = {
@@ -206,8 +181,7 @@ export class AssetsFacade extends RegistryBase {
         has_more: hasMore,
       };
       if (q.include_total) {
-        const [c] = await trx.$queryRaw<Array<{ n: bigint }>>`
-          select count(*) as n ${ASSET_FROM} where ${where}`;
+        const [c] = await trx.$queryRaw<Array<{ n: bigint }>>(assetCountSql(q, cf));
         page.total = Number(c?.n ?? 0);
       }
       return {
@@ -308,7 +282,7 @@ export class AssetsFacade extends RegistryBase {
       let [row] = await loadAssetRows(trx, Prisma.sql`a.label_code = ${code}`, 1);
       if (!row) {
         matchType = 'asset_tag';
-        [row] = await loadAssetRows(trx, Prisma.sql`lower(a.asset_tag) = lower(${code})`, 1);
+        [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
       }
       if (!row) throw problem.notFound('No asset matches this code.');
       const allowed: string[] = [];

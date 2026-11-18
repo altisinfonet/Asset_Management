@@ -8289,6 +8289,7 @@ components:
         - asset-already-checked-out
       x-known-values:
         - bad-request
+        - invalid-cursor
         - idempotency-key-required
         - idempotency-key-invalid
         - unauthorized
@@ -12876,7 +12877,11 @@ x-problem-codes:
   bad-request:
     status:
       - 400
-    description: "Malformed request: bad JSON, bad query parameter, invalid cursor."
+    description: "Malformed request: bad JSON, bad query parameter."
+  invalid-cursor:
+    status:
+      - 400
+    description: "The cursor is not valid for this list: it is garbled, or it was issued for a different sort or filter. Start again without a cursor."
   idempotency-key-required:
     status:
       - 400

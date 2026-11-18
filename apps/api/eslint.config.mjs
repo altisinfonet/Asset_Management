@@ -27,6 +27,8 @@ export const FACADE_MODULES = [
   'crypto',
   'mail',
   'observability',
+  'registry',
+  'openapi',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [

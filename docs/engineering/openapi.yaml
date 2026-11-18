@@ -57,6 +57,8 @@ security:
 tags:
   - name: Auth
     description: Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.
+  - name: System
+    description: Liveness/health and build version; no credential needed.
   - name: Search
     description: Global search across registry entities, filtered by the caller's permissions.
   - name: Access
@@ -1254,6 +1256,61 @@ paths:
           $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/{id}/clone:
+    post:
+      tags:
+        - Assets
+      operationId: cloneAsset
+      summary: Clone an asset
+      description: |-
+        Creates `count` copies of the asset with fresh tags (the numbering template, or the explicit `asset_tags`) and a cleared serial. `copy_fields` chooses what is copied (default: all of `name`, `model_id`, `status_id`, `vendor_id`, `location_id`, `parent_asset_id`, `purchase_date`, `purchase_cost`, `order_number`, `warranty_end`, `notes`, `custom_data`). All or nothing: one transaction, one audit record and outbox event per copy.
+
+        Added by M1-REG-09 (not part of the first contract draft).
+
+        Requires permission `asset:create`.
+      x-permission: asset:create
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetCloneRequest"
+      responses:
+        "201":
+          description: The copies.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetCloneResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/assets/{id}/history:
     get:
       tags:
@@ -1433,6 +1490,162 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/bulk-archive:
+    post:
+      tags:
+        - Assets
+      operationId: bulkArchiveAssets
+      summary: Archive many assets
+      description: |-
+        Soft-deletes the listed assets (same rules as `DELETE /v1/assets/{id}`).
+
+        At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+
+        Added by M1-REG-09 (not part of the first contract draft).
+
+        Requires permission `asset:delete`.
+      x-permission: asset:delete
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAssetIds"
+      responses:
+        "200":
+          description: Per-item results.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkAssetResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/bulk-restore:
+    post:
+      tags:
+        - Assets
+      operationId: bulkRestoreAssets
+      summary: Restore many assets
+      description: |-
+        Restores the listed archived assets.
+
+        At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+
+        Added by M1-REG-09 (not part of the first contract draft).
+
+        Requires permission `asset:delete`.
+      x-permission: asset:delete
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAssetIds"
+      responses:
+        "200":
+          description: Per-item results.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkAssetResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/bulk-update:
+    post:
+      tags:
+        - Assets
+      operationId: bulkUpdateAssets
+      summary: Edit many assets
+      description: |-
+        Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.
+
+        At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+
+        Added by M1-REG-09 (not part of the first contract draft).
+
+        Requires permission `asset:update`.
+      x-permission: asset:update
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAssetUpdate"
+      responses:
+        "200":
+          description: Per-item results.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkAssetResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -2298,7 +2511,7 @@ paths:
         - Auth
       operationId: confirmMfaEnrolment
       summary: Confirm TOTP enrolment
-      description: "Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
+      description: "Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. The session id is rotated (new cookie) and the response carries the new `csrf_token`. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
       x-self-service: true
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -2310,7 +2523,7 @@ paths:
               $ref: "#/components/schemas/MfaConfirmRequest"
       responses:
         "200":
-          description: Factor active; recovery codes.
+          description: Factor active; recovery codes and the new CSRF token.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -2323,7 +2536,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MfaRecoveryCodes"
+                $ref: "#/components/schemas/MfaEnrolmentConfirmed"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3938,6 +4151,35 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/health:
+    get:
+      tags:
+        - System
+      operationId: getHealth
+      summary: Health with a database round trip
+      security: []
+      description: Liveness plus a database round trip (through PgBouncer when so configured). No credential needed. `503` with the same body shape when the database does not answer.
+      responses:
+        "200":
+          description: Healthy.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: "Degraded: the database check failed (same body)."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
   /v1/imports:
     get:
       tags:
@@ -6552,6 +6794,97 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/settings/asset-tag-template:
+    get:
+      tags:
+        - Assets
+      operationId: getAssetTagTemplate
+      summary: Get the asset tag numbering template
+      description: |-
+        The template used to generate asset tags when `POST /v1/assets` omits `asset_tag`: `prefix` + the category `tag_prefix` (when `use_category_prefix`) + a counter zero-padded to `width`. Counters are per tenant and per full prefix; tags are never reused.
+
+        Added by M1-REG-06 (not part of the first contract draft).
+
+        Requires permission `catalog:read`.
+      x-permission: catalog:read
+      responses:
+        "200":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetTagTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    put:
+      tags:
+        - Assets
+      operationId: putAssetTagTemplate
+      summary: Replace the asset tag numbering template
+      description: |-
+        Existing tags are never rewritten. `If-Match` is the ETag of `GET` (the tenant settings version).
+
+        Requires permission `catalog:manage`.
+      x-permission: catalog:manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetTagTemplate"
+      responses:
+        "200":
+          description: The new template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetTagTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/status-labels:
     get:
       tags:
@@ -7515,6 +7848,26 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/version:
+    get:
+      tags:
+        - System
+      operationId: getVersion
+      summary: Build version
+      security: []
+      description: Name, version, commit and process role of the running build. No credential needed.
+      responses:
+        "200":
+          description: The build.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 components:
   securitySchemes:
     sessionCookie:
@@ -7806,6 +8159,215 @@ components:
       x-problem-codes:
         - too-many-requests
   schemas:
+    AssetCloneRequest:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 1
+        copy_fields:
+          type: array
+          items:
+            type: string
+            enum:
+              - name
+              - model_id
+              - status_id
+              - vendor_id
+              - location_id
+              - parent_asset_id
+              - purchase_date
+              - purchase_cost
+              - order_number
+              - warranty_end
+              - notes
+              - custom_data
+          description: Fields to copy from the source. Default - all of them.
+        asset_tags:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: ^\S+$
+          description: One explicit tag per copy; omit to generate them from the numbering template.
+      additionalProperties: false
+    AssetCloneResult:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+      required:
+        - data
+    BulkAssetIds:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 100
+      required:
+        - ids
+      additionalProperties: false
+    BulkAssetUpdate:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 100
+        changes:
+          type: object
+          properties:
+            status_id:
+              type: string
+              format: uuid
+            category_id:
+              type: string
+              format: uuid
+            model_id:
+              type:
+                - string
+                - "null"
+              format: uuid
+            vendor_id:
+              type:
+                - string
+                - "null"
+              format: uuid
+            custom_data:
+              $ref: "#/components/schemas/CustomData"
+          description: At least one of these. `custom_data` merges per key (`null` removes a key).
+          additionalProperties: false
+      required:
+        - ids
+        - changes
+      additionalProperties: false
+    BulkAssetResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              status:
+                type: integer
+                description: HTTP status the single-asset operation would have returned.
+              data:
+                $ref: "#/components/schemas/Asset"
+              error:
+                $ref: "#/components/schemas/Problem"
+            required:
+              - index
+              - status
+        summary:
+          type: object
+          properties:
+            total:
+              type: integer
+            succeeded:
+              type: integer
+            failed:
+              type: integer
+          required:
+            - total
+            - succeeded
+            - failed
+      required:
+        - results
+        - summary
+    AssetTagTemplate:
+      type: object
+      properties:
+        prefix:
+          type: string
+          pattern: ^[A-Z0-9-]{0,12}$
+          default: ""
+        width:
+          type: integer
+          minimum: 1
+          maximum: 12
+          default: 5
+          description: Zero-padded width of the counter.
+        use_category_prefix:
+          type: boolean
+          default: true
+        example:
+          type: string
+          readOnly: true
+          description: A sample tag produced by the template (counter 42).
+      additionalProperties: false
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+        checks:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - ok
+                    - error
+                latencyMs:
+                  type: number
+                  minimum: 0
+                  description: Round trip of the database probe (only when `ok`).
+                error:
+                  type: string
+                  description: Why the probe failed (only when `error`).
+              required:
+                - status
+          required:
+            - db
+        uptimeSeconds:
+          type: number
+          minimum: 0
+      required:
+        - status
+        - checks
+        - uptimeSeconds
+      description: Health of the API process and its database. `200` when `ok`, `503` (same shape) when `degraded`.
+    VersionResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Package name of the API build.
+        version:
+          type: string
+          description: Semantic version of the build.
+        commit:
+          type: string
+          description: Git commit the image was built from (`dev` for local runs).
+        role:
+          type: string
+          description: "Process role: `api`, `worker`, `scheduler` or `migrate`."
+      required:
+        - name
+        - version
+        - commit
+        - role
     Problem:
       type: object
       properties:
@@ -7832,6 +8394,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/FieldError"
+        usage:
+          type: object
+          description: 'Extension member of a `409` that refuses to delete or change something still in use: what references it (for example `{"assets": 12, "models": 3}`).'
+          additionalProperties:
+            type: integer
       required:
         - type
         - title
@@ -7847,6 +8414,7 @@ components:
         - asset-already-checked-out
       x-known-values:
         - bad-request
+        - invalid-cursor
         - idempotency-key-required
         - idempotency-key-invalid
         - unauthorized
@@ -10782,6 +11350,20 @@ components:
             - string
             - "null"
           format: uuid
+        actor:
+          oneOf:
+            - type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                display_name:
+                  type: string
+              required:
+                - id
+                - display_name
+            - type: "null"
+          description: Who did it, resolved for display; null for system events or when the user no longer exists.
         assignment_id:
           type:
             - string
@@ -11995,6 +12577,22 @@ components:
           description: Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.
       required:
         - recovery_codes
+    MfaEnrolmentConfirmed:
+      type: object
+      properties:
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          minItems: 10
+          maxItems: 10
+          description: Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.
+        csrf_token:
+          type: string
+          description: "The session is rotated on activation, so the CSRF token changes: store this one and send it as `X-CSRF-Token` on the next cookie-authenticated mutation."
+      required:
+        - recovery_codes
+        - csrf_token
     ReauthRequest:
       type: object
       description: Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.
@@ -12434,7 +13032,11 @@ x-problem-codes:
   bad-request:
     status:
       - 400
-    description: "Malformed request: bad JSON, bad query parameter, invalid cursor."
+    description: "Malformed request: bad JSON, bad query parameter."
+  invalid-cursor:
+    status:
+      - 400
+    description: "The cursor is not valid for this list: it is garbled, or it was issued for a different sort or filter. Start again without a cursor."
   idempotency-key-required:
     status:
       - 400

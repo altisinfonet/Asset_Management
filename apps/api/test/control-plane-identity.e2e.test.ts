@@ -326,7 +326,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       );
     });
 
-    it('creates Acme and Globex with 4 users and 50 assets each, overlapping tags and serials, and is idempotent', async () => {
+    it('creates Acme and Globex with 4 users and 200 assets each, overlapping tags and serials, and is idempotent', async () => {
       const first = await seedDemoData(tenancy, { nodeEnv: 'test' });
       const second = await seedDemoData(tenancy, { nodeEnv: 'test' });
       expect(second.tenants.map((t) => t.seeded)).toEqual([false, false]);
@@ -371,8 +371,8 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           'app.asset': ASSETS_PER_TENANT,
           'app.user_account': 4,
           'app.status_label': 7,
-          'app.asset_model': 9,
-          'app.custom_field_def': 3,
+          'app.asset_model': 18,
+          'app.custom_field_def': 12,
         });
         expect(s.roles).toEqual(['asset_manager', 'technician', 'tenant_admin', 'viewer']);
       }

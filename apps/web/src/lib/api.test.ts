@@ -1,11 +1,11 @@
-import { ApiError } from '@assettracker/api-client';
+import { ApiError, getVersion } from '@assettracker/api-client';
 import { describe, expect, it } from 'vitest';
 import { createWebApi, ETagStore, ifMatch, toUiError } from './api';
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
-    headers: { 'content-type': 'application/json', ...init.headers },
     ...init,
+    headers: { 'content-type': 'application/json', ...init.headers },
   });
 }
 
@@ -45,14 +45,14 @@ describe('createWebApi', () => {
   it('calls same-origin /v1 paths and remembers ETags', async () => {
     const seen: string[] = [];
     const fake = (async (input: RequestInfo | URL) => {
-      seen.push(String(input));
+      seen.push(new URL((input as Request).url).pathname);
       return jsonResponse(
         { name: 'api', version: '1', commit: 'abc', role: 'api' },
         { headers: { etag: 'W/"3"' } },
       );
     }) as typeof fetch;
     const api = createWebApi(fake);
-    await api.client.getVersion();
+    await getVersion(api.http);
     expect(seen).toEqual(['/v1/version']);
     expect(api.etags.etagFor('/v1/version')).toBe('W/"3"');
     expect(ifMatch(api.etags.etagFor('/v1/version'))).toEqual({ 'If-Match': 'W/"3"' });
@@ -66,7 +66,7 @@ describe('createWebApi', () => {
         { status: 500, headers: { 'x-request-id': 'req-7' } },
       )) as typeof fetch;
     const api = createWebApi(fake);
-    const err = await api.client.getVersion().catch((e: unknown) => api.toUiError(e));
+    const err = await getVersion(api.http).catch((e: unknown) => api.toUiError(e));
     expect(err).toMatchObject({ kind: 'server', requestId: 'req-7' });
   });
 });

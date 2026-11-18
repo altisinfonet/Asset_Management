@@ -95,6 +95,7 @@ const C = doc.components;
 
 const tagDefs = {
   Auth: 'Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.',
+  System: 'Liveness/health and build version; no credential needed.',
   Search: 'Global search across registry entities, filtered by the caller\'s permissions.',
   Access: 'Users, roles, companies and API keys.',
   Assets: 'The asset registry: CRUD, search, scan resolution and history.',
@@ -149,7 +150,8 @@ C.parameters = {
 // Catalogue of problem `code` values: code -> [HTTP statuses, meaning]. Published as the root `x-problem-codes`
 // extension and as the `ProblemCode` schema; each response lists the subset it can carry in its own `x-problem-codes`.
 const PROBLEM_CODES = {
-  'bad-request': [[400], 'Malformed request: bad JSON, bad query parameter, invalid cursor.'],
+  'bad-request': [[400], 'Malformed request: bad JSON, bad query parameter.'],
+  'invalid-cursor': [[400], 'The cursor is not valid for this list: it is garbled, or it was issued for a different sort or filter. Start again without a cursor.'],
   'idempotency-key-required': [[400], 'The operation needs an Idempotency-Key header and none was sent.'],
   'idempotency-key-invalid': [[400], 'The Idempotency-Key header is not 8-255 visible ASCII characters.'],
   unauthorized: [[401], 'No credential, or the credential is not valid (generic).'],
@@ -225,6 +227,58 @@ function specificProblem(status, codes, text) {
 
 // ---------------------------------------------------------------- common schemas
 const S_ = C.schemas;
+// Registry additions (M1-REG-06 / M1-REG-09); listed first to keep the published schema order stable.
+const BULK_MAX = 100;
+const bulkIds = () => arr({ type: 'string', format: 'uuid' }, { minItems: 1, maxItems: BULK_MAX });
+S_.AssetCloneRequest = obj({
+  count: int({ minimum: 1, maximum: 100, default: 1 }),
+  copy_fields: arr(en(['name', 'model_id', 'status_id', 'vendor_id', 'location_id', 'parent_asset_id', 'purchase_date', 'purchase_cost', 'order_number', 'warranty_end', 'notes', 'custom_data']), { description: 'Fields to copy from the source. Default - all of them.' }),
+  asset_tags: arr(str({ minLength: 1, maxLength: 64, pattern: '^\\S+$' }), { description: 'One explicit tag per copy; omit to generate them from the numbering template.' }),
+}, [], { additionalProperties: false });
+S_.AssetCloneResult = obj({ data: arr(S('Asset')) }, ['data']);
+S_.BulkAssetIds = obj({ ids: bulkIds() }, ['ids'], { additionalProperties: false });
+S_.BulkAssetUpdate = obj({
+  ids: bulkIds(),
+  changes: obj({
+    status_id: uuid(),
+    category_id: uuid(),
+    model_id: nuuid(),
+    vendor_id: nuuid(),
+    custom_data: S('CustomData'),
+  }, [], { description: 'At least one of these. `custom_data` merges per key (`null` removes a key).', additionalProperties: false }),
+}, ['ids', 'changes'], { additionalProperties: false });
+S_.BulkAssetResult = obj({
+  results: arr(obj({
+    index: int(),
+    status: int({ description: 'HTTP status the single-asset operation would have returned.' }),
+    data: S('Asset'),
+    error: S('Problem'),
+  }, ['index', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary']);
+S_.AssetTagTemplate = obj({
+  prefix: str({ pattern: '^[A-Z0-9-]{0,12}$', default: '' }),
+  width: int({ minimum: 1, maximum: 12, default: 5, description: 'Zero-padded width of the counter.' }),
+  use_category_prefix: bool({ default: true }),
+  example: str({ readOnly: true, description: 'A sample tag produced by the template (counter 42).' }),
+}, [], { additionalProperties: false });
+S_.HealthResponse = obj({
+  status: en(['ok', 'degraded']),
+  checks: obj({
+    db: obj({
+      status: en(['ok', 'error']),
+      latencyMs: { type: 'number', minimum: 0, description: 'Round trip of the database probe (only when `ok`).' },
+      error: str({ description: 'Why the probe failed (only when `error`).' }),
+    }, ['status']),
+  }, ['db']),
+  uptimeSeconds: { type: 'number', minimum: 0 },
+}, ['status', 'checks', 'uptimeSeconds'], { description: 'Health of the API process and its database. `200` when `ok`, `503` (same shape) when `degraded`.' });
+S_.VersionResponse = obj({
+  name: str({ description: 'Package name of the API build.' }),
+  version: str({ description: 'Semantic version of the build.' }),
+  commit: str({ description: 'Git commit the image was built from (`dev` for local runs).' }),
+  role: str({ description: 'Process role: `api`, `worker`, `scheduler` or `migrate`.' }),
+}, ['name', 'version', 'commit', 'role']);
 S_.Problem = obj({
   type: str({ format: 'uri-reference', description: 'Problem type URI.' }),
   title: str(),
@@ -234,6 +288,7 @@ S_.Problem = obj({
   code: S('ProblemCode'),
   request_id: str(),
   errors: arr(S('FieldError')),
+  usage: { type: 'object', description: 'Extension member of a `409` that refuses to delete or change something still in use: what references it (for example `{"assets": 12, "models": 3}`).', additionalProperties: int() },
 }, ['type', 'title', 'status'], { description: 'RFC 9457 problem details.' });
 S_.ProblemCode = str({
   description: 'Stable machine-readable problem code. The set is open (new codes may appear): branch on codes you know and fall back to the HTTP status. The full catalogue (code, HTTP status, meaning) is the root `x-problem-codes` extension of this document; each error response lists its own subset in `x-problem-codes`.',
@@ -562,6 +617,7 @@ S_.HistoryEvent = obj({
   event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']),
   actor_type: en(['user', 'api_key', 'integration', 'system']),
   actor_id: nuuid(),
+  actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display; null for system events or when the user no longer exists.' },
   assignment_id: nuuid(),
   transfer_id: nuuid(),
   summary: nstr(),
@@ -828,9 +884,12 @@ S_.MfaEnrolment = obj({
   provisioning_uri: str({ description: '`otpauth://totp/...` URI that the QR code encodes.' }),
 }, ['secret', 'provisioning_uri'], { description: 'A pending (not yet active) TOTP factor. It becomes active only after `POST /v1/auth/mfa/enrol/confirm`. Calling enrol again before confirming replaces the pending secret.' });
 S_.MfaConfirmRequest = obj({ code: str({ pattern: '^[0-9 ]{6,8}$', description: 'Current 6-digit TOTP code (spaces ignored).' }) }, ['code'], { additionalProperties: false });
-S_.MfaRecoveryCodes = obj({
-  recovery_codes: arr(str(), { minItems: 10, maxItems: 10, description: 'Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.' }),
-}, ['recovery_codes']);
+const RECOVERY_CODES = arr(str(), { minItems: 10, maxItems: 10, description: 'Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.' });
+S_.MfaRecoveryCodes = obj({ recovery_codes: RECOVERY_CODES }, ['recovery_codes']);
+S_.MfaEnrolmentConfirmed = obj({
+  recovery_codes: RECOVERY_CODES,
+  csrf_token: str({ description: 'The session is rotated on activation, so the CSRF token changes: store this one and send it as `X-CSRF-Token` on the next cookie-authenticated mutation.' }),
+}, ['recovery_codes', 'csrf_token']);
 S_.ReauthRequest = {
   type: 'object',
   description: 'Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.',
@@ -1082,10 +1141,10 @@ addOp('/v1/auth/mfa/enrol', 'post', {
 });
 addOp('/v1/auth/mfa/enrol/confirm', 'post', {
   tag: 'Auth', id: 'confirmMfaEnrolment', summary: 'Confirm TOTP enrolment', selfService: true, idem: 'none', hasId: false,
-  description: 'Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled.' + SECRET_NOTE,
+  description: 'Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. The session id is rotated (new cookie) and the response carries the new `csrf_token`. Works on a limited session. Attempts are throttled.' + SECRET_NOTE,
   body: jsonBody(S('MfaConfirmRequest')),
   problems: { 403: SELF_403, 409: { codes: ['conflict', 'mfa-already-enrolled'], text: 'No enrolment is pending (call enrol first) or a factor is already active.' }, 422: { codes: ['mfa-invalid-code', 'validation'], text: 'The code does not match. `errors[]` pointer `/code`.' }, 429: THROTTLED },
-  success: { 200: okResp(200, 'Factor active; recovery codes.', S('MfaRecoveryCodes'), { replay: false }) },
+  success: { 200: okResp(200, 'Factor active; recovery codes and the new CSRF token.', S('MfaEnrolmentConfirmed'), { replay: false }) },
 });
 addOp('/v1/auth/mfa/recovery-codes/regenerate', 'post', {
   tag: 'Auth', id: 'regenerateRecoveryCodes', summary: 'Regenerate recovery codes', selfService: true, idem: 'none', hasId: false,
@@ -1304,6 +1363,58 @@ addOp('/v1/assets/{id}', 'delete', {
 addOp('/v1/assets/{id}/restore', 'post', {
   tag: 'Assets', id: 'restoreAsset', summary: 'Restore an archived asset', perm: 'asset:delete', params: [ID], ifMatch: true,
   success: { 200: okResp(200, 'Restored asset.', S('Asset'), { etag: true }) },
+});
+// Public probes (no credential, not rate limited). `/healthz` and `/readyz` are the unversioned orchestrator probes and stay out of the contract.
+const probeOk = (description, schema) => ({ description, headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S(schema) } } });
+doc.paths['/v1/health'] = { get: {
+  tags: ['System'], operationId: 'getHealth', summary: 'Health with a database round trip', security: [],
+  description: 'Liveness plus a database round trip (through PgBouncer when so configured). No credential needed. `503` with the same body shape when the database does not answer.',
+  responses: {
+    200: probeOk('Healthy.', 'HealthResponse'),
+    429: R('TooManyRequests'),
+    503: { description: 'Degraded: the database check failed (same body).', headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('HealthResponse') } } },
+  },
+} };
+doc.paths['/v1/version'] = { get: {
+  tags: ['System'], operationId: 'getVersion', summary: 'Build version', security: [],
+  description: 'Name, version, commit and process role of the running build. No credential needed.',
+  responses: { 200: probeOk('The build.', 'VersionResponse'), 429: R('TooManyRequests') },
+} };
+addOp('/v1/assets/{id}/clone', 'post', {
+  tag: 'Assets', id: 'cloneAsset', summary: 'Clone an asset', perm: 'asset:create', params: [ID],
+  description: 'Creates `count` copies of the asset with fresh tags (the numbering template, or the explicit `asset_tags`) and a cleared serial. `copy_fields` chooses what is copied (default: all of `name`, `model_id`, `status_id`, `vendor_id`, `location_id`, `parent_asset_id`, `purchase_date`, `purchase_cost`, `order_number`, `warranty_end`, `notes`, `custom_data`). All or nothing: one transaction, one audit record and outbox event per copy.\n\nAdded by M1-REG-09 (not part of the first contract draft).',
+  body: jsonBody(S('AssetCloneRequest'), false),
+  success: { 201: okResp(201, 'The copies.', S('AssetCloneResult')) },
+});
+const BULK_NOTE = 'At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.\n\nAdded by M1-REG-09 (not part of the first contract draft).';
+addOp('/v1/assets/bulk-update', 'post', {
+  tag: 'Assets', id: 'bulkUpdateAssets', summary: 'Edit many assets', perm: 'asset:update', hasId: false, conflict: false,
+  description: 'Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetUpdate')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/assets/bulk-archive', 'post', {
+  tag: 'Assets', id: 'bulkArchiveAssets', summary: 'Archive many assets', perm: 'asset:delete', hasId: false, conflict: false,
+  description: 'Soft-deletes the listed assets (same rules as `DELETE /v1/assets/{id}`).\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetIds')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/assets/bulk-restore', 'post', {
+  tag: 'Assets', id: 'bulkRestoreAssets', summary: 'Restore many assets', perm: 'asset:delete', hasId: false, conflict: false,
+  description: 'Restores the listed archived assets.\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetIds')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/settings/asset-tag-template', 'get', {
+  tag: 'Assets', id: 'getAssetTagTemplate', summary: 'Get the asset tag numbering template', perm: 'catalog:read',
+  description: 'The template used to generate asset tags when `POST /v1/assets` omits `asset_tag`: `prefix` + the category `tag_prefix` (when `use_category_prefix`) + a counter zero-padded to `width`. Counters are per tenant and per full prefix; tags are never reused.\n\nAdded by M1-REG-06 (not part of the first contract draft).',
+  success: { 200: okResp(200, 'The template.', S('AssetTagTemplate'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/asset-tag-template', 'put', {
+  tag: 'Assets', id: 'putAssetTagTemplate', summary: 'Replace the asset tag numbering template', perm: 'catalog:manage', ifMatch: true, conflict: false,
+  description: 'Existing tags are never rewritten. `If-Match` is the ETag of `GET` (the tenant settings version).',
+  body: jsonBody(S('AssetTagTemplate')),
+  success: { 200: okResp(200, 'The new template.', S('AssetTagTemplate'), { etag: true }) },
 });
 addOp('/v1/assets/{id}/history', 'get', {
   tag: 'Assets', id: 'listAssetHistory', summary: 'Chain of custody and lifecycle events', perm: 'asset:read',

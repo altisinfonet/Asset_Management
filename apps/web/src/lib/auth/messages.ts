@@ -1,6 +1,6 @@
 import type { TranslationKey } from '@/i18n';
 import { toUiError } from '@/lib/api';
-import { AuthRequestError } from './http';
+import { ApiError } from '@assettracker/api-client';
 
 type T = (key: TranslationKey, values?: Record<string, string | number>) => string;
 
@@ -14,7 +14,7 @@ export function formatWait(seconds: number, t: T): string {
 }
 
 export function tooManyAttemptsMessage(err: unknown, t: T): string {
-  const wait = err instanceof AuthRequestError ? err.retryAfterSeconds : undefined;
+  const wait = err instanceof ApiError ? err.retryAfterSeconds : undefined;
   return wait === undefined
     ? t('login.errors.tooManyAttemptsNoWait')
     : t('login.errors.tooManyAttempts', { wait: formatWait(wait, t) });
@@ -43,9 +43,9 @@ export function passwordFieldError(err: unknown): string | undefined {
 }
 
 export function isStatus(err: unknown, ...statuses: number[]): boolean {
-  return err instanceof AuthRequestError && statuses.includes(err.status);
+  return err instanceof ApiError && statuses.includes(err.status);
 }
 
 export function errorCode(err: unknown): string | undefined {
-  return err instanceof AuthRequestError ? err.code : undefined;
+  return err instanceof ApiError ? err.code : undefined;
 }

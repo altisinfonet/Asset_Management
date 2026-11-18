@@ -1,5 +1,5 @@
 import { SETTINGS_SECTIONS, type SettingsSection } from '@/lib/routes';
-import { SettingsSectionPlaceholder } from '../settings-section';
+import { SettingsSectionScreen } from '../settings-section';
 
 // A finite, build-time-known set: prerendered with generateStaticParams, anything else is a 404.
 export const dynamicParams = false;
@@ -14,5 +14,5 @@ export default async function SettingsSectionPage({
   params: Promise<{ section: string }>;
 }) {
   const { section } = await params;
-  return <SettingsSectionPlaceholder section={section as SettingsSection} />;
+  return <SettingsSectionScreen section={section as SettingsSection} />;
 }

@@ -9,6 +9,7 @@ export function Skeleton({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
       aria-hidden
+      data-skeleton=""
       className={cn('animate-[at-pulse_1.6s_ease-in-out_infinite] rounded-md bg-sunken', className)}
       {...props}
     />

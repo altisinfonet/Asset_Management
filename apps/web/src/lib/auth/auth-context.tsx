@@ -13,7 +13,7 @@ import { toUiError, type UiError } from '@/lib/api';
 import { authApi } from './auth-api';
 import { setCsrfToken } from './http';
 import { hasAnyPermission } from './permissions';
-import { onUnauthorized } from './session-events';
+import { onMfaEnrolmentRequired, onUnauthorized } from './session-events';
 import type { Me } from './types';
 
 export type AuthState =
@@ -27,8 +27,9 @@ export type AuthState =
   | { status: 'error'; error: UiError };
 
 /**
- * Problem code of the `403` that `GET /v1/auth/me` (and every other endpoint) returns while a
- * required MFA enrolment is pending. PROPOSED: the contract only says "(or MFA is required)".
+ * Problem code of the `403` that every endpoint except `/v1/auth/me`, logout and enrolment
+ * returns while a required MFA enrolment is pending. `GET /v1/auth/me` itself answers 200 with
+ * `mfa_enrolment_required: true`.
  */
 export const MFA_ENROLMENT_REQUIRED = 'mfa-enrolment-required';
 
@@ -52,7 +53,11 @@ const AuthContext = createContext<AuthContextValue>({
 
 async function bootstrap(): Promise<AuthState> {
   try {
-    return { status: 'authenticated', me: await authApi.getMe() };
+    const me = await authApi.getMe();
+    // A limited session: /me answers 200 so the client learns its CSRF token, but nothing else
+    // works until enrolment is done. Reloading the page must land here, not on the dashboard.
+    if (me.mfa_enrolment_required) return { status: 'mfa_enrolment_required' };
+    return { status: 'authenticated', me };
   } catch (err) {
     const error = toUiError(err);
     if (error.kind === 'unauthorized') return { status: 'anonymous' };
@@ -95,6 +100,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           current.status === 'authenticated' || current.status === 'mfa_enrolment_required'
             ? { status: 'anonymous', reason: 'expired' }
             : current,
+        ),
+      ),
+    [],
+  );
+
+  // Any other endpoint answering  means the session is limited.
+  useEffect(
+    () =>
+      onMfaEnrolmentRequired(() =>
+        setState((current) =>
+          current.status === 'authenticated' ? { status: 'mfa_enrolment_required' } : current,
         ),
       ),
     [],

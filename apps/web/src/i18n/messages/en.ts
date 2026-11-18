@@ -1,3 +1,5 @@
+import { registryMessages } from './registry';
+
 /**
  * English message catalogue (the only locale in M1). Every user-facing string of the app shell and
  * the placeholder pages lives here; components take text through props or `useI18n().t`.
@@ -26,6 +28,28 @@ export const en = {
     moreActions: 'More actions',
     openFullPage: 'Open full page',
     notAvailableYet: 'Available in a later milestone',
+    actions: 'Actions',
+    all: 'All',
+    any: 'Any',
+    archive: 'Archive',
+    archiveNamed: 'Archive {name}',
+    archived: 'archived',
+    choose: 'Choose',
+    done: 'Done',
+    edit: 'Edit',
+    editNamed: 'Edit {name}',
+    loadFailed: 'We could not load this. Try again.',
+    moveDownNamed: 'Move {name} down',
+    moveUpNamed: 'Move {name} up',
+    no: 'No',
+    yes: 'Yes',
+    none: 'None',
+    on: 'On',
+    off: 'Off',
+    showArchived: 'Show archived',
+  },
+  form: {
+    required: 'This field is required.',
   },
   nav: {
     primary: 'Primary',
@@ -74,6 +98,8 @@ export const en = {
     toggleTheme: 'Switch theme',
     recent: 'Recent',
     assets: 'Assets',
+    models: 'Models',
+    categories: 'Categories',
     openAsset: 'Open asset {code}',
     security: 'Account security',
     shortcuts: 'Keyboard shortcuts',
@@ -122,6 +148,17 @@ export const en = {
     validation: 'Some fields need your attention.',
     server: 'Something went wrong on our side. Try again in a moment.',
     unknown: 'Something went wrong.',
+    inUse: 'Still in use by {usage}. Move or archive those first.',
+  },
+  usage: {
+    assets_one: '{count} asset',
+    assets_other: '{count} assets',
+    models_one: '{count} model',
+    models_other: '{count} models',
+    customFields_one: '{count} custom field',
+    customFields_other: '{count} custom fields',
+    assetsWithValues_one: '{count} asset with a value',
+    assetsWithValues_other: '{count} assets with a value',
   },
   dashboard: {
     title: 'Dashboard',
@@ -141,42 +178,6 @@ export const en = {
     database: 'database {status}',
     latency: '{ms} ms',
   },
-  assets: {
-    title: 'Assets',
-    description: 'Find, filter and act on every asset.',
-    newAsset: 'New asset',
-    import: 'Import',
-    placeholderBanner:
-      'Placeholder rows. The asset registry replaces this table in the registry stories.',
-    tableLabel: 'Assets',
-    columns: {
-      tag: 'Tag',
-      name: 'Name',
-      model: 'Model',
-      status: 'Status',
-      location: 'Location',
-    },
-    emptyTitle: 'No assets yet',
-    emptyDescription: 'Add your first asset or import a CSV file to get started.',
-    drawerDescription: 'Quick view',
-  },
-  assetView: {
-    title: 'Asset',
-    breadcrumbList: 'Assets',
-    noneSelected: 'No asset selected',
-    noneSelectedHint: 'Open an asset from the list, or scan a tag.',
-    backToList: 'Back to assets',
-    resolvingCode: 'Looking up code {code}',
-    tabs: {
-      overview: 'Overview',
-      history: 'History',
-      repairs: 'Repairs',
-      attachments: 'Attachments',
-    },
-    idLabel: 'Asset ID',
-    codeLabel: 'Scanned code',
-    tabPlaceholder: 'This tab is filled in by a later story.',
-  },
   settings: {
     title: 'Settings',
     subnav: 'Settings sections',
@@ -185,8 +186,11 @@ export const en = {
       users: 'Users and roles',
       categories: 'Categories',
       models: 'Models',
+      manufacturers: 'Manufacturers',
       fields: 'Custom fields',
       status: 'Status labels',
+      tags: 'Tag numbering',
+      vendors: 'Vendors',
     },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',
@@ -365,6 +369,7 @@ export const en = {
     palette: 'Open the command palette',
     scan: 'Focus the scan field',
     help: 'Show this help',
+    newAsset: 'Create a new asset',
     close: 'Close a dialog or menu',
     goDashboard: 'Dashboard',
     goAssets: 'Assets',
@@ -380,6 +385,7 @@ export const en = {
     home: 'Go to the dashboard',
     openingCode: 'Opening {code}',
   },
+  ...registryMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

@@ -11,15 +11,16 @@ import {
 } from '@/mocks/fixtures';
 import { toUiError } from '@/lib/api';
 import { authApi } from './auth-api';
-import { AuthRequestError, setCsrfToken } from './http';
+import { ApiError } from '@assettracker/api-client';
+import { getCsrfToken, setCsrfToken } from './http';
 import { onUnauthorized } from './session-events';
 
-async function failure(promise: Promise<unknown>): Promise<AuthRequestError> {
+async function failure(promise: Promise<unknown>): Promise<ApiError> {
   try {
     await promise;
   } catch (err) {
-    expect(err).toBeInstanceOf(AuthRequestError);
-    return err as AuthRequestError;
+    expect(err).toBeInstanceOf(ApiError);
+    return err as ApiError;
   }
   throw new Error('expected the request to fail');
 }
@@ -125,9 +126,13 @@ describe('auth API against the mock contract', () => {
 
   it('a limited session (MFA required by the tenant) is blocked everywhere but enrolment', async () => {
     await authApi.login({ email: MOCK_ACCOUNTS.mfaRequired, password: MOCK_PASSWORD });
-    const me = await failure(authApi.getMe());
-    expect(me.status).toBe(403);
-    expect(me.code).toBe('mfa-enrolment-required');
+    // Like the real API: /me answers 200 and says enrolment is pending (and hands out the CSRF token).
+    const me = await authApi.getMe();
+    expect(me.mfa_enrolment_required).toBe(true);
+    // every other endpoint is blocked with 403 mfa-enrolment-required
+    const blocked = await failure(authApi.listSessions());
+    expect(blocked.status).toBe(403);
+    expect(blocked.code).toBe('mfa-enrolment-required');
 
     const enrolment = await authApi.startMfaEnrolment();
     expect(enrolment.provisioning_uri).toMatch(/^otpauth:\/\/totp\//);
@@ -146,9 +151,11 @@ describe('auth API against the mock contract', () => {
     });
     await authApi.startMfaEnrolment();
     const done = await authApi.confirmMfaEnrolment(MOCK_TOTP_CODE);
-    expect(done.csrf_token).toBeTruthy();
-    expect(done.csrf_token).not.toBe(login.csrf_token);
-    // No refetch of /me in between: a mutation must already carry the rotated token.
+    expect(done.recovery_codes).toHaveLength(10);
+    // The confirm response carries the rotated CSRF token, which the client stored.
+    expect(getCsrfToken()).toBe(done.csrf_token);
+    expect(getCsrfToken()).toBeTruthy();
+    expect(getCsrfToken()).not.toBe(login.csrf_token);
     await expect(authApi.revokeSession('sess-phone')).resolves.toBeUndefined();
     // The pre-rotation token is dead, like on the real API.
     setCsrfToken(login.csrf_token);

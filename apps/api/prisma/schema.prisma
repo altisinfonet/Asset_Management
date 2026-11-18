@@ -82,6 +82,7 @@ model asset {
   @@unique([tenant_id, label_code])
   @@index([tenant_id, category_id, id(sort: Desc)], map: "asset_category_idx", where: raw("(archived_at IS NULL)"))
   @@index([tenant_id, company_id], map: "asset_company_idx")
+  @@index([tenant_id, created_at(sort: Desc), id(sort: Desc)], map: "asset_created_idx", where: raw("(archived_at IS NULL)"))
   @@index([tenant_id, location_id, id(sort: Desc)], map: "asset_location_idx", where: raw("(archived_at IS NULL)"))
   @@index([tenant_id, model_id], map: "asset_model_idx", where: raw("(model_id IS NOT NULL)"))
   @@index([tenant_id, parent_asset_id], map: "asset_parent_idx", where: raw("(parent_asset_id IS NOT NULL)"))
@@ -264,6 +265,7 @@ model custom_field_def {
 
   @@unique([tenant_id, category_id, key], map: "custom_field_def_key_uq", where: raw("(archived_at IS NULL)"))
   @@unique([tenant_id, id])
+  @@index([tenant_id, category_id], map: "custom_field_def_category_idx")
   @@schema("app")
 }
 

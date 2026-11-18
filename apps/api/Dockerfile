@@ -33,6 +33,8 @@ FROM deps AS build
 COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/api apps/api
+# The API contract is bundled into dist at build time and served at /v1/openapi.json (scripts/bundle-openapi.mjs).
+COPY docs/engineering/openapi.yaml docs/engineering/openapi.yaml
 # `...` = the api plus the workspace packages it depends on, built in topological order.
 RUN pnpm --filter "@assettracker/api..." run build
 # Self-contained production tree: compiled dist, migrations, prod node_modules only.

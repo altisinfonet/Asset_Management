@@ -7,7 +7,9 @@ import { ControlPlaneModule } from './control-plane/index.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
 import { pinoHttpParams } from './logging/logger.js';
+import { OpenApiModule } from './openapi/index.js';
 import { PlatformModule } from './platform/index.js';
+import { RegistryModule } from './registry/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
 export interface AppModuleOptions {
@@ -36,8 +38,9 @@ export class AppModule {
         PlatformModule,
         ControlPlaneModule,
         IdentityModule,
-        ...(auth ? [AuthModule] : []),
+        ...(auth ? [AuthModule, RegistryModule] : []),
         HealthModule,
+        OpenApiModule,
         ...extraImports,
       ],
     };

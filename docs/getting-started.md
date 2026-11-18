@@ -65,7 +65,7 @@ Emails (invitations, password resets) appear at **http://localhost:8025**.
 
 | Mode                                   | Command                                                                                     | Use it for                                                                                   |
 | -------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **a. Production build** (section 3)    | `pnpm turbo run build --filter=@assettracker/web`, then `serve-static.mjs …`                | Testing exactly what ships. Rebuild after every change.                                      |
+| **a. Production build** (section 3)    | `pnpm turbo run build --filter=@assettracker/web`, then `node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000` | Testing exactly what ships. Rebuild after every change.                                      |
 | **b. Dev server, hot reload**          | `pnpm --filter @assettracker/web dev` (or `docker compose --profile web up -d`)             | Day-to-day frontend work. Changes appear instantly; `/v1` is proxied to `localhost:3000`.    |
 | **c. Mock mode, no backend needed**    | `pnpm --filter @assettracker/web dev:mock`                                                  | UI work with Docker stopped. Uses a built-in fake API with sample data.                      |
 
@@ -78,7 +78,7 @@ Mock mode has its own accounts: password `correct horse battery staple`, authent
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | **Backend code** (`apps/api/src`)                  | `docker compose up -d --build` (rebuilds the image, restarts api, worker and scheduler)                            |
 | **New database migration** (`apps/api/migrations`) | `docker compose up -d --build` applies it automatically, or `docker compose run --rm migrate`                      |
-| **Website code**                                   | Dev mode (4b): nothing, it reloads. Production build: rerun `pnpm turbo run build --filter=@assettracker/web` and restart `serve-static` |
+| **Website code**                                   | Dev mode (4b): nothing, it reloads. Production build: rerun `pnpm turbo run build --filter=@assettracker/web`, stop the running server (Ctrl+C) and start it again with `node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000` |
 | **API contract** (`docs/engineering/openapi.yaml`) | `pnpm --filter @assettracker/api-client generate`, then rebuild the website                                        |
 | **After `git pull`**                               | `pnpm install` → `docker compose up -d --build` → `pnpm turbo run build --filter=@assettracker/web`                |
 | **Want fresh demo data**                           | `docker compose down -v` then `docker compose up -d --build` (**wipes your local database**)                       |

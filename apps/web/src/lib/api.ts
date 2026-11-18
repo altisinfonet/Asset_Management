@@ -60,6 +60,8 @@ export interface UiError {
   /** Catalogue key for a user-safe message. */
   messageKey: TranslationKey;
   requestId?: string;
+  /** The problem's human-readable `detail` (for example "Used by 3 assets"), when it sent one. */
+  detail?: string;
   fieldErrors: FieldError[];
 }
 
@@ -94,6 +96,7 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
       code: problem?.code,
       messageKey,
       requestId: problem?.request_id ?? headerRequestId,
+      detail: typeof problem?.detail === 'string' ? problem.detail : undefined,
       fieldErrors: Array.isArray(problem?.errors) ? problem.errors : [],
     };
   }

@@ -133,10 +133,10 @@ test.describe('route guard', () => {
   });
 
   test('a scanned QR link (/s/<code>) survives the login round trip', async ({ page }) => {
-    await page.goto('/s/AB12CD34');
+    await page.goto('/s/LBL00124');
     await expect(page).toHaveURL(/\/login\/?\?next=/);
     await signIn(page, MOCK_ACCOUNTS.owner);
-    await expect(page.getByTestId('asset-code')).toHaveText('AB12CD34');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
   });
 
   test('an external next= target is ignored', async ({ page }) => {

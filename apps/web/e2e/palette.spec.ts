@@ -1,4 +1,4 @@
-import { expect, gotoApp, test } from './fixtures';
+import { assetId, expect, gotoApp, test } from './fixtures';
 
 /** Command palette, recent items and keyboard shortcuts (M1-WEB-04) in a real browser. */
 test.describe('command palette', () => {
@@ -14,14 +14,14 @@ test.describe('command palette', () => {
     await expect(dialog).toBeHidden();
   });
 
-  test('a typed asset tag jumps to /assets/view?code=', async ({ page }) => {
+  test('a typed asset tag jumps to the asset', async ({ page }) => {
     await gotoApp(page, '/');
     await page.keyboard.press('Control+k');
     const dialog = page.getByRole('dialog', { name: 'Command palette' });
     await dialog.getByRole('combobox').fill('AT-00124');
     await dialog.getByRole('option', { name: 'Open asset AT-00124' }).click();
-    await expect(page.getByTestId('asset-code')).toHaveText('AT-00124');
-    expect(new URL(page.url()).search).toBe('?code=AT-00124');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
+    expect(new URL(page.url()).searchParams.get('id')).toBe(assetId(124));
   });
 
   test('recent items are remembered across reloads and listed first', async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe('command palette', () => {
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox').fill('AT-00124');
     await page.getByRole('option', { name: 'Open asset AT-00124' }).click();
-    await expect(page.getByTestId('asset-code')).toBeVisible();
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
 
     await page.reload();
     await expect(page.locator('main#main')).toBeVisible();
@@ -37,7 +37,7 @@ test.describe('command palette', () => {
     const recent = page.getByRole('group', { name: 'Recent' });
     await expect(recent.getByRole('option', { name: 'Open asset AT-00124' })).toBeVisible();
     await recent.getByRole('option', { name: 'Open asset AT-00124' }).click();
-    await expect(page.getByTestId('asset-code')).toHaveText('AT-00124');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
   });
 
   test('works with localStorage blocked (the palette and navigation still function)', async ({

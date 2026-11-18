@@ -117,8 +117,16 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # Mail adapter e2e (M1-PLAT-09): messages sent over SMTP are read back from the Mailpit API.
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
     env:
       PGPASSWORD: dev
+      SMTP_URL: smtp://localhost:1025
+      MAILPIT_API_URL: http://localhost:8025
       # Owner role (app_owner), DIRECT: migrations, schema lint, fixtures that need DDL.
       MIGRATOR_DATABASE_URL: postgres://app_owner:dev@localhost:5432/app
       # Superuser, used ONLY by the lint-fixture test that flips BYPASSRLS inside a rolled-back transaction.

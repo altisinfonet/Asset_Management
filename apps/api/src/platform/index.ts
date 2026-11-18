@@ -49,6 +49,8 @@ export {
   type SortTerm,
 } from './pagination.js';
 export { PlatformModule } from './platform.module.js';
+export { MAIL_TRANSPORT, PortsModule } from './ports.module.js';
+export { RequestIdentityInterceptor } from './request-identity.interceptor.js';
 export { Principal, type RequestPrincipal } from './principal.js';
 export {
   ApiProblem,

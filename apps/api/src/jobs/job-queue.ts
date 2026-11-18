@@ -12,7 +12,7 @@ export interface EnqueueOptions {
   /**
    * With a queue `dedupeSeconds` (or `singletonSeconds` here): at most ONE job per key per time slot
    * across all processes, enforced by a unique index in the database. This is what makes two
-   * schedulers safe. A deduplicated enqueue returns `''`.
+   * schedulers safe. A deduplicated enqueue returns `null`.
    */
   singletonKey?: string;
   singletonSeconds?: number;
@@ -56,7 +56,7 @@ export class PgBossJobQueue implements JobQueue {
     name: string,
     payload: { tenantId?: string } & Record<string, unknown>,
     opts: EnqueueOptions = {},
-  ): Promise<string> {
+  ): Promise<string | null> {
     const def = queueDefinition(name);
     if (!def) throw new UnknownQueueError(name);
     assertIdsOnlyPayload(payload, `job ${name}`);
@@ -90,6 +90,6 @@ export class PgBossJobQueue implements JobQueue {
 
     const boss = await this.boss();
     const id = await boss.send(name, payload, options);
-    return id ?? '';
+    return id ?? null;
   }
 }

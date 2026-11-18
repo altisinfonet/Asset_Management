@@ -83,6 +83,11 @@ updates:
       minor-and-patch:
         patterns: ['*']
         update-types: [minor, patch]
+    ignore:
+      # @types/node must match the Node runtime major (24: .nvmrc, engines, Dockerfiles).
+      # Bump it by hand together with a Node upgrade, never on its own.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
 
   # GitHub Actions used by the workflows and by the local composite action.
   - package-ecosystem: github-actions

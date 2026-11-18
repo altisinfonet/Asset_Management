@@ -9,6 +9,8 @@ import {
 import { type Queryable, withOwnerClient } from './maintenance.js';
 import type { MigrationLogger } from './migrator.js';
 
+const IDENT = /^[a-z_][a-z0-9_]*$/;
+
 /**
  * The `migrate` step for the job system (M1-PLAT-06), run over the DIRECT owner connection right
  * after the SQL migrations:
@@ -29,11 +31,14 @@ import type { MigrationLogger } from './migrator.js';
 export async function provisionJobs(
   ownerDatabaseUrl: string,
   logger: MigrationLogger,
+  schema: string = PGBOSS_SCHEMA,
 ): Promise<{ queues: string[] }> {
+  if (!IDENT.test(schema)) throw new Error(`invalid pg-boss schema name ${schema}`);
   const boss = new PgBoss(
     provisioningBossOptions({
       connectionString: ownerDatabaseUrl,
       applicationName: 'migrate-jobs',
+      schema,
     }),
   );
   boss.on('error', (err) => logger.info({ err: err.message }, 'pg-boss provisioning error'));
@@ -57,8 +62,8 @@ export async function provisionJobs(
   await withOwnerClient(
     ownerDatabaseUrl,
     async (client) => {
-      await grantJobsAccess(client);
-      const gaps = await verifyJobsGrants(client);
+      await grantJobsAccess(client, 'app_user', schema);
+      const gaps = await verifyJobsGrants(client, 'app_user', schema);
       if (gaps.length > 0) throw new Error(`pgboss grants incomplete:\n  - ${gaps.join('\n  - ')}`);
     },
     'migrate-jobs-grants',
@@ -96,16 +101,19 @@ async function ensureQueue(
   await boss.updateQueue(name, updatable);
 }
 
-const IDENT = /^[a-z_][a-z0-9_]*$/;
-
 /**
  * Grants the runtime role what a pg-boss runtime instance needs: USAGE on the schema, DML on its
  * tables (partitions included) and sequences, EXECUTE on its functions, plus default privileges for
  * objects the connected owner role creates later. No DDL, no TRUNCATE, nothing outside `pgboss`.
  */
-export async function grantJobsAccess(client: Queryable, runtimeRole = 'app_user'): Promise<void> {
+export async function grantJobsAccess(
+  client: Queryable,
+  runtimeRole = 'app_user',
+  schema: string = PGBOSS_SCHEMA,
+): Promise<void> {
   if (!IDENT.test(runtimeRole)) throw new Error(`invalid role name ${runtimeRole}`);
-  const s = PGBOSS_SCHEMA;
+  if (!IDENT.test(schema)) throw new Error(`invalid pg-boss schema name ${schema}`);
+  const s = schema;
   const statements = [
     `grant usage on schema ${s} to ${runtimeRole}`,
     `grant select, insert, update, delete on all tables in schema ${s} to ${runtimeRole}`,
@@ -124,17 +132,18 @@ export async function grantJobsAccess(client: Queryable, runtimeRole = 'app_user
     $$`);
 }
 
-/** Gaps in the runtime role's access to schema pgboss (empty = complete). */
+/** Gaps in the runtime role's access to the pg-boss schema (empty = complete). */
 export async function verifyJobsGrants(
   client: Queryable,
   runtimeRole = 'app_user',
+  schema: string = PGBOSS_SCHEMA,
 ): Promise<string[]> {
   const gaps: string[] = [];
-  const schema = await client.query(`select has_schema_privilege($1, $2, 'USAGE') as ok`, [
+  const usage = await client.query(`select has_schema_privilege($1, $2, 'USAGE') as ok`, [
     runtimeRole,
-    PGBOSS_SCHEMA,
+    schema,
   ]);
-  if (!schema.rows[0]?.ok) gaps.push(`${runtimeRole} lacks USAGE on schema ${PGBOSS_SCHEMA}`);
+  if (!usage.rows[0]?.ok) gaps.push(`${runtimeRole} lacks USAGE on schema ${schema}`);
 
   const tables = await client.query(
     `select c.relname
@@ -145,27 +154,27 @@ export async function verifyJobsGrants(
              and has_table_privilege($1, c.oid, 'UPDATE')
              and has_table_privilege($1, c.oid, 'DELETE'))
       order by c.relname`,
-    [runtimeRole, PGBOSS_SCHEMA],
+    [runtimeRole, schema],
   );
   for (const r of tables.rows)
-    gaps.push(`${runtimeRole} lacks DML on ${PGBOSS_SCHEMA}.${String(r.relname)}`);
+    gaps.push(`${runtimeRole} lacks DML on ${schema}.${String(r.relname)}`);
 
   const sequences = await client.query(
     `select c.relname from pg_class c
       where c.relnamespace = $2::regnamespace
         and case when c.relkind = 'S' then not has_sequence_privilege($1, c.oid, 'USAGE') else false end`,
-    [runtimeRole, PGBOSS_SCHEMA],
+    [runtimeRole, schema],
   );
   for (const r of sequences.rows)
-    gaps.push(`${runtimeRole} lacks USAGE on sequence ${PGBOSS_SCHEMA}.${String(r.relname)}`);
+    gaps.push(`${runtimeRole} lacks USAGE on sequence ${schema}.${String(r.relname)}`);
 
   const functions = await client.query(
     `select p.proname from pg_proc p
       where p.pronamespace = $2::regnamespace and not has_function_privilege($1, p.oid, 'EXECUTE')
       order by p.proname`,
-    [runtimeRole, PGBOSS_SCHEMA],
+    [runtimeRole, schema],
   );
   for (const r of functions.rows)
-    gaps.push(`${runtimeRole} lacks EXECUTE on ${PGBOSS_SCHEMA}.${String(r.proname)}()`);
+    gaps.push(`${runtimeRole} lacks EXECUTE on ${schema}.${String(r.proname)}()`);
   return gaps;
 }

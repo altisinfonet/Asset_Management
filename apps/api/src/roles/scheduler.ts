@@ -46,7 +46,7 @@ export async function runSchedulerRole(
   const controlPlane = app.get(ControlPlaneService);
   const runtime = app.get(JobsRuntime);
 
-  const maintenance = new MaintenanceInstance(ownerUrl, logger);
+  const maintenance = new MaintenanceInstance(ownerUrl, logger, config.JOBS_SCHEMA);
   await maintenance.start();
 
   const boss = await runtime.get();

@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
+import { loadConfig } from '../config/env.js';
 import {
   maintenanceBossOptions,
   provisioningBossOptions,
@@ -30,6 +31,17 @@ describe('pg-boss configuration rules (spike F5, architecture 5.2)', () => {
       useListenNotify: false,
       schema: 'pgboss',
     });
+  });
+
+  it('the pg-boss schema is configurable (JOBS_SCHEMA) and every instance kind honours it', () => {
+    const own = { ...common, schema: 'pgboss_e2e' };
+    expect(runtimeBossOptions(own).schema).toBe('pgboss_e2e');
+    expect(provisioningBossOptions(own).schema).toBe('pgboss_e2e');
+    expect(maintenanceBossOptions(own).schema).toBe('pgboss_e2e');
+    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d' }).JOBS_SCHEMA).toBe('pgboss');
+    expect(() =>
+      loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d', JOBS_SCHEMA: 'x; drop schema app' }),
+    ).toThrow(/JOBS_SCHEMA/);
   });
 
   it('only the provisioning (migrate) instance creates and upgrades the schema', () => {

@@ -15,7 +15,7 @@ import { base } from '../../eslint.config.mjs';
  */
 
 /** Modules with a public facade (`index.ts`). */
-export const FACADE_MODULES = ['tenancy', 'platform', 'control-plane', 'identity'];
+export const FACADE_MODULES = ['tenancy', 'platform', 'control-plane', 'identity', 'auth'];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [
   'platform',

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { createApiApp } from './app.js';
+import { createTemporarySecretBox } from './auth/index.js';
 import { ConfigError, loadConfig } from './config/env.js';
 import { runMigrate } from './db/run-migrate.js';
 import { createLogger } from './logging/logger.js';
@@ -45,6 +46,7 @@ async function main(): Promise<void> {
         try {
           const { tenants } = await seedDemoData(tenancy, {
             nodeEnv: config.NODE_ENV,
+            secretBox: createTemporarySecretBox(), // TEMPORARY: the platform SecretBox when it lands
             logger: { info: (msg) => logger.info(msg) },
           });
           logger.info({ tenants }, 'demo data ready');

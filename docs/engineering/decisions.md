@@ -19,6 +19,7 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 | ED-11 | Accessory partial returns via `quantity_returned` | M2 | `schema.sql` and `openapi.yaml` changed |
 | ED-12 | Asset tags are never reused | M1 | recorded (already modelled) |
 | ED-13 | Check-out, check-in and transfer return the updated asset and the assignment | M2 | `openapi.yaml` changed |
+| ED-14 | Auth contract completion (2026-11-18) | M1 | `openapi.yaml` changed |
 
 ## ED-01. `person` is separate from `user_account`
 
@@ -110,3 +111,18 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 - **Rationale.** Clients chain the next call (for example a check-in right after a scan) without re-fetching the asset, and always hold a current `ETag`.
 - **Consequences.** New schema `CustodyResult`; `TransferResult` now includes `asset`. The accessory check-out and check-in keep returning the assignment alone (there is no asset ETag involved). Client code written against the earlier draft (bare `Assignment`) must read `assignment` from the body.
 - **Milestone.** M2.
+
+## ED-14. Auth contract completion (2026-11-18)
+
+- **Decision.** The contract now covers every auth screen the web team built, plus the admin operations the M1-AUTH backlog implies (18 operations, 114 -> 132 on 82 paths).
+  - Password reset: `POST /v1/auth/password/forgot` (always 202, no account enumeration), `POST /v1/auth/password/reset` (204; 404 `token-invalid`, 410 `token-expired`, 422 at `/password`; revokes every session).
+  - Invitations: `GET /v1/auth/invitations/{token}` (`InvitationInfo`), `POST /v1/auth/invitations/accept` (returns `LoginResponse`; 404 `invitation-not-found`, 410 `invitation-expired`), admin `POST /v1/users/{id}/invitation/resend` and `DELETE /v1/users/{id}/invitation`.
+  - MFA (TOTP): `POST /v1/auth/mfa/enrol`, `POST /v1/auth/mfa/enrol/confirm` (ten recovery codes, once), `POST /v1/auth/mfa/recovery-codes/regenerate` and `DELETE /v1/auth/mfa` (both need password or TOTP in the body; wrong value is 403 `reauth-failed`, never 401; disable is 403 `mfa-required-by-policy` when the tenant enforces MFA), admin `DELETE /v1/users/{id}/mfa`. Secret-bearing responses are never stored for idempotent replay, so these operations take no `Idempotency-Key`.
+  - Sessions: `GET /v1/auth/sessions`, `DELETE /v1/auth/sessions/{id}` (409 `cannot-revoke-current`), `DELETE /v1/auth/sessions` (all others), admin `GET /v1/users/{id}/sessions` and `DELETE /v1/users/{id}/sessions/{session_id}` (M1-AUTH-03: user and admin can revoke).
+  - Search: `GET /v1/search?q&types&limit` returns `{data:[{type,id,label,sublabel,href_hint}]}`, filtered per type by the caller's permissions. M1 returns asset, model and category only; person and location are accepted but empty until M2.
+  - `GET /v1/auth/me` gains `mfa_enrolment_required`, `session` (`idle_expires_at`, `absolute_expires_at`; null for API keys) and `tenant.branding` (`logo_url`, `accent_color`, both null until M4+).
+  - `GET /v1/auth/password-policy` (public) and schema `PasswordPolicy`: min length 12, max 128, no composition rules, breached-password check (bundled local list always; optional online k-anonymity provider).
+  - Problem codes: a catalogue of every `code` (root `x-problem-codes`, schema `ProblemCode`), and each error response lists its own codes in `x-problem-codes`.
+- **Rationale.** The web screens were built against proposed shapes; fixing them in the contract lets the web and API sides converge without a later rename, and the code catalogue makes error handling testable. Re-authentication failures are 403, not 401, so clients keep `401` for "session gone".
+- **Consequences.** (1) The contract keeps the codes the platform code already emits: `validation` (not `validation-failed`), `idempotency-key-reuse` and `too-many-requests` (not `rate-limited`), plus `unauthorized` for a generic 401. (2) New permission `search:read`, granted to every built-in role, for `GET /v1/search`; self-service auth operations carry `x-self-service: true` instead of `x-permission` (the role matrix test must whitelist them). (3) `schema.sql` has no table for password-reset tokens yet: M1-AUTH-05 needs `identity.password_reset_token` (hash PK, tenant_id, user_id, expires_at, used_at), mirroring `identity.invitation_token`; not added here. Tenant branding and the MFA-enforcement flag live in `app.tenant.settings` (jsonb), so no DDL. (4) Revoking an invitation archives the never-activated account; resend replaces the token.
+- **Milestone.** M1 (M1-AUTH-02 to 07); branding values M4+.

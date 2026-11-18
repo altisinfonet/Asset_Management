@@ -10,6 +10,14 @@ info:
     - **Browser / web app:** server-side session in the `__Host-at_session` cookie (HttpOnly, Secure, SameSite=Lax). Mutating requests made with the cookie must send the `X-CSRF-Token` header (value returned by login and `GET /v1/auth/me`).
     - **Integrations / scripts / mobile:** `Authorization: Bearer <api key>`. Keys are scoped (`resource:action`), can expire and are stored hashed. A key can never exceed the permissions of the role that created it.
     - The tenant is derived **only** from the credential, never from a header or body field. A resource id that belongs to another tenant returns `404`, exactly like a missing id.
+    - **Session lifetime:** every cookie session has an idle timeout and an absolute timeout (`GET /v1/auth/me` returns `session.idle_expires_at` and `session.absolute_expires_at`). A request on an expired or revoked session returns `401` with code `session-expired`.
+    - **Unauthenticated endpoints** (login, MFA verify, password forgot/reset, password policy, invitation lookup/accept) take no cookie and no CSRF header, and are throttled per IP and per account (`429`, `Retry-After`). Invitation accept and password reset tokens are single-use and stored hashed.
+
+    ## Account security
+    - **Password policy:** minimum 12 and maximum 128 characters, no composition rules, Unicode NFKC-normalised, and a breached-password check (bundled offline list always on; an optional online k-anonymity provider can be enabled). A rejected password returns `422` with an `errors[]` entry at pointer `/password` (code `too-short`, `too-long` or `breached`). Clients read the live limits from `GET /v1/auth/password-policy` instead of hardcoding them (schema `PasswordPolicy`).
+    - **MFA enrolment enforcement:** when the tenant requires MFA for the user's role and the user has not enrolled, the session is *limited*: `GET /v1/auth/me` returns `mfa_enrolment_required: true` and every other endpoint except `/v1/auth/logout` and `/v1/auth/mfa/enrol*` answers `403` with code `mfa-enrolment-required`. Completing `POST /v1/auth/mfa/enrol/confirm` lifts the limit.
+    - **Re-authentication:** regenerating recovery codes and disabling MFA need the current password or a current TOTP code in the body (`ReauthRequest`); a wrong value returns `403` `reauth-failed` (never `401`, which clients treat as "session gone").
+    - **Self-service endpoints** (`/v1/auth/sessions`, `/v1/auth/mfa/*`) need a browser session, not an API key, and no permission beyond being signed in (marked `x-self-service: true`).
 
     ## Permissions
     Each operation lists the permission it needs in `x-permission` (`resource:action`). Built-in roles: `tenant_admin` (`*`), `asset_manager`, `technician`, `auditor`, `viewer`. Role assignments can be scoped to the tenant, a company or a location subtree; reads and writes outside the scope behave as `404`.
@@ -24,7 +32,7 @@ info:
     List endpoints use **cursor pagination**: `limit` (1-200, default 50) and an opaque `cursor`; the response carries `page.next_cursor` and `page.has_more`. `page.total` is only returned with `include_total=true` (it costs a count). Cursors are bound to the `sort` and filters that produced them. `sort` is a comma-separated list, `-` prefix for descending. Filters are plain query parameters; array filters are comma-separated; custom fields filter with `cf[<key>]=<value>`.
 
     ## Errors
-    Errors are RFC 9457 `application/problem+json` with a stable machine `code`, the `request_id` (also in the `X-Request-Id` header) and, for validation failures, an `errors[]` array of JSON-pointer + message.
+    Errors are RFC 9457 `application/problem+json` with a stable machine `code`, the `request_id` (also in the `X-Request-Id` header) and, for validation failures, an `errors[]` array of JSON-pointer + message. The catalogue of codes is the `x-problem-codes` extension at the root of this document (code, HTTP status, meaning) and the `ProblemCode` schema; every error response lists the codes it can carry in its own `x-problem-codes` array. The set grows over time: clients must branch on `code` for the ones they know and fall back to the HTTP status for the rest.
 
     ## Rate limits
     Per tenant by plan tier. Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; `429` adds `Retry-After`.
@@ -48,7 +56,9 @@ security:
   - bearerApiKey: []
 tags:
   - name: Auth
-    description: Login, MFA, logout and the current principal.
+    description: Login, MFA enrolment and verification, password reset, invitation acceptance, browser sessions, password policy and the current principal.
+  - name: Search
+    description: Global search across registry entities, filtered by the caller's permissions.
   - name: Access
     description: Users, roles, companies and API keys.
   - name: Assets
@@ -1733,6 +1743,219 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/auth/invitations/{token}:
+    get:
+      tags:
+        - Auth
+      operationId: getInvitation
+      summary: Look up an invitation
+      description: Shows what an invitation link is for, before the invitee chooses a password. Does not consume the token. Throttled per IP.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Invitation token from the email link.
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 256
+      responses:
+        "200":
+          description: The invitation.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationInfo"
+        "404":
+          description: "Unknown token, or the invitation was already accepted or revoked. Codes: `invitation-not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/invitation-not-found
+                title: invitation not found
+                status: 404
+                code: invitation-not-found
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - invitation-not-found
+        "410":
+          description: "The invitation expired; an administrator can resend it. Codes: `invitation-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/invitation-expired
+                title: invitation expired
+                status: 410
+                code: invitation-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - invitation-expired
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/invitations/accept:
+    post:
+      tags:
+        - Auth
+      operationId: acceptInvitation
+      summary: Accept an invitation and set a password
+      description: Consumes the single-use invitation token, activates the account with the chosen password and display name, and signs the user in (cookie + `csrf_token`, same as login, `status` is `authenticated`). If the tenant requires MFA for the role (`InvitationInfo.mfa_enrolment_required`) the new session is *limited* until MFA enrolment is confirmed (`Me.mfa_enrolment_required`). A rejected password does not consume the token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200":
+          description: Account activated and signed in.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/SetCookie"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: "Malformed request. Codes: `bad-request`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/bad-request
+                title: bad request
+                status: 400
+                code: bad-request
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - bad-request
+        "404":
+          description: "Unknown token, or the invitation was already accepted or revoked. Codes: `invitation-not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/invitation-not-found
+                title: invitation not found
+                status: 404
+                code: invitation-not-found
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - invitation-not-found
+        "410":
+          description: "The invitation expired; an administrator can resend it. Codes: `invitation-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/invitation-expired
+                title: invitation expired
+                status: 410
+                code: invitation-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - invitation-expired
+        "422":
+          description: "Password rejected: `errors[]` pointer `/password`, code `too-short`, `too-long` or `breached`. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
   /v1/auth/login:
     post:
       tags:
@@ -1765,11 +1988,54 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: "Wrong email or password (same answer for an unknown account). Codes: `invalid-credentials`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            WWW-Authenticate:
+              description: Authentication scheme.
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/invalid-credentials
+                title: invalid credentials
+                status: 401
+                code: invalid-credentials
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - invalid-credentials
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
   /v1/auth/logout:
     post:
       tags:
@@ -1803,7 +2069,7 @@ paths:
         - Auth
       operationId: getMe
       summary: Current principal
-      description: The authenticated user (or the user that owns the API key), tenant, effective permissions and role scopes.
+      description: The authenticated user (or the user that owns the API key), tenant (with branding), effective permissions and role scopes, plus, for cookie sessions, the session lifetime (`session`) and whether the user must still enrol in MFA (`mfa_enrolment_required`). This is one of the few endpoints that still works on a *limited* session (MFA enrolment pending), so the web app calls it first to decide where to route.
       responses:
         "200":
           description: The principal.
@@ -1821,11 +2087,442 @@ paths:
               schema:
                 $ref: "#/components/schemas/Me"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: "No session, or it expired or was revoked. Codes: `unauthorized`, `session-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            WWW-Authenticate:
+              description: Authentication scheme.
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unauthorized
+                title: unauthorized
+                status: 401
+                code: unauthorized
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unauthorized
+            - session-expired
         "403":
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/auth/mfa:
+    delete:
+      tags:
+        - Auth
+      operationId: disableMfa
+      summary: Disable MFA
+      description: Removes the user's own TOTP factor and recovery codes. Requires re-authentication (password or current TOTP code in the body) and revokes all the user's **other** sessions. Forbidden while tenant policy enforces MFA for this user (`403 mfa-required-by-policy`); an administrator can reset a lost factor with `DELETE /v1/users/{id}/mfa`.
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReauthRequest"
+      responses:
+        "204":
+          description: MFA disabled.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Tenant policy enforces MFA for this user, the re-authentication value is wrong, or the request is not a valid browser-session mutation. Codes: `mfa-required-by-policy`, `reauth-failed`, `forbidden`, `csrf-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/mfa-required-by-policy
+                title: mfa required by policy
+                status: 403
+                code: mfa-required-by-policy
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - mfa-required-by-policy
+            - reauth-failed
+            - forbidden
+            - csrf-invalid
+        "409":
+          description: "MFA is not enabled for this user. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "422":
+          description: "Neither `password` nor `totp_code` was sent. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/mfa/enrol:
+    post:
+      tags:
+        - Auth
+      operationId: startMfaEnrolment
+      summary: Start TOTP enrolment
+      description: Creates a pending TOTP factor (secret stored envelope-encrypted) and returns the secret and the `otpauth://` URI for the QR code. Works on a *limited* session (MFA enrolment pending). Not active until `POST /v1/auth/mfa/enrol/confirm`; calling it again replaces the pending secret. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted.
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Pending factor.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaEnrolment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Needs a browser session (not an API key) with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+            - csrf-invalid
+        "409":
+          description: "A TOTP factor is already active; disable it first. Codes: `mfa-already-enrolled`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/mfa-already-enrolled
+                title: mfa already enrolled
+                status: 409
+                code: mfa-already-enrolled
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - mfa-already-enrolled
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/auth/mfa/enrol/confirm:
+    post:
+      tags:
+        - Auth
+      operationId: confirmMfaEnrolment
+      summary: Confirm TOTP enrolment
+      description: "Verify-then-activate: a valid current code activates the factor, generates ten single-use recovery codes (stored hashed) and returns them **once**. If the session was limited it becomes a full session and `mfa_verified` is true. Works on a limited session. Attempts are throttled. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MfaConfirmRequest"
+      responses:
+        "200":
+          description: Factor active; recovery codes.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaRecoveryCodes"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Needs a browser session (not an API key) with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+            - csrf-invalid
+        "409":
+          description: "No enrolment is pending (call enrol first) or a factor is already active. Codes: `conflict`, `mfa-already-enrolled`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+            - mfa-already-enrolled
+        "422":
+          description: "The code does not match. `errors[]` pointer `/code`. Codes: `mfa-invalid-code`, `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/mfa-invalid-code
+                title: mfa invalid code
+                status: 422
+                code: mfa-invalid-code
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - mfa-invalid-code
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/mfa/recovery-codes/regenerate:
+    post:
+      tags:
+        - Auth
+      operationId: regenerateRecoveryCodes
+      summary: Regenerate recovery codes
+      description: "Replaces all recovery codes with ten new ones (the old ones stop working) and returns them once. Requires recent re-authentication: the current password or a current TOTP code in the body. The response contains secrets and is never stored for idempotent replay, so no `Idempotency-Key` is accepted."
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReauthRequest"
+      responses:
+        "200":
+          description: New recovery codes.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaRecoveryCodes"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Not a browser session, bad CSRF token, or the re-authentication value is wrong. Codes: `forbidden`, `csrf-invalid`, `reauth-failed`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+            - csrf-invalid
+            - reauth-failed
+        "409":
+          description: "MFA is not enabled for this user. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "422":
+          description: "Neither `password` nor `totp_code` was sent. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
   /v1/auth/mfa/verify:
     post:
       tags:
@@ -1855,9 +2552,486 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: "The code is wrong (also: a TOTP code replayed inside its window) or the challenge is gone. Codes: `mfa-invalid-code`, `mfa-challenge-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            WWW-Authenticate:
+              description: Authentication scheme.
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/mfa-invalid-code
+                title: mfa invalid code
+                status: 401
+                code: mfa-invalid-code
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - mfa-invalid-code
+            - mfa-challenge-expired
         "422":
           $ref: "#/components/responses/Unprocessable"
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/password-policy:
+    get:
+      tags:
+        - Auth
+      operationId: getPasswordPolicy
+      summary: Password policy
+      description: Public. The rules the server enforces for new passwords (minimum 12, maximum 128, breached-password check), so clients and forms do not hardcode them. The values can differ per deployment (self-hosted operators may enable the online breach provider).
+      security: []
+      responses:
+        "200":
+          description: The policy.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordPolicy"
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/password/forgot:
+    post:
+      tags:
+        - Auth
+      operationId: forgotPassword
+      summary: Request a password-reset email
+      description: Always answers `202`, whether or not an account exists for the email, so it cannot be used to discover accounts; the response time does not depend on it either. If an active account matches, a single-use reset link (token stored hashed, short expiry) is emailed. Throttled per IP and per email. `422` only for a malformed email.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+            example:
+              email: alice@example.org
+      responses:
+        "202":
+          description: Accepted. If the account exists an email is on its way.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+        "400":
+          description: "Malformed request. Codes: `bad-request`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/bad-request
+                title: bad request
+                status: 400
+                code: bad-request
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - bad-request
+        "422":
+          description: "Validation failed. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/password/reset:
+    post:
+      tags:
+        - Auth
+      operationId: resetPassword
+      summary: Set a new password with a reset token
+      description: "Consumes a single-use reset token and sets the new password (policy: see `PasswordPolicy` and `GET /v1/auth/password-policy`). On success **every session of the user is revoked** and no session is created: the user signs in again. Failure modes: `404 token-invalid` (unknown or already used), `410 token-expired`, `422` with `errors[]` at pointer `/password` (code `too-short`, `too-long` or `breached`); a rejected password does not consume the token."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: Password changed; all sessions revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+        "400":
+          description: "Malformed request. Codes: `bad-request`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/bad-request
+                title: bad request
+                status: 400
+                code: bad-request
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - bad-request
+        "404":
+          description: "The reset token is unknown or was already used. Codes: `token-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-invalid
+                title: token invalid
+                status: 404
+                code: token-invalid
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-invalid
+        "410":
+          description: "The reset token has expired; request a new link. Codes: `token-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-expired
+                title: token expired
+                status: 410
+                code: token-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-expired
+        "422":
+          description: "Password rejected: `errors[]` pointer `/password`, code `too-short`, `too-long` or `breached`. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          description: "Throttled: too many attempts for this account or IP (`account-locked`) or the general rate limit. See `Retry-After`. Codes: `account-locked`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/account-locked
+                title: account locked
+                status: 429
+                code: account-locked
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - account-locked
+            - too-many-requests
+  /v1/auth/sessions:
+    get:
+      tags:
+        - Auth
+      operationId: listMySessions
+      summary: List my active sessions
+      description: The caller's unrevoked, unexpired browser sessions (devices), newest activity first, with the current one flagged. Not paginated (a user has few live sessions).
+      x-self-service: true
+      responses:
+        "200":
+          description: Active sessions.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfoList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Needs a browser session, not an API key. Codes: `forbidden`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    delete:
+      tags:
+        - Auth
+      operationId: revokeOtherSessions
+      summary: Sign out everywhere else
+      description: Revokes every session of the caller except the current one. Revoked sessions fail on their next request with `401 session-expired`.
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Other sessions revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Needs a browser session (not an API key) with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+            - csrf-invalid
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/auth/sessions/{id}:
+    delete:
+      tags:
+        - Auth
+      operationId: revokeMySession
+      summary: Revoke one of my sessions
+      description: Revokes one of the caller's own sessions. The current session cannot be revoked here (use `POST /v1/auth/logout`). An unknown id, or one that belongs to another user, is `404`.
+      x-self-service: true
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "Needs a browser session (not an API key) with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
+            - csrf-invalid
+        "404":
+          description: "Not found. Codes: `not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/not-found
+                title: not found
+                status: 404
+                code: not-found
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - not-found
+        "409":
+          description: "That is the current session; use sign out. Codes: `cannot-revoke-current`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/cannot-revoke-current
+                title: cannot revoke current
+                status: 409
+                code: cannot-revoke-current
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - cannot-revoke-current
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/categories:
@@ -5303,6 +6477,81 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/search:
+    get:
+      tags:
+        - Search
+      operationId: search
+      summary: Search across the registry
+      description: |-
+        One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.
+
+        **Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
+
+        Requires permission `search:read`.
+      x-permission: search:read
+      x-permission-by-type:
+        asset: asset:read
+        model: catalog:read
+        category: catalog:read
+        person: person:read
+        location: location:read
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search text (1-200 characters).
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: types
+          in: query
+          description: "Comma-separated entity types to search. Default: every type available in this release."
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - asset
+                - model
+                - category
+                - person
+                - location
+        - name: limit
+          in: query
+          description: Maximum results **per type**.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 5
+      responses:
+        "200":
+          description: Grouped results (empty array when nothing matches).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResultList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/status-labels:
     get:
       tags:
@@ -5824,6 +7073,206 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/users/{id}/invitation:
+    delete:
+      tags:
+        - Access
+      operationId: revokeUserInvitation
+      summary: Revoke a user's pending invitation
+      description: |-
+        Marks the invitation `revoked` (the link then answers `404 invitation-not-found`) and archives the never-activated account. `409 conflict` if the user already accepted. The action is audited.
+
+        Requires permission `user:manage`.
+      x-permission: user:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Invitation revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/users/{id}/invitation/resend:
+    post:
+      tags:
+        - Access
+      operationId: resendUserInvitation
+      summary: Resend a user's invitation
+      description: |-
+        For a user still in status `invited`: invalidates the previous link, issues a fresh single-use token with a new expiry and emails it. Also the way to recover from `410 invitation-expired`. `409 conflict` if the user has no pending or expired invitation (already active or disabled).
+
+        Requires permission `user:manage`.
+      x-permission: user:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: New invitation sent.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/users/{id}/mfa:
+    delete:
+      tags:
+        - Access
+      operationId: resetUserMfa
+      summary: Reset a user's MFA
+      description: |-
+        For a user who lost their device and recovery codes: removes all MFA factors and recovery codes and revokes all their sessions. If tenant policy requires MFA the user must enrol again at the next sign-in. You cannot reset your own MFA this way (`409 conflict`; use `DELETE /v1/auth/mfa`). Audited.
+
+        Requires permission `user:manage`.
+      x-permission: user:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: MFA reset.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/users/{id}/sessions:
+    get:
+      tags:
+        - Access
+      operationId: listUserSessions
+      summary: List a user's active sessions
+      description: |-
+        Administrator view of the same device list as `GET /v1/auth/sessions` (`current` is always false). Not paginated.
+
+        Requires permission `user:manage`.
+      x-permission: user:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Active sessions.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfoList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/users/{id}/sessions/{session_id}:
+    delete:
+      tags:
+        - Access
+      operationId: revokeUserSession
+      summary: Revoke one session of a user
+      description: |-
+        Revokes a single session of another user (the user's whole set is also revoked by role change, deactivation and password reset). Audited.
+
+        Requires permission `user:manage`.
+      x-permission: user:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: session_id
+          in: path
+          required: true
+          description: Session id.
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Revoked.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/vendors:
     get:
       tags:
@@ -6222,7 +7671,7 @@ components:
         type: string
   responses:
     BadRequest:
-      description: Malformed request (bad JSON, bad query parameter, invalid cursor).
+      description: "Malformed request (bad JSON, bad query parameter, invalid cursor). Codes: `bad-request`, `idempotency-key-required`, `idempotency-key-invalid`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6237,8 +7686,12 @@ components:
             code: bad-request
             detail: Query parameter "limit" must be between 1 and 200.
             request_id: 01JABCDEF0123456789
+      x-problem-codes:
+        - bad-request
+        - idempotency-key-required
+        - idempotency-key-invalid
     Unauthorized:
-      description: Missing, invalid or expired credentials.
+      description: "Missing, invalid or expired credentials. Codes: `unauthorized`, `session-expired`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6250,8 +7703,11 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - unauthorized
+        - session-expired
     Forbidden:
-      description: Authenticated, but the principal lacks the required permission (or MFA is required).
+      description: "Authenticated, but the principal lacks the required permission (or MFA enrolment is required). Codes: `forbidden`, `csrf-invalid`, `mfa-enrolment-required`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6259,8 +7715,12 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - forbidden
+        - csrf-invalid
+        - mfa-enrolment-required
     NotFound:
-      description: The resource does not exist **or belongs to another tenant or is outside the caller's scope**.
+      description: "The resource does not exist **or belongs to another tenant or is outside the caller's scope**. Codes: `not-found`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6268,8 +7728,10 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - not-found
     Conflict:
-      description: "State conflict: uniqueness violation, asset already checked out, insufficient stock, or an Idempotency-Key request still in flight."
+      description: "State conflict: uniqueness violation, asset already checked out, insufficient stock, or an Idempotency-Key request still in flight. Codes: `conflict`, `idempotency-key-in-flight`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6277,8 +7739,11 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - conflict
+        - idempotency-key-in-flight
     PreconditionFailed:
-      description: "`If-Match` does not match the current version; re-read and retry."
+      description: "`If-Match` does not match the current version; re-read and retry. Codes: `precondition-failed`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6286,8 +7751,10 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - precondition-failed
     PreconditionRequired:
-      description: "`If-Match` header is required for this operation."
+      description: "`If-Match` header is required for this operation. Codes: `precondition-required`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6295,8 +7762,10 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - precondition-required
     Unprocessable:
-      description: Validation failed (see `errors[]`), or an Idempotency-Key was reused with a different body.
+      description: "Validation failed (see `errors[]`), or an Idempotency-Key was reused with a different body. Codes: `validation`, `idempotency-key-reuse`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6314,8 +7783,11 @@ components:
                 message: must not contain whitespace
                 code: pattern
             request_id: 01JABCDEF0123456789
+      x-problem-codes:
+        - validation
+        - idempotency-key-reuse
     TooManyRequests:
-      description: Rate limit exceeded.
+      description: "Rate limit exceeded. Codes: `too-many-requests`."
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -6331,6 +7803,8 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+      x-problem-codes:
+        - too-many-requests
   schemas:
     Problem:
       type: object
@@ -6351,8 +7825,7 @@ components:
           type: string
           format: uri-reference
         code:
-          type: string
-          description: Stable machine-readable code, e.g. `validation`, `asset-already-checked-out`.
+          $ref: "#/components/schemas/ProblemCode"
         request_id:
           type: string
         errors:
@@ -6364,6 +7837,53 @@ components:
         - title
         - status
       description: RFC 9457 problem details.
+    ProblemCode:
+      type: string
+      description: "Stable machine-readable problem code. The set is open (new codes may appear): branch on codes you know and fall back to the HTTP status. The full catalogue (code, HTTP status, meaning) is the root `x-problem-codes` extension of this document; each error response lists its own subset in `x-problem-codes`."
+      examples:
+        - validation
+        - invalid-credentials
+        - mfa-enrolment-required
+        - asset-already-checked-out
+      x-known-values:
+        - bad-request
+        - idempotency-key-required
+        - idempotency-key-invalid
+        - unauthorized
+        - invalid-credentials
+        - mfa-invalid-code
+        - mfa-challenge-expired
+        - session-expired
+        - forbidden
+        - csrf-invalid
+        - mfa-enrolment-required
+        - mfa-required-by-policy
+        - reauth-failed
+        - not-found
+        - token-invalid
+        - invitation-not-found
+        - method-not-allowed
+        - conflict
+        - idempotency-key-in-flight
+        - cannot-revoke-current
+        - mfa-already-enrolled
+        - asset-already-checked-out
+        - asset-not-checked-out
+        - insufficient-stock
+        - no-loaner-available
+        - import-stale-dry-run
+        - token-expired
+        - invitation-expired
+        - precondition-failed
+        - payload-too-large
+        - unsupported-media-type
+        - validation
+        - idempotency-key-reuse
+        - precondition-required
+        - account-locked
+        - too-many-requests
+        - internal
+        - unavailable
     FieldError:
       type: object
       properties:
@@ -6374,6 +7894,7 @@ components:
           type: string
         code:
           type: string
+          description: Per-field code, e.g. `pattern`, `required`; for passwords `too-short`, `too-long`, `breached`.
       required:
         - pointer
         - message
@@ -10232,10 +11753,30 @@ components:
               type: string
             cell:
               type: string
+            branding:
+              type: object
+              properties:
+                logo_url:
+                  type:
+                    - string
+                    - "null"
+                  format: uri
+                  description: Absolute URL of the tenant logo. Always null until tenant branding ships (M4+).
+                accent_color:
+                  type:
+                    - string
+                    - "null"
+                  pattern: ^#[0-9a-fA-F]{6}$
+                  description: Accent colour as `#rrggbb`. Always null until tenant branding ships (M4+).
+              required:
+                - logo_url
+                - accent_color
+              description: Tenant branding for the web shell. Always present; both fields are null in M1-M3 (clients use the default theme).
           required:
             - id
             - name
             - base_currency
+            - branding
         default_company_id:
           type: string
           format: uuid
@@ -10269,6 +11810,14 @@ components:
                 type: string
           required:
             - method
+        mfa_enrolment_required:
+          type: boolean
+          description: "True when tenant policy requires MFA for this user and the user has not enrolled yet. The session is then *limited*: every endpoint except `/v1/auth/me`, `/v1/auth/logout` and `/v1/auth/mfa/enrol*` returns 403 `mfa-enrolment-required`. Always false for API keys."
+        session:
+          oneOf:
+            - $ref: "#/components/schemas/SessionExpiry"
+            - type: "null"
+          description: Lifetime of the current browser session; null when authenticated with an API key.
         csrf_token:
           type: string
           description: Only for cookie sessions.
@@ -10277,6 +11826,275 @@ components:
         - tenant
         - permissions
         - auth
+        - mfa_enrolment_required
+        - session
+    SessionExpiry:
+      type: object
+      properties:
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: The session ends at this time unless there is activity before it; each authenticated request pushes it forward, never beyond `absolute_expires_at`.
+        absolute_expires_at:
+          type: string
+          format: date-time
+          description: Hard end of the session regardless of activity.
+      required:
+        - idle_expires_at
+        - absolute_expires_at
+    PasswordPolicy:
+      type: object
+      properties:
+        min_length:
+          type: integer
+          description: Minimum length in Unicode code points after NFKC normalisation.
+          examples:
+            - 12
+        max_length:
+          type: integer
+          description: Maximum length in Unicode code points (bounds hashing cost).
+          examples:
+            - 128
+        composition_rules:
+          type: boolean
+          description: "Always false: no required character classes. Length and the breach check are the policy."
+        breached_check:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            sources:
+              type: array
+              items:
+                type: string
+                enum:
+                  - local_list
+                  - online_k_anonymity
+              description: Always includes `local_list` (bundled, works offline and in self-hosted installs). `online_k_anonymity` is present only when the operator enabled the optional provider; only a hash prefix ever leaves the server.
+          required:
+            - enabled
+            - sources
+        rejection_codes:
+          type: array
+          items:
+            type: string
+            enum:
+              - too-short
+              - too-long
+              - breached
+          description: Field codes returned in `errors[].code` at pointer `/password` on a 422.
+      required:
+        - min_length
+        - max_length
+        - composition_rules
+        - breached_check
+      description: "The password rules enforced by `POST /v1/auth/password/reset` and `POST /v1/auth/invitations/accept`. Defaults: min 12, max 128, breached-password check on (bundled local list; optional online k-anonymity provider). Clients read this instead of hardcoding limits."
+    Password:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 128
+      description: "New password. Policy: 12-128 characters, no composition rules, NFKC-normalised, rejected if found in the breached-password list. A violation returns 422 with `errors[]` pointer `/password` and code `too-short`, `too-long` or `breached`. Live limits: `GET /v1/auth/password-policy`."
+    ForgotPasswordRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required:
+        - email
+      additionalProperties: false
+    ResetPasswordRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Single-use token from the reset email link.
+        password:
+          $ref: "#/components/schemas/Password"
+      required:
+        - token
+        - password
+      additionalProperties: false
+    InvitationInfo:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          description: Name the administrator entered; the invitee may change it on accept.
+        tenant_name:
+          type: string
+        role_name:
+          type: string
+          description: Display name of the invited role (for example "Asset Manager").
+        expires_at:
+          type: string
+          format: date-time
+        mfa_enrolment_required:
+          type: boolean
+          description: "The tenant requires MFA for this role: after accepting, the new session is limited until the user enrols (see `Me.mfa_enrolment_required`)."
+      required:
+        - email
+        - display_name
+        - tenant_name
+        - expires_at
+        - mfa_enrolment_required
+      description: What the accept-invitation screen shows before the user picks a password. Contains no secret.
+    AcceptInvitationRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Single-use invitation token from the email link.
+        password:
+          $ref: "#/components/schemas/Password"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+      required:
+        - token
+        - password
+        - display_name
+      additionalProperties: false
+    MfaEnrolment:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: Base32 TOTP shared secret, for manual entry.
+        provisioning_uri:
+          type: string
+          description: "`otpauth://totp/...` URI that the QR code encodes."
+      required:
+        - secret
+        - provisioning_uri
+      description: A pending (not yet active) TOTP factor. It becomes active only after `POST /v1/auth/mfa/enrol/confirm`. Calling enrol again before confirming replaces the pending secret.
+    MfaConfirmRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          pattern: ^[0-9 ]{6,8}$
+          description: Current 6-digit TOTP code (spaces ignored).
+      required:
+        - code
+      additionalProperties: false
+    MfaRecoveryCodes:
+      type: object
+      properties:
+        recovery_codes:
+          type: array
+          items:
+            type: string
+          minItems: 10
+          maxItems: 10
+          description: Ten single-use recovery codes. Shown **once**; only their hashes are stored. Any earlier set is invalidated.
+      required:
+        - recovery_codes
+    ReauthRequest:
+      type: object
+      description: Proof of a recent sign-in for a sensitive action. Send the current password **or** a current TOTP code. A wrong value returns 403 `reauth-failed` and counts toward the account lockout.
+      properties:
+        password:
+          type: string
+          format: password
+          maxLength: 1024
+        totp_code:
+          type: string
+          pattern: ^[0-9 ]{6,8}$
+      anyOf:
+        - required:
+            - password
+        - required:
+            - totp_code
+      additionalProperties: false
+    SessionInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Session id (not the cookie token).
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        ip:
+          type:
+            - string
+            - "null"
+          description: IP address the session was last seen from.
+        user_agent:
+          type:
+            - string
+            - "null"
+          description: Raw or summarised user agent.
+        current:
+          type: boolean
+          description: True for the session making this request.
+      required:
+        - id
+        - created_at
+        - last_seen_at
+        - ip
+        - user_agent
+        - current
+    SessionInfoList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionInfo"
+      required:
+        - data
+    SearchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - asset
+            - model
+            - category
+            - person
+            - location
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          description: Primary text, e.g. asset tag + name, model name, category name.
+        sublabel:
+          type:
+            - string
+            - "null"
+          description: Secondary text, e.g. serial number or model; null if none.
+        href_hint:
+          type: string
+          description: "App-relative path the web client may navigate to (for example `/assets/view?id=<uuid>`). A hint only: clients own routing and may build the URL from `type` and `id`."
+      required:
+        - type
+        - id
+        - label
+        - sublabel
+        - href_hint
+    SearchResultList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+          description: "Grouped by type in the order of the `types` parameter (default: asset, model, category, person, location), best match first within a group; at most `limit` per type."
+      required:
+        - data
     RoleAssignment:
       type: object
       properties:
@@ -10612,3 +12430,157 @@ components:
       required:
         - data
         - page
+x-problem-codes:
+  bad-request:
+    status:
+      - 400
+    description: "Malformed request: bad JSON, bad query parameter, invalid cursor."
+  idempotency-key-required:
+    status:
+      - 400
+    description: The operation needs an Idempotency-Key header and none was sent.
+  idempotency-key-invalid:
+    status:
+      - 400
+    description: The Idempotency-Key header is not 8-255 visible ASCII characters.
+  unauthorized:
+    status:
+      - 401
+    description: No credential, or the credential is not valid (generic).
+  invalid-credentials:
+    status:
+      - 401
+    description: Wrong email or password. Never reveals which one, or whether the account exists.
+  mfa-invalid-code:
+    status:
+      - 401
+      - 422
+    description: The TOTP or recovery code is wrong, already used, or outside its window. 401 on the login challenge, 422 when confirming an enrolment.
+  mfa-challenge-expired:
+    status:
+      - 401
+    description: The MFA challenge from login is expired or already consumed; sign in again.
+  session-expired:
+    status:
+      - 401
+    description: The session hit its idle or absolute timeout, or was revoked; sign in again.
+  forbidden:
+    status:
+      - 403
+    description: Authenticated, but the principal lacks the required permission (or the request needs a browser session).
+  csrf-invalid:
+    status:
+      - 403
+    description: A cookie-authenticated mutation is missing a valid X-CSRF-Token.
+  mfa-enrolment-required:
+    status:
+      - 403
+    description: The tenant requires MFA and the user has not enrolled; only enrolment endpoints and logout work until then.
+  mfa-required-by-policy:
+    status:
+      - 403
+    description: The action (disabling MFA) is not allowed because tenant policy enforces MFA for this user.
+  reauth-failed:
+    status:
+      - 403
+    description: The password or TOTP code sent to re-authenticate a sensitive action is wrong.
+  not-found:
+    status:
+      - 404
+    description: The resource does not exist, belongs to another tenant, or is outside the caller's scope.
+  token-invalid:
+    status:
+      - 404
+    description: The password-reset token is unknown or already used.
+  invitation-not-found:
+    status:
+      - 404
+    description: The invitation token is unknown, already accepted or revoked.
+  method-not-allowed:
+    status:
+      - 405
+    description: The path exists but not for this HTTP method.
+  conflict:
+    status:
+      - 409
+    description: "State conflict: uniqueness violation, or the resource is in the wrong state for this action."
+  idempotency-key-in-flight:
+    status:
+      - 409
+    description: A request with the same Idempotency-Key is still running.
+  cannot-revoke-current:
+    status:
+      - 409
+    description: The current session cannot be revoked here; use sign out.
+  mfa-already-enrolled:
+    status:
+      - 409
+    description: The user already has an active TOTP factor; disable it first.
+  asset-already-checked-out:
+    status:
+      - 409
+    description: The asset is already checked out.
+  asset-not-checked-out:
+    status:
+      - 409
+    description: The asset has no open check-out to return.
+  insufficient-stock:
+    status:
+      - 409
+    description: Not enough quantity on hand.
+  no-loaner-available:
+    status:
+      - 409
+    description: The loaner pool has no available member.
+  import-stale-dry-run:
+    status:
+      - 409
+    description: The dry run being committed is not the one reviewed.
+  token-expired:
+    status:
+      - 410
+    description: The password-reset token has expired; request a new one.
+  invitation-expired:
+    status:
+      - 410
+    description: The invitation has expired; ask an administrator to resend it.
+  precondition-failed:
+    status:
+      - 412
+    description: "`If-Match` does not match the current version."
+  payload-too-large:
+    status:
+      - 413
+    description: The request body exceeds the size limit.
+  unsupported-media-type:
+    status:
+      - 415
+    description: The Content-Type is not supported.
+  validation:
+    status:
+      - 422
+    description: Validation failed; see errors[] (JSON pointer + message + field code).
+  idempotency-key-reuse:
+    status:
+      - 422
+    description: The Idempotency-Key was already used with a different request body.
+  precondition-required:
+    status:
+      - 428
+    description: "`If-Match` is required for this operation."
+  account-locked:
+    status:
+      - 429
+    description: Too many failed sign-in or re-authentication attempts; locked until Retry-After elapses.
+  too-many-requests:
+    status:
+      - 429
+    description: Rate limit exceeded; wait for Retry-After.
+  internal:
+    status:
+      - 500
+    description: Unexpected server error; quote request_id.
+  unavailable:
+    status:
+      - 503
+    description: A dependency is down or the service is starting.

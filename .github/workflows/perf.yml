@@ -1,7 +1,7 @@
 # Nightly performance budget job (M1-CI-05). Budgets: scripts/ci/perf-budgets.json (documented in
 # docs/engineering/ci.md). Not a required check on PRs; a red nightly run is a defect to triage next morning.
-# The asset-list / search / tag-lookup budgets are SKIPPED until the registry endpoints exist (they are
-# only enforced when the repository variable PERF_REQUIRE_REGISTRY is '1').
+# The registry budgets (asset list, search, tag lookup on 2 x 50,000 assets) are ENFORCED: a registry endpoint
+# that cannot be measured fails the run. Set the repository variable PERF_REQUIRE_REGISTRY to 0 to skip them.
 name: Performance
 
 on:
@@ -58,22 +58,16 @@ jobs:
           KEEP_STACK: '1'
         run: scripts/ci/compose-smoke.sh
 
-      # M1-CI-05 seeds 2 x 50,000 assets. The seeder arrives with the registry (M1-REG-07/08): until
-      # scripts/ci/perf-seed.sh exists the job measures the demo seed only and the registry budgets skip.
-      - name: Seed 2 x 50,000 assets (when the seeder exists)
-        run: |
-          if [ -x scripts/ci/perf-seed.sh ]; then
-            scripts/ci/perf-seed.sh
-          else
-            echo "scripts/ci/perf-seed.sh not present yet: registry budgets are skipped" >> "$GITHUB_STEP_SUMMARY"
-          fi
+      # M1-CI-05: 2 x 50,000 assets (Acme and Globex), one INSERT .. SELECT per tenant, then VACUUM ANALYZE.
+      - name: Seed 2 x 50,000 assets
+        run: scripts/ci/perf-seed.sh
 
       - name: Measure budgets
         env:
           PERF_BASE_URL: http://127.0.0.1:3000
           PERF_DURATION: ${{ inputs.duration || '10' }}
           PERF_CONNECTIONS: ${{ inputs.connections || '10' }}
-          PERF_REQUIRE_REGISTRY: ${{ vars.PERF_REQUIRE_REGISTRY || '0' }}
+          PERF_REQUIRE_REGISTRY: ${{ vars.PERF_REQUIRE_REGISTRY || '1' }}
           PERF_OUT: perf-results.json
         run: node scripts/ci/perf-check.mjs
 

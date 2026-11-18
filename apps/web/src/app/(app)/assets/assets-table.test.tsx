@@ -107,16 +107,10 @@ describe('AssetsTable against the mock registry', () => {
     await screen.findByText('Showing 1-10 of 10');
     await user.click(screen.getByRole('checkbox', { name: 'Select row PRJ-00010' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select row PRJ-00009' }));
-    // PRJ-00009 changes behind our back, so its If-Match is stale by the time we write
+    // PRJ-00009 is archived behind our back, so the bulk edit refuses that one item (409)
     const { assetsApi } = await import('@/lib/registry/api');
-    const original = assetsApi.update.bind(assetsApi);
-    const spy = vi.spyOn(assetsApi, 'update').mockImplementation(async (id, body, etag) => {
-      if (id.endsWith('9')) {
-        await original(id, { notes: 'someone else' }); // bumps the version
-        return original(id, body, 'W/"1"'); // stale
-      }
-      return original(id, body, etag);
-    });
+    const nine = (await assetsApi.list({ tag: 'PRJ-00009' })).data[0]!;
+    await assetsApi.archive(nine.id);
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit 2 assets' });
     await user.click(within(dialog).getByRole('combobox', { name: 'New value' }));
@@ -127,6 +121,5 @@ describe('AssetsTable against the mock registry', () => {
     expect(within(results).getByRole('list', { name: 'Assets that failed' })).toHaveTextContent(
       'PRJ-00009',
     );
-    spy.mockRestore();
   });
 });

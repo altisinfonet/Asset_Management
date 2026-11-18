@@ -148,6 +148,17 @@ export const en = {
     validation: 'Some fields need your attention.',
     server: 'Something went wrong on our side. Try again in a moment.',
     unknown: 'Something went wrong.',
+    inUse: 'Still in use by {usage}. Move or archive those first.',
+  },
+  usage: {
+    assets_one: '{count} asset',
+    assets_other: '{count} assets',
+    models_one: '{count} model',
+    models_other: '{count} models',
+    customFields_one: '{count} custom field',
+    customFields_other: '{count} custom fields',
+    assetsWithValues_one: '{count} asset with a value',
+    assetsWithValues_other: '{count} assets with a value',
   },
   dashboard: {
     title: 'Dashboard',

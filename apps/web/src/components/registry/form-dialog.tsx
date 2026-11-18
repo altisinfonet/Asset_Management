@@ -17,6 +17,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Select, type SelectOption } from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
+import { uiErrorText } from '@/lib/error-text';
 
 export interface FormFieldSpec {
   name: string;
@@ -162,10 +163,7 @@ export function FormDialog({
           className="flex flex-col gap-4"
         >
           {formError ? (
-            <FormError
-              message={formError.detail ?? t(formError.messageKey)}
-              requestId={formError.requestId}
-            />
+            <FormError message={uiErrorText(t, formError)} requestId={formError.requestId} />
           ) : null}
           {fields.map((field) =>
             field.kind === 'checkbox' ? (

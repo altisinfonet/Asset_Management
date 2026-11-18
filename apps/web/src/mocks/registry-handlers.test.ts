@@ -1,7 +1,14 @@
 import { ApiError } from '@assettracker/api-client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getApi } from '@/lib/api';
-import { assetsApi, categoriesApi, fieldsApi, usersApi, vendorsApi } from '@/lib/registry/api';
+import {
+  assetsApi,
+  categoriesApi,
+  fieldsApi,
+  tagTemplateApi,
+  usersApi,
+  vendorsApi,
+} from '@/lib/registry/api';
 import { seedSession } from '@/test/render';
 import { MOCK_ACCOUNTS } from './fixtures';
 import { uid } from './registry-fixtures';
@@ -53,7 +60,7 @@ describe('mock registry (owner)', () => {
       assetsApi.list({ limit: 50, cursor: first.page.next_cursor!, sort: ['-asset_tag'] }),
     );
     expect(wrong.status).toBe(400);
-    expect(wrong.code).toBe('bad-request');
+    expect(wrong.code).toBe('invalid-cursor');
   });
 
   it('filters by category, status, free text, tag, custom field and archived state', async () => {
@@ -161,12 +168,67 @@ describe('mock registry (owner)', () => {
     const [laptop] = (await categoriesApi.list({ q: 'Laptop' })).data;
     const refused = await fails(categoriesApi.archive(laptop!.id));
     expect(refused.status).toBe(409);
-    expect((refused.body as { detail: string }).detail).toMatch(/39 assets/);
+    // Like the API: every asset counts (archived too) and the 409 carries `usage`.
+    const body = refused.body as { code: string; detail: string; usage: Record<string, number> };
+    expect(body.code).toBe('conflict');
+    expect(body.usage).toEqual({ assets: 40, models: 3, custom_fields: 2 });
+    expect(body.detail).toMatch(/assets: 40/);
 
     const created = await categoriesApi.create({ name: 'Scratch', kind: 'asset' });
     await categoriesApi.archive(created.id);
     const all = await categoriesApi.list({ archived: 'only' });
     expect(all.data.map((c) => c.name)).toContain('Scratch');
+  });
+
+  it('bulk endpoints answer 200 with one result per id; a failing item does not stop the others', async () => {
+    const page = (await assetsApi.list({ limit: 3, sort: ['asset_tag'] })).data;
+    const ids = page.map((a) => a.id);
+    // archive one of them first: the bulk edit refuses that item (409) and edits the rest
+    await assetsApi.archive(ids[1]!);
+    const statuses = (await getApi().http.GET('/v1/status-labels')).data!.data;
+    const target = statuses.find((x) => x.id !== page[0]!.status_id)!;
+    const updated = await assetsApi.bulkUpdate(ids, { status_id: target.id });
+    expect(updated.summary).toEqual({ total: 3, succeeded: 2, failed: 1 });
+    expect(updated.results.map((r) => r.status)).toEqual([200, 409, 200]);
+    expect(updated.results[1]!.error).toMatchObject({ code: 'conflict' });
+    expect(updated.results[0]!.data!.status_id).toBe(target.id);
+
+    const archived = await assetsApi.bulkArchive([ids[0]!, ids[1]!]);
+    expect(archived.results.map((r) => r.status)).toEqual([200, 409]);
+    const restored = await assetsApi.bulkRestore([ids[0]!, ids[1]!, uid('asset', 9999)]);
+    expect(restored.results.map((r) => r.status)).toEqual([200, 200, 404]);
+
+    const empty = await fails(assetsApi.bulkArchive([]));
+    expect(empty).toMatchObject({ status: 422, code: 'validation' });
+    const many = await fails(
+      assetsApi.bulkArchive(Array.from({ length: 101 }, (_, i) => uid('asset', i + 1))),
+    );
+    expect(many.status).toBe(422);
+    const noop = await fails(assetsApi.bulkUpdate(ids, {}));
+    expect(noop.status).toBe(422);
+  });
+
+  it('the tag numbering template is versioned and drives generated tags', async () => {
+    const before = await tagTemplateApi.get();
+    expect(before.value).toMatchObject({ prefix: '', width: 5, use_category_prefix: true });
+    expect(before.etag).toBeTruthy();
+    const saved = await tagTemplateApi.put(
+      { prefix: 'ACME-', width: 4, use_category_prefix: false },
+      before.etag,
+    );
+    expect(saved.value.example).toBe('ACME-0042');
+    expect(saved.etag).not.toBe(before.etag);
+    // a stale If-Match is refused
+    expect((await fails(tagTemplateApi.put(saved.value, before.etag))).status).toBe(412);
+    // invalid values are refused with pointers
+    const bad = await fails(
+      tagTemplateApi.put({ prefix: 'lower', width: 40, use_category_prefix: true }, saved.etag),
+    );
+    expect(bad.status).toBe(422);
+
+    const [category] = (await categoriesApi.list({ q: 'Laptop' })).data;
+    const created = await assetsApi.create({ category_id: category!.id });
+    expect(created.value.asset_tag).toBe('ACME-0001');
   });
 
   it('custom fields: key is immutable, type cannot change once assets have values', async () => {

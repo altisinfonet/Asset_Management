@@ -6,6 +6,7 @@ import { useT } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useInvalidateLookups } from '@/lib/registry/queries';
 import type { Versioned } from '@/lib/registry/types';
+import { uiErrorText } from '@/lib/error-text';
 
 /**
  * Runs a write from a table action (reorder, archive, resend ...): refreshes the catalogue
@@ -28,7 +29,7 @@ export function useRunner() {
         toast({
           variant: 'danger',
           title: t(ui.messageKey),
-          description: ui.detail,
+          description: ui.usage ? uiErrorText(t, ui) : ui.detail,
           requestId: ui.requestId,
         });
         return false;

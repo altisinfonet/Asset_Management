@@ -22,6 +22,7 @@ import { assetsApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
 import type { HistoryEvent } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
+import { uiErrorText } from '@/lib/error-text';
 
 const TABS = ['overview', 'history', 'repairs', 'attachments'] as const;
 type Tab = (typeof TABS)[number];
@@ -264,7 +265,7 @@ function AssetById({ id }: { id: string }) {
                       const ui = getApi().toUiError(err);
                       toast({
                         variant: 'danger',
-                        title: ui.detail ?? t(ui.messageKey),
+                        title: uiErrorText(t, ui),
                         requestId: ui.requestId,
                       });
                     }

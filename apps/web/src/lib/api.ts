@@ -30,6 +30,8 @@ export interface ProblemDetails {
   code?: string;
   request_id?: string;
   errors?: Array<{ pointer: string; message: string }>;
+  /** On a `409` that refuses to delete or change something still in use: what references it. */
+  usage?: Record<string, number>;
 }
 
 export type ApiErrorKind =
@@ -60,6 +62,8 @@ export interface UiError {
   requestId?: string;
   /** The problem's human-readable `detail` (for example "Used by 3 assets"), when it sent one. */
   detail?: string;
+  /** Counts of what still references the record, from a `409` (`usage` in the problem), e.g. `{ assets: 12 }`. */
+  usage?: Record<string, number>;
   fieldErrors: FieldError[];
 }
 
@@ -79,6 +83,15 @@ function isProblem(body: unknown): body is ProblemDetails {
   return typeof body === 'object' && body !== null;
 }
 
+/** Keeps only positive integer counts of a problem's `usage` member. */
+function usageOf(value: unknown): Record<string, number> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const entries = Object.entries(value).filter(
+    (e): e is [string, number] => typeof e[1] === 'number' && Number.isFinite(e[1]) && e[1] > 0,
+  );
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 /** Map any thrown value from an API call to a `UiError`. Never throws. */
 export function toUiError(err: unknown, headerRequestId?: string): UiError {
   if (err instanceof ApiError) {
@@ -95,6 +108,7 @@ export function toUiError(err: unknown, headerRequestId?: string): UiError {
       messageKey,
       requestId: problem?.request_id ?? headerRequestId,
       detail: typeof problem?.detail === 'string' ? problem.detail : undefined,
+      usage: usageOf(problem?.usage),
       fieldErrors: Array.isArray(problem?.errors) ? problem.errors : [],
     };
   }

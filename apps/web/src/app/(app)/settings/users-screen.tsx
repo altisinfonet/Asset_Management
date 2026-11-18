@@ -35,6 +35,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { fetchAll, usersApi } from '@/lib/registry/api';
 import { useRoles } from '@/lib/registry/queries';
 import type { RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
+import { uiErrorText } from '@/lib/error-text';
 
 const USERS_KEY = ['users'] as const;
 
@@ -143,7 +144,7 @@ function UsersTable({
 
   const fail = (err: unknown) => {
     const ui = getApi().toUiError(err);
-    toast({ variant: 'danger', title: ui.detail ?? t(ui.messageKey), requestId: ui.requestId });
+    toast({ variant: 'danger', title: uiErrorText(t, ui), requestId: ui.requestId });
   };
 
   const changeRole = async (user: RegistryUser, roleId: string) => {
@@ -401,7 +402,7 @@ function InvitationsTable({
       toast({ variant: 'success', title: t('users.invitationResent', { email: user.email }) });
     } catch (err) {
       const ui = getApi().toUiError(err);
-      toast({ variant: 'danger', title: ui.detail ?? t(ui.messageKey), requestId: ui.requestId });
+      toast({ variant: 'danger', title: uiErrorText(t, ui), requestId: ui.requestId });
     }
   };
 

@@ -88,15 +88,13 @@ export class SearchService {
          limit ${limit - exact.length}`;
       rows = [...exact, ...rest];
     }
-    return rows.map(
-      (r): SearchResult => ({
-        type: 'asset',
-        id: r.id,
-        label: r.asset_tag,
-        sublabel: r.name ?? r.serial,
-        href_hint: `/assets/view?id=${r.id}`,
-      }),
-    );
+    return rows.map((r): SearchResult => ({
+      type: 'asset',
+      id: r.id,
+      label: r.asset_tag,
+      sublabel: r.name ?? r.serial,
+      href_hint: `/assets/view?id=${r.id}`,
+    }));
   }
 
   private async models(trx: Tx, q: string, contains: string, prefix: string, limit: number) {

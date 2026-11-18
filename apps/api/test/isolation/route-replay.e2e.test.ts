@@ -3,7 +3,7 @@ import { ModulesContainer } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Client, dbEnabled } from '../auth/support.js';
 import { mode } from '../support/db.js';
-import { discoverRoutes, toTemplate } from '../support/routes.js';
+import { discoverRoutes } from '../support/routes.js';
 import {
   type App,
   type TenantFixture,
@@ -62,11 +62,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
   }
 
   /** A path id of tenant A, replayed with the headers a real client would send. */
-  const notFound = (
-    method: Replay['method'],
-    url: string,
-    body?: unknown,
-  ): Replay => ({ method, url, body, expect: [404] });
+  const notFound = (method: Replay['method'], url: string, body?: unknown): Replay => ({
+    method,
+    url,
+    body,
+    expect: [404],
+  });
   const list = (url: string): Replay => ({ method: 'GET', url, expect: [200] });
   const refused = (method: Replay['method'], url: string, body: unknown): Replay => ({
     method,
@@ -92,14 +93,22 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       ...crud('vendors', c.vendorId, { notes: 'b was here' }),
       ...crud('custom-fields', c.customFieldId, { label: 'b was here' }),
       ...crud('assets', c.assetId, { name: 'b was here' }),
-      'get /v1/categories': [list(`/v1/categories?q=${c.markers[0]}`), list('/v1/categories?limit=200')],
+      'get /v1/categories': [
+        list(`/v1/categories?q=${c.markers[0]}`),
+        list('/v1/categories?limit=200'),
+      ],
       'post /v1/categories': [
         // the same name as A's category is fine in B: it must create B's own category, not collide
         { method: 'POST', url: '/v1/categories', body: { name: unique('B-own') }, expect: [201] },
       ],
       'get /v1/manufacturers': [list('/v1/manufacturers?limit=200')],
       'post /v1/manufacturers': [
-        { method: 'POST', url: '/v1/manufacturers', body: { name: unique('B-own') }, expect: [201] },
+        {
+          method: 'POST',
+          url: '/v1/manufacturers',
+          body: { name: unique('B-own') },
+          expect: [201],
+        },
       ],
       'get /v1/models': [
         list(`/v1/models?category_id=${c.categoryId}`),
@@ -108,24 +117,46 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       ],
       'post /v1/models': [
         refused('POST', '/v1/models', { category_id: c.categoryId, name: unique('X') }),
-        refused('POST', '/v1/models', { category_id: c.categoryId, manufacturer_id: c.manufacturerId, name: unique('X') }),
+        refused('POST', '/v1/models', {
+          category_id: c.categoryId,
+          manufacturer_id: c.manufacturerId,
+          name: unique('X'),
+        }),
       ],
       'get /v1/status-labels': [list('/v1/status-labels')],
       'post /v1/status-labels': [
-        { method: 'POST', url: '/v1/status-labels', body: { name: unique('B-own'), state_type: 'pending' }, expect: [201] },
+        {
+          method: 'POST',
+          url: '/v1/status-labels',
+          body: { name: unique('B-own'), state_type: 'pending' },
+          expect: [201],
+        },
       ],
       'get /v1/vendors': [list('/v1/vendors?limit=200')],
       'post /v1/vendors': [
         { method: 'POST', url: '/v1/vendors', body: { name: unique('B-own') }, expect: [201] },
       ],
-      'get /v1/custom-fields': [list(`/v1/custom-fields?category_id=${c.categoryId}`), list('/v1/custom-fields')],
+      'get /v1/custom-fields': [
+        list(`/v1/custom-fields?category_id=${c.categoryId}`),
+        list('/v1/custom-fields'),
+      ],
       'post /v1/custom-fields': [
-        refused('POST', '/v1/custom-fields', { category_id: c.categoryId, key: 'x', label: 'x', data_type: 'text' }),
+        refused('POST', '/v1/custom-fields', {
+          category_id: c.categoryId,
+          key: 'x',
+          label: 'x',
+          data_type: 'text',
+        }),
       ],
       'get /v1/settings/asset-tag-template': [list('/v1/settings/asset-tag-template')],
       'put /v1/settings/asset-tag-template': [
         // B changes ITS template; A's is checked untouched at the end
-        { method: 'PUT', url: '/v1/settings/asset-tag-template', body: { prefix: 'BB-', width: 4, use_category_prefix: false }, expect: [200] },
+        {
+          method: 'PUT',
+          url: '/v1/settings/asset-tag-template',
+          body: { prefix: 'BB-', width: 4, use_category_prefix: false },
+          expect: [200],
+        },
       ],
       'get /v1/assets': [
         list(`/v1/assets?tag=${c.assetTag}`),
@@ -142,26 +173,50 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       ],
       'post /v1/assets': [
         refused('POST', '/v1/assets', { category_id: c.categoryId, name: 'b was here' }),
-        refused('POST', '/v1/assets', { category_id: c.categoryId, model_id: c.modelId, vendor_id: c.vendorId }),
+        refused('POST', '/v1/assets', {
+          category_id: c.categoryId,
+          model_id: c.modelId,
+          vendor_id: c.vendorId,
+        }),
         refused('POST', '/v1/assets', { category_id: c.categoryId, status_id: c.statusLabelId }),
       ],
       'post /v1/assets/:id/restore': [notFound('POST', `/v1/assets/${c.assetId}/restore`)],
-      'post /v1/assets/:id/clone': [notFound('POST', `/v1/assets/${c.assetId}/clone`, { count: 2 })],
+      'post /v1/assets/:id/clone': [
+        notFound('POST', `/v1/assets/${c.assetId}/clone`, { count: 2 }),
+      ],
       'post /v1/assets/bulk-update': [
         // per-item 404s, the request itself is well formed: 200 and nothing of A's in the answer
-        { method: 'POST', url: '/v1/assets/bulk-update', body: { ids: [c.assetId], changes: { vendor_id: null } }, expect: [200] },
+        {
+          method: 'POST',
+          url: '/v1/assets/bulk-update',
+          body: { ids: [c.assetId], changes: { vendor_id: null } },
+          expect: [200],
+        },
       ],
       'post /v1/assets/bulk-archive': [
-        { method: 'POST', url: '/v1/assets/bulk-archive', body: { ids: [c.assetId] }, expect: [200] },
+        {
+          method: 'POST',
+          url: '/v1/assets/bulk-archive',
+          body: { ids: [c.assetId] },
+          expect: [200],
+        },
       ],
       'post /v1/assets/bulk-restore': [
-        { method: 'POST', url: '/v1/assets/bulk-restore', body: { ids: [c.assetId] }, expect: [200] },
+        {
+          method: 'POST',
+          url: '/v1/assets/bulk-restore',
+          body: { ids: [c.assetId] },
+          expect: [200],
+        },
       ],
       'get /v1/scan/resolve': [
         notFound('GET', `/v1/scan/resolve?code=${c.assetTag}`),
         notFound('GET', `/v1/scan/resolve?code=${c.assetTag.toLowerCase()}`),
         notFound('GET', `/v1/scan/resolve?code=${c.labelCode}`),
-        notFound('GET', `/v1/scan/resolve?code=${encodeURIComponent(`https://app.example/a/${c.labelCode}`)}`),
+        notFound(
+          'GET',
+          `/v1/scan/resolve?code=${encodeURIComponent(`https://app.example/a/${c.labelCode}`)}`,
+        ),
       ],
       'get /v1/search': [
         list(`/v1/search?q=${c.assetTag}`),
@@ -171,13 +226,23 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       // ---- access
       'get /v1/users': [list('/v1/users?limit=200')],
       'post /v1/users': [
-        refused('POST', '/v1/users', { email: 'x@y.example', display_name: 'x', role_assignments: [{ role_id: c.roleId }] }),
+        refused('POST', '/v1/users', {
+          email: 'x@y.example',
+          display_name: 'x',
+          role_assignments: [{ role_id: c.roleId }],
+        }),
       ],
       'get /v1/users/:id': [notFound('GET', `/v1/users/${c.userId}`)],
-      'patch /v1/users/:id': [notFound('PATCH', `/v1/users/${c.userId}`, { display_name: 'b was here' })],
+      'patch /v1/users/:id': [
+        notFound('PATCH', `/v1/users/${c.userId}`, { display_name: 'b was here' }),
+      ],
       'delete /v1/users/:id': [notFound('DELETE', `/v1/users/${c.userId}`)],
-      'delete /v1/users/:id/invitation': [notFound('DELETE', `/v1/users/${c.invitedUserId}/invitation`)],
-      'post /v1/users/:id/invitation/resend': [notFound('POST', `/v1/users/${c.invitedUserId}/invitation/resend`)],
+      'delete /v1/users/:id/invitation': [
+        notFound('DELETE', `/v1/users/${c.invitedUserId}/invitation`),
+      ],
+      'post /v1/users/:id/invitation/resend': [
+        notFound('POST', `/v1/users/${c.invitedUserId}/invitation/resend`),
+      ],
       'delete /v1/users/:id/mfa': [notFound('DELETE', `/v1/users/${c.userId}/mfa`)],
       'get /v1/users/:id/sessions': [notFound('GET', `/v1/users/${c.userId}/sessions`)],
       'delete /v1/users/:id/sessions/:session_id': [
@@ -187,7 +252,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       'get /v1/companies': [list('/v1/companies')],
       'get /v1/api-keys': [list('/v1/api-keys')],
       'post /v1/api-keys': [
-        { method: 'POST', url: '/v1/api-keys', body: { name: 'b-own', scopes: ['asset:read'] }, expect: [201] },
+        {
+          method: 'POST',
+          url: '/v1/api-keys',
+          body: { name: 'b-own', scopes: ['asset:read'] },
+          expect: [201],
+        },
       ],
       'delete /v1/api-keys/:id': [notFound('DELETE', `/v1/api-keys/${c.apiKeyId}`)],
       'delete /v1/auth/sessions/:id': [notFound('DELETE', `/v1/auth/sessions/${c.sessionId}`)],
@@ -203,19 +273,20 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     'get /v1/openapi.json': 'public contract document: no tenant data',
     'post /v1/auth/login': 'pre-tenant: the credential in the body selects the tenant',
     'post /v1/auth/mfa/verify': 'pre-tenant: bound to the login challenge of the caller',
-    'post /v1/auth/password/forgot': 'pre-tenant: always answers the same, no lookup result is revealed',
+    'post /v1/auth/password/forgot':
+      'pre-tenant: always answers the same, no lookup result is revealed',
     'post /v1/auth/password/reset': 'pre-tenant: the single-use token is the credential',
     'get /v1/auth/password-policy': 'public: static policy',
     'get /v1/auth/invitations/:token': 'pre-tenant: the single-use token is the credential',
     'post /v1/auth/invitations/accept': 'pre-tenant: the single-use token is the credential',
     'get /v1/auth/me': 'principal-scoped: describes the caller only',
-    'post /v1/auth/logout': 'principal-scoped: ends the caller\'s own session',
-    'get /v1/auth/sessions': 'principal-scoped: lists the caller\'s own sessions',
-    'delete /v1/auth/sessions': 'principal-scoped: revokes the caller\'s other sessions',
-    'delete /v1/auth/mfa': 'principal-scoped: the caller\'s own factor',
-    'post /v1/auth/mfa/enrol': 'principal-scoped: the caller\'s own factor',
-    'post /v1/auth/mfa/enrol/confirm': 'principal-scoped: the caller\'s own factor',
-    'post /v1/auth/mfa/recovery-codes/regenerate': 'principal-scoped: the caller\'s own codes',
+    'post /v1/auth/logout': "principal-scoped: ends the caller's own session",
+    'get /v1/auth/sessions': "principal-scoped: lists the caller's own sessions",
+    'delete /v1/auth/sessions': "principal-scoped: revokes the caller's other sessions",
+    'delete /v1/auth/mfa': "principal-scoped: the caller's own factor",
+    'post /v1/auth/mfa/enrol': "principal-scoped: the caller's own factor",
+    'post /v1/auth/mfa/enrol/confirm': "principal-scoped: the caller's own factor",
+    'post /v1/auth/mfa/recovery-codes/regenerate': "principal-scoped: the caller's own codes",
   };
 
   const b = () => B.admin;
@@ -226,19 +297,52 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     B = await createTenant(app, tenancy, 'replayb');
     const a = A.admin;
     const marker = unique('isoA').replace(/-/g, '');
-    const category = (await a.post('/v1/categories', { name: `${marker} category`, tag_prefix: 'ISA-' })).body;
+    const category = (
+      await a.post('/v1/categories', { name: `${marker} category`, tag_prefix: 'ISA-' })
+    ).body;
     const manufacturer = (await a.post('/v1/manufacturers', { name: `${marker} maker` })).body;
-    const model = (await a.post('/v1/models', { category_id: category.id, manufacturer_id: manufacturer.id, name: `${marker} model` })).body;
+    const model = (
+      await a.post('/v1/models', {
+        category_id: category.id,
+        manufacturer_id: manufacturer.id,
+        name: `${marker} model`,
+      })
+    ).body;
     const vendor = (await a.post('/v1/vendors', { name: `${marker} vendor` })).body;
-    const label = (await a.post('/v1/status-labels', { name: `${marker} label`, state_type: 'pending' })).body;
-    const field = (await a.post('/v1/custom-fields', { category_id: category.id, key: 'tier', label: 'Tier', data_type: 'text' })).body;
+    const label = (
+      await a.post('/v1/status-labels', { name: `${marker} label`, state_type: 'pending' })
+    ).body;
+    const field = (
+      await a.post('/v1/custom-fields', {
+        category_id: category.id,
+        key: 'tier',
+        label: 'Tier',
+        data_type: 'text',
+      })
+    ).body;
     const asset = (
-      await a.post('/v1/assets', { category_id: category.id, model_id: model.id, vendor_id: vendor.id, name: `${marker} asset`, serial: `${marker}-serial`, custom_data: { tier: 'gold' } })
+      await a.post('/v1/assets', {
+        category_id: category.id,
+        model_id: model.id,
+        vendor_id: vendor.id,
+        name: `${marker} asset`,
+        serial: `${marker}-serial`,
+        custom_data: { tier: 'gold' },
+      })
     ).body;
     const viewer = await createUser(app, A, 'viewer');
-    const invited = (await a.post('/v1/users', { email: `invited-${marker}@replay.example`, display_name: 'Invited', role_assignments: [{ role_id: A.roles.viewer! }] })).body;
-    const sessions = (await viewer.client.get('/v1/auth/sessions')).body.data as Array<{ id: string }>;
-    const key = (await a.post('/v1/api-keys', { name: `${marker}-key`, scopes: ['asset:read'] })).body;
+    const invited = (
+      await a.post('/v1/users', {
+        email: `invited-${marker}@replay.example`,
+        display_name: 'Invited',
+        role_assignments: [{ role_id: A.roles.viewer! }],
+      })
+    ).body;
+    const sessions = (await viewer.client.get('/v1/auth/sessions')).body.data as Array<{
+      id: string;
+    }>;
+    const key = (await a.post('/v1/api-keys', { name: `${marker}-key`, scopes: ['asset:read'] }))
+      .body;
     fx = {
       categoryId: category.id,
       manufacturerId: manufacturer.id,
@@ -257,9 +361,21 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       roleId: A.roles.viewer!,
       markers: [
         marker,
-        category.id, manufacturer.id, model.id, vendor.id, label.id, field.id, asset.id,
-        asset.asset_tag, asset.serial, asset.label_code, viewer.id, invited.id, key.id,
-        viewer.email, A.adminEmail,
+        category.id,
+        manufacturer.id,
+        model.id,
+        vendor.id,
+        label.id,
+        field.id,
+        asset.id,
+        asset.asset_tag,
+        asset.serial,
+        asset.label_code,
+        viewer.id,
+        invited.id,
+        key.id,
+        viewer.email,
+        A.adminEmail,
       ],
     };
   });
@@ -281,8 +397,15 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       asset: await etag(`/v1/assets/${fx.assetId}`),
       user: await etag(`/v1/users/${fx.userId}`),
       template: await etag('/v1/settings/asset-tag-template'),
-      keys: JSON.stringify((await A.admin.get('/v1/api-keys')).body.data.map((k: { id: string; revoked_at: unknown }) => [k.id, k.revoked_at])),
-      assets: String((await A.admin.get('/v1/assets?include_total=true&limit=1&archived=include')).body.page.total),
+      keys: JSON.stringify(
+        (await A.admin.get('/v1/api-keys')).body.data.map(
+          (k: { id: string; revoked_at: unknown }) => [k.id, k.revoked_at],
+        ),
+      ),
+      assets: String(
+        (await A.admin.get('/v1/assets?include_total=true&limit=1&archived=include')).body.page
+          .total,
+      ),
       users: String((await A.admin.get('/v1/users?limit=200')).body.data.length),
     };
   }
@@ -292,13 +415,21 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     const known = { ...cases() };
     const keys = routes.map((r) => `${r.method} ${r.path}`);
     const missing = keys.filter((k) => !(k in known) && !(k in EXEMPT));
-    expect(missing, 'routes without a replay case: add one in route-replay.e2e.test.ts').toEqual([]);
+    expect(missing, 'routes without a replay case: add one in route-replay.e2e.test.ts').toEqual(
+      [],
+    );
     // no stale registrations either
     const stale = [...Object.keys(known), ...Object.keys(EXEMPT)].filter((k) => !keys.includes(k));
     expect(stale, 'replay cases for routes that no longer exist').toEqual([]);
     // the registry is what this harness exists for: it must be covered, not exempted
-    for (const r of routes.filter((r) => /^\/v1\/(assets|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users)/.test(r.path))) {
-      expect(`${r.method} ${r.path}` in EXEMPT, `${r.method} ${r.path} must not be exempt`).toBe(false);
+    for (const r of routes.filter((r) =>
+      /^\/v1\/(assets|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users)/.test(
+        r.path,
+      ),
+    )) {
+      expect(`${r.method} ${r.path}` in EXEMPT, `${r.method} ${r.path} must not be exempt`).toBe(
+        false,
+      );
     }
   });
 
@@ -308,14 +439,24 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     for (const [route, replays] of Object.entries(cases())) {
       for (const r of replays) {
         const headers: Record<string, string> = {};
-        if (r.method === 'PATCH' || r.method === 'DELETE' || (r.method === 'POST' && /\/restore$/.test(r.url)) || r.method === 'PUT') {
+        if (
+          r.method === 'PATCH' ||
+          r.method === 'DELETE' ||
+          (r.method === 'POST' && /\/restore$/.test(r.url)) ||
+          r.method === 'PUT'
+        ) {
           headers['if-match'] = '*';
         }
         const res = await b().request(r.method, r.url, { body: r.body, headers });
         const where = `${route} <- ${r.method} ${r.url}`;
-        expect(r.expect, `${where}: got ${res.status} ${res.raw.slice(0, 200)}`).toContain(res.status);
+        expect(r.expect, `${where}: got ${res.status} ${res.raw.slice(0, 200)}`).toContain(
+          res.status,
+        );
         // the problem document echoes the request path as `instance` (B sent it); nothing else may carry A's data
-        const answer = res.body && typeof res.body === 'object' ? { ...res.body, instance: undefined } : res.body;
+        const answer =
+          res.body && typeof res.body === 'object'
+            ? { ...res.body, instance: undefined }
+            : res.body;
         const text = JSON.stringify(answer ?? res.raw);
         for (const m of fx.markers) {
           expect(text.includes(m), `${where}: the response leaks ${m}`).toBe(false);
@@ -331,7 +472,11 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
 
   it("the answers for B's own data are B's: B sees only its own asset after creating one with A's tag", async () => {
     const own = await b().post('/v1/categories', { name: unique('B-cat'), tag_prefix: 'ISA-' });
-    const created = await b().post('/v1/assets', { category_id: own.body.id, asset_tag: fx.assetTag, serial: fx.serial });
+    const created = await b().post('/v1/assets', {
+      category_id: own.body.id,
+      asset_tag: fx.assetTag,
+      serial: fx.serial,
+    });
     expect(created.status, created.raw).toBe(201);
     // same tag and serial as A's asset, different tenant: each tenant resolves its own
     const mine = await b().get(`/v1/assets?tag=${fx.assetTag}`);
@@ -348,7 +493,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
   it('a request without a credential never reaches tenant data', async () => {
     const anon = b().clone();
     anon.cookie = undefined;
-    for (const url of [`/v1/assets/${fx.assetId}`, '/v1/assets', `/v1/scan/resolve?code=${fx.assetTag}`, '/v1/search?q=x', `/v1/categories/${fx.categoryId}`]) {
+    for (const url of [
+      `/v1/assets/${fx.assetId}`,
+      '/v1/assets',
+      `/v1/scan/resolve?code=${fx.assetTag}`,
+      '/v1/search?q=x',
+      `/v1/categories/${fx.categoryId}`,
+    ]) {
       const res = await (anon as Client).get(url, { cookie: false });
       expect(res.status, url).toBe(401);
     }

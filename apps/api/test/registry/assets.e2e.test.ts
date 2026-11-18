@@ -1145,6 +1145,14 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect(
         (await a().get(`/v1/assets?category_id=${cat.id}&limit=2&cursor=${cursor}`)).status,
       ).toBe(200);
+      // a forged cursor with the right binding but values PostgreSQL cannot cast is a 400, not a 500
+      const forged = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+      forged.k[0] = 'not-a-timestamp';
+      const bad = await a().get(
+        `/v1/assets?category_id=${cat.id}&limit=2&cursor=${Buffer.from(JSON.stringify(forged)).toString('base64url')}`,
+      );
+      expect(bad.status).toBe(400);
+      expect(bad.body.code).toBe('invalid-cursor');
     });
 
     it("never returns another tenant's rows, even for the same tags", async () => {

@@ -153,6 +153,8 @@ export function matchOperation(
     .filter((o) => o.method === method.toLowerCase())
     .filter((o) => new RegExp(`^${o.path.replace(/\{[^}]+\}/g, '[^/]+')}$`).test(path));
   // `/v1/assets/bulk-update` also matches `/v1/assets/{id}`: prefer the template with fewer parameters.
-  candidates.sort((a, b) => (a.path.match(/\{/g)?.length ?? 0) - (b.path.match(/\{/g)?.length ?? 0));
+  candidates.sort(
+    (a, b) => (a.path.match(/\{/g)?.length ?? 0) - (b.path.match(/\{/g)?.length ?? 0),
+  );
   return candidates[0];
 }

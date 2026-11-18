@@ -70,15 +70,19 @@ export function check(schema: Schema, value: unknown, path = '', doc = loadDocum
     if (schema.format && FORMATS[schema.format] && !FORMATS[schema.format]!.test(value)) {
       problems.push(`${here}: not a ${schema.format}: ${value}`);
     }
-    if (schema.minLength !== undefined && value.length < schema.minLength) problems.push(`${here}: too short`);
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) problems.push(`${here}: too long`);
+    if (schema.minLength !== undefined && value.length < schema.minLength)
+      problems.push(`${here}: too short`);
+    if (schema.maxLength !== undefined && value.length > schema.maxLength)
+      problems.push(`${here}: too long`);
     if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) {
       problems.push(`${here}: does not match ${schema.pattern}`);
     }
   }
   if (typeof value === 'number') {
-    if (schema.minimum !== undefined && value < schema.minimum) problems.push(`${here}: below minimum`);
-    if (schema.maximum !== undefined && value > schema.maximum) problems.push(`${here}: above maximum`);
+    if (schema.minimum !== undefined && value < schema.minimum)
+      problems.push(`${here}: below minimum`);
+    if (schema.maximum !== undefined && value > schema.maximum)
+      problems.push(`${here}: above maximum`);
   }
   if (Array.isArray(value) && schema.items) {
     value.forEach((item, i) => problems.push(...check(schema.items!, item, `${path}/${i}`, doc)));

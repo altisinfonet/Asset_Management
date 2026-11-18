@@ -136,6 +136,6 @@ export class AssetTagService extends RegistryBase {
 
 export async function tagExists(trx: Tx, tag: string): Promise<boolean> {
   const rows = await trx.$queryRaw<Array<{ one: number }>>`
-    select 1 as one from app.asset where lower(asset_tag) = lower(${tag}) limit 1`;
+    select 1 as one from app.asset where asset_tag_key = lower(${tag}) limit 1`;
   return rows.length > 0;
 }

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
 import { permits } from '../auth/index.js';
 import { TenancyService, type Tx } from '../tenancy/index.js';
-import { ASSET_FTS, escapeLike } from './asset-queries.js';
+import { escapeLike } from './asset-queries.js';
 import type { SearchType } from './schemas.js';
 
 export interface SearchResult {
@@ -23,9 +23,13 @@ const M1_TYPES: Array<{ type: SearchType; permission: string }> = [
 /**
  * `GET /v1/search` (M1-REG-08): one box over assets, models and categories. Each type is searched
  * only when the caller holds its permission (a type the caller may not read is left out, never a
- * 403). Assets rank exact tag/serial first, then prefix, then substring and full-text matches; the
- * tag, serial and name predicates are served by the trigram indexes, the notes / order number text
- * by the `asset_fts_idx` GIN index. Archived records are excluded. Tenant scoping is RLS.
+ * 403). Archived records are excluded; tenant scoping is RLS.
+ *
+ * Assets, in two steps: (1) EXACT tag or serial through the btree on the stored lower-case key
+ * columns (leakproof equality, so the index is usable through RLS: O(log n)) ranks first;
+ * (2) when the page is not full, a substring scan of `search_text` (tag, serial and name) fills it,
+ * prefix matches before inner matches. Step 2 is a tenant-bounded scan: `ILIKE`, `@@` and jsonb
+ * `@>` are not leakproof, so no trigram / full-text / GIN index can serve them under RLS (ADR 0005).
  */
 @Injectable()
 export class SearchService {
@@ -61,28 +65,38 @@ export class SearchService {
     );
   }
 
-  private async assets(trx: Tx, q: string, contains: string, prefix: string, limit: number) {
-    const rows = await trx.$queryRaw<
-      Array<{ id: string; asset_tag: string; name: string | null; serial: string | null }>
-    >`
+  private async assets(trx: Tx, q: string, _contains: string, _prefix: string, limit: number) {
+    type Row = { id: string; asset_tag: string; name: string | null; serial: string | null };
+    const exact = await trx.$queryRaw<Row[]>`
       select a.id, a.asset_tag, a.name, a.serial
         from app.asset a
-       where a.archived_at is null
-         and (a.asset_tag ilike ${contains} or a.serial ilike ${contains} or a.name ilike ${contains}
-              or ${ASSET_FTS} @@ websearch_to_tsquery('simple', ${q}))
-       order by case when lower(a.asset_tag) = lower(${q}) or lower(a.serial) = lower(${q}) then 0
-                     when a.asset_tag ilike ${prefix} or a.serial ilike ${prefix} then 1
-                     when a.name ilike ${prefix} then 2
-                     else 3 end,
-                lower(a.asset_tag)
+       where a.archived_at is null and (a.asset_tag_key = lower(${q}) or a.serial_key = lower(${q}))
+       order by a.asset_tag_key
        limit ${limit}`;
-    return rows.map((r): SearchResult => ({
-      type: 'asset',
-      id: r.id,
-      label: r.asset_tag,
-      sublabel: r.name ?? r.serial,
-      href_hint: `/assets/view?id=${r.id}`,
-    }));
+    let rows = exact;
+    if (exact.length < limit) {
+      const seen = exact.map((r) => r.id);
+      const rest = await trx.$queryRaw<Row[]>`
+        select a.id, a.asset_tag, a.name, a.serial
+          from app.asset a
+         where a.archived_at is null
+           and strpos(a.search_text, lower(${q})) > 0
+           and a.id <> all (${seen}::uuid[])
+         order by case when starts_with(a.search_text, lower(${q}))
+                         or strpos(a.search_text, chr(31) || lower(${q})) > 0 then 0 else 1 end,
+                  a.asset_tag_key
+         limit ${limit - exact.length}`;
+      rows = [...exact, ...rest];
+    }
+    return rows.map(
+      (r): SearchResult => ({
+        type: 'asset',
+        id: r.id,
+        label: r.asset_tag,
+        sublabel: r.name ?? r.serial,
+        href_hint: `/assets/view?id=${r.id}`,
+      }),
+    );
   }
 
   private async models(trx: Tx, q: string, contains: string, prefix: string, limit: number) {

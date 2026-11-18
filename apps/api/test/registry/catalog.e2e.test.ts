@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { contractViolations } from '../support/contract-observer.js';
 import { dbEnabled } from '../auth/support.js';
 import {
   type App,
@@ -34,6 +35,8 @@ describe.skipIf(!dbEnabled)('registry catalog', () => {
   afterAll(async () => {
     await app.close();
     await tenancy.onModuleDestroy();
+    // every status this file provoked is one the contract documents for that operation
+    expect(contractViolations()).toEqual([]);
   });
 
   const ifMatch = (res: { headers: Record<string, unknown> }) => ({

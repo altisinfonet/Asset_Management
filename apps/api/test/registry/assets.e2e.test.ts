@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, dbEnabled, env, withClient } from '../auth/support.js';
+import { contractViolations } from '../support/contract-observer.js';
 import {
   type App,
   type TenantFixture,
@@ -41,6 +42,8 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
     faults.outboxFailsFor = null;
     await app.close();
     await tenancy.onModuleDestroy();
+    // every status this file provoked is one the contract documents for that operation
+    expect(contractViolations()).toEqual([]);
   });
 
   const im = (res: { headers: Record<string, unknown> } | string) => ({
@@ -1059,7 +1062,7 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       ).toBeGreaterThan(0);
     });
 
-    it('text search matches tag, serial, name (substring) and notes (full text), and ignores LIKE wildcards', async () => {
+    it('text search matches tag, serial and name (substring, case-insensitive) and treats % and _ literally', async () => {
       const count = (q: string) =>
         a()
           .get(
@@ -1070,7 +1073,8 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect(await count('lst-0000')).toBeGreaterThan(9);
       expect(await count('Bulk asset 5')).toBeGreaterThan(0);
       expect(await count('SER-LST-1')).toBeGreaterThan(0);
-      expect(await count('keycap')).toBeGreaterThan(0); // notes: full text
+      expect(await count('BULK ASSET 5')).toBeGreaterThan(0);
+      expect(await count('keycap')).toBe(0); // notes are not searched (contract: tag, serial, name)
       expect(await count('%')).toBe(0);
       expect(await count('_')).toBe(0);
       expect(await count('no such thing')).toBe(0);

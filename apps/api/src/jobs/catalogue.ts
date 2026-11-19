@@ -82,6 +82,41 @@ export const QUEUES = {
     expireInSeconds: 5 * MINUTE,
     dedupeSeconds: 6 * 60 * MINUTE,
   },
+  // ---- M2 files (M2-FILE-02/03) ------------------------------------------------------------
+  /** Stream a confirmed upload to ClamAV; clean -> thumbnail, infected -> delete + notify. */
+  'attachment.scan': {
+    name: 'attachment.scan',
+    tenantScoped: true,
+    priorityClass: 'interactive',
+    runsIn: 'worker',
+    retryLimit: 6,
+    retryDelay: 10,
+    retryDelayMax: 10 * MINUTE,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 5 * MINUTE,
+  },
+  /** Re-encode a clean image into a metadata-free WebP thumbnail (sharp). */
+  'attachment.thumbnail': {
+    name: 'attachment.thumbnail',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 3,
+    retryDelay: 15,
+    expireInSeconds: 3 * MINUTE,
+    dedupeSeconds: 5 * MINUTE,
+  },
+  /** Orphan sweep: abandoned uploads, lost scan jobs (per tenant, from the scheduler). */
+  'attachment.sweep': {
+    name: 'attachment.sweep',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 1,
+    retryDelay: 30,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 5 * MINUTE,
+  },
 } as const satisfies Record<string, QueueDefinition>;
 
 export type QueueName = keyof typeof QUEUES;

@@ -12,6 +12,7 @@ import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
 import { PeopleModule } from './people/index.js';
 import { PlatformModule } from './platform/index.js';
+import { FilesModule } from './files/index.js';
 import { RegistryModule } from './registry/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
@@ -42,7 +43,14 @@ export class AppModule {
         ControlPlaneModule,
         IdentityModule,
         ...(auth
-          ? [AuthModule, RegistryModule, LocationsModule, PeopleModule, LifecycleModule]
+          ? [
+              AuthModule,
+              RegistryModule,
+              LocationsModule,
+              PeopleModule,
+              LifecycleModule,
+              FilesModule,
+            ]
           : []),
         HealthModule,
         OpenApiModule,

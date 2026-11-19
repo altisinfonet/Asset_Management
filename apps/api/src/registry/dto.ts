@@ -83,6 +83,7 @@ export const modelDto = (
     default_depreciation_months: number | null;
     eol_date: Date | null;
     notes: string | null;
+    image_attachment_id: string | null;
   },
 ) => ({
   ...stamps(r),
@@ -93,6 +94,7 @@ export const modelDto = (
   default_depreciation_months: r.default_depreciation_months,
   eol_date: isoDate(r.eol_date),
   notes: r.notes,
+  image_attachment_id: r.image_attachment_id,
 });
 
 export const statusLabelDto = (

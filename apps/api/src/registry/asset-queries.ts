@@ -41,6 +41,8 @@ export interface AssetRow {
   disposed_on: Date | null;
   disposal_reason: string | null;
   disposal_note: string | null;
+  /** M2-FILE-03; optional so fixtures that predate the column still type-check. */
+  image_attachment_id?: string | null;
   status_name: string;
   status_state_type: string;
   /** The open custody period (attached by {@link withStatus}); null when the asset is in stock. */
@@ -64,7 +66,7 @@ export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name,
   a.model_id, a.status_id, a.location_id, a.company_id, a.vendor_id, a.parent_asset_id, a.purchase_date,
   a.purchase_cost_minor, a.currency, a.order_number, a.warranty_end, a.notes, a.custom_data,
   a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version,
-  a.disposed_on, a.disposal_reason, a.disposal_note`;
+  a.disposed_on, a.disposal_reason, a.disposal_note, a.image_attachment_id`;
 
 /** Row of the asset queries before the status label and the open custody period are attached. */
 export type BareAssetRow = Omit<AssetRow, 'status_name' | 'status_state_type' | 'assignment'>;
@@ -204,6 +206,7 @@ export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
     external_source: r.external_source,
     external_id: r.external_id,
     label_code: r.label_code,
+    image_attachment_id: r.image_attachment_id ?? null,
     current_assignment: r.assignment ?? (null as AssignmentSummaryDto | null),
     disposal:
       r.disposed_on && r.disposal_reason

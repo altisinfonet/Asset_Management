@@ -53,6 +53,7 @@ describe('contract coverage', () => {
     ).toEqual(
       [
         'acceptInvitation',
+        'downloadLocalFile',
         'forgotPassword',
         'getHealth',
         'getInvitation',
@@ -60,6 +61,7 @@ describe('contract coverage', () => {
         'getVersion',
         'login',
         'resetPassword',
+        'uploadLocalFile',
         'verifyMfa',
       ].sort(),
     );
@@ -212,6 +214,14 @@ describe('role x operation matrix', () => {
     markAssetLost: ['tenant_admin', 'asset_manager', 'technician'],
     markAssetFound: ['tenant_admin', 'asset_manager', 'technician'],
     disposeAsset: ['tenant_admin', 'asset_manager'],
+    // files (M2-FILE): everyone reads attachments; uploading needs attachment:write; settings are catalogue-level
+    listAttachments: ALL,
+    getAttachment: ALL,
+    createAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    completeAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    archiveAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    getFilesSettings: ALL,
+    putFilesSettings: ['tenant_admin', 'asset_manager'],
   };
   it.each(Object.entries(allowed))('%s is allowed for exactly %j', (operationId, expectedRoles) => {
     const op = operations.find((o) => o.operationId === operationId);

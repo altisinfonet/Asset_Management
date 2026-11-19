@@ -108,7 +108,10 @@ export const modelCreateSchema = z.strictObject({
   eol_date: isoDate.nullable().optional(),
   notes: nullableText(10_000).optional(),
 });
-export const modelUpdateSchema = modelCreateSchema.partial();
+export const modelUpdateSchema = modelCreateSchema.partial().extend({
+  /** M2-FILE-03: the model's picture, an image attachment whose owner is this model. */
+  image_attachment_id: z.uuid().nullable().optional(),
+});
 export type ModelCreate = z.output<typeof modelCreateSchema>;
 export type ModelUpdate = z.output<typeof modelUpdateSchema>;
 
@@ -239,8 +242,13 @@ export const assetUpdateSchema = z.strictObject({
   custom_data: customData.optional(),
   external_source: nullableText(100).optional(),
   external_id: nullableText(200).optional(),
+  /** M2-FILE-03: the asset's primary picture, an image attachment whose owner is this asset. */
+  image_attachment_id: z.uuid().nullable().optional(),
 });
-export const assetCreateSchema = assetUpdateSchema.extend({ category_id: z.uuid() });
+// A picture is an attachment OF the asset, so it can only be set once the asset exists.
+export const assetCreateSchema = assetUpdateSchema
+  .omit({ image_attachment_id: true })
+  .extend({ category_id: z.uuid() });
 export type AssetCreate = z.output<typeof assetCreateSchema>;
 export type AssetUpdate = z.output<typeof assetUpdateSchema>;
 

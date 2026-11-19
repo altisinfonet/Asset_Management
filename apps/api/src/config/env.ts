@@ -31,7 +31,58 @@ const envSchema = z
     /** How long a duplicate Idempotency-Key request waits for the first before answering 409. */
     IDEMPOTENCY_LOCK_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(3_000),
 
+    // --- files, scanning (M2-FILE, src/storage, src/files) ------------------------------------
+    /**
+     * Object storage behind the StorageAdapter: `s3` (any S3-compatible store: MinIO in dev and
+     * self-hosted, AWS S3 in Cloud) or `local` (a directory, served by the API itself; the
+     * self-hosted fallback). Default: `s3` when S3_ENDPOINT is set, else `local`.
+     */
+    STORAGE_DRIVER: z.enum(['s3', 'local']).optional(),
     S3_ENDPOINT: z.url().optional(),
+    /** Host that BROWSERS use to reach the store (presigned URLs are built for it); defaults to S3_ENDPOINT. */
+    S3_PUBLIC_ENDPOINT: z.url().optional(),
+    S3_REGION: z.string().min(1).default('us-east-1'),
+    S3_BUCKET: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'must be a valid bucket name')
+      .default('assettracker-files'),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    /** Docker-secret form of the secret key (wins over S3_SECRET_ACCESS_KEY). */
+    S3_SECRET_ACCESS_KEY_FILE: z.string().min(1).optional(),
+    /** Path-style addressing (required by MinIO and most self-hosted stores). */
+    S3_FORCE_PATH_STYLE: z.stringbool().default(true),
+    /** Create the bucket at startup when it does not exist (dev / bundled MinIO). */
+    S3_CREATE_BUCKET: z.stringbool().default(false),
+    /** `local` driver: directory that holds the objects (a volume shared by api and worker). */
+    FILES_LOCAL_DIR: z.string().min(1).default('./data/files'),
+    /**
+     * `local` driver: the public base URL of the API as browsers see it; presigned URLs are
+     * `<base>/v1/files/<token>`. Point it at a dedicated cookie-less host to serve files from a
+     * different origin than the app.
+     */
+    FILES_BASE_URL: z.url().optional(),
+    /** Lifetime of a presigned upload URL. */
+    FILES_UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+    /** Lifetime of a presigned download URL. */
+    FILES_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(120),
+    /** Hard ceiling of one upload in bytes, whatever the tenant tier says. */
+    FILES_MAX_BYTES_CEILING: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .max(2_147_483_647)
+      .default(100 * 1024 * 1024),
+    /** ClamAV daemon (clamd, TCP). Without it uploads cannot be scanned; see SCAN_REQUIRED. */
+    CLAMD_HOST: z.string().min(1).optional(),
+    CLAMD_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+    CLAMD_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(600).default(120),
+    /**
+     * true (default): an upload stays `pending` until a scan says clean; with no scanner configured
+     * it never leaves `pending`. false: without a scanner uploads are marked `clean` with
+     * `scan_detail = scan-disabled` and an `attachment.scan_skipped` event (documented risk).
+     */
+    SCAN_REQUIRED: z.stringbool().default(true),
 
     /**
      * Which reverse proxies' `X-Forwarded-For` the API believes (see `trust-proxy.ts`): `false`
@@ -120,6 +171,8 @@ const envSchema = z
     SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(720).default(12),
     /** Failed logins (or re-authentications) per account (hashed email) before `429 account-locked`. */
     LOGIN_MAX_FAILURES_PER_ACCOUNT: z.coerce.number().int().min(1).max(1000).default(5),
+    /** Scan resolves that match nothing, per signed-in principal and throttle window, before `429` (M2-TAG-01). */
+    SCAN_RESOLVE_MAX_MISSES: z.coerce.number().int().min(1).max(100_000).default(60),
     /** Failed attempts per client IP before `429 too-many-requests`. */
     LOGIN_MAX_FAILURES_PER_IP: z.coerce.number().int().min(1).max(10_000).default(30),
     /** Fixed throttling window; also the lockout duration. */

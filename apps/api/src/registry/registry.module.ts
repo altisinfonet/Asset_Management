@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/index.js';
 import { AssetTagService } from './asset-tags.js';
 import { AssetsController, SearchController } from './assets.controller.js';
 import { AssetsFacade } from './assets.facade.js';
@@ -19,6 +20,7 @@ import {
   StatusLabelsService,
   VendorsService,
 } from './catalog-services.js';
+import { ScanResolveThrottle } from './scan-throttle.js';
 import { SearchService } from './search.service.js';
 
 /**
@@ -29,6 +31,8 @@ import { SearchService } from './search.service.js';
  * global PortsModule. `AssetsFacade` is the entry point other modules use in M2.
  */
 @Module({
+  // ThrottleService (scan-resolve miss limiter)
+  imports: [AuthModule],
   controllers: [
     CategoriesController,
     ManufacturersController,
@@ -49,6 +53,7 @@ import { SearchService } from './search.service.js';
     CustomFieldsService,
     AssetTagService,
     AssetsFacade,
+    ScanResolveThrottle,
     SearchService,
   ],
   exports: [AssetsFacade, AssetTagService],

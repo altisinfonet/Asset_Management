@@ -9,6 +9,8 @@ import {
   MAIL_SENDER,
   OUTBOX_PUBLISHER,
   SECRET_BOX,
+  STORAGE_ADAPTER,
+  VIRUS_SCANNER,
 } from '../../src/ports/index.js';
 import {
   type Client,
@@ -48,8 +50,18 @@ class FaultyOutbox extends PgOutboxPublisher {
     { provide: MAIL_SENDER, useValue: testPorts.mail },
     { provide: SECRET_BOX, useValue: testPorts.secretBox },
     { provide: JOB_QUEUE, useValue: testPorts.jobs },
+    { provide: STORAGE_ADAPTER, useValue: testPorts.storage },
+    { provide: VIRUS_SCANNER, useValue: testPorts.scanner },
   ],
-  exports: [AUDIT_WRITER, OUTBOX_PUBLISHER, MAIL_SENDER, SECRET_BOX, JOB_QUEUE],
+  exports: [
+    AUDIT_WRITER,
+    OUTBOX_PUBLISHER,
+    MAIL_SENDER,
+    SECRET_BOX,
+    JOB_QUEUE,
+    STORAGE_ADAPTER,
+    VIRUS_SCANNER,
+  ],
 })
 export class RegistryTestPortsModule {}
 

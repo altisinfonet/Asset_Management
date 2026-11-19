@@ -2,6 +2,7 @@
 
 import {
   ChevronRight,
+  Bell,
   History,
   Keyboard,
   LogOut,
@@ -42,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import { useScan } from '@/components/scan/scan-provider';
 import { NAV_ITEMS, normalizePathname, type NavItem } from './nav-config';
 import { ShortcutsDialog } from './shortcuts-dialog';
@@ -263,6 +265,13 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
             onSelect: () => router.push(routes.security),
           },
           {
+            id: 'notification-settings',
+            label: t('palette.notificationSettings'),
+            icon: Bell,
+            keywords: ['notifications', 'alerts', 'email'],
+            onSelect: () => router.push(routes.notificationSettings),
+          },
+          {
             id: 'shortcuts',
             label: t('palette.shortcuts'),
             icon: Keyboard,
@@ -452,6 +461,7 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
             </Kbd>
           </Button>
 
+          <NotificationBell />
           <ThemeToggle />
 
           <DropdownMenu>
@@ -470,6 +480,12 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
                 <Link href={routes.security}>
                   <ShieldCheck aria-hidden className="size-4" />
                   {t('topbar.security')}
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href={routes.notificationSettings}>
+                  <Bell aria-hidden className="size-4" />
+                  {t('topbar.notificationSettings')}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={openShortcuts}>
@@ -552,6 +568,14 @@ export function breadcrumbTrail(pathname: string, t: ReturnType<typeof useT>): C
     ];
   }
   if (pathname === '/locations') return [{ label: t('nav.locations') }];
+  if (pathname === '/stock') return [{ label: t('nav.stock') }];
+  if (pathname === '/stock/view') {
+    return [{ label: t('nav.stock'), href: routes.stock() }, { label: t('stockView.title') }];
+  }
+  if (pathname === '/repairs') return [{ label: t('nav.repairs') }];
+  if (pathname === '/account/notifications') {
+    return [{ label: t('nav.account') }, { label: t('notifications.settings.title') }];
+  }
   if (pathname === '/people') return [{ label: t('nav.people') }];
   if (pathname === '/people/view') {
     return [{ label: t('nav.people'), href: routes.people }, { label: t('personView.title') }];

@@ -44,6 +44,13 @@ export const routes = {
   },
   /** Locations tree, optionally with one location selected (`?id=`). */
   locations: (id?: string) => (id ? `/locations?id=${encodeURIComponent(id)}` : '/locations'),
+  /** Accessories and consumables; `kind` picks the tab. */
+  stock: (kind?: 'accessory' | 'consumable') => (kind ? `/stock?kind=${kind}` : '/stock'),
+  stockView: (kind: 'accessory' | 'consumable', id: string, tab?: string) =>
+    `/stock/view?kind=${kind}&id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
+  /** Repair log; `id` opens one repair's drawer. */
+  repairs: (id?: string) => (id ? `/repairs?id=${encodeURIComponent(id)}` : '/repairs'),
+  notificationSettings: '/account/notifications',
   people: '/people',
   personView: (id: string, tab?: string) =>
     `/people/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,

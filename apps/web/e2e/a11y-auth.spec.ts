@@ -204,14 +204,10 @@ const SCENARIOS: Scenario[] = [
     name: 'security: turn off blocked by policy',
     session: MOCK_ACCOUNTS.mfaEnforced,
     open: async (page) => {
+      // M2-AUTH-01: /me says the policy is enforced, so "Turn off" is disabled up front
       await page.goto('/account/security');
-      await page.getByRole('button', { name: 'Turn off', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: 'Turn off two-step verification?' });
-      await dialog.getByLabel(/^Current password/).fill(MOCK_PASSWORD);
-      await dialog.getByRole('button', { name: 'Turn off two-step verification' }).click();
-      await expect(
-        dialog.getByText('Your organisation requires two-step verification'),
-      ).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Turn off', exact: true })).toBeDisabled();
+      await expect(page.getByText(/so you cannot turn it off/)).toBeVisible();
     },
   },
   {

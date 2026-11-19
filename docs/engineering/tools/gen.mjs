@@ -2299,7 +2299,7 @@ S_.Me.required.push('mfa_policy');
 // ================================================================ [M2-W2 NOT] END
 
 // ---------------------------------------------------------------- prune unused components, order, emit
-const text = () => JSON.stringify({ paths: doc.paths, security: doc.security });
+const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {
   const used = { schemas: new Set(), parameters: new Set(), responses: new Set(), headers: new Set() };
   const scan = (node) => {

@@ -3,11 +3,9 @@ import {
   DEFAULT_COLUMNS,
   SAVED_VIEWS_KEY,
   defaultViewState,
-  deleteView,
   hasActiveFilters,
   readSavedViews,
   sanitiseState,
-  saveView,
   toAssetQuery,
 } from './asset-view';
 
@@ -78,23 +76,8 @@ describe('assets list state', () => {
   });
 });
 
-describe('saved views (this browser only)', () => {
+describe('views kept in this browser by the earlier version', () => {
   beforeEach(() => window.localStorage.clear());
-
-  it('saves, lists, replaces by name and deletes', () => {
-    const state = { ...defaultViewState(), category_id: 'c1', columns: ['tag', 'serial'] };
-    const saved = saveView('Laptops', state);
-    expect(saved).toHaveLength(1);
-    expect(readSavedViews()[0]).toMatchObject({ name: 'Laptops', state: { category_id: 'c1' } });
-
-    saveView('laptops', { ...state, category_id: 'c2' }); // same name, any case
-    expect(readSavedViews()).toHaveLength(1);
-    expect(readSavedViews()[0]!.state.category_id).toBe('c2');
-
-    saveView('Other', defaultViewState());
-    expect(readSavedViews().map((v) => v.name)).toEqual(['Other', 'laptops']);
-    expect(deleteView(readSavedViews()[0]!.id)).toHaveLength(1);
-  });
 
   it('ignores a tampered or outdated stored value instead of crashing', () => {
     window.localStorage.setItem(SAVED_VIEWS_KEY, '{not json');

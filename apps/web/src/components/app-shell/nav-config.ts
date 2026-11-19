@@ -1,4 +1,5 @@
 import {
+  Boxes,
   ClipboardCheck,
   LayoutDashboard,
   MapPin,
@@ -78,6 +79,15 @@ export const NAV_ITEMS: NavItem[] = [
     permission: 'person:read',
   },
   {
+    id: 'stock',
+    labelKey: 'nav.stock',
+    href: routes.stock(),
+    icon: Boxes,
+    isActive: prefix('/stock'),
+    available: true,
+    permission: ['accessory:read', 'consumable:read'],
+  },
+  {
     id: 'loaner',
     labelKey: 'nav.loanerPool',
     href: '/loaner',
@@ -88,10 +98,11 @@ export const NAV_ITEMS: NavItem[] = [
   {
     id: 'repairs',
     labelKey: 'nav.repairs',
-    href: '/repairs',
+    href: routes.repairs(),
     icon: Wrench,
     isActive: prefix('/repairs'),
-    available: false,
+    available: true,
+    permission: 'repair:read',
   },
   {
     id: 'stocktake',

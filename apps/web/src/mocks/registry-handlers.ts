@@ -1180,7 +1180,7 @@ const ASSET_SORTS: ListConfig<MockAsset>['sorts'] = {
   warranty_end: (a) => a.warranty_end,
 };
 
-function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
+export function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
   const data = registry();
   const tag = p.get('tag');
   if (tag && a.asset_tag.toLowerCase() !== tag.toLowerCase()) return false;

@@ -997,8 +997,9 @@ CREATE INDEX maintenance_open_idx   ON app.maintenance_record (tenant_id, status
   WHERE status IN ('open','in_progress') AND archived_at IS NULL;
 CREATE INDEX maintenance_vendor_idx ON app.maintenance_record (tenant_id, vendor_id) WHERE vendor_id IS NOT NULL;
 
--- Fixed templates only in the MVP (plan decision 22): rows are seeded per tenant by
--- app.provision_tenant and are read-only through the API. The editor is v1.1.
+-- Fixed templates only in the MVP (plan decision 22): rows are seeded per tenant (the migration
+-- 0070 does it through app.seed_label_templates, ADR 0007) and the API only lets a manager change the
+-- two calibration offsets. The editor is v1.1.
 CREATE TABLE app.label_template (
   id              uuid PRIMARY KEY,
   tenant_id       uuid NOT NULL REFERENCES app.tenant (id),
@@ -1015,15 +1016,67 @@ CREATE TABLE app.label_template (
   margin_left_mm  numeric(7,2) NOT NULL DEFAULT 0 CHECK (margin_left_mm >= 0),
   gap_x_mm        numeric(7,2) NOT NULL DEFAULT 0 CHECK (gap_x_mm >= 0),
   gap_y_mm        numeric(7,2) NOT NULL DEFAULT 0 CHECK (gap_y_mm >= 0),
+  offset_x_mm     numeric(5,2) NOT NULL DEFAULT 0 CHECK (offset_x_mm BETWEEN -10 AND 10),  -- calibration (M2-TAG-04)
+  offset_y_mm     numeric(5,2) NOT NULL DEFAULT 0 CHECK (offset_y_mm BETWEEN -10 AND 10),
   code_type       text NOT NULL DEFAULT 'qr' CHECK (code_type IN ('qr','code128','qr_and_code128')),
-  fields          text[] NOT NULL DEFAULT '{asset_tag}',      -- printed text lines
+  fields          text[] NOT NULL DEFAULT '{asset_tag}'                                  -- printed text lines
+                  CHECK (cardinality(fields) BETWEEN 1 AND 6
+                         AND fields <@ ARRAY['asset_tag','name','serial','location','model','organisation']),
   is_system       boolean NOT NULL DEFAULT true,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
+  updated_by      uuid,
   version         integer NOT NULL DEFAULT 1,
   UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, key)
+  UNIQUE (tenant_id, key),
+  CHECK (margin_left_mm + cols * label_width_mm  + (cols - 1) * gap_x_mm <= page_width_mm  + 0.05),
+  CHECK (margin_top_mm  + rows * label_height_mm + (rows - 1) * gap_y_mm <= page_height_mm + 0.05)
 );
+
+-- One request to print labels (M2-TAG-02, ADR 0007): the worker renders the PDF, stores it through the
+-- StorageAdapter and flips the row to 'ready'; the requester downloads it via a short-lived presigned URL
+-- until expires_at.
+CREATE TABLE app.label_batch (
+  id                  uuid PRIMARY KEY,
+  tenant_id           uuid NOT NULL REFERENCES app.tenant (id),
+  template_id         uuid NOT NULL,
+  template_key        text NOT NULL,
+  status              text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','ready','failed','expired')),
+  asset_ids           uuid[] NOT NULL CHECK (cardinality(asset_ids) BETWEEN 1 AND 5000),   -- print order
+  source_filter       jsonb CHECK (source_filter IS NULL OR jsonb_typeof(source_filter) = 'object'),
+  asset_count         integer NOT NULL CHECK (asset_count BETWEEN 1 AND 5000),
+  copies              integer NOT NULL DEFAULT 1 CHECK (copies BETWEEN 1 AND 10),
+  label_count         integer NOT NULL CHECK (label_count BETWEEN 1 AND 10000),
+  start_position      integer NOT NULL DEFAULT 1 CHECK (start_position >= 1),
+  codes               text[] NOT NULL CHECK (cardinality(codes) <= 2 AND codes <@ ARRAY['qr','code128']),
+  fields              text[] NOT NULL CHECK (cardinality(fields) <= 6
+                                             AND fields <@ ARRAY['asset_tag','name','serial','location','model','organisation']),
+  outlines            boolean NOT NULL DEFAULT false,
+  logo_attachment_id  uuid,
+  requested_by_type   text NOT NULL DEFAULT 'user' CHECK (requested_by_type IN ('user','api_key')),
+  page_count          integer CHECK (page_count IS NULL OR page_count >= 1),
+  storage_key         text,
+  content_type        text,
+  size_bytes          bigint CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  sha256              text CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
+  rendered_at         timestamptz,
+  render_ms           integer CHECK (render_ms IS NULL OR render_ms >= 0),
+  error_code          text CHECK (error_code IS NULL OR length(error_code) <= 100),
+  error_detail        text CHECK (error_detail IS NULL OR length(error_detail) <= 1000),
+  expires_at          timestamptz NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  created_by          uuid,
+  version             integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, template_id)        REFERENCES app.label_template (tenant_id, id),
+  FOREIGN KEY (tenant_id, logo_attachment_id) REFERENCES app.attachment (tenant_id, id),
+  CONSTRAINT label_batch_storage_prefix CHECK (storage_key IS NULL OR storage_key LIKE 'tenants/' || tenant_id::text || '/%'),
+  CONSTRAINT label_batch_ready_has_file CHECK (status <> 'ready' OR (storage_key IS NOT NULL AND size_bytes IS NOT NULL AND page_count IS NOT NULL))
+);
+CREATE INDEX label_batch_requester_idx ON app.label_batch (tenant_id, created_by, created_at DESC, id DESC);
+CREATE INDEX label_batch_open_idx      ON app.label_batch (tenant_id, created_at) WHERE status = 'queued';
+CREATE INDEX label_batch_expiry_idx    ON app.label_batch (tenant_id, expires_at) WHERE status = 'ready';
 
 CREATE TABLE app.import_job (
   id                   uuid PRIMARY KEY,
@@ -1400,14 +1453,17 @@ BEGIN
     (gen_random_uuid(), p_tenant_id, 'Retired',         'archived',     '#616161', 60, false),
     (gen_random_uuid(), p_tenant_id, 'Lost or stolen',  'lost',         '#6a1b9a', 70, false);
 
-  -- fixed PDF label sheets (geometry follows the published Avery layouts; verify against a test print)
+  -- fixed PDF label sheets (geometry follows the published Avery layouts; verify against a test print).
+  -- The migrations seed the same six rows through app.seed_label_templates (0070), not provision_tenant.
   INSERT INTO app.label_template
     (id, tenant_id, key, name, page_size, page_width_mm, page_height_mm, label_width_mm, label_height_mm,
      cols, rows, margin_top_mm, margin_left_mm, gap_x_mm, gap_y_mm, code_type, fields) VALUES
-    (gen_random_uuid(), p_tenant_id, 'letter-30up-qr',  'US Letter 30-up (Avery 5160 layout), QR',   'letter', 215.90, 279.40, 66.68, 25.40, 3, 10, 12.70,  4.76, 3.18, 0.00, 'qr', ARRAY['asset_tag','name']),
-    (gen_random_uuid(), p_tenant_id, 'a4-21up-qr',      'A4 21-up (Avery L7160 layout), QR',          'a4',     210.00, 297.00, 63.50, 38.10, 3,  7, 15.15,  7.20, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
-    (gen_random_uuid(), p_tenant_id, 'letter-10up-qr',  'US Letter 10-up (Avery 5163 layout), QR',   'letter', 215.90, 279.40, 101.60, 50.80, 2,  5, 12.70,  4.00, 0.00, 0.00, 'qr_and_code128', ARRAY['asset_tag','name','serial']),
-    (gen_random_uuid(), p_tenant_id, 'single-50x25-qr', 'Single label 50 x 25 mm, QR (one per page)', 'custom', 50.00,  25.00,  50.00, 25.00, 1,  1,  0.00,  0.00, 0.00, 0.00, 'qr', ARRAY['asset_tag']);
+    (gen_random_uuid(), p_tenant_id, 'letter-30up-qr',   'US Letter 30-up (Avery 5160 layout), QR',     'letter', 215.90, 279.40,  66.68, 25.40, 3, 10, 12.70, 4.76, 3.18, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'a4-21up-qr',       'A4 21-up (Avery L7160 layout), QR',            'a4',     210.00, 297.00,  63.50, 38.10, 3,  7, 15.15, 7.21, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'a4-24up-qr',       'A4 24-up, 3 x 8 (Avery L7159 layout), QR',     'a4',     210.00, 297.00,  63.50, 33.90, 3,  8, 12.90, 7.21, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'letter-10up-qr',   'US Letter 10-up (Avery 5163 layout), QR and Code128', 'letter', 215.90, 279.40, 101.60, 50.80, 2,  5, 12.70, 3.97, 4.76, 0.00, 'qr_and_code128', ARRAY['asset_tag','name','serial']),
+    (gen_random_uuid(), p_tenant_id, 'single-50x25-qr',  'Single label 50 x 25 mm, QR (one per page)',   'custom',  50.00,  25.00,  50.00, 25.00, 1,  1,  0.00, 0.00, 0.00, 0.00, 'qr', ARRAY['asset_tag']),
+    (gen_random_uuid(), p_tenant_id, 'thermal-2x1in-qr', 'Single label 2 x 1 inch for thermal / roll printers, QR and Code128', 'custom', 50.80, 25.40, 50.80, 25.40, 1, 1, 0.00, 0.00, 0.00, 0.00, 'qr_and_code128', ARRAY['asset_tag','name']);
 
   RETURN p_tenant_id;
 END
@@ -1484,7 +1540,7 @@ GRANT SELECT, INSERT, UPDATE ON
   app.location, app.person, app.category, app.manufacturer, app.vendor, app.asset_model,
   app.status_label, app.custom_field_def, app.asset_tag_counter, app.asset, app.attachment,
   app.accessory, app.consumable, app.loaner_pool, app.assignment, app.transfer,
-  app.maintenance_record, app.label_template, app.import_job, app.outbox_event
+  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.outbox_event
   TO app_user;
 -- app: limited deletes
 GRANT DELETE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key, app.outbox_event TO app_user;

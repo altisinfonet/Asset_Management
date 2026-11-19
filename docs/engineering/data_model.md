@@ -153,7 +153,8 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | Entity | M | Purpose | Key columns | Notes |
 |---|---|---|---|---|
 | `app.maintenance_record` | M2 | **Repair / maintenance log** (API: `/v1/repairs`) | `asset_id`, `kind`, `status` (open/in_progress/completed/cancelled), `title`, `reported_at`, `started_at`, `completed_at`, `vendor_id`, `performed_by_person_id`, `cost_minor`, `currency`, `restore_status_id`, `resolution_notes` | indexes by asset and open records; photos/invoices via `attachment` |
-| `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 4 templates seeded per tenant by `provision_tenant`; read-only through the API |
+| `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `offset_x_mm` / `offset_y_mm` (calibration, [M2-W2 LABELS]), `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 6 templates seeded per tenant by `app.seed_label_templates` (migration 0070, ADR 0007), mirrored by code constants (`tagging/templates.ts`) and checked for drift; only the two offsets change through the API; CHECKs: the grid fits the page, offsets within +-10 mm |
+| `app.label_batch` | M2 | One request to print labels; the worker renders the PDF (ADR 0007) | `template_id`/`template_key`, `status` (queued/ready/failed/expired), `asset_ids uuid[]` (print order), `source_filter`, `copies`, `label_count`, `start_position`, `codes`, `fields`, `outlines`, `logo_attachment_id`, `storage_key`, `size_bytes`, `sha256`, `page_count`, `render_ms`, `error_code`, `expires_at`, `created_by` (the requester: only they can read it) | the file is stored through the StorageAdapter under a tenant-prefixed key (CHECK) and deleted after `expires_at`; ready requires the file; indexes by requester, open (queued) and expiry |
 | `app.import_job` | M2 | Import with **mandatory dry run** | `source` (csv/xlsx/snipe_it/google_admin_csv), `entity_type`, `state`, `file_attachment_id`, `mapping`, `options`, row counters, `dry_run_digest`, `dry_run_completed_at`, `committed_at` | `CHECK` that commit states require a `dry_run_digest`; commit must quote the reviewed digest |
 | `app.import_row` | M2 | Per-row dry-run / commit outcome and errors | `job_id`, `phase`, `row_no`, `outcome` (create/update/skip/error), `entity_id`, `errors`, `warnings`, `source_data` | unique `(tenant_id, job_id, phase, row_no)` |
 
@@ -164,7 +165,8 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | `app.v_accessory_availability` (security_invoker) | `qty_total`, `qty_checked_out`, `qty_available`, `min_qty` per accessory |
 | `app.v_overdue_checkouts` (security_invoker) | Open asset check-outs past `expected_return` (loaner or not) with `days_overdue` |
 | `app.v_low_stock` (security_invoker) | Consumables and accessories at or below `min_qty` |
-| `app.provision_tenant(tenant_id, name, slug, currency, cell)` | Seeds a tenant under the caller's RLS: tenant row, directory row, **default company**, 5 built-in roles, 7 status labels, 4 label templates (seed rows get `gen_random_uuid()` ids). Refuses to run unless `app.tenant_id` equals the new id (42501) |
+| `app.provision_tenant(tenant_id, name, slug, currency, cell)` | Seeds a tenant under the caller's RLS: tenant row, directory row, **default company**, 5 built-in roles, 7 status labels (label templates: `app.seed_label_templates`, next row; seed rows get `gen_random_uuid()` ids). Refuses to run unless `app.tenant_id` equals the new id (42501) |
+| `app.seed_label_templates(tenant_id)` | [M2-W2 LABELS] Idempotently seeds the 6 fixed label templates under the caller's RLS (`ON CONFLICT DO NOTHING`; refuses unless `app.tenant_id` equals the tenant, 42501). Called by `bootstrapTenant`, by migration 0070 for every existing tenant and lazily by the labels service; deliberately **not** part of `provision_tenant` |
 | `app.next_asset_tag(prefix)` | Sequential per-tenant asset tags (`LAP-00001`) |
 | `app.ensure_partitions(from, months)` | Creates the monthly partitions of **both** `audit_log` and `asset_history` plus a default partition for each, with FORCE RLS and no grants; idempotent; returns the number created (owner only) |
 | `app.schema_lint()` | Returns violations: missing RLS/FORCE/policy form, no tenant-led index, any grant on a partition, non-invoker view, SECURITY DEFINER, dangerous runtime role, any `uuidv7()` column default (ED-08). Run at install and in CI |
@@ -186,6 +188,7 @@ erDiagram
     TENANT ||--o{ IDEMPOTENCY_KEY : replays
     TENANT ||--o{ OUTBOX_EVENT : emits
     TENANT ||--o{ LABEL_TEMPLATE : seeds
+    LABEL_TEMPLATE ||--o{ LABEL_BATCH : renders
     TENANT ||--o{ IMPORT_JOB : runs
     TENANT ||--|| TENANT_DIRECTORY : "registered in"
 
@@ -553,6 +556,14 @@ erDiagram
         integer rows
         text code_type
     }
+    LABEL_BATCH {
+        uuid id PK
+        uuid tenant_id FK
+        uuid template_id FK
+        text status
+        uuid[] asset_ids
+        text storage_key
+    }
     IMPORT_JOB {
         uuid id PK
         uuid tenant_id FK
@@ -708,7 +719,7 @@ PASS T19k asset assignment cannot be open with quantity_returned = 1 | SQLSTATE 
 PASS T19l final return closes the row (quantity_returned = quantity, checked_in_at set); availability 1
 ```
 
-The remaining checks, all PASS on all three versions: security_invoker views show only the caller's tenant (T6a-T6c); assignment CHECKs, one open custody per asset, loaner due date, accessory over-checkout and consumable overdraw rejected, stock ledger append-only, view results (T8a-T8m); location path, subtree re-parenting and cycle rejection (T8n-T8p); attachment key prefix (T10a/b); `provision_tenant` guard (T11); asset tag generation, version bump, default company trigger, seed counts (5 roles, 7 status labels, 4 label templates), duplicate custom-field key rejected (T14-T18); `app_user` cannot CREATE TABLE in `app` or `public`, cannot DISABLE/NO FORCE RLS, cannot call `ensure_partitions`, cannot `SET ROLE app_owner`, is not superuser/BYPASSRLS and owns nothing (T9a-T9g).
+The remaining checks, all PASS on all three versions: security_invoker views show only the caller's tenant (T6a-T6c); assignment CHECKs, one open custody per asset, loaner due date, accessory over-checkout and consumable overdraw rejected, stock ledger append-only, view results (T8a-T8m); location path, subtree re-parenting and cycle rejection (T8n-T8p); attachment key prefix (T10a/b); `provision_tenant` guard (T11); asset tag generation, version bump, default company trigger, seed counts (5 roles, 7 status labels, 6 label templates), duplicate custom-field key rejected (T14-T18); `app_user` cannot CREATE TABLE in `app` or `public`, cannot DISABLE/NO FORCE RLS, cannot call `ensure_partitions`, cannot `SET ROLE app_owner`, is not superuser/BYPASSRLS and owns nothing (T9a-T9g).
 
 ### 10.2 Lint negative control
 

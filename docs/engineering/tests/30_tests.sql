@@ -170,8 +170,8 @@ SELECT tt.ok('T14 next_asset_tag generates sequential per-tenant tags', :'t1' = 
 UPDATE app.asset SET name = 'Laptop 1 (renamed)' WHERE id = 'a5000000-0000-7000-8000-000000000001';
 SELECT tt.ok('T15 version bumps on update (ETag source)', tt.n($$SELECT version FROM app.asset WHERE id = 'a5000000-0000-7000-8000-000000000001'$$) = 2, 'version=' || tt.n($$SELECT version FROM app.asset WHERE id = 'a5000000-0000-7000-8000-000000000001'$$));
 SELECT tt.ok('T16 default company filled by trigger on asset insert', tt.n($$SELECT count(*) FROM app.asset a JOIN app.company c ON c.id = a.company_id AND c.tenant_id = a.tenant_id AND c.is_default$$) = 2, '');
-SELECT tt.ok('T17 seeds: 5 built-in roles, 7 status labels, 4 label templates',
-  tt.n('SELECT count(*) FROM app.role WHERE is_builtin') = 5 AND tt.n('SELECT count(*) FROM app.status_label') = 7 AND tt.n('SELECT count(*) FROM app.label_template') = 4, '');
+SELECT tt.ok('T17 seeds: 5 built-in roles, 7 status labels, 6 label templates',
+  tt.n('SELECT count(*) FROM app.role WHERE is_builtin') = 5 AND tt.n('SELECT count(*) FROM app.status_label') = 7 AND tt.n('SELECT count(*) FROM app.label_template') = 6, '');
 SELECT tt.err('T18 custom_field_def duplicate key in the same scope rejected', $$INSERT INTO app.custom_field_def (id, tenant_id, key, label, data_type) VALUES (gen_random_uuid(), 'aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa','warranty_tier','W','text'); INSERT INTO app.custom_field_def (id, tenant_id, key, label, data_type) VALUES (gen_random_uuid(), 'aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa','warranty_tier','W2','text')$$, '23505');
 COMMIT;
 

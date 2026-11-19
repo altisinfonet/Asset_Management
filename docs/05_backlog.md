@@ -615,9 +615,9 @@ Status: done - ADR index (0001-0005), developer guide, tenancy threat model.
 
 #### M1-UX-01 - M1 founder acceptance walk-through
 Size: S - Owner: Founder - Deps: all M1 stories
-Status: todo - Founder walk-through; `docker compose up` then sign in as `owner@acme.example` (README quick start).
-- [ ] Founder completes the exit-criteria script from a clean clone and records findings as new stories or defects.
-- [ ] Look and feel (design system) and screen flows accepted or change requests logged.
+Status: done - Founder walk-through completed 2026-11-19. Findings fixed during the walk-through: cramped inline role selects and a stray tab-list scrollbar (0c54616), no way to turn off two-step verification or regenerate recovery codes (5e62b98); follow-up logged as M2-AUTH-01 (MFA policy in /me).
+- [x] Founder completes the exit-criteria script from a clean clone and records findings as new stories or defects.
+- [x] Look and feel (design system) and screen flows accepted or change requests logged.
 - [ ] Founder confirms the isolation demo: a second-tenant user cannot reach the first tenant's data through UI and API.
 
 ---

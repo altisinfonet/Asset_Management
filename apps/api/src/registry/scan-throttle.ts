@@ -11,7 +11,7 @@ import { ApiProblem } from '../platform/index.js';
  * MISSES count: a caller whose lookups keep failing (`SCAN_RESOLVE_MAX_MISSES` per throttle window,
  * per principal) is answered `429 too-many-requests` with `Retry-After` for the rest of the window,
  * before any lookup happens, so a blocked caller learns nothing more, not even hit versus miss.
- * Normal scanning (hits) is never limited. Counters live in the shared throttle table, so every API
+ * Hits never count towards the limit (normal scanning is never limited), but once blocked the caller stays blocked until the window ends. Counters live in the shared throttle table, so every API
  * replica applies the same limit.
  */
 @Injectable()

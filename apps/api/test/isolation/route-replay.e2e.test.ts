@@ -44,6 +44,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     assetTag: string;
     serial: string;
     labelCode: string;
+    /** M2-FILE: an attachment of A (upload never confirmed) and its file name */
+    attachmentId: string;
+    attachmentName: string;
     userId: string;
     invitedUserId: string;
     sessionId: string;
@@ -218,6 +221,42 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
           `/v1/scan/resolve?code=${encodeURIComponent(`https://app.example/a/${c.labelCode}`)}`,
         ),
       ],
+      // ---- files (M2-FILE-01/02, M2-SEC-02): B never sees, confirms, archives or attaches to A's records
+      'get /v1/attachments': [
+        list(`/v1/attachments?entity_type=asset&entity_id=${c.assetId}`),
+        list(`/v1/attachments?entity_type=asset&entity_id=${c.assetId}&kind=photo&limit=200`),
+      ],
+      'post /v1/attachments': [
+        refused('POST', '/v1/attachments', {
+          entity_type: 'asset',
+          entity_id: c.assetId,
+          filename: 'b-was-here.png',
+          content_type: 'image/png',
+          size_bytes: 10,
+        }),
+        refused('POST', '/v1/attachments', {
+          entity_type: 'asset_model',
+          entity_id: c.modelId,
+          filename: 'b-was-here.png',
+          content_type: 'image/png',
+          size_bytes: 10,
+        }),
+      ],
+      'get /v1/attachments/:id': [notFound('GET', `/v1/attachments/${c.attachmentId}`)],
+      'post /v1/attachments/:id/complete': [
+        notFound('POST', `/v1/attachments/${c.attachmentId}/complete`),
+      ],
+      'delete /v1/attachments/:id': [notFound('DELETE', `/v1/attachments/${c.attachmentId}`)],
+      'get /v1/settings/files': [list('/v1/settings/files')],
+      'put /v1/settings/files': [
+        // B changes ITS settings; A's are checked untouched at the end
+        {
+          method: 'PUT',
+          url: '/v1/settings/files',
+          body: { strip_exif_original: true, max_upload_bytes: 4096 },
+          expect: [200],
+        },
+      ],
       'get /v1/search': [
         list(`/v1/search?q=${c.assetTag}`),
         list(`/v1/search?q=${c.serial}`),
@@ -279,6 +318,10 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     'get /v1/auth/password-policy': 'public: static policy',
     'get /v1/auth/invitations/:token': 'pre-tenant: the single-use token is the credential',
     'post /v1/auth/invitations/accept': 'pre-tenant: the single-use token is the credential',
+    'put /v1/files/:token':
+      'capability URL: the HMAC-signed token is the credential and names one object key; covered by test/files',
+    'get /v1/files/:token':
+      'capability URL: the HMAC-signed token is the credential and names one object key; covered by test/files',
     'get /v1/auth/me': 'principal-scoped: describes the caller only',
     'post /v1/auth/logout': "principal-scoped: ends the caller's own session",
     'get /v1/auth/sessions': "principal-scoped: lists the caller's own sessions",
@@ -330,6 +373,16 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         custom_data: { tier: 'gold' },
       })
     ).body;
+    const attachmentName = `${marker}-secret.png`;
+    const attachment = (
+      await a.post('/v1/attachments', {
+        entity_type: 'asset',
+        entity_id: asset.id,
+        filename: attachmentName,
+        content_type: 'image/png',
+        size_bytes: 50,
+      })
+    ).body.attachment;
     const viewer = await createUser(app, A, 'viewer');
     const invited = (
       await a.post('/v1/users', {
@@ -354,6 +407,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       assetTag: asset.asset_tag,
       serial: asset.serial,
       labelCode: asset.label_code,
+      attachmentId: attachment.id,
+      attachmentName,
       userId: viewer.id,
       invitedUserId: invited.id,
       sessionId: sessions[0]!.id,
@@ -371,6 +426,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         asset.asset_tag,
         asset.serial,
         asset.label_code,
+        attachment.id,
+        attachmentName,
         viewer.id,
         invited.id,
         key.id,
@@ -397,6 +454,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       asset: await etag(`/v1/assets/${fx.assetId}`),
       user: await etag(`/v1/users/${fx.userId}`),
       template: await etag('/v1/settings/asset-tag-template'),
+      files: await etag('/v1/settings/files'),
+      attachments: JSON.stringify(
+        (
+          await A.admin.get(`/v1/attachments?entity_type=asset&entity_id=${fx.assetId}`)
+        ).body.data.map((x: { id: string; scan_status: string }) => [x.id, x.scan_status]),
+      ),
       keys: JSON.stringify(
         (await A.admin.get('/v1/api-keys')).body.data.map(
           (k: { id: string; revoked_at: unknown }) => [k.id, k.revoked_at],
@@ -423,7 +486,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     expect(stale, 'replay cases for routes that no longer exist').toEqual([]);
     // the registry is what this harness exists for: it must be covered, not exempted
     for (const r of routes.filter((r) =>
-      /^\/v1\/(assets|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users)/.test(
+      /^\/v1\/(assets|attachments|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users)/.test(
         r.path,
       ),
     )) {

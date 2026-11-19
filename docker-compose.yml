@@ -267,6 +267,12 @@ services:
   # e2e suite (CLAMD_HOST/CLAMD_PORT); the image has no authentication, so never publish it beyond localhost.
   clamav:
     image: ${CLAMAV_IMAGE:-clamav/clamav:stable}
+    environment:
+      # Upload cap is 100 MiB (FILES_MAX_BYTES_CEILING): clamd must accept a stream that large
+      # (INSTREAM is limited by StreamMaxLength, the unpacked content by MaxFileSize / MaxScanSize).
+      CLAMD_CONF_StreamMaxLength: 105M
+      CLAMD_CONF_MaxFileSize: 105M
+      CLAMD_CONF_MaxScanSize: 210M
     ports:
       - '127.0.0.1:${CLAMD_PORT:-3310}:3310'
     volumes:

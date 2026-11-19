@@ -24,10 +24,12 @@ import { variantKey } from '../storage/index.js';
 import type { Tx } from '../tenancy/index.js';
 import { type AttachmentRow, SCAN_JOB, SWEEP_JOB, THUMBNAIL_JOB } from './attachments.service.js';
 import { isThumbnailable, normalizeMime } from './content.js';
-import { effectiveMaxBytes, parseFilesSettings } from './settings.js';
+import { parseFilesSettings } from './settings.js';
 
 /** Thumbnails fit in a 320 px box. */
 export const THUMBNAIL_SIZE = 320;
+/** Originals above this size get no thumbnail (they are decoded in memory). */
+export const THUMBNAIL_MAX_INPUT_BYTES = 40 * 1024 * 1024;
 /** Refuse to decode an image with more pixels than this (decompression bombs). */
 export const MAX_IMAGE_PIXELS = 80_000_000;
 /** An upload whose "complete" call never arrived is abandoned after this long. */
@@ -152,14 +154,10 @@ export class AttachmentPipeline {
       return this.fail(tx, row, before, 'size-mismatch', true);
     }
 
-    const tenant = await tx.tenant.findFirst({ select: { plan: true, settings: true } });
-    const cap = effectiveMaxBytes(
-      tenant?.plan ?? 'free',
-      parseFilesSettings((tenant?.settings as Record<string, unknown> | null)?.files),
-      this.config.FILES_MAX_BYTES_CEILING,
-    );
     const source = await this.storage.read(row.storage_key);
-    const metered = meter(Math.min(cap, expectedSize));
+    // The cap was enforced when the upload was created and confirmed; here the stream may not exceed
+    // what was confirmed (a tenant lowering its cap later must not wedge an in-flight scan).
+    const metered = meter(expectedSize);
     source.on('error', (err) => metered.stream.destroy(err));
     let verdict: ScanVerdict;
     try {
@@ -287,6 +285,10 @@ export class AttachmentPipeline {
       !isThumbnailable(row.content_type)
     ) {
       ctx.logger.info({ attachment_id: id }, 'thumbnail skipped');
+      return;
+    }
+    if (Number(row.size_bytes) > THUMBNAIL_MAX_INPUT_BYTES) {
+      ctx.logger.info({ attachment_id: id }, 'thumbnail skipped: original is too large to decode');
       return;
     }
     let original: Buffer;

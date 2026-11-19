@@ -795,6 +795,7 @@ export class AssetsFacade extends RegistryBase {
         throw problem.conflict('The asset is checked out. Check it in before archiving it.');
       }
       await this.assertNoOpenRepair(trx, current.id, 'archiving it');
+      await this.assertNoOpenAccessoryAssignments(trx, current.id, 'archiving it');
     }
     // Restoring a DISPOSED asset takes it back for real: the disposal record is cleared and an
     // archived-type status moves to the tenant default (so it is not "retired" yet active).
@@ -959,6 +960,30 @@ export class AssetsFacade extends RegistryBase {
     }
   }
 
+  /**
+   * M2-ACC-02 (wave-1 gap): accessories checked out TO this asset (a charger issued to a laptop) are
+   * still out while the asset is archived or disposed of, so the units would never come back. 409 with
+   * the usage; check the accessories in first.
+   */
+  private async assertNoOpenAccessoryAssignments(
+    trx: Tx,
+    assetId: string,
+    doing: string,
+  ): Promise<void> {
+    const [open] = await trx.$queryRaw<Array<{ assignments: bigint; units: bigint }>>`
+      select count(*) as assignments, coalesce(sum(quantity - quantity_returned), 0) as units
+        from app.assignment
+       where target_asset_id = ${assetId}::uuid and accessory_id is not null and checked_in_at is null`;
+    if (open && open.assignments > 0n) {
+      const usage = { accessory_assignments: Number(open.assignments), units: Number(open.units) };
+      throw new ApiProblem({
+        code: 'conflict',
+        detail: `${usage.units} accessory unit(s) in ${usage.accessory_assignments} open assignment(s) are checked out to this asset. Check them in before ${doing}.`,
+        extensions: { usage },
+      });
+    }
+  }
+
   async dispose(
     auth: AuthContext,
     id: string,
@@ -971,6 +996,7 @@ export class AssetsFacade extends RegistryBase {
       assertIfMatch(ifMatch, current.version);
       assertAssetAction('dispose', this.stateOf(current));
       await this.assertNoOpenRepair(trx, current.id, 'disposing of it');
+      await this.assertNoOpenAccessoryAssignments(trx, current.id, 'disposing of it');
       const status = await this.statusOfType(trx, 'archived', body.status_id);
       const disposedOn = body.disposed_on
         ? new Date(`${body.disposed_on}T00:00:00Z`)

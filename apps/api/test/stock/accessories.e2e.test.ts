@@ -317,6 +317,42 @@ describe.skipIf(!dbEnabled)(`accessories (${mode})`, () => {
       expect(inactive.body.usage).toEqual({ open_assignments: 1 });
     });
 
+    it('an asset that still holds accessory units cannot be archived, bulk-archived or disposed of (409 with the usage) until they are checked in', async () => {
+      const acc = await newAccessory(a(), { qty_total: 10 });
+      const cat = (await a().post('/v1/categories', { name: unique('HolderCat') })).body;
+      const asset = (await a().post('/v1/assets', { category_id: cat.id, name: 'Dock host' })).body;
+      const out = await checkout(acc.id, { target_asset_id: asset.id, quantity: 3 });
+      expect(out.status, out.raw).toBe(201);
+      const current = async () => String((await a().get(`/v1/assets/${asset.id}`)).headers.etag);
+
+      const archive = await a().del(`/v1/assets/${asset.id}`, undefined, ifMatch(await current()));
+      expect(archive.status, archive.raw).toBe(409);
+      expect(archive.body).toMatchObject({
+        code: 'conflict',
+        usage: { accessory_assignments: 1, units: 3 },
+      });
+      expect(archive.body.detail).toContain('3 accessory unit(s)');
+      const dispose = await a().post(
+        `/v1/assets/${asset.id}/dispose`,
+        { reason: 'recycled' },
+        ifMatch(await current()),
+      );
+      expect(dispose.status, dispose.raw).toBe(409);
+      expect(dispose.body.usage).toEqual({ accessory_assignments: 1, units: 3 });
+      const bulk = await a().post('/v1/assets/bulk-archive', { ids: [asset.id] });
+      expect(JSON.stringify(bulk.body)).toContain('accessory unit');
+      expect((await a().get(`/v1/assets/${asset.id}`)).body.archived_at ?? null).toBeNull();
+
+      // two units back: still blocked; the last unit back: the asset can go
+      expect((await checkin(acc.id, { assignment_id: out.body.id, quantity: 2 })).status).toBe(200);
+      expect(
+        (await a().del(`/v1/assets/${asset.id}`, undefined, ifMatch(await current()))).body.usage,
+      ).toEqual({ accessory_assignments: 1, units: 1 });
+      expect((await checkin(acc.id, { assignment_id: out.body.id, quantity: 1 })).status).toBe(200);
+      const done = await a().del(`/v1/assets/${asset.id}`, undefined, ifMatch(await current()));
+      expect(done.status, done.raw).toBe(204);
+    });
+
     it('refuses over-checkout with 409 insufficient-stock and bad targets with 422', async () => {
       const acc = await newAccessory(a(), { qty_total: 3 });
       const person = await newPerson(a());

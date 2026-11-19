@@ -469,7 +469,11 @@ describe.skipIf(!dbEnabled)(`notifications (${mode})`, () => {
           outbox.publish(tx, { type, aggregateType: 'label_batch', aggregateId: batchId, payload }),
         );
       await publish('label.batch.ready', { batch_id: batchId, requested_by: u.id, version: 2 });
-      await publish('label.batch.failed', { batch_id: batchId, requested_by: u.id, code: 'logo-invalid' });
+      await publish('label.batch.failed', {
+        batch_id: batchId,
+        requested_by: u.id,
+        code: 'logo-invalid',
+      });
       await relay();
       const list = (await u.client.get('/v1/notifications')).body.data as Array<{
         type: string;
@@ -489,7 +493,9 @@ describe.skipIf(!dbEnabled)(`notifications (${mode})`, () => {
       expect(failed!.body).toContain('logo-invalid');
       // nobody else is told
       const other = await member('asset_manager');
-      const theirs = (await other.client.get('/v1/notifications')).body.data as Array<{ type: string }>;
+      const theirs = (await other.client.get('/v1/notifications')).body.data as Array<{
+        type: string;
+      }>;
       expect(theirs.map((n) => n.type)).not.toContain('label.batch.ready');
     });
   });

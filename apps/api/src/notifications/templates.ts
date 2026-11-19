@@ -34,7 +34,8 @@ export const en: Catalogue = {
     'The batch of labels failed ({reason}). Nothing was printed; start the batch again.',
 
   'notification.label.batch.ready.title': 'Your labels are ready',
-  'notification.label.batch.ready.body': 'Your batch of {count} label(s) is ready to print. The file is removed after it expires.',
+  'notification.label.batch.ready.body':
+    'Your batch of {count} label(s) is ready to print. The file is removed after it expires.',
 
   'notification.loan.overdue.title': 'Overdue: {asset}',
   'notification.loan.overdue.body':

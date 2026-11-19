@@ -240,9 +240,13 @@ describe('Drawer', () => {
 describe('Toast', () => {
   function Trigger() {
     const { toast, error } = useToast();
+    // A long duration keeps the toasts from timing out while the test clicks (the 5 s default made
+    // the count depend on how busy the machine is, which flaked under the parallel suite).
     return (
       <>
-        <button onClick={() => toast({ title: 'Saved', variant: 'success' })}>ok</button>
+        <button onClick={() => toast({ title: 'Saved', variant: 'success', duration: 120_000 })}>
+          ok
+        </button>
         <button onClick={() => error('error.server', 'req-42')}>fail</button>
       </>
     );

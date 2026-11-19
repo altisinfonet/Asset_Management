@@ -31,6 +31,7 @@ cp .env.example .env        # optional; only needed to change ports or settings
 | **postgres** (5433) / **pgbouncer** (6432) | Database and connection pooler                                   | Docker                          |
 | **mailpit** (8025)                        | Catches every email the app sends; view it in the browser        | Docker                          |
 | **minio** (9000 / 9001)                   | S3-compatible file storage                                       | Docker                          |
+| **clamav** (3310)                         | Virus scanner (clamd) for uploaded files; first start downloads its signatures (a minute or two) | Docker |
 | **web** (3001)                            | Next.js website (static export)                                  | Your machine, or Docker (4b)    |
 
 ## 3. Start everything (the normal way)
@@ -117,9 +118,22 @@ pnpm format                                        # auto-fix formatting
 | 6432 | PgBouncer                                                                          |
 | 8025 | Mailpit (emails); SMTP on 1025                                                     |
 | 9001 | MinIO console (`minioadmin` / `minioadmin-dev`); S3 API on 9000                    |
+| 3310 | ClamAV daemon (clamd), published on localhost only                                 |
 
 Change any of them in `.env`: `API_PORT`, `WEB_PORT`, `POSTGRES_PORT`, `PGBOUNCER_PORT`,
-`MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`.
+`MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`, `CLAMD_PORT`.
+
+Uploaded files (attachments, photos) go to MinIO and are scanned by ClamAV before anyone can download
+them: a new upload shows `scan_status: pending` until the `worker` has scanned it (a few seconds once
+ClamAV is `healthy`; `docker compose ps` shows it). To develop without ClamAV, stop it and set
+`SCAN_REQUIRED=false` for the api and worker: uploads are then marked clean without a scan and a
+`attachment.scan_skipped` audit row records it. Design: [ADR 0006](adr/0006-files-scanning-and-thumbnails.md).
+
+The browser uploads straight to MinIO with a presigned URL, so the S3 endpoint the api signs for
+(`S3_PUBLIC_ENDPOINT`, `http://localhost:${MINIO_PORT}`) must be reachable from your browser: if you change
+`MINIO_PORT` in `.env`, the compose file follows it. The **first ClamAV start downloads the signature
+database and can take several minutes** (it needs internet and 1-2 GB of RAM); uploads wait as `pending`
+until it is `healthy`. The signatures live in the `clamdata` volume, so later starts are fast.
 
 ## 9. Troubleshooting
 
@@ -133,3 +147,4 @@ Change any of them in `.env`: `API_PORT`, `WEB_PORT`, `POSTGRES_PORT`, `PGBOUNCE
 | Authenticator code rejected                                                            | Each code works once; wait about 30 seconds for the next one.                                    |
 | Account locked after wrong passwords                                                   | Wait for the time shown, or reset with `docker compose down -v`.                                 |
 | Git Bash mangles paths in `docker exec` / `docker cp`                                  | Prefix the command with `MSYS_NO_PATHCONV=1`.                                                    |
+| An upload stays `pending`                                                              | ClamAV is still downloading signatures or is down: `docker compose ps clamav`, `logs clamav worker`. |

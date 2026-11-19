@@ -3,9 +3,10 @@ export class ETagStore {
   private readonly etags = new Map<string, string>();
   private lastFailedRequestId: string | undefined;
 
-  record(path: string, response: Response): void {
+  /** `remember: false` only tracks the failed request id (an action path has no ETag of its own). */
+  record(path: string, response: Response, remember = true): void {
     const etag = response.headers.get('etag');
-    if (etag) this.etags.set(path, etag);
+    if (etag && remember) this.etags.set(path, etag);
     if (!response.ok) this.lastFailedRequestId = response.headers.get('x-request-id') ?? undefined;
   }
 

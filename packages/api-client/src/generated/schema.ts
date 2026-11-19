@@ -323,6 +323,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assets/{id}/dispose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispose of an asset
+         * @description Retires the asset for good: sets an `archived`-type status, records the reason, the date and the note (`Asset.disposal`), and archives the asset so it leaves default lists and active counts. Not allowed while the asset is checked out (`409 asset-already-checked-out`: check it in first) or already archived. Writes an `archived` history event, an audit record and an outbox event. `POST /v1/assets/{id}/restore` takes a disposed asset back (the disposal record is cleared and the status returns to the tenant default).
+         *
+         *     Requires permission `asset:delete`.
+         */
+        post: operations["disposeAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/{id}/history": {
         parameters: {
             query?: never;
@@ -339,6 +361,72 @@ export interface paths {
         get: operations["listAssetHistory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/mark-found": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a lost asset found
+         * @description Returns a lost asset to a `deployable` status (and optionally a location). `409 conflict` when the asset is not lost. Writes a `status_changed` history event.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["markAssetFound"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/mark-lost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark an asset lost or stolen
+         * @description Moves the asset to a `lost`-type status. An open custody period is closed (its `checkin_note` says the asset was lost). A lost asset cannot be checked out. Not allowed when the asset is already lost or archived. Writes a `status_changed` history event.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["markAssetLost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move an asset to a location
+         * @description Changes `location_id` and writes a `location_changed` history event with the note, an audit record and an outbox event. Allowed while the asset is checked out (the location is where it physically is). Archived assets cannot be moved. `If-Match` is optional; with it a stale version is `412`.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["moveAsset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -376,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Transfer an asset to a new holder
-         * @description Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`.
+         * @description Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`. User to user, user to location and location to user all work; an asset in stock (no open assignment) is handed out like a check-out and needs a `deployable` state. If either half fails the whole transfer rolls back: the asset is never left unassigned. One audit record and one `transferred` history event. The new holder must differ from the current one (422).
          *
          *     Requires permission `asset:transfer`.
          */
@@ -407,6 +495,32 @@ export interface paths {
          *     Requires permission `asset:delete`.
          */
         post: operations["bulkArchiveAssets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/bulk-move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move many assets to a location
+         * @description Moves every listed asset to `location_id` (same rules as `POST /v1/assets/{id}/move`).
+         *
+         *     At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+         *
+         *     Added by M1-REG-09 (not part of the first contract draft).
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["bulkMoveAssets"];
         delete?: never;
         options?: never;
         head?: never;
@@ -482,6 +596,8 @@ export interface paths {
          * Start an upload
          * @description Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.
          *
+         *     The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
+         *
          *     Requires permission `attachment:write`.
          */
         post: operations["createAttachment"];
@@ -509,7 +625,9 @@ export interface paths {
         post?: never;
         /**
          * Archive an attachment
-         * @description Requires permission `attachment:write`.
+         * @description Soft delete. `409` while the attachment is the primary picture of an asset or model (clear it there first).
+         *
+         *     Requires permission `attachment:write`.
          */
         delete: operations["archiveAttachment"];
         options?: never;
@@ -528,7 +646,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm an upload
-         * @description Verifies the object exists (and its size / sha256 when provided) and queues the virus scan.
+         * @description Verifies the object exists with exactly the declared size, checks that its first bytes are really of the declared type, and queues the virus scan. Idempotent: confirming twice returns the same attachment. A rejected upload (wrong size, content that does not match its type) is archived with `scan_status=error` and its object deleted.
          *
          *     Requires permission `attachment:write`.
          */
@@ -1081,6 +1199,30 @@ export interface paths {
         patch: operations["updateCustomFieldDef"];
         trace?: never;
     };
+    "/v1/files/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a file from local storage (presigned)
+         * @description Only with the **local filesystem** storage driver: the short-lived URL returned as `download_url` / `thumbnail_url`. The signed token is the credential; no cookie is read or set. The response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a content type from the allow-list and `Content-Disposition: attachment` for everything except raster images.
+         */
+        get: operations["downloadLocalFile"];
+        /**
+         * Upload a file to local storage (presigned)
+         * @description Only with the **local filesystem** storage driver (the self-hosted fallback): the "presigned PUT" URL returned by `POST /v1/attachments`. The signed token is the credential (no cookie or API key is read). Send exactly the promised content type and byte count as the raw request body. With the S3 driver the upload URL points at the object store and this route answers `404`.
+         */
+        put: operations["uploadLocalFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -1446,7 +1588,7 @@ export interface paths {
         put?: never;
         /**
          * Create location
-         * @description Requires permission `location:manage`.
+         * @description Creates a location under `parent_id` (a root when null). The name must be unique among the live children of the same parent (409 `conflict`, pointer `/name`); the hierarchy is at most ten levels deep (422, pointer `/parent_id`). Requires permission `location:manage`.
          */
         post: operations["createLocation"];
         delete?: never;
@@ -1471,16 +1613,14 @@ export interface paths {
         post?: never;
         /**
          * Archive location
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `location:manage`.
+         * @description Soft delete. Refused with `409 conflict` and `usage` (`children`, `assets`, `people`, `open_assignments`: how many live records still reference the location) while anything is located here or below it. Requires permission `location:manage`.
          */
         delete: operations["archiveLocation"];
         options?: never;
         head?: never;
         /**
          * Update location
-         * @description Requires permission `location:manage`.
+         * @description Merge semantics. Changing `parent_id` **moves the whole subtree** (every descendant's `ancestor_ids` and `depth` are rewritten in the same transaction). Moving a location under itself or one of its descendants is 422 (pointer `/parent_id`, code `cycle`), as is exceeding the depth limit or an archived parent. Requires permission `location:manage`.
          */
         patch: operations["updateLocation"];
         trace?: never;
@@ -1614,7 +1754,7 @@ export interface paths {
         put?: never;
         /**
          * Create person
-         * @description Requires permission `person:manage`.
+         * @description Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.
          */
         post: operations["createPerson"];
         delete?: never;
@@ -1639,16 +1779,14 @@ export interface paths {
         post?: never;
         /**
          * Archive person
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `person:manage`.
+         * @description Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.
          */
         delete: operations["archivePerson"];
         options?: never;
         head?: never;
         /**
          * Update person
-         * @description Requires permission `person:manage`.
+         * @description Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.
          */
         patch: operations["updatePerson"];
         trace?: never;
@@ -1667,6 +1805,28 @@ export interface paths {
          *     Requires permission `person:read`.
          */
         get: operations["listPersonAssignments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/people/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chain of custody of a person
+         * @description Newest first: every custody event (check-out, check-in, transfer) that involved this person, across assets.
+         *
+         *     Requires permission `person:read`.
+         */
+        get: operations["listPersonHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1784,7 +1944,7 @@ export interface paths {
         };
         /**
          * Resolve a scanned code
-         * @description Accepts the opaque QR `label_code` (the last path segment of the label URL) or a Code128 `asset_tag` and returns the asset with the actions allowed right now. `404` when nothing matches in the caller's tenant and scope.
+         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
          *
          *     Requires permission `asset:read`.
          */
@@ -1808,7 +1968,7 @@ export interface paths {
          * Search across the registry
          * @description One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.
          *
-         *     **Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
+         *     **Availability:** `asset`, `model`, `category`, `person` (name, email, employee number) and `location` (name, code) results. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
          *
          *     Requires permission `search:read`.
          */
@@ -1844,6 +2004,34 @@ export interface paths {
          *     Requires permission `catalog:manage`.
          */
         put: operations["putAssetTagTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the file settings
+         * @description Upload cap (tier default, override, effective) and the EXIF-stripping option of the organisation.
+         *
+         *     Requires permission `catalog:read`.
+         */
+        get: operations["getFilesSettings"];
+        /**
+         * Replace the file settings
+         * @description Replaces `strip_exif_original` and `max_upload_bytes`. The override can only lower the cap that the plan allows.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        put: operations["putFilesSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2473,6 +2661,11 @@ export interface components {
             /** Format: date */
             eol_date?: string | null;
             notes?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it.
+             */
+            image_attachment_id?: string | null;
         };
         AssetModelCreate: {
             /**
@@ -2504,6 +2697,11 @@ export interface components {
             /** Format: date */
             eol_date?: string | null;
             notes?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it.
+             */
+            image_attachment_id?: string | null;
         };
         AssetModelList: {
             data: components["schemas"]["AssetModel"][];
@@ -2700,9 +2898,16 @@ export interface components {
             latitude?: number | null;
             longitude?: number | null;
             notes?: string | null;
+            /** @description Distance from the root (a root has depth 0). The hierarchy is limited to depth 9, i.e. ten levels. */
             readonly depth?: number;
             /** @description Root..self. */
             readonly ancestor_ids?: string[];
+            /** @description Live (not archived) assets located here **or in any descendant** location. */
+            readonly asset_count?: number;
+            /** @description Live assets located exactly here. */
+            readonly direct_asset_count?: number;
+            /** @description Live direct child locations. */
+            readonly child_count?: number;
         };
         LocationCreate: {
             /**
@@ -2797,6 +3002,8 @@ export interface components {
              * @description Linked login account, if this person can sign in.
              */
             readonly user_id?: string | null;
+            /** @description Number of assets currently checked out to this person. */
+            readonly assets_held?: number;
         };
         PersonCreate: {
             /**
@@ -2858,6 +3065,13 @@ export interface components {
              */
             status?: "active" | "inactive";
             notes?: string | null;
+            /**
+             * @description With `status: "inactive"`: deactivate even though the person still holds assets. Needs `reason`. Not stored on the person.
+             * @default false
+             */
+            force?: boolean;
+            /** @description Why a forced deactivation is justified (audit trail). Ignored without `force`. */
+            reason?: string;
         };
         PersonList: {
             data: components["schemas"]["Person"][];
@@ -3238,8 +3452,18 @@ export interface components {
             checked_out_at: string;
             /** Format: date */
             expected_return?: string | null;
+            /** @description [M2-W1] Computed: the assignment is open and `expected_return` is before today (UTC). */
+            overdue?: boolean;
             /** Format: uuid */
             loaner_pool_id?: string | null;
+        };
+        /** @description [M2-W1] Why and when the asset left the inventory. */
+        AssetDisposal: {
+            /** Format: date */
+            disposed_on: string;
+            /** @enum {string} */
+            reason: "sold" | "donated" | "recycled" | "scrapped" | "stolen" | "returned_to_vendor" | "other";
+            note?: string | null;
         };
         Asset: {
             /** Format: uuid */
@@ -3295,6 +3519,8 @@ export interface components {
             readonly label_code?: string;
             /** @description Open custody period, or null when in stock. */
             readonly current_assignment?: components["schemas"]["AssignmentSummary"] | null;
+            /** @description Set once the asset was disposed of (`POST /v1/assets/{id}/dispose`); null otherwise. */
+            readonly disposal?: components["schemas"]["AssetDisposal"] | null;
             readonly status?: {
                 /** Format: uuid */
                 id: string;
@@ -3305,6 +3531,11 @@ export interface components {
             readonly expanded?: {
                 [key: string]: unknown;
             };
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
+             */
+            image_attachment_id?: string | null;
         };
         AssetCreate: {
             /** @description Unique per tenant (case-insensitive). If omitted on create, generated from the category `tag_prefix`. */
@@ -3392,17 +3623,30 @@ export interface components {
             /** @description Origin system, e.g. `snipe_it`, `google_admin`. Set together with `external_id`. */
             external_source?: string | null;
             external_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
+             */
+            image_attachment_id?: string | null;
         };
         AssetList: {
             data: components["schemas"]["Asset"][];
             page: components["schemas"]["PageInfo"];
         };
         ScanResolveResult: {
-            /** @enum {string} */
-            match_type: "label_code" | "asset_tag";
+            /**
+             * @description What the code was: the opaque `label_code` of the label, the `asset_tag`, or the device `serial` (checked in that order).
+             * @enum {string}
+             */
+            match_type: "label_code" | "asset_tag" | "serial";
             asset: components["schemas"]["Asset"];
             /** @description Actions valid for the asset in its current state and for the caller. */
             allowed_actions: ("checkout" | "checkin" | "transfer" | "update" | "open_repair")[];
+            /**
+             * @description Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
+             * @enum {string}
+             */
+            entity_type: "asset";
         };
         /** @description One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set. */
         Assignment: {
@@ -3439,6 +3683,21 @@ export interface components {
             acceptance_state: "not_required" | "pending" | "accepted" | "declined";
             note?: string | null;
             checkin_note?: string | null;
+            /**
+             * @description Condition of the asset when it came back (`CheckinRequest.condition`); `null` while the assignment is open or when none was stated.
+             * @enum {string|null}
+             */
+            checkin_condition?: "good" | "fair" | "poor" | "damaged" | null;
+            /** @description Photos / signatures linked at check-out (ids only; the attachments service owns the files). */
+            attachment_ids?: string[];
+            /** @description Photos linked at check-in. */
+            checkin_attachment_ids?: string[];
+            /** @description Computed: the assignment is open and `expected_return` is before today (UTC). */
+            overdue?: boolean;
+            /** @description Tag of the asset; present in the assignment lists of a person and of an asset. */
+            asset_tag?: string | null;
+            /** @description Name of the asset; present together with `asset_tag`. */
+            asset_name?: string | null;
         };
         AssignmentList: {
             data: components["schemas"]["Assignment"][];
@@ -3457,8 +3716,13 @@ export interface components {
              * @default false
              */
             acceptance_required?: boolean;
-            /** @description Previously uploaded photos/signatures to link to the assignment. */
+            /** @description Photos/signatures uploaded against the asset beforehand (`POST /v1/attachments` with `entity_type=asset`; `pending` or `clean`). They are linked to the new assignment and then list under it (`entity_type=assignment`). `422` with the pointer `/attachment_ids/<index>` when an id is unknown, belongs to another asset or organisation, or was rejected (infected, error). */
             attachment_ids?: string[];
+            /**
+             * Format: uuid
+             * @description Status to give the asset: a non-archived label of type `deployed`. Default: the organisation's first deployed label.
+             */
+            status_label_id?: string;
         };
         CheckinRequest: {
             /**
@@ -3471,7 +3735,13 @@ export interface components {
              * @description Status to set on check-in (default: the tenant default deployable status).
              */
             status_id?: string | null;
+            /**
+             * @description Condition of the asset as it comes back; stored on the assignment (`checkin_condition`) and shown in the history.
+             * @enum {string}
+             */
+            condition?: "good" | "fair" | "poor" | "damaged";
             note?: string;
+            /** @description Photos uploaded against the asset beforehand (`pending` or `clean`); linked to the closed assignment, same rules and `422` pointers as at check-out. */
             attachment_ids?: string[];
         };
         /** @description Atomic hand-over: closes the current assignment (if any) and opens a new one to the given target. */
@@ -3485,6 +3755,7 @@ export interface components {
             expected_return?: string;
             reason?: string;
             note?: string;
+            /** @description Photos uploaded against the asset beforehand; linked to the new assignment (same rules and `422` pointers as at check-out). */
             attachment_ids?: string[];
         };
         Transfer: {
@@ -3531,18 +3802,33 @@ export interface components {
             actor_type: "user" | "api_key" | "integration" | "system";
             /** Format: uuid */
             actor_id?: string | null;
-            /** @description Who did it, resolved for display; null for system events or when the user no longer exists. */
+            /** @description Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists. */
             actor?: {
                 /** Format: uuid */
                 id: string;
                 display_name: string;
             } | null;
+            /** @description [M2-W1] Tag of the asset, so a per-person timeline can label its entries. */
+            asset_tag?: string | null;
             /** Format: uuid */
             assignment_id?: string | null;
             /** Format: uuid */
             transfer_id?: string | null;
             summary?: string | null;
-            /** @description Event details, e.g. `{"from":"...","to":"..."}`. */
+            /**
+             * @description Event details; the keys depend on `event_type` (all ids are uuids, names are display strings, optional keys are absent when empty):
+             *
+             *     - `created`: `{status_id, location_id, cloned_from?}`
+             *     - `updated`: `{fields: string[]}`, the names of the fields that changed
+             *     - `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`
+             *     - `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)
+             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`
+             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
+             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
+             *     - `restored`: `{}` or `{was_disposed: true}`
+             *     - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
+             */
             payload?: {
                 [key: string]: unknown;
             };
@@ -3703,7 +3989,7 @@ export interface components {
             /** Format: uuid */
             readonly id: string;
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+            entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
             /** Format: uuid */
             entity_id: string;
             /** @enum {string} */
@@ -3719,15 +4005,26 @@ export interface components {
             readonly uploaded_at?: string | null;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description Why the status is what it is: the signature name when `infected`, a short reason when `error` (`size-mismatch`, `content-mismatch`, `upload-abandoned`...), `scan-disabled` when the deployment runs without a scanner. */
+            readonly scan_detail?: string | null;
+            /** @description Pixel width of an image, once its thumbnail exists. */
+            readonly width?: number | null;
+            /** @description Pixel height of an image, once its thumbnail exists. */
+            readonly height?: number | null;
             /**
              * Format: uri
-             * @description Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`.
+             * @description Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.
+             */
+            readonly thumbnail_url?: string | null;
+            /**
+             * Format: uri
+             * @description Short-lived signed URL, only when `scan_status=clean`; present on the list and on `GET /v1/attachments/{id}` alike (no per-item request needed). Images are served inline, everything else as an attachment download.
              */
             readonly download_url?: string | null;
         };
         AttachmentCreate: {
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+            entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
             /** Format: uuid */
             entity_id: string;
             /**
@@ -3762,6 +4059,20 @@ export interface components {
         AttachmentList: {
             data: components["schemas"]["Attachment"][];
             page: components["schemas"]["PageInfo"];
+        };
+        FilesSettings: {
+            /** @description Re-encode every uploaded image without EXIF/GPS metadata (the stored original is replaced). Thumbnails are always metadata-free. */
+            strip_exif_original: boolean;
+            /** @description Lower the upload cap below the tier default; `null` = the tier default. It can never raise the cap above the tier. */
+            max_upload_bytes: number | null;
+            /** @description The cap that applies: the smaller of the override (or tier default) and the deployment ceiling. */
+            readonly effective_max_upload_bytes?: number;
+            /** @description The cap of the organisation's plan. */
+            readonly tier_max_upload_bytes?: number;
+        };
+        FilesSettingsUpdate: {
+            strip_exif_original: boolean;
+            max_upload_bytes: number | null;
         };
         ImportJob: {
             /** Format: uuid */
@@ -4233,6 +4544,61 @@ export interface components {
         ApiKeyList: {
             data: components["schemas"]["ApiKey"][];
             page: components["schemas"]["PageInfo"];
+        };
+        /** @description Moves an asset to a location. */
+        MoveRequest: {
+            /**
+             * Format: uuid
+             * @description Destination location; `null` clears the location (whereabouts unknown).
+             */
+            location_id: string | null;
+            note?: string;
+        };
+        BulkAssetMove: {
+            ids: string[];
+            /**
+             * Format: uuid
+             * @description Destination location for every asset; `null` clears it.
+             */
+            location_id: string | null;
+            note?: string;
+        };
+        DisposeRequest: {
+            /** @enum {string} */
+            reason: "sold" | "donated" | "recycled" | "scrapped" | "stolen" | "returned_to_vendor" | "other";
+            /** @description Free text (buyer, recipient, certificate number...). */
+            note?: string;
+            /**
+             * Format: date
+             * @description Defaults to today (UTC).
+             */
+            disposed_on?: string;
+            /**
+             * Format: uuid
+             * @description An `archived`-type status label; default: the first one of the tenant.
+             */
+            status_id?: string;
+        };
+        MarkLostRequest: {
+            note?: string;
+            /**
+             * Format: uuid
+             * @description A `lost`-type status label; default: the first one of the tenant.
+             */
+            status_id?: string;
+        };
+        MarkFoundRequest: {
+            /**
+             * Format: uuid
+             * @description A `deployable`-type status label to return the asset to; default: the tenant default (or first deployable) label.
+             */
+            status_id?: string;
+            /**
+             * Format: uuid
+             * @description Where the asset was found / is now.
+             */
+            location_id?: string | null;
+            note?: string;
         };
     };
     responses: {
@@ -4901,6 +5267,8 @@ export interface operations {
                 assigned_person_id?: string;
                 /** @description true = checked out, false = in stock. */
                 assigned?: boolean;
+                /** @description [M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset. */
+                overdue?: boolean;
                 /** @description Members of this loaner pool. */
                 loaner_pool_id?: string;
                 /** @description Warranty ends on or before. */
@@ -5207,7 +5575,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset has no open check-out, or a request with the same Idempotency-Key is still running. Codes: `asset-not-checked-out`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-not-checked-out",
+                     *       "title": "asset not checked out",
+                     *       "status": 409,
+                     *       "code": "asset-not-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5263,7 +5649,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description Already checked out, not in a deployable state (lost, archived, in repair, pending), or a request with the same Idempotency-Key is still running. Codes: `asset-already-checked-out`, `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-already-checked-out",
+                     *       "title": "asset already checked out",
+                     *       "status": 409,
+                     *       "code": "asset-already-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5313,6 +5717,78 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    disposeAsset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "recycled",
+                 *       "note": "Certificate R-2210"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DisposeRequest"];
+            };
+        };
+        responses: {
+            /** @description The disposed asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listAssetHistory: {
         parameters: {
             query?: {
@@ -5353,6 +5829,210 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAssetFound: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkFoundRequest"];
+            };
+        };
+        responses: {
+            /** @description The recovered asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is not in a lost state. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAssetLost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkLostRequest"];
+            };
+        };
+        responses: {
+            /** @description The asset in its lost state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    moveAsset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "location_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92",
+                 *       "note": "Moved to the exam room"
+                 *     }
+                 */
+                "application/json": components["schemas"]["MoveRequest"];
+            };
+        };
+        responses: {
+            /** @description The moved asset; `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -5442,7 +6122,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running. Codes: `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-not-deployable",
+                     *       "title": "asset not deployable",
+                     *       "status": 409,
+                     *       "code": "asset-not-deployable",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5463,6 +6161,45 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BulkAssetIds"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkAssetResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    bulkMoveAssets: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkAssetMove"];
             };
         };
         responses: {
@@ -5572,7 +6309,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+                entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
                 entity_id: string;
                 /** @description Filter by kind. */
                 kind?: "photo" | "document" | "signature" | "import_file" | "other";
@@ -5639,6 +6376,44 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            /** @description The file is larger than the organisation's upload cap. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The file type is not allowed, or does not match the file name extension. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -5744,7 +6519,82 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description No object was uploaded yet. Codes: `upload-missing`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/upload-missing",
+                     *       "title": "upload missing",
+                     *       "status": 409,
+                     *       "code": "upload-missing",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The uploaded object is larger than declared or allowed. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The content does not match the declared type. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The uploaded size differs from the declared size. Codes: `validation`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -7820,6 +8670,217 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    downloadLocalFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Signed, short-lived download token from the presigned URL. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file bytes. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description inline for raster images, attachment otherwise. */
+                    "Content-Disposition"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The token is malformed, forged or not a download token, the file is gone, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-invalid",
+                     *       "title": "token invalid",
+                     *       "status": 404,
+                     *       "code": "token-invalid",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The download URL expired; fetch the attachment again for a new one. Codes: `token-expired`. */
+            410: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-expired",
+                     *       "title": "token expired",
+                     *       "status": 410,
+                     *       "code": "token-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    uploadLocalFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Signed, short-lived upload token from the presigned URL. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored. Now call `POST /v1/attachments/{id}/complete`. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The body has fewer bytes than the URL was issued for. Codes: `bad-request`. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/bad-request",
+                     *       "title": "bad request",
+                     *       "status": 400,
+                     *       "code": "bad-request",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The token is malformed, forged or not an upload token, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-invalid",
+                     *       "title": "token invalid",
+                     *       "status": 404,
+                     *       "code": "token-invalid",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description This upload URL was already used. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The upload URL expired. Codes: `token-expired`. */
+            410: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-expired",
+                     *       "title": "token expired",
+                     *       "status": 410,
+                     *       "code": "token-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description More bytes than the URL was issued for. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The Content-Type differs from the one the URL was issued for. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     getHealth: {
         parameters: {
             query?: never;
@@ -9529,6 +10590,43 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listPersonHistory: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryEventList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listRepairs: {
         parameters: {
             query?: {
@@ -9848,6 +10946,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description The serial number belongs to several assets; use the label or the asset tag. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -9947,6 +11064,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetTagTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getFilesSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    putFilesSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilesSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The new settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesSettings"];
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -42,6 +42,6 @@ import { UsersService } from './users.service.js';
     AuthenticationService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
-  exports: [PolicyService, AuthService],
+  exports: [PolicyService, AuthService, ThrottleService],
 })
 export class AuthModule {}

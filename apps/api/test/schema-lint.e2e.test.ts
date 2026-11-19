@@ -292,25 +292,29 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
       await withClient(env.migratorUrl!, async (c) => {
         await c.query("set time zone 'UTC'");
         // "Advance the clock": ask for 3 months starting in a far-future month.
+        // Since M2 wave 1 two tables are partitioned (audit_log and asset_history, ED-09): one call
+        // covers both, so 3 months create 3 partitions of each.
         const first = await ensurePartitions(c, new Date(`${year}-01-15T00:00:00Z`), 3);
-        expect(first).toBe(3);
+        expect(first).toBe(6);
         expect(await ensurePartitions(c, new Date(`${year}-01-15T00:00:00Z`), 3)).toBe(0);
-        const { rows } = await c.query(
-          `select c.relname, c.relrowsecurity and c.relforcerowsecurity as forced, c.relacl::text as acl,
-                  pg_get_expr(c.relpartbound, c.oid) as bound
-             from pg_class c where c.relkind = 'r' and c.relname like $1 order by c.relname`,
-          [`audit_log_${year}_%`],
-        );
-        expect(rows.map((r) => r.relname)).toEqual([
-          `audit_log_${year}_01`,
-          `audit_log_${year}_02`,
-          `audit_log_${year}_03`,
-        ]);
-        for (const r of rows) {
-          expect(r.forced).toBe(true);
-          expect(String(r.acl ?? '')).not.toMatch(/app_user/);
+        for (const table of ['audit_log', 'asset_history']) {
+          const { rows } = await c.query(
+            `select c.relname, c.relrowsecurity and c.relforcerowsecurity as forced, c.relacl::text as acl,
+                    pg_get_expr(c.relpartbound, c.oid) as bound
+               from pg_class c where c.relkind = 'r' and c.relname like $1 order by c.relname`,
+            [`${table}_${year}_%`],
+          );
+          expect(rows.map((r) => r.relname)).toEqual([
+            `${table}_${year}_01`,
+            `${table}_${year}_02`,
+            `${table}_${year}_03`,
+          ]);
+          for (const r of rows) {
+            expect(r.forced).toBe(true);
+            expect(String(r.acl ?? '')).not.toMatch(/app_user/);
+          }
+          expect(rows[0].bound).toContain(`${year}-01-01 00:00:00+00`);
         }
-        expect(rows[0].bound).toContain(`${year}-01-01 00:00:00+00`);
         expect(await schemaLint(c)).toEqual([]);
       });
     });

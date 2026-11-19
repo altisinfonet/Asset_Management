@@ -175,7 +175,7 @@ test.describe('models, manufacturers, status labels, tag numbering, vendors (M1-
     await expect(page.getByRole('row', { name: /On loan/ })).toBeVisible();
 
     await page.getByRole('button', { name: 'Make default' }).first().click();
-    await expect(page.getByText('is now the default.')).toBeVisible();
+    await expect(page.getByText('is now the default.').first()).toBeVisible();
     // the default label cannot be archived: the button is not offered for it
     const defaultRow = page.getByRole('row').filter({ hasText: 'Default' }).first();
     await expect(defaultRow.getByRole('button', { name: /^Archive/ })).toHaveCount(0);

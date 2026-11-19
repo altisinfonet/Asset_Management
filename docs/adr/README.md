@@ -13,6 +13,7 @@ numbered `ED-nn` in [`../engineering/decisions.md`](../engineering/decisions.md)
 | [0003](0003-module-boundaries-and-api-conventions.md)        | Module boundary lint and API conventions (platform kernel)                    | PROPOSED, needs founder sign-off           | 2026-11-18                | M1-PLAT-01, M1-PLAT-02            |
 | [0004](0004-platform-services.md)                            | Platform services: audit, outbox, jobs, secret box, mail, observability       | PROPOSED, needs founder sign-off           | 2026-11-18                | M1-PLAT-04..09, M1-OPS-01         |
 | [0005](0005-asset-registry.md)                               | Asset registry: RLS-safe indexing, tag numbering, lists and bulk operations   | PROPOSED, needs founder sign-off           | 2026-11-18                | M1-REG-01..11, M1-PLAT-03, M1-TEN-04 |
+| [0006](0006-files-scanning-and-thumbnails.md)                | Files: storage adapter, upload pipeline, virus scanning, thumbnails, file serving, scan codes | PROPOSED, needs founder sign-off | 2026-11-19 | M2-FILE-01..03, M2-SEC-02, M2-TAG-01 |
 
 Status values: `PROPOSED` (written by Claude, waiting for the founder), `ACCEPTED`, `SUPERSEDED by
 ADR nnnn`, `REJECTED`. An accepted ADR is not edited except to fix mistakes or to mark it superseded;

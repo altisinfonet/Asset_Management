@@ -15,11 +15,15 @@ export function registry(): RegistryData {
   try {
     const raw = globalThis.localStorage?.getItem(KEY);
     if (raw) {
-      memory = JSON.parse(raw) as RegistryData;
+      const saved = JSON.parse(raw) as RegistryData;
       // State saved by an older build lacks the numbering template.
-      memory.tagTemplate ??= { prefix: '', width: 5, use_category_prefix: true };
-      memory.settingsVersion ??= 1;
-      return memory;
+      saved.tagTemplate ??= { prefix: '', width: 5, use_category_prefix: true };
+      saved.settingsVersion ??= 1;
+      // ... and M2 data (people, custody, attachments): start from the current seed instead.
+      if (saved.people && saved.assignments && saved.attachments && saved.filesSettings) {
+        memory = saved;
+        return memory;
+      }
     }
   } catch {
     // storage unavailable or corrupt: fall back to the seed

@@ -26,12 +26,27 @@ export const routes = {
   assets: '/assets',
   assetView: (id: string, tab?: string) =>
     `/assets/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
+  /** Asset opened by a scan: the primary custody action takes focus (rapid desk workflow). */
+  assetScanned: (id: string) => `/assets/view?id=${encodeURIComponent(id)}&scanned=1`,
   assetNew: '/assets/new',
   /** New asset prefilled from an existing one (everything but tag and serial). */
   assetClone: (id: string) => `/assets/new?clone=${encodeURIComponent(id)}`,
   assetEdit: (id: string) => `/assets/edit?id=${encodeURIComponent(id)}`,
   /** Resolve a scanned tag or QR code to an asset (`/s/<code>` redirects here). */
   assetByCode: (code: string) => `/assets/view?code=${encodeURIComponent(code)}`,
+  /** The asset list opened with a filter: a location (with its sublocations) or a holder. */
+  assetsFiltered: ({ location, person }: { location?: string; person?: string }) => {
+    const params = new URLSearchParams();
+    if (location) params.set('location', location);
+    if (person) params.set('person', person);
+    const query = params.toString();
+    return query ? `/assets?${query}` : '/assets';
+  },
+  /** Locations tree, optionally with one location selected (`?id=`). */
+  locations: (id?: string) => (id ? `/locations?id=${encodeURIComponent(id)}` : '/locations'),
+  people: '/people',
+  personView: (id: string, tab?: string) =>
+    `/people/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
   settings: (section: SettingsSection = 'organisation') => `/settings/${section}`,
 } as const;
 

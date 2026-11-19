@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -28,7 +29,7 @@ import {
  */
 const PER_TENANT = Number(process.env.PERF_ASSETS ?? 50_000);
 const SAMPLES = Number(process.env.PERF_SAMPLES ?? 120);
-const BUDGET = { list: 500, search: 200, lookup: 150 } as const;
+const BUDGET = { list: 500, search: 200, lookup: 150, custody: 300 } as const;
 
 const pct = (sorted: number[], p: number) =>
   sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
@@ -181,7 +182,11 @@ describe.skipIf(!dbEnabled)(
       if (process.env.PERF_KEEP) console.log(`PERF_KEEP: tenants ${A?.tenantId} ${B?.tenantId}`);
       else {
         for (const T of [A, B]) {
-          if (T) await ownerTenantSql(T.tenantId, 'delete from app.asset').catch(() => undefined);
+          if (!T) continue;
+          // custody rows reference the assets: delete children first
+          for (const table of ['asset_history', 'transfer', 'assignment', 'asset']) {
+            await ownerTenantSql(T.tenantId, `delete from app.${table}`).catch(() => undefined);
+          }
         }
       }
       await app?.close();
@@ -276,6 +281,83 @@ describe.skipIf(!dbEnabled)(
       });
       for (const s of [byTag, bySerial, scan, scanTag])
         expect(s.p95, s.name).toBeLessThan(BUDGET.lookup);
+    }, 300_000);
+
+    it(`custody p95 < ${BUDGET.custody} ms: check-out, transfer, check-in and the custody filters (M2-LIFE-02)`, async () => {
+      // deployable, active assets of the 50k-row tenant: each is used once per phase
+      const pool = await ownerTenantSql(
+        A.tenantId,
+        `select a.id from app.asset a join app.status_label s on s.tenant_id = a.tenant_id and s.id = a.status_id
+          where a.archived_at is null and s.state_type = 'deployable' order by a.id limit $1`,
+        [SAMPLES + 10],
+      );
+      const ids = pool.rows.map((r: { id: string }) => r.id);
+      expect(ids.length).toBe(SAMPLES + 10);
+      const person = (await A.admin.post('/v1/people', { display_name: 'Perf Person' })).body.id;
+      const other = (await A.admin.post('/v1/people', { display_name: 'Perf Other' })).body.id;
+      const post = async (path: string, body: unknown) => {
+        const res = await A.admin.post(path, body, {
+          headers: { 'idempotency-key': randomUUID() },
+        });
+        if (res.status >= 300) throw new Error(`${path} -> ${res.status} ${res.raw.slice(0, 300)}`);
+      };
+      // the first 10 calls of a phase are warm-up and are not counted
+      const phase = async (name: string, call: (id: string) => Promise<void>) => {
+        const times: number[] = [];
+        for (const [i, id] of ids.entries()) {
+          const t0 = performance.now();
+          await call(id);
+          if (i >= 10) times.push(performance.now() - t0);
+        }
+        times.sort((x, y) => x - y);
+        const stat = {
+          name,
+          samples: times.length,
+          p50: Math.round(pct(times, 50) * 10) / 10,
+          p95: Math.round(pct(times, 95) * 10) / 10,
+          p99: Math.round(pct(times, 99) * 10) / 10,
+          max: Math.round(times.at(-1)! * 10) / 10,
+        };
+        stats.push(stat);
+        return stat;
+      };
+      const out = await phase('custody check-out', (id) =>
+        post(`/v1/assets/${id}/checkout`, { person_id: person }),
+      );
+      // planner statistics for the new table, as autovacuum would have them
+      await withClient(env.migratorUrl!, (c) => c.query('vacuum (analyze) app.assignment'));
+      const filters = await measure('list assigned_person_id + assigned', SAMPLES, async () => {
+        const res = await get(`/v1/assets?limit=50&assigned_person_id=${person}`);
+        if (res.body.data.length !== 50) throw new Error('custody filter miss');
+      });
+      const assigned = await measure('list assigned=true', SAMPLES, async () => {
+        await get('/v1/assets?limit=50&assigned=true');
+      });
+      const unassigned = await measure('list assigned=false (default order)', SAMPLES, async () => {
+        await get('/v1/assets?limit=50&assigned=false');
+      });
+      const transfer = await phase('custody transfer', (id) =>
+        post(`/v1/assets/${id}/transfer`, { person_id: other }),
+      );
+      const back = await phase('custody check-in', (id) => post(`/v1/assets/${id}/checkin`, {}));
+      const history = await measure('asset history (first page)', SAMPLES, async (i) => {
+        await get(`/v1/assets/${ids[i % ids.length]}/history?limit=50`);
+      });
+      const personAssignments = await measure('person assignments', SAMPLES, async () => {
+        await get(`/v1/people/${other}/assignments?state=all&limit=50`);
+      });
+      for (const s of [
+        out,
+        transfer,
+        back,
+        filters,
+        assigned,
+        unassigned,
+        history,
+        personAssignments,
+      ]) {
+        expect(s.p95, s.name).toBeLessThan(BUDGET.custody);
+      }
     }, 300_000);
 
     it(`global search p95 < ${BUDGET.search} ms`, async () => {

@@ -53,6 +53,7 @@ describe('contract coverage', () => {
     ).toEqual(
       [
         'acceptInvitation',
+        'downloadLocalFile',
         'forgotPassword',
         'getHealth',
         'getInvitation',
@@ -60,6 +61,7 @@ describe('contract coverage', () => {
         'getVersion',
         'login',
         'resetPassword',
+        'uploadLocalFile',
         'verifyMfa',
       ].sort(),
     );
@@ -191,6 +193,35 @@ describe('role x operation matrix', () => {
     updateCustomFieldDef: ['tenant_admin', 'asset_manager'],
     archiveCustomFieldDef: ['tenant_admin', 'asset_manager'],
     putAssetTagTemplate: ['tenant_admin', 'asset_manager'],
+    // M2 wave 1: locations, people, custody, history
+    listLocations: ALL,
+    getLocation: ALL,
+    createLocation: ['tenant_admin', 'asset_manager'],
+    updateLocation: ['tenant_admin', 'asset_manager'],
+    archiveLocation: ['tenant_admin', 'asset_manager'],
+    listPeople: ALL,
+    getPerson: ALL,
+    listPersonAssignments: ALL,
+    listPersonHistory: ALL,
+    createPerson: ['tenant_admin', 'asset_manager'],
+    updatePerson: ['tenant_admin', 'asset_manager'],
+    archivePerson: ['tenant_admin', 'asset_manager'],
+    transferAsset: ['tenant_admin', 'asset_manager', 'technician'],
+    listAssetAssignments: ALL,
+    listAssetHistory: ALL,
+    moveAsset: ['tenant_admin', 'asset_manager', 'technician'],
+    bulkMoveAssets: ['tenant_admin', 'asset_manager', 'technician'],
+    markAssetLost: ['tenant_admin', 'asset_manager', 'technician'],
+    markAssetFound: ['tenant_admin', 'asset_manager', 'technician'],
+    disposeAsset: ['tenant_admin', 'asset_manager'],
+    // files (M2-FILE): everyone reads attachments; uploading needs attachment:write; settings are catalogue-level
+    listAttachments: ALL,
+    getAttachment: ALL,
+    createAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    completeAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    archiveAttachment: ['tenant_admin', 'asset_manager', 'technician'],
+    getFilesSettings: ALL,
+    putFilesSettings: ['tenant_admin', 'asset_manager'],
   };
   it.each(Object.entries(allowed))('%s is allowed for exactly %j', (operationId, expectedRoles) => {
     const op = operations.find((o) => o.operationId === operationId);

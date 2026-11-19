@@ -6,9 +6,13 @@ import type { AppConfig } from './config/env.js';
 import { ControlPlaneModule } from './control-plane/index.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
+import { LifecycleModule } from './lifecycle/index.js';
+import { LocationsModule } from './locations/index.js';
 import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
+import { PeopleModule } from './people/index.js';
 import { PlatformModule } from './platform/index.js';
+import { FilesModule } from './files/index.js';
 import { RegistryModule } from './registry/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
@@ -38,7 +42,16 @@ export class AppModule {
         PlatformModule,
         ControlPlaneModule,
         IdentityModule,
-        ...(auth ? [AuthModule, RegistryModule] : []),
+        ...(auth
+          ? [
+              AuthModule,
+              RegistryModule,
+              LocationsModule,
+              PeopleModule,
+              LifecycleModule,
+              FilesModule,
+            ]
+          : []),
         HealthModule,
         OpenApiModule,
         ...extraImports,

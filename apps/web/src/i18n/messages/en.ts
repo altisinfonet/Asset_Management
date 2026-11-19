@@ -1,3 +1,4 @@
+import { m2Messages } from './m2';
 import { registryMessages } from './registry';
 
 /**
@@ -47,15 +48,18 @@ export const en = {
     on: 'On',
     off: 'Off',
     showArchived: 'Show archived',
+    delete: 'Delete',
   },
   form: {
     required: 'This field is required.',
+    duplicate: 'This value is already in use.',
   },
   nav: {
     primary: 'Primary',
     dashboard: 'Dashboard',
     assets: 'Assets',
     locations: 'Locations',
+    people: 'People',
     loanerPool: 'Loaner pool',
     repairs: 'Repairs',
     stocktake: 'Stocktake',
@@ -101,6 +105,7 @@ export const en = {
     models: 'Models',
     categories: 'Categories',
     openAsset: 'Open asset {code}',
+    batchScan: 'Scan assets (check out or in many)',
     security: 'Account security',
     shortcuts: 'Keyboard shortcuts',
     signOut: 'Sign out',
@@ -159,6 +164,14 @@ export const en = {
     customFields_other: '{count} custom fields',
     assetsWithValues_one: '{count} asset with a value',
     assetsWithValues_other: '{count} assets with a value',
+    children_one: '{count} sublocation',
+    children_other: '{count} sublocations',
+    locations_one: '{count} location',
+    locations_other: '{count} locations',
+    openAssignments_one: '{count} asset still checked out',
+    openAssignments_other: '{count} assets still checked out',
+    loginAccounts_one: '{count} login account',
+    loginAccounts_other: '{count} login accounts',
   },
   dashboard: {
     title: 'Dashboard',
@@ -420,6 +433,7 @@ export const en = {
     openingCode: 'Opening {code}',
   },
   ...registryMessages,
+  ...m2Messages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

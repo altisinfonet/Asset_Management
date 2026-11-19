@@ -644,6 +644,7 @@ Status: done - Founder walk-through completed 2026-11-19. Findings fixed during 
 | E2.8 CSV import with dry run | IMP | 9 |
 | E2.9 Notifications and saved views | NOT, REG | 4 |
 | E2.10 Quality, docs, acceptance | SEC, OPS, DOC, UX | 5 |
+| E2.11 Deferred from wave 1 integration | LIFE, REG, USR, UX | 4 |
 
 **Suggested build order.** LOC-01/02, USR-01, LIFE-01..03 and FILE-01 first (everything else depends on custody and files); then TAG, ACC, MNT, NOT-01 in parallel; IMP-01..05 in parallel with the UI work; LOAN after NOT-01; LOC-03 (scoping) last because it touches every query path.
 
@@ -651,6 +652,7 @@ Status: done - Founder walk-through completed 2026-11-19. Findings fixed during 
 
 #### M2-LOC-01 - Location hierarchy
 Size: L - Owner: Claude - Deps: M1-TEN-01, M1-REG-05
+Status: done (M2 wave 1) - `app.location` with trigger-maintained `ancestor_ids` and `depth` (ED-07), ten-level limit (`too-deep`), cycle check (`cycle`) plus a per-tenant advisory lock for moves, `asset_count` / `direct_asset_count` / `child_count`, archive refused with usage counts; migration 0040.
 - [ ] `location` tenant table with parent, type (site, building, floor, room, other), address/notes, optional geo; unique name per parent; a subtree path encoding chosen by ADR (materialized path or `ltree`) with an index that supports "all descendants" queries.
 - [ ] Cycle creation and reparenting under a descendant are rejected; reparenting updates descendant paths in one transaction; depth limit documented.
 - [ ] CRUD API with `asset_count` per node (including descendants), audit and events.
@@ -658,6 +660,7 @@ Size: L - Owner: Claude - Deps: M1-TEN-01, M1-REG-05
 
 #### M2-LOC-02 - Asset location and moves
 Size: M - Owner: Claude - Deps: M2-LOC-01
+Status: partial (M2 wave 1) - `asset.location_id` FK, writable on create/update, `POST /v1/assets/{id}/move` and `bulk-move`, filters `location_id` + `include_sublocations`, `expand=location`, history events. Not done: the optional default location on models and categories (the contract has no field).
 - [ ] Expand migration adds nullable `asset.location_id` (composite FK) using the expand/contract pattern; `asset_model` and category gain an optional default location.
 - [ ] `POST /v1/assets/{id}/move` changes location with a note, writing a history event, audit and outbox event; bulk move through the bulk helper.
 - [ ] List and search filters include location with "include sublocations".
@@ -671,11 +674,13 @@ Size: L - Owner: Claude - Deps: M2-LOC-01, M1-AUTH-01
 
 #### M2-LOC-04 - Locations admin UI
 Size: M - Owner: Both - Deps: M2-LOC-01, M1-WEB-02
+Status: done (M2 wave 1) - tree with per-node `asset_count`, create / edit / move / archive, click-through to the filtered asset list, keyboard accessible, axe in light and dark.
 - [ ] Tree view with expand/collapse, create/edit/move (drag or picker), per-node asset count and click-through to a filtered asset list.
 - [ ] Keyboard accessible; usable at 375 px.
 
 #### M2-USR-01 - People (assignable users)
 Size: M - Owner: Claude - Deps: M1-AUTH-01, M2-LOC-01
+Status: done (M2 wave 1, ED-01 / ED-15) - separate `app.person` (not credential-less users), one person per login account by trigger (linked by email when the account is created), CRUD with unique email and employee id, forced deactivation with a reason, people search; no explicit link-to-login endpoint.
 Assignable-only people share the user model with login users (decision to be recorded in the data model doc).
 - [ ] `user_account` supports records without credentials ("person"): name, email, employee id, department (text field), job title, home location, manager (optional), status active/inactive; a person can be linked to a login account later.
 - [ ] CRUD API with unique email and employee id per tenant; deactivating a person with assets checked out is refused unless forced with a reason.
@@ -683,6 +688,7 @@ Assignable-only people share the user model with login users (decision to be rec
 
 #### M2-USR-02 - People UI
 Size: M - Owner: Both - Deps: M2-USR-01, M1-WEB-02
+Status: partial (M2 wave 1) - people list and detail with assets held and a server-side history tab, create / edit, archive with the force + reason path, person picker; the link-to-login action is deferred to M2-USR-03.
 - [ ] People list/detail with "assets currently held" and a history tab; create/edit; link-to-login action for Admins.
 - [ ] Person picker component (type-ahead, used by check-out dialogs) with keyboard selection.
 
@@ -690,12 +696,14 @@ Size: M - Owner: Both - Deps: M2-USR-01, M1-WEB-02
 
 #### M2-LIFE-01 - Assignment model
 Size: M - Owner: Claude - Deps: M2-USR-01, M2-LOC-01
+Status: done (M2 wave 1) - `app.assignment` with the target check constraint, partial unique index for one open period per asset, composite FKs; `accessory_id` / `loaner_pool_id` columns await their tables (FKs added by the integrator).
 - [ ] `assignment` tenant table with exactly one target (`user_id` xor `location_id` xor `parent_asset_id`, enforced by a check constraint), `expected_return_at`, checked-out/in timestamps and actors, notes, quantity (for accessories), acceptance state placeholder.
 - [ ] Partial unique index guarantees at most one open assignment per individual asset.
 - [ ] Composite foreign keys; schema lint and isolation suite pass without exceptions.
 
 #### M2-LIFE-02 - Check-out API
 Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-PLAT-02
+Status: done (M2 wave 1, integrated) - `POST /v1/assets/{id}/checkout` returns `{asset, assignment}` with the asset ETag; optional `status_label_id` (a `deployed` label, default as before) and photos linked like at check-in; row lock + unique index: 50 concurrent requests give one 201 and 49 `asset-already-checked-out`; the 409 codes (`asset-already-checked-out`, `asset-not-deployable`, `conflict`) are in the contract.
 - [ ] `POST /v1/assets/{id}/checkout` with `Idempotency-Key` and `If-Match`; verifies the asset's state type allows check-out (ready only), locks the row (`SELECT ... FOR UPDATE`), inserts the assignment, moves status to an "assigned" label, writes audit and `asset.checked_out`.
 - [ ] 50 concurrent check-outs of the same asset yield exactly one 201 and 49 clean 409 responses (test).
 - [ ] Replaying a request with the same `Idempotency-Key` returns the original response and creates no second assignment.
@@ -703,35 +711,41 @@ Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-PLAT-02
 
 #### M2-LIFE-03 - Check-in API
 Size: M - Owner: Claude - Deps: M2-LIFE-02, M2-FILE-01
+Status: done (M2 wave 1, integrated) - check-in with status, location, `condition` (good|fair|poor|damaged, stored on the assignment and shown in the history), note and photos: `attachment_ids` are validated (same organisation, owned by the asset, not infected or rejected; `pending` is accepted) and re-pointed at the assignment inside the check-in transaction (`entity_type=assignment`); an unknown, foreign or infected id is a `422` with the pointer `/attachment_ids/<n>`. `overdue` is computed on the assignment and the asset, plus the `overdue` filter.
 - [ ] `POST /v1/assets/{id}/checkin` with target status label, optional location, condition notes and attachment ids (photo); closes the open assignment; audit and `asset.checked_in`.
 - [ ] Check-in of an asset with no open assignment returns a clear 409; idempotent replay works.
 - [ ] Overdue state is derived from `expected_return_at` and exposed as a computed field and filter.
 
 #### M2-LIFE-04 - Transfer
 Size: M - Owner: Claude - Deps: M2-LIFE-02, M2-LIFE-03
+Status: done (M2 wave 1) - transfer in one transaction, one audit entry, one `transferred` history event, rollback test with an injected failure.
 - [ ] `POST /v1/assets/{id}/transfer` performs check-in and check-out in a single transaction (user to user, user to location, location to user) with one audit entry and one history event "transferred".
 - [ ] A failure in either half rolls back both (test); the asset is never left unassigned.
 
 #### M2-LIFE-05 - Retirement, disposal, lost and found
 Size: S - Owner: Claude - Deps: M2-LIFE-03
+Status: done (M2 wave 1) - dispose (reason enum + note + date, archived-type status, archived), mark-lost (closes the custody) and mark-found; the state-machine table test covers every state and action.
 - [ ] Disposal action sets an archived-type status with reason (enum + free text) and date; disposed assets are excluded from active counts and hidden from default lists.
 - [ ] Mark lost / mark found actions with notes; lost assets cannot be checked out; found returns them to a chosen ready status.
 - [ ] All transitions covered by a state-machine test table (which state types allow which actions).
 
 #### M2-LIFE-06 - Chain-of-custody history
 Size: M - Owner: Claude - Deps: M2-LIFE-04
+Status: partial (M2 wave 1) - `GET /v1/assets/{id}/history` and `GET /v1/people/{id}/history` (cursor, actor `{id, display_name}`, filters), `HistoryEvent.payload` documented per event type in the contract, rebuilt from the audit rows in a test; repair and attachment events come with their stories; location scoping with M2-LOC-03.
 - [ ] `GET /v1/assets/{id}/history` returns a unified, cursor-paginated timeline derived from assignments, moves, status changes, repairs and attachments, with actor and note; also available per person.
 - [ ] Timeline entries are reproducible from audit/events (a test rebuilds the timeline from audit rows and compares).
 - [ ] Respects location scoping (M2-LOC-03) when enabled.
 
 #### M2-LIFE-07 - Check-out/in/transfer UI
 Size: L - Owner: Both - Deps: M2-LIFE-04, M2-USR-02, M2-FILE-04
+Status: done (M2 wave 1) - check-out / check-in / transfer dialogs on asset detail, the list (bulk) and the person page, with condition, status after, photos, 409/412 refresh path and a History tab fed by the server timeline; the tenant default for the expected return is deferred to M2-LIFE-09.
 - [ ] Actions on asset detail and from list selection (bulk check-out to one person); dialogs for assignee, expected return (with tenant default), notes, photo on check-in.
 - [ ] Optimistic-concurrency conflicts (409/412) show a clear refresh path.
 - [ ] History tab on the asset detail page and on person pages; flows work at 375 px.
 
 #### M2-LIFE-08 - Keyboard-wedge scanner and manual tag entry
 Size: M - Owner: Both - Deps: M2-TAG-01, M1-WEB-04
+Status: partial (M2 wave 1) - global scan panel and manual entry resolve a label URL, label code, asset tag or exact serial (`match_type`), batch mode, mocks and real stack; the founder test with the real USB scanner (F-02) is still open.
 - [ ] A global "Scan or type tag" input (focus shortcut) accepts Enter-terminated input from USB/Bluetooth keyboard-wedge scanners, resolves tag, serial or scan-URL via `scan/resolve`, and opens the asset or offers check-out/in.
 - [ ] A "batch mode" keeps focus for repeated scans (check-in many, check-out many to one person).
 - [ ] Founder tests with the real USB scanner (F-02) and accepts speed and error feedback.
@@ -740,6 +754,7 @@ Size: M - Owner: Both - Deps: M2-TAG-01, M1-WEB-04
 
 #### M2-FILE-01 - Storage adapter and attachments
 Size: L - Owner: Claude - Deps: M1-PLAT-06, M1-PLAT-08
+Status: done (M2 wave 1) - `StorageAdapter` (S3 / MinIO and local filesystem), presigned PUT / GET, per-tier caps with an organisation override (`/v1/settings/files`), allow-list, isolation tests; ADR 0006.
 - [ ] `StorageAdapter` interface with S3-compatible (MinIO in dev) and local-filesystem implementations (both required; the latter is the Self-hosted fallback).
 - [ ] Presigned PUT with size and content-type conditions; keys `t/<tenant_id>/<yyyy>/<uuid>`; `attachment` tenant table (polymorphic target, mime, size, checksum, `scan_status`); presigned GET only when `scan_status = clean` and short-lived.
 - [ ] Type allow-list (images, PDF, office formats, CSV) and size caps configurable per tenant tier.
@@ -747,6 +762,7 @@ Size: L - Owner: Claude - Deps: M1-PLAT-06, M1-PLAT-08
 
 #### M2-FILE-02 - Virus scanning
 Size: M - Owner: Claude - Deps: M2-FILE-01
+Status: done (M2 wave 1) - ClamAV (`clamd` INSTREAM) is a default Compose service (not a profile); `SCAN_REQUIRED=false` marks files clean with a warning event; scan jobs, sweep, EICAR test against the real ClamAV.
 - [ ] Worker job streams new objects to ClamAV (`clamd` INSTREAM); `clean` flips status and enqueues thumbnailing; `infected` deletes the object, audits and notifies the uploader.
 - [ ] Scheduler sweep handles uploads whose completion call never arrived; scan status is visible in the API.
 - [ ] `scan` Compose profile runs ClamAV; with the profile off, behaviour is configurable (`SCAN_REQUIRED=false` marks clean with a warning event) and documented.
@@ -754,12 +770,14 @@ Size: M - Owner: Claude - Deps: M2-FILE-01
 
 #### M2-FILE-03 - Thumbnails, model images and EXIF handling
 Size: M - Owner: Claude - Deps: M2-FILE-02
+Status: done (M2 wave 1) - sharp thumbnails (re-encoded WebP), optional EXIF stripping of the original, `image_attachment_id` on assets and models, inline images and attachment downloads for everything else.
 - [ ] Server-side thumbnail generation (sharp) in the worker, re-encoding images (neutralises payloads); optional per-tenant EXIF stripping.
 - [ ] Model image and asset photo fields on `asset_model` and `asset` (primary image) wired to attachments.
 - [ ] Non-image downloads are served with `Content-Disposition: attachment`; a cookie-less file host setting is supported.
 
 #### M2-FILE-04 - Attachments UI component
 Size: M - Owner: Both - Deps: M2-FILE-03, M1-WEB-02
+Status: done (M2 wave 1) - reusable attachments panel and upload slot (progress, scan state, delete with confirmation, the server's message on rejection, the organisation's size cap read from `/v1/settings/files`); used on assets, people, locations and the custody dialogs.
 - [ ] Reusable upload/list/preview component (drag-drop, progress, scan-pending state, delete with confirmation) used on asset, repair and check-in dialogs.
 - [ ] Rejected types/sizes show the server's problem message.
 
@@ -942,6 +960,7 @@ Size: M - Owner: Claude - Deps: M1-TEN-05, all new M2 tables
 
 #### M2-SEC-02 - Upload and file-serving security
 Size: M - Owner: Claude - Deps: M2-FILE-03
+Status: done (M2 wave 1) - type sniffing against the declared type, SVG / HTML refused, signed file tokens for the local driver, downloads only for clean unchanged objects, scan-resolve enumeration throttle.
 - [ ] Content sniffing rejects mismatched extension/mime; SVG and HTML uploads are blocked or served as downloads only; size caps are enforced server-side regardless of presign conditions.
 - [ ] Fuzz tests on attachment URLs and keys; tests prove infected, pending and foreign-tenant attachments cannot be downloaded.
 - [ ] Security headers on file responses are documented and tested.
@@ -965,6 +984,35 @@ Founder request (2026-11-18): the Security page cannot know up front whether the
 Size: S - Owner: Founder - Deps: all M2 stories
 - [ ] Founder completes the exit-criteria script (items 1 to 8) on the Compose stack with real data and real hardware.
 - [ ] UX change requests are logged as stories; the founder rates import and check-out speed against the "30 minutes to 100 labelled assets" target.
+
+
+### E2.11 Deferred from wave 1 integration
+
+Found while integrating locations, people, custody and files; each was judged bigger than an integration fix.
+
+#### M2-LIFE-09 - Tenant default for the expected return
+Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Should
+Deferred from wave 1 integration. The check-out dialog leaves the expected return empty; schools want "end of term" or "+14 days" pre-filled.
+- [ ] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:write` to change it; ETag and audit like the other settings.
+- [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently.
+
+#### M2-REG-03 - Sort the asset list by location, assignee and due date
+Size: M - Owner: Both - Deps: M2-LOC-02, M2-LIFE-01 - Priority: Should
+Deferred from wave 1 integration. The list sorts by columns of the asset row only.
+- [ ] `sort` accepts `location`, `assignee` and `due` with keyset paging (stable ordering, indexes that serve them under RLS, see ADR 0005); documented in the contract.
+- [ ] The asset table headers for the three columns become sortable; perf budget on 100k assets unchanged.
+
+#### M2-USR-03 - Link and unlink a person and a login account
+Size: M - Owner: Both - Deps: M2-USR-01, M2-USR-02 - Priority: Should
+Deferred from wave 1 integration. People are linked to a login by e-mail when the account is created; an Admin cannot link or unlink by hand.
+- [ ] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
+- [ ] The person page offers "Link to a login" and "Unlink"; mock, unit and real-stack tests.
+
+#### M2-UX-02 - Undo toast after a custody action
+Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Could
+Deferred from wave 1 integration. A mistaken check-out needs a second dialog today.
+- [ ] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
+- [ ] Keyboard reachable, announced to screen readers, and absent when the inverse is no longer valid (the asset changed meanwhile).
 
 ---
 

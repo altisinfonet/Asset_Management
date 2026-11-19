@@ -116,16 +116,12 @@ export function loadProblemCodes(): Record<string, number[]> {
 }
 
 /**
- * Operations that M1 does not implement (custody, history and assignments belong to M2): the
- * registry route tests treat them as "not yet", everything else under the registry tags is required.
+ * Operations under the registry tags that are not built yet: the route tests treat them as "not
+ * yet", everything else under the registry tags is required. M2 wave 1 (custody, history,
+ * assignments) implemented the five operations that used to be listed here; a later M2 wave that
+ * adds operations to a registry tag lists them here until they land.
  */
-export const M2_OPERATIONS = new Set([
-  'listAssetAssignments',
-  'checkinAsset',
-  'checkoutAsset',
-  'listAssetHistory',
-  'transferAsset',
-]);
+export const M2_OPERATIONS = new Set<string>();
 
 /** Tags whose operations the registry module (M1-REG) owns. */
 export const REGISTRY_TAGS = new Set([
@@ -138,6 +134,16 @@ export const REGISTRY_TAGS = new Set([
   'Status labels',
   'Vendors',
 ]);
+
+/**
+ * Tags of M2 wave 1 (locations, people, custody): every operation under them has a route, and the
+ * wave-1 contract walk (`test/lifecycle/contract-wave1.e2e.test.ts`) calls each one live. The
+ * `Assets` operations added by the wave (move, dispose, mark-lost, mark-found, bulk-move) belong to
+ * the registry tag and are walked there.
+ */
+export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
+/** Tags whose operations the files module (M2-FILE) owns: every one must be implemented. */
+export const FILES_TAGS = new Set(['Attachments']);
 
 /** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
 export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];

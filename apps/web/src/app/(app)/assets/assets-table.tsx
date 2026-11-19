@@ -6,17 +6,23 @@ import {
   ChevronRight,
   Columns3,
   Copy,
+  LogIn,
+  LogOut,
   Package,
   Plus,
   Save,
   Trash2,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCustody } from '@/components/custody/custody-provider';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
+import { LocationPicker } from '@/components/registry/location-picker';
+import { PersonPicker } from '@/components/registry/person-picker';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
 import { FormDialog } from '@/components/registry/form-dialog';
+import { StatusBadge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
 import { Button, IconButton } from '@/components/ui/button';
 import {
@@ -35,6 +41,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -42,7 +49,8 @@ import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
-import { assetsApi } from '@/lib/registry/api';
+import { availableActions, isOverdue } from '@/lib/custody/helpers';
+import { assetsApi, peopleApi } from '@/lib/registry/api';
 import {
   COLUMN_BY_SORT_KEY,
   PAGE_SIZE,
@@ -83,8 +91,21 @@ export function AssetsTable() {
   const queryClient = useQueryClient();
   const { can } = useAuth();
   const lookups = useLookups();
+  const custody = useCustody();
+  const params = useSearchParams();
 
-  const [state, setState] = useState<AssetViewState>(defaultViewState);
+  // Deep links from the locations tree (`?location=`) and a person's page (`?person=`) start filtered.
+  const [state, setState] = useState<AssetViewState>(() => ({
+    ...defaultViewState(),
+    location_id: params.get('location') ?? '',
+    person_id: params.get('person') ?? '',
+  }));
+  const personFromLink = useQuery({
+    queryKey: ['person', state.person_id],
+    queryFn: () => peopleApi.get(state.person_id),
+    enabled: !!state.person_id && !state.person_name,
+    retry: false,
+  });
   const [searchText, setSearchText] = useState('');
   const [cursors, setCursors] = useState<string[]>([]);
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -190,6 +211,38 @@ export function AssetsTable() {
         header: t('assets.columns.status'),
         cell: (row) => <AssetStatusBadge asset={row} lookups={lookups} />,
       },
+      assignee: {
+        id: 'assignee',
+        header: t('assets.columns.assignee'),
+        cell: (row) => {
+          const assignment = row.current_assignment;
+          if (!assignment) return <span className="text-muted">{'-'}</span>;
+          return (
+            <span className="inline-flex items-center gap-2">
+              {assignment.target_type === 'person' ? (
+                <Link
+                  href={routes.personView(assignment.target_id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="rounded-sm text-primary-text underline underline-offset-2"
+                >
+                  {assignment.target_name}
+                </Link>
+              ) : (
+                (assignment.target_name ?? '')
+              )}
+              {isOverdue(assignment) ? <StatusBadge type="overdue" /> : null}
+            </span>
+          );
+        },
+      },
+      due: {
+        id: 'due',
+        header: t('assets.columns.due'),
+        cell: (row) => {
+          const due = row.current_assignment?.expected_return;
+          return due ? i18n.formatDate(`${due}T00:00:00Z`, { timeZone: 'UTC' }) : '';
+        },
+      },
       location: {
         id: 'location',
         header: t('assets.columns.location'),
@@ -266,6 +319,28 @@ export function AssetsTable() {
     .filter((r) => selected.has(r.id))
     .map((r) => ({ id: r.id, label: r.asset_tag }));
 
+  const selectedRows = rows.filter((r) => selected.has(r.id));
+  const eligibleFor = (action: 'checkout' | 'checkin') =>
+    selectedRows.filter((row) => availableActions(row, can).includes(action));
+  const eligibleCount = (action: 'checkout' | 'checkin') => eligibleFor(action).length;
+  /** Bulk check-out (to one person) or check-in: only the selected assets that allow it take part. */
+  const startBulkCustody = (action: 'checkout' | 'checkin') => {
+    const assets = eligibleFor(action);
+    if (assets.length === 0) return;
+    const skipped = selectedRows.length - assets.length;
+    if (skipped > 0) {
+      toast({ variant: 'info', title: t(`custody.bulkSkipped.${action}`, { count: skipped }) });
+    }
+    custody.open({
+      assets,
+      action,
+      onDone: () => {
+        setSelected(new Set());
+        void refreshList();
+      },
+    });
+  };
+
   const finishBulk = async (title: string, outcome: BulkResult[]) => {
     await refreshList();
     setProgress(null);
@@ -337,16 +412,66 @@ export function AssetsTable() {
           options={catOptions}
           onChange={(v) => update({ category_id: v })}
         />
-        <FilterSelect
-          label={t('assets.filters.location')}
-          value={state.location_id}
-          allLabel={t('assets.filters.allLocations')}
-          options={lookups.locations.map((l) => ({
-            value: l.id,
-            label: lookups.locationLabel(l.id),
-          }))}
-          onChange={(v) => update({ location_id: v })}
-        />
+        <div className="flex min-w-56 flex-col gap-1.5 text-sm font-medium">
+          <label htmlFor="filter-location">{t('assets.filters.location')}</label>
+          <LocationPicker
+            id="filter-location"
+            clearable
+            value={state.location_id}
+            placeholder={t('assets.filters.allLocations')}
+            onChange={(id) => update({ location_id: id })}
+          />
+          {state.location_id ? (
+            <Checkbox
+              label={t('assets.filters.includeSublocations')}
+              checked={state.include_sublocations}
+              onCheckedChange={(v) => update({ include_sublocations: v === true })}
+            />
+          ) : null}
+        </div>
+        <label className="flex min-w-44 flex-col gap-1.5 text-sm font-medium">
+          {t('assets.filters.assigned')}
+          <Select
+            aria-label={t('assets.filters.assigned')}
+            value={state.assigned || ALL}
+            onValueChange={(v) =>
+              update({
+                assigned: v === ALL ? '' : (v as AssetViewState['assigned']),
+                ...(v === 'no' ? { person_id: '', person_name: '' } : {}),
+              })
+            }
+            options={[
+              { value: ALL, label: t('assets.filters.anyAssigned') },
+              { value: 'yes', label: t('assets.filters.checkedOut') },
+              { value: 'no', label: t('assets.filters.inStock') },
+            ]}
+          />
+        </label>
+        <div className="flex min-w-56 flex-col gap-1.5 text-sm font-medium">
+          <label htmlFor="filter-person">{t('assets.filters.heldBy')}</label>
+          <PersonPicker
+            id="filter-person"
+            clearable
+            includeInactive
+            value={
+              state.person_id
+                ? {
+                    id: state.person_id,
+                    display_name:
+                      state.person_name || personFromLink.data?.value.display_name || '',
+                  }
+                : null
+            }
+            placeholder={t('assets.filters.anyPerson')}
+            onChange={(person) =>
+              update({
+                person_id: person?.id ?? '',
+                person_name: person?.display_name ?? '',
+                ...(person && state.assigned === 'no' ? { assigned: '' as const } : {}),
+              })
+            }
+          />
+        </div>
         <label className="flex min-w-40 flex-col gap-1.5 text-sm font-medium">
           {t('assets.filters.archived')}
           <Select
@@ -584,6 +709,26 @@ export function AssetsTable() {
           ) : null
         ) : (
           <>
+            {can('asset:checkout') ? (
+              <Button
+                size="sm"
+                disabled={eligibleCount('checkout') === 0}
+                onClick={() => startBulkCustody('checkout')}
+              >
+                <LogOut aria-hidden className="size-4" />
+                {t('assets.bulk.checkOut', { count: eligibleCount('checkout') })}
+              </Button>
+            ) : null}
+            {can('asset:checkin') ? (
+              <Button
+                size="sm"
+                disabled={eligibleCount('checkin') === 0}
+                onClick={() => startBulkCustody('checkin')}
+              >
+                <LogIn aria-hidden className="size-4" />
+                {t('assets.bulk.checkIn', { count: eligibleCount('checkin') })}
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button size="sm" onClick={() => setBulkEditOpen(true)}>
                 {t('assets.bulk.edit')}

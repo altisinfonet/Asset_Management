@@ -762,6 +762,11 @@ paths:
           description: true = checked out, false = in stock.
           schema:
             type: boolean
+        - name: overdue
+          in: query
+          description: "[M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset."
+          schema:
+            type: boolean
         - name: loaner_pool_id
           in: query
           description: Members of this loaner pool.
@@ -1185,7 +1190,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The asset has no open check-out, or a request with the same Idempotency-Key is still running. Codes: `asset-not-checked-out`, `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/asset-not-checked-out
+                title: asset not checked out
+                status: 409
+                code: asset-not-checked-out
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - asset-not-checked-out
+            - conflict
+            - idempotency-key-in-flight
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -1249,7 +1271,25 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "Already checked out, not in a deployable state (lost, archived, in repair, pending), or a request with the same Idempotency-Key is still running. Codes: `asset-already-checked-out`, `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/asset-already-checked-out
+                title: asset already checked out
+                status: 409
+                code: asset-already-checked-out
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - asset-already-checked-out
+            - asset-not-deployable
+            - conflict
+            - idempotency-key-in-flight
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -1307,6 +1347,84 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/{id}/dispose:
+    post:
+      tags:
+        - Assets
+      operationId: disposeAsset
+      summary: Dispose of an asset
+      description: |-
+        Retires the asset for good: sets an `archived`-type status, records the reason, the date and the note (`Asset.disposal`), and archives the asset so it leaves default lists and active counts. Not allowed while the asset is checked out (`409 asset-already-checked-out`: check it in first) or already archived. Writes an `archived` history event, an audit record and an outbox event. `POST /v1/assets/{id}/restore` takes a disposed asset back (the disposal record is cleared and the status returns to the tenant default).
+
+        Requires permission `asset:delete`.
+      x-permission: asset:delete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisposeRequest"
+            example:
+              reason: recycled
+              note: Certificate R-2210
+      responses:
+        "200":
+          description: The disposed asset.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+            - asset-already-checked-out
+            - asset-not-deployable
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1387,6 +1505,230 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/{id}/mark-found:
+    post:
+      tags:
+        - Assets
+      operationId: markAssetFound
+      summary: Mark a lost asset found
+      description: |-
+        Returns a lost asset to a `deployable` status (and optionally a location). `409 conflict` when the asset is not lost. Writes a `status_changed` history event.
+
+        Requires permission `asset:update`.
+      x-permission: asset:update
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkFoundRequest"
+      responses:
+        "200":
+          description: The recovered asset.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The asset is not in a lost state. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/{id}/mark-lost:
+    post:
+      tags:
+        - Assets
+      operationId: markAssetLost
+      summary: Mark an asset lost or stolen
+      description: |-
+        Moves the asset to a `lost`-type status. An open custody period is closed (its `checkin_note` says the asset was lost). A lost asset cannot be checked out. Not allowed when the asset is already lost or archived. Writes a `status_changed` history event.
+
+        Requires permission `asset:update`.
+      x-permission: asset:update
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkLostRequest"
+      responses:
+        "200":
+          description: The asset in its lost state.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+            - asset-already-checked-out
+            - asset-not-deployable
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/{id}/move:
+    post:
+      tags:
+        - Assets
+      operationId: moveAsset
+      summary: Move an asset to a location
+      description: |-
+        Changes `location_id` and writes a `location_changed` history event with the note, an audit record and an outbox event. Allowed while the asset is checked out (the location is where it physically is). Archived assets cannot be moved. `If-Match` is optional; with it a stale version is `412`.
+
+        Requires permission `asset:update`.
+      x-permission: asset:update
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchOptional"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveRequest"
+            example:
+              location_id: 0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92
+              note: Moved to the exam room
+      responses:
+        "200":
+          description: The moved asset; `ETag` is its new version.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The asset is archived. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/assets/{id}/restore:
     post:
       tags:
@@ -1441,7 +1783,7 @@ paths:
       operationId: transferAsset
       summary: Transfer an asset to a new holder
       description: |-
-        Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`.
+        Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`. User to user, user to location and location to user all work; an asset in stock (no open assignment) is handed out like a check-out and needs a `deployable` state. If either half fails the whole transfer rolls back: the asset is never left unassigned. One audit record and one `transferred` history event. The new holder must differ from the current one (422).
 
         Requires permission `asset:transfer`.
       x-permission: asset:transfer
@@ -1487,7 +1829,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running. Codes: `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/asset-not-deployable
+                title: asset not deployable
+                status: 409
+                code: asset-not-deployable
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - asset-not-deployable
+            - conflict
+            - idempotency-key-in-flight
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -1518,6 +1877,58 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/BulkAssetIds"
+      responses:
+        "200":
+          description: Per-item results.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkAssetResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/assets/bulk-move:
+    post:
+      tags:
+        - Assets
+      operationId: bulkMoveAssets
+      summary: Move many assets to a location
+      description: |-
+        Moves every listed asset to `location_id` (same rules as `POST /v1/assets/{id}/move`).
+
+        At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+
+        Added by M1-REG-09 (not part of the first contract draft).
+
+        Requires permission `asset:update`.
+      x-permission: asset:update
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAssetMove"
       responses:
         "200":
           description: Per-item results.
@@ -1668,6 +2079,7 @@ paths:
             type: string
             enum:
               - asset
+              - asset_model
               - accessory
               - consumable
               - location
@@ -1724,6 +2136,8 @@ paths:
       description: |-
         Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.
 
+        The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
+
         Requires permission `attachment:write`.
       x-permission: attachment:write
       parameters:
@@ -1763,6 +2177,40 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          description: "The file is larger than the organisation's upload cap. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The file type is not allowed, or does not match the file name extension. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1809,7 +2257,10 @@ paths:
         - Attachments
       operationId: archiveAttachment
       summary: Archive an attachment
-      description: Requires permission `attachment:write`.
+      description: |-
+        Soft delete. `409` while the attachment is the primary picture of an asset or model (clear it there first).
+
+        Requires permission `attachment:write`.
       x-permission: attachment:write
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -1846,7 +2297,7 @@ paths:
       operationId: completeAttachment
       summary: Confirm an upload
       description: |-
-        Verifies the object exists (and its size / sha256 when provided) and queues the virus scan.
+        Verifies the object exists with exactly the declared size, checks that its first bytes are really of the declared type, and queues the virus scan. Idempotent: confirming twice returns the same attachment. A rejected upload (wrong size, content that does not match its type) is archived with `scan_status=error` and its object deleted.
 
         Requires permission `attachment:write`.
       x-permission: attachment:write
@@ -1879,7 +2330,73 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "No object was uploaded yet. Codes: `upload-missing`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/upload-missing
+                title: upload missing
+                status: 409
+                code: upload-missing
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - upload-missing
+        "413":
+          description: "The uploaded object is larger than declared or allowed. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The content does not match the declared type. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
+        "422":
+          description: "The uploaded size differs from the declared size. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/audit-log:
@@ -4151,6 +4668,216 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/files/{token}:
+    put:
+      tags:
+        - Attachments
+      operationId: uploadLocalFile
+      summary: Upload a file to local storage (presigned)
+      description: 'Only with the **local filesystem** storage driver (the self-hosted fallback): the "presigned PUT" URL returned by `POST /v1/attachments`. The signed token is the credential (no cookie or API key is read). Send exactly the promised content type and byte count as the raw request body. With the S3 driver the upload URL points at the object store and this route answers `404`.'
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Signed, short-lived upload token from the presigned URL.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stored. Now call `POST /v1/attachments/{id}/complete`.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+        "400":
+          description: "The body has fewer bytes than the URL was issued for. Codes: `bad-request`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/bad-request
+                title: bad request
+                status: 400
+                code: bad-request
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - bad-request
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "The token is malformed, forged or not an upload token, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-invalid
+                title: token invalid
+                status: 404
+                code: token-invalid
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-invalid
+            - not-found
+        "409":
+          description: "This upload URL was already used. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "410":
+          description: "The upload URL expired. Codes: `token-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-expired
+                title: token expired
+                status: 410
+                code: token-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-expired
+        "413":
+          description: "More bytes than the URL was issued for. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The Content-Type differs from the one the URL was issued for. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    get:
+      tags:
+        - Attachments
+      operationId: downloadLocalFile
+      summary: Download a file from local storage (presigned)
+      description: "Only with the **local filesystem** storage driver: the short-lived URL returned as `download_url` / `thumbnail_url`. The signed token is the credential; no cookie is read or set. The response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a content type from the allow-list and `Content-Disposition: attachment` for everything except raster images."
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Signed, short-lived download token from the presigned URL.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file bytes.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: inline for raster images, attachment otherwise.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: nosniff
+              schema:
+                type: string
+            Content-Security-Policy:
+              description: default-src 'none'; sandbox
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "The token is malformed, forged or not a download token, the file is gone, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-invalid
+                title: token invalid
+                status: 404
+                code: token-invalid
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-invalid
+            - not-found
+        "410":
+          description: "The download URL expired; fetch the attachment again for a new one. Codes: `token-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-expired
+                title: token expired
+                status: 410
+                code: token-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-expired
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/health:
     get:
       tags:
@@ -5272,7 +5999,7 @@ paths:
         - Locations
       operationId: createLocation
       summary: Create location
-      description: Requires permission `location:manage`.
+      description: Creates a location under `parent_id` (a root when null). The name must be unique among the live children of the same parent (409 `conflict`, pointer `/name`); the hierarchy is at most ten levels deep (422, pointer `/parent_id`). Requires permission `location:manage`.
       x-permission: location:manage
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -5358,7 +6085,7 @@ paths:
         - Locations
       operationId: updateLocation
       summary: Update location
-      description: Requires permission `location:manage`.
+      description: Merge semantics. Changing `parent_id` **moves the whole subtree** (every descendant's `ancestor_ids` and `depth` are rewritten in the same transaction). Moving a location under itself or one of its descendants is 422 (pointer `/parent_id`, code `cycle`), as is exceeding the depth limit or an archived parent. Requires permission `location:manage`.
       x-permission: location:manage
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -5414,10 +6141,7 @@ paths:
         - Locations
       operationId: archiveLocation
       summary: Archive location
-      description: |-
-        Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-
-        Requires permission `location:manage`.
+      description: "Soft delete. Refused with `409 conflict` and `usage` (`children`, `assets`, `people`, `open_assignments`: how many live records still reference the location) while anything is located here or below it. Requires permission `location:manage`."
       x-permission: location:manage
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -6055,7 +6779,7 @@ paths:
         - People
       operationId: createPerson
       summary: Create person
-      description: Requires permission `person:manage`.
+      description: Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.
       x-permission: person:manage
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -6141,7 +6865,7 @@ paths:
         - People
       operationId: updatePerson
       summary: Update person
-      description: Requires permission `person:manage`.
+      description: 'Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.'
       x-permission: person:manage
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -6197,10 +6921,7 @@ paths:
         - People
       operationId: archivePerson
       summary: Archive person
-      description: |-
-        Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-
-        Requires permission `person:manage`.
+      description: Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.
       x-permission: person:manage
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -6275,6 +6996,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AssignmentList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/people/{id}/history:
+    get:
+      tags:
+        - People
+      operationId: listPersonHistory
+      summary: Chain of custody of a person
+      description: |-
+        Newest first: every custody event (check-out, check-in, transfer) that involved this person, across assets.
+
+        Requires permission `person:read`.
+      x-permission: person:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of events.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryEventList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -6680,7 +7442,7 @@ paths:
       operationId: resolveScan
       summary: Resolve a scanned code
       description: |-
-        Accepts the opaque QR `label_code` (the last path segment of the label URL) or a Code128 `asset_tag` and returns the asset with the actions allowed right now. `404` when nothing matches in the caller's tenant and scope.
+        Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
 
         Requires permission `asset:read`.
       x-permission: asset:read
@@ -6717,6 +7479,23 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The serial number belongs to several assets; use the label or the asset tag. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/search:
@@ -6728,7 +7507,7 @@ paths:
       description: |-
         One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.
 
-        **Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
+        **Availability:** `asset`, `model`, `category`, `person` (name, email, employee number) and `location` (name, code) results. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
 
         Requires permission `search:read`.
       x-permission: search:read
@@ -6871,6 +7650,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AssetTagTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/settings/files:
+    get:
+      tags:
+        - Attachments
+      operationId: getFilesSettings
+      summary: Get the file settings
+      description: |-
+        Upload cap (tier default, override, effective) and the EXIF-stripping option of the organisation.
+
+        Requires permission `catalog:read`.
+      x-permission: catalog:read
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    put:
+      tags:
+        - Attachments
+      operationId: putFilesSettings
+      summary: Replace the file settings
+      description: |-
+        Replaces `strip_exif_original` and `max_upload_bytes`. The override can only lower the cap that the plan allows.
+
+        Requires permission `catalog:manage`.
+      x-permission: catalog:manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FilesSettingsUpdate"
+      responses:
+        "200":
+          description: The new settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesSettings"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -8437,9 +9305,11 @@ components:
         - mfa-already-enrolled
         - asset-already-checked-out
         - asset-not-checked-out
+        - asset-not-deployable
         - insufficient-stock
         - no-loaner-available
         - import-stale-dry-run
+        - upload-missing
         - token-expired
         - invitation-expired
         - precondition-failed
@@ -8987,6 +9857,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it."
       required:
         - id
         - category_id
@@ -9063,6 +9939,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it."
       additionalProperties: false
       description: "Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field."
     AssetModelList:
@@ -9516,6 +10398,7 @@ components:
             - "null"
         depth:
           type: integer
+          description: Distance from the root (a root has depth 0). The hierarchy is limited to depth 9, i.e. ten levels.
           readOnly: true
         ancestor_ids:
           type: array
@@ -9523,6 +10406,21 @@ components:
             type: string
             format: uuid
           description: Root..self.
+          readOnly: true
+        asset_count:
+          type: integer
+          minimum: 0
+          description: Live (not archived) assets located here **or in any descendant** location.
+          readOnly: true
+        direct_asset_count:
+          type: integer
+          minimum: 0
+          description: Live assets located exactly here.
+          readOnly: true
+        child_count:
+          type: integer
+          minimum: 0
+          description: Live direct child locations.
           readOnly: true
       required:
         - id
@@ -9737,6 +10635,11 @@ components:
           format: uuid
           description: Linked login account, if this person can sign in.
           readOnly: true
+        assets_held:
+          type: integer
+          minimum: 0
+          description: Number of assets currently checked out to this person.
+          readOnly: true
       required:
         - id
         - display_name
@@ -9871,6 +10774,15 @@ components:
           type:
             - string
             - "null"
+        force:
+          type: boolean
+          default: false
+          description: 'With `status: "inactive"`: deactivate even though the person still holds assets. Needs `reason`. Not stored on the person.'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Why a forced deactivation is justified (audit trail). Ignored without `force`.
       additionalProperties: false
       description: "Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field."
     PersonList:
@@ -10696,6 +11608,9 @@ components:
             - string
             - "null"
           format: date
+        overdue:
+          type: boolean
+          description: "[M2-W1] Computed: the assignment is open and `expected_return` is before today (UTC)."
         loaner_pool_id:
           type:
             - string
@@ -10706,6 +11621,30 @@ components:
         - target_type
         - target_id
         - checked_out_at
+    AssetDisposal:
+      type: object
+      properties:
+        disposed_on:
+          type: string
+          format: date
+        reason:
+          type: string
+          enum:
+            - sold
+            - donated
+            - recycled
+            - scrapped
+            - stolen
+            - returned_to_vendor
+            - other
+        note:
+          type:
+            - string
+            - "null"
+      required:
+        - disposed_on
+        - reason
+      description: "[M2-W1] Why and when the asset left the inventory."
     Asset:
       type: object
       properties:
@@ -10818,6 +11757,12 @@ components:
             - type: "null"
           description: Open custody period, or null when in stock.
           readOnly: true
+        disposal:
+          oneOf:
+            - $ref: "#/components/schemas/AssetDisposal"
+            - type: "null"
+          description: Set once the asset was disposed of (`POST /v1/assets/{id}/dispose`); null otherwise.
+          readOnly: true
         status:
           type: object
           properties:
@@ -10839,6 +11784,12 @@ components:
           additionalProperties: true
           description: Related objects requested through `expand` (model, category, location, vendor).
           readOnly: true
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create."
       required:
         - id
         - asset_tag
@@ -11016,6 +11967,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create."
       additionalProperties: false
       description: Partial update (merge semantics). `custom_data` is merged per key; set a key to null to remove it. Changing status or location writes history events.
     AssetList:
@@ -11038,6 +11995,8 @@ components:
           enum:
             - label_code
             - asset_tag
+            - serial
+          description: "What the code was: the opaque `label_code` of the label, the `asset_tag`, or the device `serial` (checked in that order)."
         asset:
           $ref: "#/components/schemas/Asset"
         allowed_actions:
@@ -11051,8 +12010,14 @@ components:
               - update
               - open_repair
           description: Actions valid for the asset in its current state and for the caller.
+        entity_type:
+          type: string
+          enum:
+            - asset
+          description: Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
       required:
         - match_type
+        - entity_type
         - asset
         - allowed_actions
     Assignment:
@@ -11142,6 +12107,42 @@ components:
           type:
             - string
             - "null"
+        checkin_condition:
+          type:
+            - string
+            - "null"
+          enum:
+            - good
+            - fair
+            - poor
+            - damaged
+            - null
+          description: Condition of the asset when it came back (`CheckinRequest.condition`); `null` while the assignment is open or when none was stated.
+        attachment_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Photos / signatures linked at check-out (ids only; the attachments service owns the files).
+        checkin_attachment_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Photos linked at check-in.
+        overdue:
+          type: boolean
+          description: "Computed: the assignment is open and `expected_return` is before today (UTC)."
+        asset_tag:
+          type:
+            - string
+            - "null"
+          description: Tag of the asset; present in the assignment lists of a person and of an asset.
+        asset_name:
+          type:
+            - string
+            - "null"
+          description: Name of the asset; present together with `asset_tag`.
       required:
         - id
         - quantity
@@ -11182,8 +12183,12 @@ components:
               items:
                 type: string
                 format: uuid
-              description: Previously uploaded photos/signatures to link to the assignment.
+              description: Photos/signatures uploaded against the asset beforehand (`POST /v1/attachments` with `entity_type=asset`; `pending` or `clean`). They are linked to the new assignment and then list under it (`entity_type=assignment`). `422` with the pointer `/attachment_ids/<index>` when an id is unknown, belongs to another asset or organisation, or was rejected (infected, error).
               maxItems: 10
+            status_label_id:
+              type: string
+              format: uuid
+              description: "Status to give the asset: a non-archived label of type `deployed`. Default: the organisation's first deployed label."
       description: Check an asset out to a person, location or another asset.
     CheckinRequest:
       type: object
@@ -11200,6 +12205,14 @@ components:
             - "null"
           format: uuid
           description: "Status to set on check-in (default: the tenant default deployable status)."
+        condition:
+          type: string
+          enum:
+            - good
+            - fair
+            - poor
+            - damaged
+          description: Condition of the asset as it comes back; stored on the assignment (`checkin_condition`) and shown in the history.
         note:
           type: string
           maxLength: 2000
@@ -11209,6 +12222,7 @@ components:
             type: string
             format: uuid
           maxItems: 10
+          description: Photos uploaded against the asset beforehand (`pending` or `clean`); linked to the closed assignment, same rules and `422` pointers as at check-out.
     TransferRequest:
       allOf:
         - $ref: "#/components/schemas/AssignmentTarget"
@@ -11235,6 +12249,7 @@ components:
                 type: string
                 format: uuid
               maxItems: 10
+              description: Photos uploaded against the asset beforehand; linked to the new assignment (same rules and `422` pointers as at check-out).
       description: "Atomic hand-over: closes the current assignment (if any) and opens a new one to the given target."
     Transfer:
       type: object
@@ -11363,7 +12378,12 @@ components:
                 - id
                 - display_name
             - type: "null"
-          description: Who did it, resolved for display; null for system events or when the user no longer exists.
+          description: "Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists."
+        asset_tag:
+          type:
+            - string
+            - "null"
+          description: "[M2-W1] Tag of the asset, so a per-person timeline can label its entries."
         assignment_id:
           type:
             - string
@@ -11381,7 +12401,19 @@ components:
         payload:
           type: object
           additionalProperties: true
-          description: Event details, e.g. `{"from":"...","to":"..."}`.
+          description: |-
+            Event details; the keys depend on `event_type` (all ids are uuids, names are display strings, optional keys are absent when empty):
+
+            - `created`: `{status_id, location_id, cloned_from?}`
+            - `updated`: `{fields: string[]}`, the names of the fields that changed
+            - `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`
+            - `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)
+            - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`
+            - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
+            - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
+            - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
+            - `restored`: `{}` or `{was_disposed: true}`
+            - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
       required:
         - id
         - asset_id
@@ -11738,6 +12770,7 @@ components:
           type: string
           enum:
             - asset
+            - asset_model
             - accessory
             - consumable
             - location
@@ -11787,12 +12820,37 @@ components:
           type: string
           format: date-time
           readOnly: true
+        scan_detail:
+          type:
+            - string
+            - "null"
+          description: "Why the status is what it is: the signature name when `infected`, a short reason when `error` (`size-mismatch`, `content-mismatch`, `upload-abandoned`...), `scan-disabled` when the deployment runs without a scanner."
+          readOnly: true
+        width:
+          type:
+            - integer
+            - "null"
+          description: Pixel width of an image, once its thumbnail exists.
+          readOnly: true
+        height:
+          type:
+            - integer
+            - "null"
+          description: Pixel height of an image, once its thumbnail exists.
+          readOnly: true
+        thumbnail_url:
+          type:
+            - string
+            - "null"
+          format: uri
+          description: Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.
+          readOnly: true
         download_url:
           type:
             - string
             - "null"
           format: uri
-          description: Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`.
+          description: Short-lived signed URL, only when `scan_status=clean`; present on the list and on `GET /v1/attachments/{id}` alike (no per-item request needed). Images are served inline, everything else as an attachment download.
           readOnly: true
       required:
         - id
@@ -11811,6 +12869,7 @@ components:
           type: string
           enum:
             - asset
+            - asset_model
             - accessory
             - consumable
             - location
@@ -11893,6 +12952,43 @@ components:
       required:
         - data
         - page
+    FilesSettings:
+      type: object
+      properties:
+        strip_exif_original:
+          type: boolean
+          description: Re-encode every uploaded image without EXIF/GPS metadata (the stored original is replaced). Thumbnails are always metadata-free.
+        max_upload_bytes:
+          type:
+            - integer
+            - "null"
+          minimum: 1024
+          description: Lower the upload cap below the tier default; `null` = the tier default. It can never raise the cap above the tier.
+        effective_max_upload_bytes:
+          type: integer
+          description: "The cap that applies: the smaller of the override (or tier default) and the deployment ceiling."
+          readOnly: true
+        tier_max_upload_bytes:
+          type: integer
+          description: The cap of the organisation's plan.
+          readOnly: true
+      required:
+        - strip_exif_original
+        - max_upload_bytes
+    FilesSettingsUpdate:
+      type: object
+      properties:
+        strip_exif_original:
+          type: boolean
+        max_upload_bytes:
+          type:
+            - integer
+            - "null"
+          minimum: 1024
+      required:
+        - strip_exif_original
+        - max_upload_bytes
+      additionalProperties: false
     ImportJob:
       type: object
       properties:
@@ -13028,6 +14124,101 @@ components:
       required:
         - data
         - page
+    MoveRequest:
+      type: object
+      properties:
+        location_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Destination location; `null` clears the location (whereabouts unknown).
+        note:
+          type: string
+          maxLength: 2000
+      required:
+        - location_id
+      additionalProperties: false
+      description: Moves an asset to a location.
+    BulkAssetMove:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 100
+        location_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Destination location for every asset; `null` clears it.
+        note:
+          type: string
+          maxLength: 2000
+      required:
+        - ids
+        - location_id
+      additionalProperties: false
+    DisposeRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          enum:
+            - sold
+            - donated
+            - recycled
+            - scrapped
+            - stolen
+            - returned_to_vendor
+            - other
+        note:
+          type: string
+          maxLength: 2000
+          description: Free text (buyer, recipient, certificate number...).
+        disposed_on:
+          type: string
+          format: date
+          description: Defaults to today (UTC).
+        status_id:
+          type: string
+          format: uuid
+          description: "An `archived`-type status label; default: the first one of the tenant."
+      required:
+        - reason
+      additionalProperties: false
+    MarkLostRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 2000
+        status_id:
+          type: string
+          format: uuid
+          description: "A `lost`-type status label; default: the first one of the tenant."
+      additionalProperties: false
+    MarkFoundRequest:
+      type: object
+      properties:
+        status_id:
+          type: string
+          format: uuid
+          description: "A `deployable`-type status label to return the asset to; default: the tenant default (or first deployable) label."
+        location_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Where the asset was found / is now.
+        note:
+          type: string
+          maxLength: 2000
+      additionalProperties: false
 x-problem-codes:
   bad-request:
     status:
@@ -13093,7 +14284,7 @@ x-problem-codes:
   token-invalid:
     status:
       - 404
-    description: The password-reset token is unknown or already used.
+    description: "The password-reset token is unknown or already used. Also: a local-storage file link (`/v1/files/{token}`) that is malformed, forged or of the wrong kind."
   invitation-not-found:
     status:
       - 404
@@ -13126,6 +14317,10 @@ x-problem-codes:
     status:
       - 409
     description: The asset has no open check-out to return.
+  asset-not-deployable:
+    status:
+      - 409
+    description: "The asset's status does not allow this custody action: check-out (and a transfer out of stock) need a `deployable` state, so lost, archived, in-repair and pending assets cannot be checked out."
   insufficient-stock:
     status:
       - 409
@@ -13138,10 +14333,14 @@ x-problem-codes:
     status:
       - 409
     description: The dry run being committed is not the one reviewed.
+  upload-missing:
+    status:
+      - 409
+    description: "The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete."
   token-expired:
     status:
       - 410
-    description: The password-reset token has expired; request a new one.
+    description: "The password-reset token has expired; request a new one. Also: a local-storage file link (`/v1/files/{token}`) whose lifetime ended."
   invitation-expired:
     status:
       - 410
@@ -13153,11 +14352,11 @@ x-problem-codes:
   payload-too-large:
     status:
       - 413
-    description: The request body exceeds the size limit.
+    description: "The request body exceeds the size limit. For attachments: the file is larger than the organisation's upload cap (see `GET /v1/settings/files`) or than the size declared when the upload was started."
   unsupported-media-type:
     status:
       - 415
-    description: The Content-Type is not supported.
+    description: "The Content-Type is not supported. For attachments: the file type is not on the allow-list (images, PDF, Office documents, CSV; never SVG or HTML), or its content does not match the declared type or extension."
   validation:
     status:
       - 422

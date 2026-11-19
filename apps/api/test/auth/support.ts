@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Type } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { createApiApp } from '../../src/app.js';
@@ -51,6 +53,8 @@ export async function startApp(
     // through X-Forwarded-For (per-IP throttling must not couple unrelated tests).
     TRUST_PROXY: '127.0.0.1',
     IDEMPOTENCY_LOCK_TIMEOUT_MS: '500',
+    // the real local storage adapter (unused: the test ports bind fakes) must not write into the repo
+    FILES_LOCAL_DIR: join(tmpdir(), 'at-api-e2e-files'),
     ...extra,
   });
   const app = await createApiApp(

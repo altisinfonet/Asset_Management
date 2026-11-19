@@ -7,8 +7,17 @@ import {
   MAIL_SENDER,
   OUTBOX_PUBLISHER,
   SECRET_BOX,
+  STORAGE_ADAPTER,
+  VIRUS_SCANNER,
 } from '../../src/ports/index.js';
-import { FakeJobQueue, FakeMailSender, FakeOutbox, FakeSecretBox } from '../../src/ports/fakes.js';
+import {
+  FakeJobQueue,
+  FakeMailSender,
+  FakeOutbox,
+  FakeSecretBox,
+  FakeStorageAdapter,
+  FakeVirusScanner,
+} from '../../src/ports/fakes.js';
 import { parseTemplateData } from '../../src/mail/index.js';
 import {
   currentTenantContext,
@@ -59,6 +68,8 @@ export const testPorts = {
   secretBox: new FakeSecretBox(),
   jobs: new FakeJobQueue(),
   outbox: new FakeOutbox(),
+  storage: new FakeStorageAdapter(),
+  scanner: new FakeVirusScanner(),
 };
 
 @Global()
@@ -69,7 +80,17 @@ export const testPorts = {
     { provide: SECRET_BOX, useValue: testPorts.secretBox },
     { provide: JOB_QUEUE, useValue: testPorts.jobs },
     { provide: OUTBOX_PUBLISHER, useValue: testPorts.outbox },
+    { provide: STORAGE_ADAPTER, useValue: testPorts.storage },
+    { provide: VIRUS_SCANNER, useValue: testPorts.scanner },
   ],
-  exports: [AUDIT_WRITER, MAIL_SENDER, SECRET_BOX, JOB_QUEUE, OUTBOX_PUBLISHER],
+  exports: [
+    AUDIT_WRITER,
+    MAIL_SENDER,
+    SECRET_BOX,
+    JOB_QUEUE,
+    OUTBOX_PUBLISHER,
+    STORAGE_ADAPTER,
+    VIRUS_SCANNER,
+  ],
 })
 export class TestPortsModule {}

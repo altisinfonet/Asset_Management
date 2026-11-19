@@ -93,6 +93,58 @@ describe('typed client', () => {
     expect(etags.etagFor('/v1/assets/a9')).toBe('W/"1"');
   });
 
+  it('never records or replays an ETag for a POST action path', async () => {
+    const { client, etags, seen } = setup((request) =>
+      new URL(request.url).pathname === '/v1/assets/a1'
+        ? json({ id: 'a1' }, { headers: { etag: 'W/"3"' } })
+        : json(
+            { asset: { id: 'a1' }, assignment: { id: 's1' } },
+            { status: 201, headers: { etag: 'W/"4"', location: '/v1/assignments/s1' } },
+          ),
+    );
+    await client.GET('/v1/assets/{id}', { params: { path: { id: 'a1' } } });
+    const header = { 'Idempotency-Key': 'k-1' };
+    // two checkouts in a row: the second must not carry the ETag the first one answered with
+    await client.POST('/v1/assets/{id}/checkout', {
+      params: { path: { id: 'a1' }, header },
+      body: { person_id: 'p1' },
+    });
+    await client.POST('/v1/assets/{id}/checkout', {
+      params: { path: { id: 'a1' }, header },
+      body: { person_id: 'p1' },
+    });
+    expect(seen[1]!.headers.get('if-match')).toBeNull();
+    expect(seen[2]!.headers.get('if-match')).toBeNull();
+    // neither the action path nor the (different) resource its Location names remembers the ETag
+    expect(etags.etagFor('/v1/assets/a1/checkout')).toBeUndefined();
+    expect(etags.etagFor('/v1/assignments/s1')).toBeUndefined();
+    // the asset's own ETag from the GET is untouched
+    expect(etags.etagFor('/v1/assets/a1')).toBe('W/"3"');
+    // an explicit If-Match from the caller still goes out
+    await client.POST('/v1/assets/{id}/checkin', {
+      params: { path: { id: 'a1' }, header: { 'Idempotency-Key': 'k-3', 'If-Match': 'W/"3"' } },
+      body: {},
+    });
+    expect(seen[3]!.headers.get('if-match')).toBe('W/"3"');
+  });
+
+  it('still tracks the failed request id of a POST action', async () => {
+    const { client, etags } = setup(() =>
+      json(
+        { type: 'x', title: 'Conflict', status: 409, code: 'asset-already-checked-out' },
+        { status: 409, headers: { 'x-request-id': 'req-77', etag: 'W/"9"' } },
+      ),
+    );
+    await client
+      .POST('/v1/assets/{id}/checkout', {
+        params: { path: { id: 'a1' }, header: { 'Idempotency-Key': 'k-2' } },
+        body: { person_id: 'p1' },
+      })
+      .catch(() => undefined);
+    expect(etags.failedRequestId).toBe('req-77');
+    expect(etags.etagFor('/v1/assets/a1/checkout')).toBeUndefined();
+  });
+
   it('throws ApiError with the problem body, request id and Retry-After', async () => {
     const { client } = setup(() =>
       json(

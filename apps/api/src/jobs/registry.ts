@@ -91,6 +91,10 @@ export class JobHandlerRegistry {
     return [...this.handlers.values()].filter((h) => h.runsIn === runner);
   }
 
+  get(queue: string): RegisteredHandler | undefined {
+    return this.handlers.get(queue);
+  }
+
   has(queue: string): boolean {
     return this.handlers.has(queue);
   }

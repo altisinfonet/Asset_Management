@@ -165,7 +165,7 @@ const PROBLEM_CODES = {
   'mfa-required-by-policy': [[403], 'The action (disabling MFA) is not allowed because tenant policy enforces MFA for this user.'],
   'reauth-failed': [[403], 'The password or TOTP code sent to re-authenticate a sensitive action is wrong.'],
   'not-found': [[404], 'The resource does not exist, belongs to another tenant, or is outside the caller\'s scope.'],
-  'token-invalid': [[404], 'The password-reset token is unknown or already used.'],
+  'token-invalid': [[404], 'The password-reset token is unknown or already used. Also: a local-storage file link (`/v1/files/{token}`) that is malformed, forged or of the wrong kind.'],
   'invitation-not-found': [[404], 'The invitation token is unknown, already accepted or revoked.'],
   'method-not-allowed': [[405], 'The path exists but not for this HTTP method.'],
   conflict: [[409], 'State conflict: uniqueness violation, or the resource is in the wrong state for this action.'],
@@ -174,14 +174,19 @@ const PROBLEM_CODES = {
   'mfa-already-enrolled': [[409], 'The user already has an active TOTP factor; disable it first.'],
   'asset-already-checked-out': [[409], 'The asset is already checked out.'],
   'asset-not-checked-out': [[409], 'The asset has no open check-out to return.'],
+  // [M2-W1 locations, people, custody]
+  'asset-not-deployable': [[409], 'The asset\'s status does not allow this custody action: check-out (and a transfer out of stock) need a `deployable` state, so lost, archived, in-repair and pending assets cannot be checked out.'],
   'insufficient-stock': [[409], 'Not enough quantity on hand.'],
   'no-loaner-available': [[409], 'The loaner pool has no available member.'],
   'import-stale-dry-run': [[409], 'The dry run being committed is not the one reviewed.'],
-  'token-expired': [[410], 'The password-reset token has expired; request a new one.'],
+  // M2 wave 1b (files): BEGIN
+  'upload-missing': [[409], 'The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete.'],
+  // M2 wave 1b (files): END
+  'token-expired': [[410], 'The password-reset token has expired; request a new one. Also: a local-storage file link (`/v1/files/{token}`) whose lifetime ended.'],
   'invitation-expired': [[410], 'The invitation has expired; ask an administrator to resend it.'],
   'precondition-failed': [[412], '`If-Match` does not match the current version.'],
-  'payload-too-large': [[413], 'The request body exceeds the size limit.'],
-  'unsupported-media-type': [[415], 'The Content-Type is not supported.'],
+  'payload-too-large': [[413], 'The request body exceeds the size limit. For attachments: the file is larger than the organisation\'s upload cap (see `GET /v1/settings/files`) or than the size declared when the upload was started.'],
+  'unsupported-media-type': [[415], 'The Content-Type is not supported. For attachments: the file type is not on the allow-list (images, PDF, Office documents, CSV; never SVG or HTML), or its content does not match the declared type or extension.'],
   validation: [[422], 'Validation failed; see errors[] (JSON pointer + message + field code).'],
   'idempotency-key-reuse': [[422], 'The Idempotency-Key was already used with a different request body.'],
   'precondition-required': [[428], '`If-Match` is required for this operation.'],
@@ -361,6 +366,13 @@ defineResource('AssetModel', {
   },
   required: ['category_id', 'name'],
 });
+// M2 wave 1b (files): BEGIN - the picture of a model (M2-FILE-03). An image attachment whose owner is the model.
+{
+  const modelImage = nuuid('Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it.');
+  S_.AssetModel.properties.image_attachment_id = modelImage;
+  S_.AssetModelUpdate.properties.image_attachment_id = modelImage;
+}
+// M2 wave 1b (files): END
 defineResource('StatusLabel', {
   props: {
     name: str({ minLength: 1, maxLength: 100 }),
@@ -402,7 +414,14 @@ defineResource('Location', {
     notes: nstr(),
   },
   required: ['name'],
-  readOnly: { depth: ro(int()), ancestor_ids: ro(arr(uuid(), { description: 'Root..self.' })) },
+  readOnly: {
+    depth: ro(int({ description: 'Distance from the root (a root has depth 0). The hierarchy is limited to depth 9, i.e. ten levels.' })),
+    ancestor_ids: ro(arr(uuid(), { description: 'Root..self.' })),
+    // [M2-W1] counts, computed per request
+    asset_count: ro(int({ minimum: 0, description: 'Live (not archived) assets located here **or in any descendant** location.' })),
+    direct_asset_count: ro(int({ minimum: 0, description: 'Live assets located exactly here.' })),
+    child_count: ro(int({ minimum: 0, description: 'Live direct child locations.' })),
+  },
 });
 defineResource('Person', {
   props: {
@@ -421,8 +440,16 @@ defineResource('Person', {
     notes: nstr(),
   },
   required: ['display_name'],
-  readOnly: { user_id: ro(nuuid('Linked login account, if this person can sign in.')) },
+  readOnly: {
+    user_id: ro(nuuid('Linked login account, if this person can sign in.')),
+    // [M2-W1] computed per request
+    assets_held: ro(int({ minimum: 0, description: 'Number of assets currently checked out to this person.' })),
+  },
 });
+// [M2-W1] Deactivating a person who still holds assets is refused (409 with `usage.open_assignments`) unless
+// the update says `force: true` together with a `reason` (recorded in the audit trail). Not stored on the person.
+S_.PersonUpdate.properties.force = bool({ default: false, description: 'With `status: "inactive"`: deactivate even though the person still holds assets. Needs `reason`. Not stored on the person.' });
+S_.PersonUpdate.properties.reason = str({ minLength: 1, maxLength: 500, description: 'Why a forced deactivation is justified (audit trail). Ignored without `force`.' });
 defineResource('Accessory', {
   props: {
     category_id: uuid('An accessory-kind category.'),
@@ -522,25 +549,44 @@ S_.AssignmentSummary = obj({
   target_name: nstr(),
   checked_out_at: dt(),
   expected_return: ndate(),
+  overdue: bool({ description: '[M2-W1] Computed: the assignment is open and `expected_return` is before today (UTC).' }),
   loaner_pool_id: nuuid(),
 }, ['assignment_id', 'target_type', 'target_id', 'checked_out_at']);
+S_.AssetDisposal = obj({
+  disposed_on: date(),
+  reason: en(['sold', 'donated', 'recycled', 'scrapped', 'stolen', 'returned_to_vendor', 'other']),
+  note: nstr(),
+}, ['disposed_on', 'reason'], { description: '[M2-W1] Why and when the asset left the inventory.' });
 S_.Asset = obj({
   ...baseRead(true),
   ...assetProps,
   label_code: ro(str({ description: 'Opaque, unguessable code encoded in the QR label URL.' })),
   current_assignment: ro({ oneOf: [S('AssignmentSummary'), { type: 'null' }], description: 'Open custody period, or null when in stock.' }),
+  // [M2-W1] disposal (M2-LIFE-05)
+  disposal: ro({ oneOf: [S('AssetDisposal'), { type: 'null' }], description: 'Set once the asset was disposed of (`POST /v1/assets/{id}/dispose`); null otherwise.' }),
   status: ro(obj({ id: uuid(), name: str(), state_type: str() }, ['id', 'name', 'state_type'])),
   expanded: ro(obj({}, [], { additionalProperties: true, description: 'Related objects requested through `expand` (model, category, location, vendor).' })),
 }, ['id', 'asset_tag', 'category_id', 'status_id', 'custom_data']);
 S_.AssetCreate = obj({ ...assetProps, asset_tag: { ...assetProps.asset_tag, description: assetProps.asset_tag.description } }, ['category_id'], { additionalProperties: false });
 S_.AssetUpdate = obj({ ...assetProps }, [], { additionalProperties: false, description: 'Partial update (merge semantics). `custom_data` is merged per key; set a key to null to remove it. Changing status or location writes history events.' });
 S_.AssetList = obj({ data: arr(S('Asset')), page: S('PageInfo') }, ['data', 'page']);
+// M2 wave 1b (files): BEGIN - the primary picture of an asset (M2-FILE-03). Not on create: an attachment needs its owner to exist.
+{
+  const assetImage = nuuid('Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.');
+  S_.Asset.properties.image_attachment_id = assetImage;
+  S_.AssetUpdate.properties.image_attachment_id = assetImage;
+}
+// M2 wave 1b (files): END
 
 S_.ScanResolveResult = obj({
-  match_type: en(['label_code', 'asset_tag']),
+  // [M2-INT] `serial`: the exact device serial number is accepted too
+  match_type: en(['label_code', 'asset_tag', 'serial'], { description: 'What the code was: the opaque `label_code` of the label, the `asset_tag`, or the device `serial` (checked in that order).' }),
   asset: S('Asset'),
   allowed_actions: arr(en(['checkout', 'checkin', 'transfer', 'update', 'open_repair']), { description: 'Actions valid for the asset in its current state and for the caller.' }),
-}, ['match_type', 'asset', 'allowed_actions']);
+  // M2 wave 1b (scan codes): BEGIN
+  entity_type: en(['asset'], { description: 'Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.' }),
+  // M2 wave 1b (scan codes): END
+}, ['match_type', 'entity_type', 'asset', 'allowed_actions']);
 
 // ---------------------------------------------------------------- custody
 S_.Assignment = obj({
@@ -562,6 +608,14 @@ S_.Assignment = obj({
   acceptance_state: en(['not_required', 'pending', 'accepted', 'declined']),
   note: nstr(),
   checkin_note: nstr(),
+  // [M2-INT] condition recorded at check-in
+  checkin_condition: { type: ['string', 'null'], enum: ['good', 'fair', 'poor', 'damaged', null], description: 'Condition of the asset when it came back (`CheckinRequest.condition`); `null` while the assignment is open or when none was stated.' },
+  // [M2-W1]
+  attachment_ids: arr(uuid(), { description: 'Photos / signatures linked at check-out (ids only; the attachments service owns the files).' }),
+  checkin_attachment_ids: arr(uuid(), { description: 'Photos linked at check-in.' }),
+  overdue: bool({ description: 'Computed: the assignment is open and `expected_return` is before today (UTC).' }),
+  asset_tag: nstr({ description: 'Tag of the asset; present in the assignment lists of a person and of an asset.' }),
+  asset_name: nstr({ description: 'Name of the asset; present together with `asset_tag`.' }),
 }, ['id', 'quantity', 'quantity_returned', 'checked_out_at', 'acceptance_state'], { description: 'One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set.' });
 S_.AssignmentList = obj({ data: arr(S('Assignment')), page: S('PageInfo') }, ['data', 'page']);
 S_.CheckoutRequest = {
@@ -569,15 +623,19 @@ S_.CheckoutRequest = {
     expected_return: date({ description: 'Required for loaner pool check-outs.' }),
     note: str({ maxLength: 2000 }),
     acceptance_required: bool({ default: false, description: 'Creates the assignment with `acceptance_state=pending`.' }),
-    attachment_ids: arr(uuid(), { description: 'Previously uploaded photos/signatures to link to the assignment.', maxItems: 10 }),
+    attachment_ids: arr(uuid(), { description: 'Photos/signatures uploaded against the asset beforehand (`POST /v1/attachments` with `entity_type=asset`; `pending` or `clean`). They are linked to the new assignment and then list under it (`entity_type=assignment`). `422` with the pointer `/attachment_ids/<index>` when an id is unknown, belongs to another asset or organisation, or was rejected (infected, error).', maxItems: 10 }),
+    // [M2-INT]
+    status_label_id: uuid('Status to give the asset: a non-archived label of type `deployed`. Default: the organisation\'s first deployed label.'),
   })],
   description: 'Check an asset out to a person, location or another asset.',
 };
 S_.CheckinRequest = obj({
   checkin_location_id: nuuid('Where the asset is now; also updates the asset location.'),
   status_id: nuuid('Status to set on check-in (default: the tenant default deployable status).'),
+  // [M2-INT]
+  condition: en(['good', 'fair', 'poor', 'damaged'], { description: 'Condition of the asset as it comes back; stored on the assignment (`checkin_condition`) and shown in the history.' }),
   note: str({ maxLength: 2000 }),
-  attachment_ids: arr(uuid(), { maxItems: 10 }),
+  attachment_ids: arr(uuid(), { maxItems: 10, description: 'Photos uploaded against the asset beforehand (`pending` or `clean`); linked to the closed assignment, same rules and `422` pointers as at check-out.' }),
 });
 S_.TransferRequest = {
   allOf: [S('AssignmentTarget'), obj({
@@ -585,7 +643,7 @@ S_.TransferRequest = {
     expected_return: date(),
     reason: str({ maxLength: 500 }),
     note: str({ maxLength: 2000 }),
-    attachment_ids: arr(uuid(), { maxItems: 10 }),
+    attachment_ids: arr(uuid(), { maxItems: 10, description: 'Photos uploaded against the asset beforehand; linked to the new assignment (same rules and `422` pointers as at check-out).' }),
   })],
   description: 'Atomic hand-over: closes the current assignment (if any) and opens a new one to the given target.',
 };
@@ -617,11 +675,26 @@ S_.HistoryEvent = obj({
   event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']),
   actor_type: en(['user', 'api_key', 'integration', 'system']),
   actor_id: nuuid(),
-  actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display; null for system events or when the user no longer exists.' },
+  actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists.' },
+  asset_tag: nstr({ description: '[M2-W1] Tag of the asset, so a per-person timeline can label its entries.' }),
   assignment_id: nuuid(),
   transfer_id: nuuid(),
   summary: nstr(),
-  payload: { type: 'object', additionalProperties: true, description: 'Event details, e.g. `{"from":"...","to":"..."}`.' },
+  // [M2-INT] payload shapes per event type
+  payload: { type: 'object', additionalProperties: true, description: [
+    'Event details; the keys depend on `event_type` (all ids are uuids, names are display strings, optional keys are absent when empty):',
+    '',
+    '- `created`: `{status_id, location_id, cloned_from?}`',
+    '- `updated`: `{fields: string[]}`, the names of the fields that changed',
+    '- `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`',
+    '- `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)',
+    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`',
+    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
+    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
+    '- `restored`: `{}` or `{was_disposed: true}`',
+    '- `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)',
+  ].join('\n') },
 }, ['id', 'asset_id', 'at', 'event_type', 'actor_type']);
 S_.HistoryEventList = obj({ data: arr(S('HistoryEvent')), page: S('PageInfo') }, ['data', 'page']);
 S_.AccessoryCheckoutRequest = {
@@ -709,7 +782,7 @@ S_.LabelRenderRequest = obj({
 // attachments
 S_.Attachment = obj({
   id: ro(uuid()),
-  entity_type: en(['asset', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']),
+  entity_type: en(['asset', 'asset_model', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']),
   entity_id: uuid(),
   kind: en(['photo', 'document', 'signature', 'import_file', 'other']),
   filename: str(),
@@ -719,10 +792,16 @@ S_.Attachment = obj({
   scan_status: ro(en(['pending', 'clean', 'infected', 'error'])),
   uploaded_at: ro(ndt()),
   created_at: ro(dt()),
-  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`.' }),
+  // M2 wave 1b (files): BEGIN
+  scan_detail: ro(nstr({ description: 'Why the status is what it is: the signature name when `infected`, a short reason when `error` (`size-mismatch`, `content-mismatch`, `upload-abandoned`...), `scan-disabled` when the deployment runs without a scanner.' })),
+  width: ro({ type: ['integer', 'null'], description: 'Pixel width of an image, once its thumbnail exists.' }),
+  height: ro({ type: ['integer', 'null'], description: 'Pixel height of an image, once its thumbnail exists.' }),
+  thumbnail_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.' }),
+  // M2 wave 1b (files): END
+  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived signed URL, only when `scan_status=clean`; present on the list and on `GET /v1/attachments/{id}` alike (no per-item request needed). Images are served inline, everything else as an attachment download.' }),
 }, ['id', 'entity_type', 'entity_id', 'kind', 'filename', 'content_type', 'size_bytes', 'scan_status', 'created_at']);
 S_.AttachmentCreate = obj({
-  entity_type: en(['asset', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']),
+  entity_type: en(['asset', 'asset_model', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']),
   entity_id: uuid(),
   kind: en(['photo', 'document', 'signature', 'import_file', 'other'], { default: 'document' }),
   filename: str({ minLength: 1, maxLength: 255 }),
@@ -740,6 +819,18 @@ S_.AttachmentUpload = obj({
   }, ['method', 'url', 'expires_at']),
 }, ['attachment', 'upload']);
 S_.AttachmentList = obj({ data: arr(S('Attachment')), page: S('PageInfo') }, ['data', 'page']);
+// M2 wave 1b (files): BEGIN
+S_.FilesSettings = obj({
+  strip_exif_original: bool({ description: 'Re-encode every uploaded image without EXIF/GPS metadata (the stored original is replaced). Thumbnails are always metadata-free.' }),
+  max_upload_bytes: { type: ['integer', 'null'], minimum: 1024, description: 'Lower the upload cap below the tier default; `null` = the tier default. It can never raise the cap above the tier.' },
+  effective_max_upload_bytes: ro(int({ description: 'The cap that applies: the smaller of the override (or tier default) and the deployment ceiling.' })),
+  tier_max_upload_bytes: ro(int({ description: 'The cap of the organisation\'s plan.' })),
+}, ['strip_exif_original', 'max_upload_bytes']);
+S_.FilesSettingsUpdate = obj({
+  strip_exif_original: bool(),
+  max_upload_bytes: { type: ['integer', 'null'], minimum: 1024 },
+}, ['strip_exif_original', 'max_upload_bytes'], { additionalProperties: false });
+// M2 wave 1b (files): END
 
 // imports
 S_.ImportJob = obj({
@@ -1184,7 +1275,7 @@ addOp('/v1/auth/sessions/{id}', 'delete', {
 // ---------------------------------------------------------------- SEARCH
 addOp('/v1/search', 'get', {
   tag: 'Search', id: 'search', summary: 'Search across the registry', perm: 'search:read', hasId: false,
-  description: "One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.\n\n**Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.",
+  description: "One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.\n\n**Availability:** `asset`, `model`, `category`, `person` (name, email, employee number) and `location` (name, code) results. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.",
   params: [
     { name: 'q', in: 'query', required: true, description: 'Search text (1-200 characters).', schema: str({ minLength: 1, maxLength: 200 }) },
     arrQ('types', en(['asset', 'model', 'category', 'person', 'location']), 'Comma-separated entity types to search. Default: every type available in this release.'),
@@ -1294,11 +1385,19 @@ crud({
   ],
   sorts: ['name', 'depth', 'created_at'], defSort: ['name'],
 });
+// [M2-W1] Location rules (M2-LOC-01): descriptions of the generic CRUD operations
+doc.paths['/v1/locations'].post.description = 'Creates a location under `parent_id` (a root when null). The name must be unique among the live children of the same parent (409 `conflict`, pointer `/name`); the hierarchy is at most ten levels deep (422, pointer `/parent_id`). Requires permission `location:manage`.';
+doc.paths['/v1/locations/{id}'].patch.description = 'Merge semantics. Changing `parent_id` **moves the whole subtree** (every descendant\'s `ancestor_ids` and `depth` are rewritten in the same transaction). Moving a location under itself or one of its descendants is 422 (pointer `/parent_id`, code `cycle`), as is exceeding the depth limit or an archived parent. Requires permission `location:manage`.';
+doc.paths['/v1/locations/{id}'].delete.description = 'Soft delete. Refused with `409 conflict` and `usage` (`children`, `assets`, `people`, `open_assignments`: how many live records still reference the location) while anything is located here or below it. Requires permission `location:manage`.';
 crud({
   tag: 'People', base: 'people', name: 'Person', plural: 'People', singular: 'person', readPerm: 'person:read', writePerm: 'person:manage',
   filters: [arrQ('kind', en(['employee', 'student', 'contractor', 'external']), 'Filter by kind.'), qp('status', en(['active', 'inactive']), 'Filter by status.'), qp('department', str(), 'Exact department.'), qp('location_id', uuid(), 'Home location.'), qp('employee_ref', str(), 'Exact employee / student number.'), qp('has_login', bool(), 'Only people with (true) or without (false) a login account.')],
   sorts: ['display_name', 'created_at', 'employee_ref'], defSort: ['display_name'],
 });
+// [M2-W1] People rules (M2-USR-01)
+doc.paths['/v1/people'].post.description = 'Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.';
+doc.paths['/v1/people/{id}'].patch.description = 'Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.';
+doc.paths['/v1/people/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.';
 addOp('/v1/people/{id}/assignments', 'get', {
   tag: 'People', id: 'listPersonAssignments', summary: 'What is checked out to a person', perm: 'person:read',
   description: 'Assignments (assets and accessories) targeting this person; defaults to open ones, which is the offboarding checklist.',
@@ -1322,6 +1421,7 @@ const assetFilters = [
   qp('parent_asset_id', uuid(), 'Children of this asset.'),
   qp('assigned_person_id', uuid(), 'Currently checked out to this person.'),
   qp('assigned', bool(), 'true = checked out, false = in stock.'),
+  qp('overdue', bool(), '[M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset.'),
   qp('loaner_pool_id', uuid(), 'Members of this loaner pool.'),
   qp('warranty_end_before', date(), 'Warranty ends on or before.'),
   qp('warranty_end_after', date(), 'Warranty ends on or after.'),
@@ -1430,7 +1530,8 @@ addOp('/v1/assets/{id}/assignments', 'get', {
 });
 addOp('/v1/scan/resolve', 'get', {
   tag: 'Assets', id: 'resolveScan', summary: 'Resolve a scanned code', perm: 'asset:read', hasId: true,
-  description: 'Accepts the opaque QR `label_code` (the last path segment of the label URL) or a Code128 `asset_tag` and returns the asset with the actions allowed right now. `404` when nothing matches in the caller\'s tenant and scope.',
+  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
+  problems: { 409: { codes: ['conflict'], text: 'The serial number belongs to several assets; use the label or the asset tag.' } },
   params: [{ name: 'code', in: 'query', required: true, description: 'Scanned value.', schema: str({ minLength: 1, maxLength: 200 }) }],
   success: { 200: okResp(200, 'The matching asset.', S('ScanResolveResult'), { replay: false }) },
 });
@@ -1440,19 +1541,91 @@ addOp('/v1/assets/{id}/checkout', 'post', {
   tag: 'Custody', id: 'checkoutAsset', summary: 'Check out an asset', perm: 'asset:checkout', params: [ID], ifMatchOptional: true, idem: 'required',
   description: 'Opens a custody period to a person, a location or another asset. The asset must be in a `deployable` state and not already checked out (409 `asset-already-checked-out`). Sets the status to the tenant\'s deployed label and writes history, audit and outbox rows atomically.',
   body: jsonBody(S('CheckoutRequest'), true, { person_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91', expected_return: '2026-12-15', note: 'Loan for the exam week' }),
+  // [M2-W1] 409 codes; the 50-way race on one asset yields exactly one 201 and 49 `asset-already-checked-out`
+  problems: { 409: { codes: ['asset-already-checked-out', 'asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'Already checked out, not in a deployable state (lost, archived, in repair, pending), or a request with the same Idempotency-Key is still running.' } },
   success: { 201: okResp(201, 'Checked out. Returns the updated asset and the new assignment; `ETag` is the new version of the asset and `Location` points at the assignment.', S('CustodyResult'), { etag: true, location: true }) },
 });
 addOp('/v1/assets/{id}/checkin', 'post', {
   tag: 'Custody', id: 'checkinAsset', summary: 'Check in an asset', perm: 'asset:checkin', params: [ID], ifMatchOptional: true, idem: 'required',
   description: 'Closes the open custody period (409 `asset-not-checked-out` if none) and optionally moves the asset and sets a new status.',
   body: jsonBody(S('CheckinRequest'), false),
+  problems: { 409: { codes: ['asset-not-checked-out', 'conflict', 'idempotency-key-in-flight'], text: 'The asset has no open check-out, or a request with the same Idempotency-Key is still running.' } },
   success: { 200: okResp(200, 'Checked in. Returns the updated asset and the closed assignment; `ETag` is the new version of the asset.', S('CustodyResult'), { etag: true }) },
 });
 addOp('/v1/assets/{id}/transfer', 'post', {
   tag: 'Custody', id: 'transferAsset', summary: 'Transfer an asset to a new holder', perm: 'asset:transfer', params: [ID], ifMatchOptional: true, idem: 'required',
-  description: 'Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`.',
+  description: 'Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`. User to user, user to location and location to user all work; an asset in stock (no open assignment) is handed out like a check-out and needs a `deployable` state. If either half fails the whole transfer rolls back: the asset is never left unassigned. One audit record and one `transferred` history event. The new holder must differ from the current one (422).',
   body: jsonBody(S('TransferRequest')),
+  problems: { 409: { codes: ['asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running.' } },
   success: { 201: okResp(201, 'Transferred. Returns the updated asset, the transfer record and the new assignment; `ETag` is the new version of the asset.', S('TransferResult'), { etag: true, location: true }) },
+});
+
+// ---------------------------------------------------------------- [M2-W1] moves, disposal, lost and found, person history
+// Added by the wave-1 backend (M2-LOC-02, M2-LIFE-05, M2-LIFE-06): not part of the first contract draft.
+S_.MoveRequest = obj({
+  location_id: nuuid('Destination location; `null` clears the location (whereabouts unknown).'),
+  note: str({ maxLength: 2000 }),
+}, ['location_id'], { additionalProperties: false, description: 'Moves an asset to a location.' });
+S_.BulkAssetMove = obj({
+  ids: bulkIds(),
+  location_id: nuuid('Destination location for every asset; `null` clears it.'),
+  note: str({ maxLength: 2000 }),
+}, ['ids', 'location_id'], { additionalProperties: false });
+S_.DisposeRequest = obj({
+  reason: en(['sold', 'donated', 'recycled', 'scrapped', 'stolen', 'returned_to_vendor', 'other']),
+  note: str({ maxLength: 2000, description: 'Free text (buyer, recipient, certificate number...).' }),
+  disposed_on: date({ description: 'Defaults to today (UTC).' }),
+  status_id: uuid('An `archived`-type status label; default: the first one of the tenant.'),
+}, ['reason'], { additionalProperties: false });
+S_.MarkLostRequest = obj({
+  note: str({ maxLength: 2000 }),
+  status_id: uuid('A `lost`-type status label; default: the first one of the tenant.'),
+}, [], { additionalProperties: false });
+S_.MarkFoundRequest = obj({
+  status_id: uuid('A `deployable`-type status label to return the asset to; default: the tenant default (or first deployable) label.'),
+  location_id: nuuid('Where the asset was found / is now.'),
+  note: str({ maxLength: 2000 }),
+}, [], { additionalProperties: false });
+const ASSET_ACTION_PROBLEMS = { 409: { codes: ['conflict', 'asset-already-checked-out', 'asset-not-deployable'], text: 'The asset is archived, or its state does not allow this action (see the description).' } };
+addOp('/v1/assets/{id}/move', 'post', {
+  tag: 'Assets', id: 'moveAsset', summary: 'Move an asset to a location', perm: 'asset:update', params: [ID], ifMatchOptional: true,
+  description: 'Changes `location_id` and writes a `location_changed` history event with the note, an audit record and an outbox event. Allowed while the asset is checked out (the location is where it physically is). Archived assets cannot be moved. `If-Match` is optional; with it a stale version is `412`.',
+  body: jsonBody(S('MoveRequest'), true, { location_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92', note: 'Moved to the exam room' }),
+  problems: { 409: { codes: ['conflict'], text: 'The asset is archived.' } },
+  success: { 200: okResp(200, 'The moved asset; `ETag` is its new version.', S('Asset'), { etag: true }) },
+});
+addOp('/v1/assets/bulk-move', 'post', {
+  tag: 'Assets', id: 'bulkMoveAssets', summary: 'Move many assets to a location', perm: 'asset:update', hasId: false, conflict: false,
+  description: 'Moves every listed asset to `location_id` (same rules as `POST /v1/assets/{id}/move`).\n\n' + BULK_NOTE,
+  body: jsonBody(S('BulkAssetMove')),
+  success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
+});
+addOp('/v1/assets/{id}/dispose', 'post', {
+  tag: 'Assets', id: 'disposeAsset', summary: 'Dispose of an asset', perm: 'asset:delete', params: [ID], ifMatchOptional: true,
+  description: 'Retires the asset for good: sets an `archived`-type status, records the reason, the date and the note (`Asset.disposal`), and archives the asset so it leaves default lists and active counts. Not allowed while the asset is checked out (`409 asset-already-checked-out`: check it in first) or already archived. Writes an `archived` history event, an audit record and an outbox event. `POST /v1/assets/{id}/restore` takes a disposed asset back (the disposal record is cleared and the status returns to the tenant default).',
+  body: jsonBody(S('DisposeRequest'), true, { reason: 'recycled', note: 'Certificate R-2210' }),
+  problems: ASSET_ACTION_PROBLEMS,
+  success: { 200: okResp(200, 'The disposed asset.', S('Asset'), { etag: true }) },
+});
+addOp('/v1/assets/{id}/mark-lost', 'post', {
+  tag: 'Assets', id: 'markAssetLost', summary: 'Mark an asset lost or stolen', perm: 'asset:update', params: [ID], ifMatchOptional: true,
+  description: 'Moves the asset to a `lost`-type status. An open custody period is closed (its `checkin_note` says the asset was lost). A lost asset cannot be checked out. Not allowed when the asset is already lost or archived. Writes a `status_changed` history event.',
+  body: jsonBody(S('MarkLostRequest'), false),
+  problems: ASSET_ACTION_PROBLEMS,
+  success: { 200: okResp(200, 'The asset in its lost state.', S('Asset'), { etag: true }) },
+});
+addOp('/v1/assets/{id}/mark-found', 'post', {
+  tag: 'Assets', id: 'markAssetFound', summary: 'Mark a lost asset found', perm: 'asset:update', params: [ID], ifMatchOptional: true,
+  description: 'Returns a lost asset to a `deployable` status (and optionally a location). `409 conflict` when the asset is not lost. Writes a `status_changed` history event.',
+  body: jsonBody(S('MarkFoundRequest'), false),
+  problems: { 409: { codes: ['conflict'], text: 'The asset is not in a lost state.' } },
+  success: { 200: okResp(200, 'The recovered asset.', S('Asset'), { etag: true }) },
+});
+addOp('/v1/people/{id}/history', 'get', {
+  tag: 'People', id: 'listPersonHistory', summary: 'Chain of custody of a person', perm: 'person:read',
+  description: 'Newest first: every custody event (check-out, check-in, transfer) that involved this person, across assets.',
+  params: [ID, P('Cursor'), P('Limit')],
+  success: { 200: okResp(200, 'A page of events.', S('HistoryEventList'), { replay: false }) },
 });
 
 // ---------------------------------------------------------------- ACCESSORIES
@@ -1561,12 +1734,13 @@ addOp('/v1/labels/render', 'post', {
 // ---------------------------------------------------------------- ATTACHMENTS
 addOp('/v1/attachments', 'get', {
   tag: 'Attachments', id: 'listAttachments', summary: 'List attachments of a record', perm: 'attachment:read',
-  params: [P('Cursor'), P('Limit'), { name: 'entity_type', in: 'query', required: true, schema: en(['asset', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']) }, { name: 'entity_id', in: 'query', required: true, schema: uuid() }, qp('kind', en(['photo', 'document', 'signature', 'import_file', 'other']), 'Filter by kind.')],
+  params: [P('Cursor'), P('Limit'), { name: 'entity_type', in: 'query', required: true, schema: en(['asset', 'asset_model', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']) }, { name: 'entity_id', in: 'query', required: true, schema: uuid() }, qp('kind', en(['photo', 'document', 'signature', 'import_file', 'other']), 'Filter by kind.')],
   success: { 200: okResp(200, 'A page of attachments.', S('AttachmentList'), { replay: false }) },
 });
 addOp('/v1/attachments', 'post', {
   tag: 'Attachments', id: 'createAttachment', summary: 'Start an upload', perm: 'attachment:write',
-  description: 'Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.',
+  description: 'Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.\n\nThe declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation\'s cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.',
+  problems: { 413: { codes: ['payload-too-large'], text: 'The file is larger than the organisation\'s upload cap.' }, 415: { codes: ['unsupported-media-type'], text: 'The file type is not allowed, or does not match the file name extension.' } },
   body: jsonBody(S('AttachmentCreate')),
   success: { 201: okResp(201, 'Upload prepared.', S('AttachmentUpload'), { location: true }) },
 });
@@ -1577,13 +1751,58 @@ addOp('/v1/attachments/{id}', 'get', {
 });
 addOp('/v1/attachments/{id}/complete', 'post', {
   tag: 'Attachments', id: 'completeAttachment', summary: 'Confirm an upload', perm: 'attachment:write', params: [ID],
-  description: 'Verifies the object exists (and its size / sha256 when provided) and queues the virus scan.',
+  description: 'Verifies the object exists with exactly the declared size, checks that its first bytes are really of the declared type, and queues the virus scan. Idempotent: confirming twice returns the same attachment. A rejected upload (wrong size, content that does not match its type) is archived with `scan_status=error` and its object deleted.',
+  problems: {
+    409: { codes: ['upload-missing'], text: 'No object was uploaded yet.' },
+    413: { codes: ['payload-too-large'], text: 'The uploaded object is larger than declared or allowed.' },
+    415: { codes: ['unsupported-media-type'], text: 'The content does not match the declared type.' },
+    422: { codes: ['validation'], text: 'The uploaded size differs from the declared size.' },
+  },
   success: { 200: okResp(200, 'Upload confirmed; scan queued.', S('Attachment')) },
 });
 addOp('/v1/attachments/{id}', 'delete', {
   tag: 'Attachments', id: 'archiveAttachment', summary: 'Archive an attachment', perm: 'attachment:write', params: [ID],
+  description: 'Soft delete. `409` while the attachment is the primary picture of an asset or model (clear it there first).',
   success: { 204: okResp(204, 'Archived.') },
 });
+
+// M2 wave 1b (files): BEGIN - organisation file settings and the local-storage "presigned URL" endpoints.
+addOp('/v1/settings/files', 'get', {
+  tag: 'Attachments', id: 'getFilesSettings', summary: 'Get the file settings', perm: 'catalog:read', hasId: false,
+  description: 'Upload cap (tier default, override, effective) and the EXIF-stripping option of the organisation.',
+  success: { 200: okResp(200, 'The settings.', S('FilesSettings'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/files', 'put', {
+  tag: 'Attachments', id: 'putFilesSettings', summary: 'Replace the file settings', perm: 'catalog:manage', ifMatch: true, conflict: false, hasId: false,
+  description: 'Replaces `strip_exif_original` and `max_upload_bytes`. The override can only lower the cap that the plan allows.',
+  body: jsonBody(S('FilesSettingsUpdate')),
+  success: { 200: okResp(200, 'The new settings.', S('FilesSettings'), { etag: true }) },
+});
+addOp('/v1/files/{token}', 'put', {
+  tag: 'Attachments', id: 'uploadLocalFile', summary: 'Upload a file to local storage (presigned)', anon: true, mutate: true, idem: 'none', conflict: false, hasId: false,
+  description: 'Only with the **local filesystem** storage driver (the self-hosted fallback): the "presigned PUT" URL returned by `POST /v1/attachments`. The signed token is the credential (no cookie or API key is read). Send exactly the promised content type and byte count as the raw request body. With the S3 driver the upload URL points at the object store and this route answers `404`.',
+  params: [{ name: 'token', in: 'path', required: true, description: 'Signed, short-lived upload token from the presigned URL.', schema: str() }],
+  problems: {
+    400: { codes: ['bad-request'], text: 'The body has fewer bytes than the URL was issued for.' },
+    404: { codes: ['token-invalid', 'not-found'], text: 'The token is malformed, forged or not an upload token, or this deployment does not use local storage.' },
+    409: { codes: ['conflict'], text: 'This upload URL was already used.' },
+    410: { codes: ['token-expired'], text: 'The upload URL expired.' },
+    413: { codes: ['payload-too-large'], text: 'More bytes than the URL was issued for.' },
+    415: { codes: ['unsupported-media-type'], text: 'The Content-Type differs from the one the URL was issued for.' },
+  },
+  success: { 200: okResp(200, 'Stored. Now call `POST /v1/attachments/{id}/complete`.', undefined, { replay: false }) },
+});
+addOp('/v1/files/{token}', 'get', {
+  tag: 'Attachments', id: 'downloadLocalFile', summary: 'Download a file from local storage (presigned)', anon: true, hasId: false,
+  description: 'Only with the **local filesystem** storage driver: the short-lived URL returned as `download_url` / `thumbnail_url`. The signed token is the credential; no cookie is read or set. The response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src \'none\'; sandbox`, `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a content type from the allow-list and `Content-Disposition: attachment` for everything except raster images.',
+  params: [{ name: 'token', in: 'path', required: true, description: 'Signed, short-lived download token from the presigned URL.', schema: str() }],
+  problems: {
+    404: { codes: ['token-invalid', 'not-found'], text: 'The token is malformed, forged or not a download token, the file is gone, or this deployment does not use local storage.' },
+    410: { codes: ['token-expired'], text: 'The download URL expired; fetch the attachment again for a new one.' },
+  },
+  success: { 200: { description: 'The file bytes.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'inline for raster images, attachment otherwise.', schema: str() }, 'X-Content-Type-Options': { description: 'nosniff', schema: str() }, 'Content-Security-Policy': { description: "default-src 'none'; sandbox", schema: str() } }, content: { 'application/octet-stream': { schema: str({ format: 'binary' }) } } } },
+});
+// M2 wave 1b (files): END
 
 // ---------------------------------------------------------------- IMPORTS
 addOp('/v1/imports', 'get', {

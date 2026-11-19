@@ -19,6 +19,30 @@ export type Manufacturer = S['Manufacturer'];
 export type AssetModel = S['AssetModel'];
 export type Vendor = S['Vendor'];
 export type Location = S['Location'];
+export type LocationCreate = S['LocationCreate'];
+export type LocationUpdate = S['LocationUpdate'];
+export type LocationKind = NonNullable<Location['kind']>;
+export type Person = S['Person'];
+export type PersonCreate = S['PersonCreate'];
+export type PersonUpdate = S['PersonUpdate'];
+export type PersonKind = NonNullable<Person['kind']>;
+export type Assignment = S['Assignment'];
+export type AssignmentSummary = S['AssignmentSummary'];
+export type CheckoutRequest = S['CheckoutRequest'];
+export type CheckinRequest = S['CheckinRequest'];
+export type TransferRequest = S['TransferRequest'];
+export type CustodyResult = S['CustodyResult'];
+export type TransferResult = S['TransferResult'];
+export type ScanResolveResult = S['ScanResolveResult'];
+export type ScanAction = ScanResolveResult['allowed_actions'][number];
+export type Attachment = S['Attachment'];
+export type AttachmentCreate = S['AttachmentCreate'];
+export type AttachmentUpload = S['AttachmentUpload'];
+export type AttachmentKind = Attachment['kind'];
+export type AttachmentEntity = Attachment['entity_type'];
+export type ScanStatus = Attachment['scan_status'];
+export type FilesSettings = S['FilesSettings'];
+export type CheckinCondition = NonNullable<CheckinRequest['condition']>;
 export type HistoryEvent = S['HistoryEvent'];
 export type SearchResult = S['SearchResult'];
 export type RegistryUser = S['User'];
@@ -42,6 +66,23 @@ export const CUSTOM_FIELD_TYPES: readonly CustomFieldType[] = [
   'multiselect',
   'url',
   'email',
+];
+
+export const LOCATION_KINDS: readonly LocationKind[] = [
+  'site',
+  'building',
+  'floor',
+  'room',
+  'storage',
+  'vehicle',
+  'other',
+];
+
+export const PERSON_KINDS: readonly PersonKind[] = [
+  'employee',
+  'student',
+  'contractor',
+  'external',
 ];
 
 export const STATE_TYPES: readonly StateType[] = [

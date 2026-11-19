@@ -48,3 +48,6 @@ playwright-report/
 apps/api/src/generated/
 # MSW service worker copied by `pnpm dev:mock` (must never reach a production build)
 apps/web/public/mockServiceWorker.js
+
+# local storage driver data (M2-FILE-01 self-hosted fallback), dev only
+apps/api/data/

@@ -54,7 +54,21 @@ export interface MockState {
 const KEY = 'at-mock-state';
 
 const ACME = MOCK_TENANTS[0].name;
-const VIEWER_PERMISSIONS = ['asset:read', 'catalog:read', 'location:read', 'search:read'];
+/** The read permissions of every built-in role (mirrors `READ` in apps/api/src/auth/permissions.ts). */
+const VIEWER_PERMISSIONS = [
+  'asset:read',
+  'catalog:read',
+  'location:read',
+  'person:read',
+  'accessory:read',
+  'consumable:read',
+  'loaner:read',
+  'repair:read',
+  'import:read',
+  'attachment:read',
+  'company:read',
+  'search:read',
+];
 
 export const SEED_USERS: Record<string, MockUser> = {
   [MOCK_ACCOUNTS.owner]: {
@@ -100,12 +114,13 @@ export const SEED_USERS: Record<string, MockUser> = {
     display_name: 'Sam Lee',
     role: 'asset_manager',
     permissions: [
+      ...VIEWER_PERMISSIONS,
       'asset:*',
       'catalog:manage',
-      'catalog:read',
-      'location:read',
+      'location:manage',
+      'person:manage',
+      'attachment:write',
       'role:read',
-      'search:read',
       'user:read',
     ],
     mfa: false,

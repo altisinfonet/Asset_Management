@@ -32,3 +32,11 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)docs/05_backlog\.md$''']
 regexes = ['''auth guide''']
+
+[[allowlists]]
+description = "Test fixture: a fake Idempotency-Key value ('key-hist-xfer1') in a mock-API unit test of an earlier commit; the current test generates its key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)apps/web/src/mocks/m2-handlers\.test\.ts$''']
+regexes = ['''key-hist-xfer1''']

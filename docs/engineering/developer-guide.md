@@ -91,6 +91,10 @@ use another project name and other host ports: `docker compose -p other up -d` w
 | `SMTP_URL`, `MAIL_FROM`                | api, worker            | `smtp://localhost:1025` for Mailpit                                                                       |
 | `MAILPIT_API_URL`                      | e2e                    | `http://localhost:8025`; with `SMTP_URL` it enables the mail e2e block                                    |
 | `JOBS_SCHEMA`                          | worker, scheduler, e2e | pg-boss schema. Default `pgboss`; the e2e config forces `pgboss_e2e`                                      |
+| `STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY[_FILE]`, `S3_CREATE_BUCKET` | api, worker | Object storage (M2-FILE-01): `s3` (MinIO / S3) or `local` (`FILES_LOCAL_DIR`, public base `FILES_BASE_URL`). Default: `s3` when `S3_ENDPOINT` is set. Compose points them at MinIO |
+| `CLAMD_HOST`, `CLAMD_PORT`, `SCAN_REQUIRED` | worker (and e2e)   | ClamAV daemon for upload scans. `SCAN_REQUIRED=false` marks uploads clean unscanned when no scanner is configured (default `true`: stay `pending`) |
+| `FILES_UPLOAD_URL_TTL_SECONDS`, `FILES_DOWNLOAD_URL_TTL_SECONDS`, `FILES_MAX_BYTES_CEILING` | api | Presigned URL lifetimes (600 s / 120 s) and the hard upload ceiling (100 MiB) over the per-plan caps |
+| `SCAN_RESOLVE_MAX_MISSES`              | api                    | Scan-resolve misses per principal and throttle window before `429` (default 60, M2-TAG-01)              |
 | `MASTER_KEY_FILE` (or `MASTER_KEY`)    | all roles              | Envelope-encryption master key, 32 random bytes base64. Compose mounts the dummy `docker/secrets/master_key.dev`. Production refuses to start without one; dev falls back to an ephemeral key |
 | `TRUST_PROXY`                          | api                    | Default `false`. Set the proxies' addresses behind a load balancer; never `true` on a reachable API       |
 | `OPS_PORT`, `OPS_HOST`, `OPS_ENABLED`  | all roles              | internal ops server; 9464 / 0.0.0.0 / on                                                                  |
@@ -132,6 +136,8 @@ the run is still green**. Set everything when you mean to run everything. With t
 export MIGRATOR_DATABASE_URL=postgres://app_owner:dev@localhost:5433/app
 export ADMIN_DATABASE_URL=postgres://postgres:dev@localhost:5433/app
 export SMTP_URL=smtp://localhost:1025 MAILPIT_API_URL=http://localhost:8025
+# File pipeline (M2-FILE): MinIO for the S3 variants, clamd for the ClamAV variants of test/files
+export S3_ENDPOINT=http://localhost:9000 CLAMD_HOST=localhost CLAMD_PORT=3310
 
 # Direct: app_user -> Postgres
 ISOLATION_MODE=direct DATABASE_URL=postgres://app_user:dev@localhost:5433/app \
@@ -150,6 +156,11 @@ tests in 13 files and takes roughly 15 seconds per mode.
   it is safe to run while the compose `worker` and `scheduler` are up.
 - Without a database the suite runs only what needs none. Without `MAILPIT_API_URL` the mail block
   skips; without `ADMIN_DATABASE_URL` one schema-lint fixture skips.
+- `test/files` always runs the local-filesystem storage driver with a fake scanner. `S3_ENDPOINT`
+  (MinIO, bucket `e2e-files` is created; `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` default to the
+  dev `minioadmin` pair) adds the S3 variant with real presigned URLs, and `CLAMD_HOST` / `CLAMD_PORT`
+  the ClamAV variants (EICAR is detected by the real daemon). Without them those variants are not
+  generated, so CI sets both.
 - The isolation suite is a **gate for everything after M1-TEN**: do not weaken or skip a case to get a
   change through. If the negative control stops failing the way it should, the harness has gone blind.
 - Web: `pnpm --filter @assettracker/web test` (unit) and `pnpm --filter @assettracker/web test:e2e`

@@ -1,11 +1,14 @@
 'use client';
 
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { StatusBadge, type StateType as BadgeStateType } from '@/components/ui/badge';
 import { useI18n } from '@/i18n';
+import { isOverdue } from '@/lib/custody/helpers';
 import { formatValue } from '@/lib/registry/custom-fields';
 import type { Lookups } from '@/lib/registry/queries';
 import type { Asset } from '@/lib/registry/types';
+import { routes } from '@/lib/routes';
 
 /** The status of an asset as a badge: admin-chosen name, colour and icon from the state type. */
 export function AssetStatusBadge({ asset, lookups }: { asset: Asset; lookups: Lookups }) {
@@ -49,6 +52,7 @@ export function AssetDetails({ asset, lookups }: { asset: Asset; lookups: Lookup
     ? lookups.manufacturerById.get(model.manufacturer_id)
     : undefined;
   const customFields = lookups.fieldsFor(asset.category_id);
+  const assignment = asset.current_assignment;
   const date = (value?: string | null) =>
     value ? formatDate(`${value}T00:00:00Z`, { timeZone: 'UTC' }) : '';
   const cost = asset.purchase_cost
@@ -66,6 +70,32 @@ export function AssetDetails({ asset, lookups }: { asset: Asset; lookups: Lookup
         </Row>
         <Row label={t('assets.columns.status')}>
           <AssetStatusBadge asset={asset} lookups={lookups} />
+        </Row>
+        <Row label={t('custody.assignee')}>
+          {assignment ? (
+            assignment.target_type === 'person' ? (
+              <Link
+                href={routes.personView(assignment.target_id)}
+                className="rounded-sm text-primary-text underline underline-offset-2"
+              >
+                {assignment.target_name}
+              </Link>
+            ) : (
+              assignment.target_name
+            )
+          ) : (
+            ''
+          )}
+        </Row>
+        <Row label={t('custody.dueBack')}>
+          {assignment?.expected_return ? (
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {date(assignment.expected_return)}
+              {isOverdue(assignment) ? <StatusBadge type="overdue" /> : null}
+            </span>
+          ) : (
+            ''
+          )}
         </Row>
         <Row label={t('assets.columns.serial')}>
           {asset.serial ? <span className="font-tag">{asset.serial}</span> : ''}

@@ -54,7 +54,13 @@ export const PROBLEM_CATALOG = {
   'method-not-allowed': { status: 405, title: 'Method not allowed' },
   conflict: { status: 409, title: 'Conflict' },
   'cannot-revoke-current': { status: 409, title: 'Cannot revoke the current session' },
+  // Files (M2-FILE-01): the upload has not reached the store yet.
+  'upload-missing': { status: 409, title: 'Upload not found' },
   'mfa-already-enrolled': { status: 409, title: 'MFA already enrolled' },
+  // Custody (M2 wave 1; openapi x-problem-codes)
+  'asset-already-checked-out': { status: 409, title: 'Asset already checked out' },
+  'asset-not-checked-out': { status: 409, title: 'Asset is not checked out' },
+  'asset-not-deployable': { status: 409, title: 'Asset cannot be checked out in its state' },
   'idempotency-key-in-flight': {
     status: 409,
     title: 'Request with this Idempotency-Key in flight',

@@ -606,7 +606,7 @@ CREATE TABLE app.attachment (
   id            uuid PRIMARY KEY,
   tenant_id     uuid NOT NULL REFERENCES app.tenant (id),
   entity_type   text NOT NULL
-                CHECK (entity_type IN ('asset','accessory','consumable','location','person','maintenance_record','assignment','import_job')),
+                CHECK (entity_type IN ('asset','asset_model','accessory','consumable','location','person','maintenance_record','assignment','import_job')),
   entity_id     uuid NOT NULL,                              -- polymorphic, resolved tenant-scoped by the app
   kind          text NOT NULL DEFAULT 'document' CHECK (kind IN ('photo','document','signature','import_file','other')),
   storage_key   text NOT NULL,
@@ -616,6 +616,15 @@ CREATE TABLE app.attachment (
   sha256        text CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
   scan_status   text NOT NULL DEFAULT 'pending' CHECK (scan_status IN ('pending','clean','infected','error')),
   uploaded_at   timestamptz,                                -- set when the client confirms the PUT
+  -- [M2 0050] scan and derivative bookkeeping
+  etag               text,                                  -- ETag at confirmation: an object replaced later is never served
+  scanned_at         timestamptz,
+  scan_detail        text CHECK (scan_detail IS NULL OR length(scan_detail) <= 200),  -- signature when infected, short reason otherwise
+  thumb_key          text,                                  -- server-generated WebP thumbnail
+  thumb_content_type text,
+  width              integer CHECK (width IS NULL OR width > 0),
+  height             integer CHECK (height IS NULL OR height > 0),
+  exif_stripped      boolean NOT NULL DEFAULT false,        -- the ORIGINAL was re-encoded without EXIF/GPS (per-tenant option)
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   created_by    uuid,
@@ -623,9 +632,24 @@ CREATE TABLE app.attachment (
   version       integer NOT NULL DEFAULT 1,
   UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, storage_key),
-  CHECK (storage_key LIKE 'tenants/' || tenant_id::text || '/%')   -- tenant-prefixed keys (plan 6.6)
+  CHECK (storage_key LIKE 'tenants/' || tenant_id::text || '/%'),   -- tenant-prefixed keys (plan 6.6)
+  CHECK (thumb_key IS NULL OR thumb_key LIKE 'tenants/' || tenant_id::text || '/%'),
+  CHECK (scan_status <> 'clean' OR uploaded_at IS NOT NULL)
 );
 CREATE INDEX attachment_entity_idx ON app.attachment (tenant_id, entity_type, entity_id, id DESC) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX attachment_thumb_key_uq ON app.attachment (tenant_id, thumb_key) WHERE thumb_key IS NOT NULL;
+-- orphan sweep: uploads never confirmed, confirmed uploads whose scan job was lost
+CREATE INDEX attachment_incomplete_idx ON app.attachment (tenant_id, created_at) WHERE uploaded_at IS NULL AND archived_at IS NULL;
+CREATE INDEX attachment_pending_scan_idx ON app.attachment (tenant_id, uploaded_at)
+  WHERE scan_status = 'pending' AND uploaded_at IS NOT NULL AND archived_at IS NULL;
+
+-- [M2 0050] primary pictures: asset_model and asset reference an attachment of the same tenant
+ALTER TABLE app.asset_model ADD COLUMN image_attachment_id uuid,
+  ADD CONSTRAINT asset_model_image_attachment_fk FOREIGN KEY (tenant_id, image_attachment_id) REFERENCES app.attachment (tenant_id, id);
+CREATE INDEX asset_model_image_idx ON app.asset_model (tenant_id, image_attachment_id) WHERE image_attachment_id IS NOT NULL;
+ALTER TABLE app.asset ADD COLUMN image_attachment_id uuid,
+  ADD CONSTRAINT asset_image_attachment_fk FOREIGN KEY (tenant_id, image_attachment_id) REFERENCES app.attachment (tenant_id, id);
+CREATE INDEX asset_image_idx ON app.asset (tenant_id, image_attachment_id) WHERE image_attachment_id IS NOT NULL;
 
 -- -----------------------------------------------------------------------------
 -- B8. [M2] Stock-keeping entities (accessory, consumable), loaner pools
@@ -797,6 +821,7 @@ CREATE TABLE app.assignment (
                       CHECK (acceptance_state IN ('not_required','pending','accepted','declined')),
   note                text,
   checkin_note        text,
+  checkin_condition   text CHECK (checkin_condition IS NULL OR checkin_condition IN ('good','fair','poor','damaged')), -- 0060
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   version             integer NOT NULL DEFAULT 1,

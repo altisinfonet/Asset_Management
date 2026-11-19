@@ -19,14 +19,20 @@ import {
   registerMailJob,
 } from '../mail/index.js';
 import { OutboxSubscribers, PgOutboxPublisher } from '../outbox/index.js';
+import { createVirusScanner } from '../scanner/index.js';
+import { createStorageAdapter } from '../storage/index.js';
 import {
   AUDIT_WRITER,
   JOB_QUEUE,
   MAIL_SENDER,
   OUTBOX_PUBLISHER,
   SECRET_BOX,
+  STORAGE_ADAPTER,
+  VIRUS_SCANNER,
   type JobQueue,
   type SecretBox,
+  type StorageAdapter,
+  type VirusScanner,
 } from '../ports/index.js';
 
 /** The mail delivery edge (SMTP). Injectable so tests and the worker can reach or replace it. */
@@ -41,6 +47,8 @@ export const MAIL_TRANSPORT = Symbol('MAIL_TRANSPORT');
  *   JOB_QUEUE         PgBossJobQueue          pg-boss, transactional enqueue                (PLAT-06)
  *   SECRET_BOX        EnvelopeSecretBox       AES-256-GCM envelope, KeyProvider-wrapped     (PLAT-08)
  *   MAIL_SENDER       QueuedMailSender        row + `mail.send` job in the tx, SMTP in worker (PLAT-09)
+ *   STORAGE_ADAPTER   S3 / local filesystem   object storage, tenant-prefixed keys          (M2-FILE-01)
+ *   VIRUS_SCANNER     ClamAV (clamd) | off    INSTREAM scanning of uploads                   (M2-FILE-02)
  *
  * It also registers the `mail.send` handler with the job registry (the worker role runs it) and
  * exposes {@link OutboxSubscribers} (where modules subscribe to outbox events; the relay runs in
@@ -81,6 +89,16 @@ export const MAIL_TRANSPORT = Symbol('MAIL_TRANSPORT');
       inject: [SECRET_BOX, JOB_QUEUE],
       useFactory: (secrets: SecretBox, jobs: JobQueue) => new QueuedMailSender(secrets, jobs),
     },
+    {
+      provide: STORAGE_ADAPTER,
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig): StorageAdapter => createStorageAdapter(config),
+    },
+    {
+      provide: VIRUS_SCANNER,
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig): VirusScanner => createVirusScanner(config),
+    },
     OutboxSubscribers,
   ],
   exports: [
@@ -89,6 +107,8 @@ export const MAIL_TRANSPORT = Symbol('MAIL_TRANSPORT');
     JOB_QUEUE,
     MAIL_SENDER,
     SECRET_BOX,
+    STORAGE_ADAPTER,
+    VIRUS_SCANNER,
     MAIL_TRANSPORT,
     OutboxSubscribers,
   ],
@@ -98,15 +118,25 @@ export class PortsModule implements OnModuleInit, OnApplicationShutdown {
     private readonly registry: JobHandlerRegistry,
     @Inject(SECRET_BOX) private readonly secrets: SecretBox,
     @Inject(MAIL_TRANSPORT) private readonly transport: MailTransport,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     registerMailJob(this.registry, {
       secrets: this.secrets,
       transport: this.transport,
       from: this.config.MAIL_FROM,
     });
+    // Bucket / directory. A storage outage must not stop the process from booting (health reports
+    // it, uploads fail with 503), so this logs instead of throwing.
+    try {
+      await this.storage.ensureReady();
+    } catch (err) {
+      new Logger('Storage').error(
+        `storage (${this.storage.driver}) is not ready: ${(err as Error).message}`,
+      );
+    }
   }
 
   onApplicationShutdown(): void {

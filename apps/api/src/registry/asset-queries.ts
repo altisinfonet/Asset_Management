@@ -38,15 +38,38 @@ export interface AssetRow {
   updated_at: Date;
   archived_at: Date | null;
   version: number;
+  disposed_on: Date | null;
+  disposal_reason: string | null;
+  disposal_note: string | null;
+  /** M2-FILE-03; optional so fixtures that predate the column still type-check. */
+  image_attachment_id?: string | null;
   status_name: string;
   status_state_type: string;
+  /** The open custody period (attached by {@link withStatus}); null when the asset is in stock. */
+  assignment?: AssignmentSummaryDto | null;
   [sortKey: `k${number}`]: string;
+}
+
+/** `Asset.current_assignment` of the contract (schema AssignmentSummary). */
+export interface AssignmentSummaryDto {
+  assignment_id: string;
+  target_type: 'person' | 'location' | 'asset';
+  target_id: string;
+  target_name: string | null;
+  checked_out_at: string;
+  expected_return: string | null;
+  overdue: boolean;
+  loaner_pool_id: string | null;
 }
 
 export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name, a.serial, a.category_id,
   a.model_id, a.status_id, a.location_id, a.company_id, a.vendor_id, a.parent_asset_id, a.purchase_date,
   a.purchase_cost_minor, a.currency, a.order_number, a.warranty_end, a.notes, a.custom_data,
-  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version`;
+  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version,
+  a.disposed_on, a.disposal_reason, a.disposal_note, a.image_attachment_id`;
+
+/** Row of the asset queries before the status label and the open custody period are attached. */
+export type BareAssetRow = Omit<AssetRow, 'status_name' | 'status_state_type' | 'assignment'>;
 
 /**
  * No join with the status label: it would let the planner start from the 7-row label table and
@@ -55,21 +78,104 @@ export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name,
  */
 export const ASSET_FROM = Prisma.sql`from app.asset a`;
 
-/** Attaches `status_name` / `status_state_type` to rows fetched without the status join. */
-export async function withStatus(
-  trx: Tx,
-  rows: Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>,
-): Promise<AssetRow[]> {
+/**
+ * Attaches `status_name` / `status_state_type` to rows fetched without the status join, and the
+ * open custody period (`assignment`, M2-LIFE-01) with the name of its target. One query over the
+ * page's asset ids hits the partial unique index of open assignments; names are read per target
+ * type only when the page has such targets.
+ */
+export async function withStatus(trx: Tx, rows: BareAssetRow[]): Promise<AssetRow[]> {
   if (rows.length === 0) return [];
   const labels = await trx.status_label.findMany({
     where: { id: { in: [...new Set(rows.map((r) => r.status_id))] } },
     select: { id: true, name: true, state_type: true },
   });
   const byId = new Map(labels.map((l) => [l.id, l]));
+  const assignments = await openAssignmentSummaries(
+    trx,
+    rows.map((r) => r.id),
+  );
   return rows.map((r) => {
     const label = byId.get(r.status_id);
-    return { ...r, status_name: label?.name ?? '', status_state_type: label?.state_type ?? '' };
+    return {
+      ...r,
+      status_name: label?.name ?? '',
+      status_state_type: label?.state_type ?? '',
+      assignment: assignments.get(r.id) ?? null,
+    };
   });
+}
+
+/** Open custody period of each given asset (assets in stock are absent from the map). */
+export async function openAssignmentSummaries(
+  trx: Tx,
+  assetIds: string[],
+): Promise<Map<string, AssignmentSummaryDto>> {
+  const out = new Map<string, AssignmentSummaryDto>();
+  if (assetIds.length === 0) return out;
+  const open = await trx.$queryRaw<
+    Array<{
+      id: string;
+      asset_id: string;
+      person_id: string | null;
+      location_id: string | null;
+      target_asset_id: string | null;
+      checked_out_at: Date;
+      expected_return: Date | null;
+      loaner_pool_id: string | null;
+      overdue: boolean;
+    }>
+  >`select s.id, s.asset_id, s.person_id, s.location_id, s.target_asset_id, s.checked_out_at,
+           s.expected_return, s.loaner_pool_id,
+           coalesce(s.expected_return < (now() at time zone 'UTC')::date, false) as overdue
+      from app.assignment s
+     where s.asset_id = any(${assetIds}::uuid[]) and s.checked_in_at is null`;
+  if (open.length === 0) return out;
+  const ids = (pick: (o: (typeof open)[number]) => string | null) => [
+    ...new Set(open.map(pick).filter((v): v is string => v !== null)),
+  ];
+  const people = new Map(
+    (
+      await trx.person.findMany({
+        where: { id: { in: ids((o) => o.person_id) } },
+        select: { id: true, display_name: true },
+      })
+    ).map((p) => [p.id, p.display_name]),
+  );
+  const places = new Map(
+    (
+      await trx.location.findMany({
+        where: { id: { in: ids((o) => o.location_id) } },
+        select: { id: true, name: true },
+      })
+    ).map((l) => [l.id, l.name]),
+  );
+  const targets = new Map(
+    (
+      await trx.asset.findMany({
+        where: { id: { in: ids((o) => o.target_asset_id) } },
+        select: { id: true, asset_tag: true, name: true },
+      })
+    ).map((a) => [a.id, a.name ? `${a.asset_tag} ${a.name}` : a.asset_tag]),
+  );
+  for (const o of open) {
+    const [type, id, name] = o.person_id
+      ? (['person', o.person_id, people.get(o.person_id)] as const)
+      : o.location_id
+        ? (['location', o.location_id, places.get(o.location_id)] as const)
+        : (['asset', o.target_asset_id!, targets.get(o.target_asset_id!)] as const);
+    out.set(o.asset_id, {
+      assignment_id: o.id,
+      target_type: type,
+      target_id: id,
+      target_name: name ?? null,
+      checked_out_at: o.checked_out_at.toISOString(),
+      expected_return: isoDate(o.expected_return),
+      overdue: o.overdue,
+      loaner_pool_id: o.loaner_pool_id,
+    });
+  }
+  return out;
 }
 
 export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
@@ -100,7 +206,12 @@ export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
     external_source: r.external_source,
     external_id: r.external_id,
     label_code: r.label_code,
-    current_assignment: null as null,
+    image_attachment_id: r.image_attachment_id ?? null,
+    current_assignment: r.assignment ?? (null as AssignmentSummaryDto | null),
+    disposal:
+      r.disposed_on && r.disposal_reason
+        ? { disposed_on: isoDate(r.disposed_on)!, reason: r.disposal_reason, note: r.disposal_note }
+        : (null as { disposed_on: string; reason: string; note: string | null } | null),
     status: { id: r.status_id, name: r.status_name, state_type: r.status_state_type },
     ...(expanded ? { expanded } : {}),
   };
@@ -133,6 +244,9 @@ export const ASSET_FIELDS = Object.keys(
     updated_at: new Date(0),
     archived_at: null,
     version: 1,
+    disposed_on: null,
+    disposal_reason: null,
+    disposal_note: null,
     status_name: '',
     status_state_type: '',
   }),
@@ -141,9 +255,17 @@ export const ASSET_FIELDS = Object.keys(
 /** One asset (any archive state) by an arbitrary predicate. */
 export async function loadAssetRows(trx: Tx, where: Prisma.Sql, limit = 1000): Promise<AssetRow[]> {
   const rows = await trx.$queryRaw<
-    Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>
+    BareAssetRow[]
   >`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} limit ${limit}`;
   return withStatus(trx, rows);
+}
+
+/** Locks the asset row (`FOR UPDATE`) and reads it: the entry point of every custody write. */
+export async function lockAsset(trx: Tx, id: string): Promise<AssetRow | null> {
+  const rows = await trx.$queryRaw<
+    BareAssetRow[]
+  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where a.id = ${id}::uuid for update of a`;
+  return rows[0] ? (await withStatus(trx, rows))[0]! : null;
 }
 
 export async function loadAsset(trx: Tx, id: string): Promise<AssetRow | null> {
@@ -304,7 +426,29 @@ export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Pri
         where m.tenant_id = a.tenant_id and m.id = a.model_id and m.manufacturer_id = ${q.manufacturer_id}::uuid)`,
     );
   }
-  if (q.location_id) c.push(Prisma.sql`a.location_id = ${q.location_id}::uuid`);
+  if (q.location_id) {
+    // M2-LOC-02: the whole subtree unless `include_sublocations=false`. The descendant ids come
+    // from the (small) per-tenant location table; ancestor_ids is trigger-maintained (ED-07).
+    c.push(
+      q.include_sublocations === false
+        ? Prisma.sql`a.location_id = ${q.location_id}::uuid`
+        : Prisma.sql`a.location_id in (select l.id from app.location l
+            where l.ancestor_ids @> array[${q.location_id}::uuid])`,
+    );
+  }
+  // M2-LIFE-01..03: custody filters, all answered by the partial unique index of open assignments
+  // (or the due-date index for `overdue`).
+  const open = Prisma.sql`select 1 from app.assignment s where s.tenant_id = a.tenant_id and s.asset_id = a.id and s.checked_in_at is null`;
+  if (q.assigned !== undefined) {
+    c.push(q.assigned ? Prisma.sql`exists (${open})` : Prisma.sql`not exists (${open})`);
+  }
+  if (q.assigned_person_id) {
+    c.push(Prisma.sql`exists (${open} and s.person_id = ${q.assigned_person_id}::uuid)`);
+  }
+  if (q.overdue !== undefined) {
+    const overdue = Prisma.sql`${open} and s.expected_return < (now() at time zone 'UTC')::date`;
+    c.push(q.overdue ? Prisma.sql`exists (${overdue})` : Prisma.sql`not exists (${overdue})`);
+  }
   if (q.company_id) c.push(Prisma.sql`a.company_id = ${q.company_id}::uuid`);
   if (q.vendor_id) c.push(Prisma.sql`a.vendor_id = ${q.vendor_id}::uuid`);
   if (q.parent_asset_id) c.push(Prisma.sql`a.parent_asset_id = ${q.parent_asset_id}::uuid`);

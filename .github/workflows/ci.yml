@@ -135,6 +135,11 @@ jobs:
       # The suite runs on its own pg-boss schema (apps/api/vitest.e2e.config.ts sets the same value), so
       # nothing it enqueues can be picked up by another worker. Set here too to make that explicit.
       JOBS_SCHEMA: pgboss_e2e
+      # File pipeline e2e (M2-FILE): presigned URLs against MinIO and virus scans against a real clamd.
+      # With these set the S3 and ClamAV variants of test/files run; unset they are not generated at all.
+      S3_ENDPOINT: http://localhost:9000
+      CLAMD_HOST: localhost
+      CLAMD_PORT: '3310'
     steps:
       - uses: actions/checkout@v4
 
@@ -146,6 +151,23 @@ jobs:
 
       - name: Unit tests
         run: pnpm --filter @assettracker/api test
+
+      # MinIO (S3 API) and ClamAV for the file pipeline e2e. ClamAV downloads its signatures on first
+      # start; wait for its own health check (clamdcheck.sh).
+      - name: Start MinIO and ClamAV (file pipeline e2e)
+        run: |
+          docker run -d --name minio -p 9000:9000 --user 0 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin-dev \
+            chainguard/minio:latest server /data
+          docker run -d --name clamav -p 3310:3310 \
+            --health-cmd /usr/local/bin/clamdcheck.sh --health-interval 10s --health-retries 60 \
+            clamav/clamav:stable
+          for _ in $(seq 1 90); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' clamav)" = healthy ] && exit 0
+            sleep 5
+          done
+          docker logs clamav
+          exit 1
 
       - name: Create roles and extensions (same script as docker compose)
         run: psql -h localhost -U postgres -d app -v ON_ERROR_STOP=1 -f docker/postgres/init/01-roles.sql

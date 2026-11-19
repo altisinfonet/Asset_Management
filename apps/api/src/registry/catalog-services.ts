@@ -248,6 +248,7 @@ interface ModelRow extends CatalogRow {
   default_depreciation_months: number | null;
   eol_date: Date | null;
   notes: string | null;
+  image_attachment_id: string | null;
 }
 
 @Injectable()
@@ -281,6 +282,28 @@ export class ModelsService extends CatalogService<ModelRow, ModelCreate, ModelUp
       if (!m || m.archived_at) errors.push(invalidRef('/manufacturer_id', 'No such manufacturer.'));
     }
     if (errors.length > 0) throw problem.validation(errors);
+  }
+
+  /** The picture must be a live, non-rejected image attachment whose owner is this model (M2-FILE-03). */
+  private async checkImage(trx: Tx, modelId: string, attachmentId: string): Promise<void> {
+    const att = await trx.attachment.findFirst({
+      where: { id: attachmentId, archived_at: null },
+      select: { entity_type: true, entity_id: true, content_type: true, scan_status: true },
+    });
+    if (!att || att.entity_type !== 'asset_model' || att.entity_id !== modelId) {
+      throw problem.validation([
+        invalidRef('/image_attachment_id', 'No such image attachment of this model.'),
+      ]);
+    }
+    if (!att.content_type.startsWith('image/') || ['infected', 'error'].includes(att.scan_status)) {
+      throw problem.validation([
+        {
+          pointer: '/image_attachment_id',
+          message: 'The attachment is not a usable image.',
+          code: 'invalid',
+        },
+      ]);
+    }
   }
 
   protected readonly cfg: CatalogConfig<ModelRow, ModelCreate, ModelUpdate> = {
@@ -324,6 +347,7 @@ export class ModelsService extends CatalogService<ModelRow, ModelCreate, ModelUp
         refs.manufacturer_id = b.manufacturer_id;
       }
       await this.checkRefs(trx, refs);
+      if (b.image_attachment_id) await this.checkImage(trx, row.id, b.image_attachment_id);
       return changed(row, { ...b }, { eol_date: toDate });
     },
     assertArchivable: async (trx, row) => {

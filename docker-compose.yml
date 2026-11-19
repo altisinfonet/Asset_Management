@@ -1,5 +1,5 @@
 # Local development stack. DUMMY credentials only; real secrets never go in this file.
-#   docker compose up -d --build          postgres, pgbouncer, mailpit, minio, migrate, api, worker, scheduler
+#   docker compose up -d --build          postgres, pgbouncer, mailpit, minio, clamav, migrate, api, worker, scheduler
 #   docker compose --profile web up -d    adds the Next.js dev server (http://localhost:3001)
 #   docker compose --profile pooling run --rm pgbouncer-check   asserts the PgBouncer profile (SHOW POOLS/CONFIG)
 #   docker compose run --rm migrate       apply new migrations
@@ -14,7 +14,20 @@ x-api-env: &api-env
   LOG_LEVEL: ${LOG_LEVEL:-info}
   # Runtime role (non-owner `app_user`) goes THROUGH PgBouncer (transaction pooling).
   DATABASE_URL: postgres://app_user:dev@pgbouncer:6432/app
+  # Object storage (M2-FILE-01): MinIO, bucket created on first start. S3_PUBLIC_ENDPOINT is how the
+  # BROWSER reaches MinIO (presigned URLs are signed for it); the containers use minio:9000.
+  STORAGE_DRIVER: s3
   S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
+  S3_BUCKET: assettracker-files
+  S3_ACCESS_KEY_ID: minioadmin
+  S3_SECRET_ACCESS_KEY: minioadmin-dev
+  S3_CREATE_BUCKET: 'true'
+  # Virus scanning (M2-FILE-02): ClamAV (clamd). Without it uploads stay `pending` unless
+  # SCAN_REQUIRED=false (then they are marked clean with a warning event; see docs/getting-started.md).
+  CLAMD_HOST: clamav
+  CLAMD_PORT: '3310'
+  SCAN_REQUIRED: ${SCAN_REQUIRED:-true}
   SMTP_URL: smtp://mailpit:1025
   MAIL_FROM: 'Asset Tracker <no-reply@assettracker.local>'
   # Envelope-encryption master key (SecretBox): a Docker secret FILE, never an env value.
@@ -132,6 +145,8 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      clamav:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -165,6 +180,10 @@ services:
       pgbouncer:
         condition: service_healthy
       mailpit:
+        condition: service_started
+      minio:
+        condition: service_started
+      clamav:
         condition: service_started
     healthcheck: &ops-healthcheck
       test:
@@ -241,6 +260,30 @@ services:
     volumes:
       - miniodata:/data
 
+  # ClamAV daemon for upload scanning (M2-FILE-02). ON by default in dev: remove it (and set
+  # SCAN_REQUIRED=false) to develop without it. First start downloads the signature database (needs
+  # internet, a minute or two); `docker compose ps` shows `healthy` when clamd answers. Needs ~1-2 GB RAM.
+  # The signatures live in a named volume, so later starts are fast. Port 3310 is published for the
+  # e2e suite (CLAMD_HOST/CLAMD_PORT); the image has no authentication, so never publish it beyond localhost.
+  clamav:
+    image: ${CLAMAV_IMAGE:-clamav/clamav:stable}
+    environment:
+      # Upload cap is 100 MiB (FILES_MAX_BYTES_CEILING): clamd must accept a stream that large
+      # (INSTREAM is limited by StreamMaxLength, the unpacked content by MaxFileSize / MaxScanSize).
+      CLAMD_CONF_StreamMaxLength: 105M
+      CLAMD_CONF_MaxFileSize: 105M
+      CLAMD_CONF_MaxScanSize: 210M
+    ports:
+      - '127.0.0.1:${CLAMD_PORT:-3310}:3310'
+    volumes:
+      - clamdata:/var/lib/clamav
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/clamdcheck.sh']
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+
 # Dummy DEV master key (docker/secrets/master_key.dev). A real install generates its own:
 #   openssl rand -base64 32 > master_key && chmod 600 master_key   (and BACK IT UP: without it, encrypted data is lost)
 secrets:
@@ -250,3 +293,4 @@ secrets:
 volumes:
   pgdata:
   miniodata:
+  clamdata:

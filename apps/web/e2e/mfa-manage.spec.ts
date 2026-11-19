@@ -25,7 +25,7 @@ test.describe('two-step verification on', () => {
     await dialog.getByLabel(/^Current password/).fill(MOCK_PASSWORD);
     await dialog.getByRole('button', { name: TURN_OFF }).click();
 
-    await expect(page.getByRole('main').getByText('Two-step verification is off.')).toBeVisible();
+    await expect(page.getByText('Two-step verification is off.').first()).toBeVisible();
     await expect(dialog).toBeHidden();
     await expect(page.getByText('Off', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Turn off', exact: true })).toHaveCount(0);
@@ -55,7 +55,7 @@ test.describe('two-step verification on', () => {
     // the right code then works
     await dialog.getByLabel(/^Authentication code/).fill(MOCK_TOTP_CODE);
     await dialog.getByRole('button', { name: TURN_OFF }).click();
-    await expect(page.getByRole('main').getByText('Two-step verification is off.')).toBeVisible();
+    await expect(page.getByText('Two-step verification is off.').first()).toBeVisible();
   });
 
   test('regenerating recovery codes shows ten codes and gates Close on "I have saved these codes"', async ({

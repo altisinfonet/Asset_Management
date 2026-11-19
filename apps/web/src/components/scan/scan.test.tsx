@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from '@/components/app-shell/app-shell';
@@ -24,6 +24,15 @@ async function shell(email: string = MOCK_ACCOUNTS.owner) {
   return view;
 }
 
+/**
+ * What a wedge scanner does: every key of the code, then Enter, within one burst. The keys are
+ * dispatched in one go (no timers), so the gap between them cannot depend on how busy the test run is.
+ */
+function scanBurst(code: string) {
+  const target = (document.activeElement as HTMLElement | null) ?? document.body;
+  for (const key of [...code, 'Enter']) fireEvent.keyDown(target, { key });
+}
+
 async function firstAsset(query: Parameters<typeof assetsApi.list>[0]): Promise<Asset> {
   return (await assetsApi.list({ ...query, sort: ['asset_tag'], limit: 1 })).data[0]!;
 }
@@ -37,9 +46,8 @@ describe('keyboard-wedge scanner (global)', () => {
   it('a fast burst of keys and Enter, with nothing focused, opens the asset', async () => {
     await shell();
     const asset = await firstAsset({ state_type: ['deployable'], assigned: false });
-    const user = userEvent.setup(); // no delay: keys arrive a millisecond apart, like a scanner
     document.body.focus();
-    await user.keyboard(`${asset.asset_tag}{Enter}`);
+    scanBurst(asset.asset_tag);
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith(`/assets/view?id=${asset.id}&scanned=1`),
     );
@@ -48,8 +56,7 @@ describe('keyboard-wedge scanner (global)', () => {
 
   it('resolves a label code too', async () => {
     await shell();
-    const user = userEvent.setup();
-    await user.keyboard('LBL00124{Enter}');
+    scanBurst('LBL00124');
     await waitFor(() =>
       expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/scanned=1$/)),
     );
@@ -57,8 +64,7 @@ describe('keyboard-wedge scanner (global)', () => {
 
   it('reports a code nobody has, and does not navigate', async () => {
     await shell();
-    const user = userEvent.setup();
-    await user.keyboard('ZZ-99999{Enter}');
+    scanBurst('ZZ-99999');
     expect(await screen.findByText('No asset matches "ZZ-99999".')).toBeVisible();
     expect(router.push).not.toHaveBeenCalled();
   });
@@ -73,9 +79,8 @@ describe('keyboard-wedge scanner (global)', () => {
 
   it('a scanned code that starts with a shortcut key does not run the shortcut', async () => {
     await shell();
-    const user = userEvent.setup();
     // "c" is "new asset", "g" then "a" is "go to Assets"
-    await user.keyboard('cga-nothing{Enter}');
+    scanBurst('cga-nothing');
     expect(await screen.findByText('No asset matches "cga-nothing".')).toBeVisible();
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(router.push).not.toHaveBeenCalled();
@@ -83,8 +88,7 @@ describe('keyboard-wedge scanner (global)', () => {
 
   it('a scanned code that starts with the go-to sequence does not change the page', async () => {
     await shell();
-    const user = userEvent.setup();
-    await user.keyboard('gas-nothing{Enter}');
+    scanBurst('gas-nothing');
     expect(await screen.findByText('No asset matches "gas-nothing".')).toBeVisible();
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(router.push).not.toHaveBeenCalled();

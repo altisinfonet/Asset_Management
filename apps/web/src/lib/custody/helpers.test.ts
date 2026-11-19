@@ -5,8 +5,8 @@ import {
   createKeyKeeper,
   dateAfter,
   holderOf,
+  CONDITIONS,
   isOverdue,
-  noteWithCondition,
 } from './helpers';
 
 const everything = () => true;
@@ -33,6 +33,7 @@ const held = {
   target_name: 'Maria Reyes',
   checked_out_at: '2026-11-01T09:00:00Z',
   expected_return: '2026-11-10',
+  overdue: true,
 };
 
 describe('availableActions', () => {
@@ -73,11 +74,13 @@ describe('dates', () => {
     expect(dateAfter({ days: 20 }, now)).toBe('2026-12-07');
   });
 
-  it('overdue means the expected return is before today', () => {
-    expect(isOverdue({ expected_return: '2026-11-16' }, now)).toBe(true);
-    expect(isOverdue({ expected_return: '2026-11-17' }, now)).toBe(false);
-    expect(isOverdue({ expected_return: null }, now)).toBe(false);
-    expect(isOverdue(null, now)).toBe(false);
+  it('overdue is the server flag, never derived from the date here', () => {
+    expect(isOverdue({ overdue: true })).toBe(true);
+    expect(isOverdue({ overdue: false })).toBe(false);
+    expect(isOverdue({})).toBe(false);
+    expect(isOverdue(null)).toBe(false);
+    // a due date in the past does not make it overdue without the flag
+    expect(isOverdue({ expected_return: '2020-01-01' } as { overdue?: boolean })).toBe(false);
   });
 });
 
@@ -92,17 +95,9 @@ describe('holderOf', () => {
   });
 });
 
-describe('noteWithCondition', () => {
-  const label = (c: string) => c[0]!.toUpperCase() + c.slice(1);
-  it('puts the condition in front of the note', () => {
-    expect(noteWithCondition('Cracked bezel', 'fair', label, 'Condition')).toBe(
-      'Condition: Fair. Cracked bezel',
-    );
-    expect(noteWithCondition('', 'damaged', label, 'Condition')).toBe('Condition: Damaged.');
-  });
-  it('leaves the note alone when no condition is chosen', () => {
-    expect(noteWithCondition('  as is  ', '', label, 'Condition')).toBe('as is');
-    expect(noteWithCondition('', '', label, 'Condition')).toBe('');
+describe('CONDITIONS', () => {
+  it('are the four values of CheckinRequest.condition', () => {
+    expect([...CONDITIONS]).toEqual(['good', 'fair', 'poor', 'damaged']);
   });
 });
 

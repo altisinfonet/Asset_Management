@@ -52,6 +52,7 @@ export const en = {
   },
   form: {
     required: 'This field is required.',
+    duplicate: 'This value is already in use.',
   },
   nav: {
     primary: 'Primary',
@@ -169,6 +170,8 @@ export const en = {
     locations_other: '{count} locations',
     openAssignments_one: '{count} asset still checked out',
     openAssignments_other: '{count} assets still checked out',
+    loginAccounts_one: '{count} login account',
+    loginAccounts_other: '{count} login accounts',
   },
   dashboard: {
     title: 'Dashboard',

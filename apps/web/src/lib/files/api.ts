@@ -6,6 +6,7 @@ import type {
   AttachmentEntity,
   AttachmentKind,
   AttachmentUpload,
+  FilesSettings,
   Page,
 } from '@/lib/registry/types';
 
@@ -48,6 +49,14 @@ export const attachmentsApi = {
   },
   async archive(id: string): Promise<void> {
     await http().DELETE('/v1/attachments/{id}', { params: { path: { id } } });
+  },
+};
+
+/** `GET /v1/settings/files`: the upload cap that applies to the organisation (`catalog:read`). */
+export const filesSettingsApi = {
+  async get(): Promise<FilesSettings> {
+    const { data } = await http().GET('/v1/settings/files');
+    return data as FilesSettings;
   },
 };
 

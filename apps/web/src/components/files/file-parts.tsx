@@ -16,7 +16,7 @@ import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button, IconButton } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { uiErrorText } from '@/lib/error-text';
+import { megabytes, scanProblemText, uploadErrorText } from '@/lib/files/messages';
 import type { UploadItem } from '@/lib/files/use-uploads';
 import type { ScanStatus } from '@/lib/registry/types';
 
@@ -179,11 +179,14 @@ export function UploadList({
   onCancel,
   onRetry,
   label,
+  limit,
 }: {
   items: UploadItem[];
   onCancel: (key: string) => void;
   onRetry: (key: string) => void;
   label: string;
+  /** The organisation's upload cap, to word a "too large" refusal. */
+  limit?: number;
 }) {
   const { t, formatNumber } = useI18n();
   if (items.length === 0) return null;
@@ -195,14 +198,23 @@ export function UploadList({
       {items.map((item) => {
         const active = item.status === 'uploading' || item.status === 'queued';
         const failed = item.status === 'failed';
+        const rejected = item.status === 'infected' && item.attachment;
         const message = failed
-          ? item.error
-            ? // a refused type or size: the server's message on the field
-              (item.error.fieldErrors[0]?.message ?? uiErrorText(t, item.error))
-            : item.uploadFailure
-              ? t('files.uploadFailed')
-              : ''
-          : '';
+          ? item.rejection
+            ? item.rejection.code === 'empty'
+              ? t('files.errors.empty')
+              : item.rejection.limit
+                ? t('files.errors.tooLarge', { limit: megabytes(item.rejection.limit) })
+                : t('files.errors.tooLargeNoLimit')
+            : item.error
+              ? // a refused type, size or content: worded by the problem's code
+                uploadErrorText(t, item.error, limit)
+              : item.uploadFailure
+                ? t('files.uploadFailed')
+                : ''
+          : rejected
+            ? scanProblemText(t, item.attachment!)
+            : '';
         return (
           <li key={item.key} className="flex flex-col gap-1.5 p-3">
             <div className="flex items-start gap-3">
@@ -236,6 +248,15 @@ export function UploadList({
                 <Button size="sm" onClick={() => onRetry(item.key)}>
                   {t('files.retry')}
                 </Button>
+                <Button size="sm" variant="ghost" onClick={() => onCancel(item.key)}>
+                  {t('files.dismiss')}
+                </Button>
+              </div>
+            ) : rejected ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p role="alert" className="flex-1 text-sm text-danger-text">
+                  {message}
+                </p>
                 <Button size="sm" variant="ghost" onClick={() => onCancel(item.key)}>
                   {t('files.dismiss')}
                 </Button>
@@ -274,7 +295,7 @@ function StatusText({
     case 'ready':
       return <ScanBadge status="clean" />;
     case 'infected':
-      return <ScanBadge status="infected" />;
+      return <ScanBadge status={item.attachment?.scan_status === 'error' ? 'error' : 'infected'} />;
     case 'failed':
       return (
         <Badge tone="danger" icon={CircleAlert}>

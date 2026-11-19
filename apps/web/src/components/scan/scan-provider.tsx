@@ -16,7 +16,6 @@ import type { PersonRef } from '@/components/registry/person-picker';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
-import { useAuth } from '@/lib/auth/auth-context';
 import { createKeyKeeper, holderOf } from '@/lib/custody/helpers';
 import { uiErrorText } from '@/lib/error-text';
 import { isAssetCode, pushRecent } from '@/lib/recent-items';
@@ -96,7 +95,6 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { toast } = useToast();
   const client = useQueryClient();
-  const { can } = useAuth();
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [batch, setBatch] = useState<ScanBatch>({
@@ -106,10 +104,8 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     log: [],
   });
   const batchRef = useRef(batch);
-  const canRef = useRef(can);
   useEffect(() => {
     batchRef.current = batch;
-    canRef.current = can;
   });
   const queue = useRef<Promise<void>>(Promise.resolve());
   const last = useRef<{ code: string; at: number } | null>(null);
@@ -146,7 +142,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       const current = batchRef.current;
       const batching = source === 'panel' && current.mode !== 'open';
       try {
-        const outcome = await resolveScan(text, (permission) => canRef.current(permission));
+        const outcome = await resolveScan(text);
         if (outcome.kind !== 'found') {
           const message =
             outcome.kind === 'ambiguous'

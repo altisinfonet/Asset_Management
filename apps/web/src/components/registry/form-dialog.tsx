@@ -145,7 +145,10 @@ export function FormDialog({
       const byField: Record<string, string> = {};
       for (const fe of ui.fieldErrors) {
         const name = fe.pointer.replace(/^\//, '');
-        if (fields.some((f) => f.name === name)) byField[name] = fe.message;
+        // `duplicate`: the API's own wording is terse ("is already in use"), so say it in full
+        if (fields.some((f) => f.name === name)) {
+          byField[name] = fe.code === 'duplicate' ? t('form.duplicate') : fe.message;
+        }
       }
       setErrors(byField);
       // Show the banner unless every problem landed on a field.

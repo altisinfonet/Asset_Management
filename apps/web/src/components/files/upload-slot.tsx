@@ -5,6 +5,8 @@ import { X } from 'lucide-react';
 import { IconButton } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import { attachmentsApi } from '@/lib/files/api';
+import { megabytes } from '@/lib/files/messages';
+import { useUploadLimit } from '@/lib/files/use-upload-limit';
 import { useUploads } from '@/lib/files/use-uploads';
 import type { AttachmentEntity, AttachmentKind } from '@/lib/registry/types';
 import { FileDropzone, ScanBadge, UploadList } from './file-parts';
@@ -20,6 +22,8 @@ export interface UploadSlotProps {
   onBusyChange?: (busy: boolean) => void;
   accept?: string;
   disabled?: boolean;
+  /** Why a clean file cannot be used (the 422 of the request that linked it), by attachment id. */
+  errors?: Record<string, string>;
   /** Most files allowed (the API takes up to 10 `attachment_ids`). */
   max?: number;
 }
@@ -38,6 +42,7 @@ export function UploadSlot({
   onBusyChange,
   accept = 'image/*',
   disabled,
+  errors,
   max = 4,
 }: UploadSlotProps) {
   const t = useT();
@@ -46,10 +51,12 @@ export function UploadSlot({
     idsRef.current = value;
   });
 
+  const limit = useUploadLimit();
   const uploads = useUploads({
     entityType,
     entityId,
     kind,
+    maxBytes: limit,
     onReady: (attachment) => onChange([...idsRef.current, attachment.id]),
     onRemoved: (attachment) => {
       onChange(idsRef.current.filter((id) => id !== attachment.id));
@@ -81,28 +88,41 @@ export function UploadSlot({
         onFiles={uploads.add}
         buttonLabel={t('files.addPhoto')}
         dropLabel={t('files.dropPhoto')}
-        hint={t('files.photoHint')}
+        hint={
+          limit ? t('files.photoHintWithSize', { limit: megabytes(limit) }) : t('files.photoHint')
+        }
       />
       <UploadList
         label={t('files.uploads')}
+        limit={limit}
         items={pending}
         onCancel={uploads.remove}
         onRetry={uploads.retry}
       />
       {ready.length > 0 ? (
         <ul aria-label={t('files.attached')} className="flex flex-col gap-1">
-          {ready.map((item) => (
-            <li key={item.key} className="flex items-center gap-2 text-base">
-              <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
-              <ScanBadge status="clean" />
-              <IconButton
-                icon={X}
-                size="icon-sm"
-                label={t('files.removeFromForm', { name: item.file.name })}
-                onClick={() => uploads.remove(item.key)}
-              />
-            </li>
-          ))}
+          {ready.map((item) => {
+            const problem = item.attachment ? errors?.[item.attachment.id] : undefined;
+            return (
+              <li key={item.key} className="flex flex-col gap-0.5 text-base">
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
+                  <ScanBadge status="clean" />
+                  <IconButton
+                    icon={X}
+                    size="icon-sm"
+                    label={t('files.removeFromForm', { name: item.file.name })}
+                    onClick={() => uploads.remove(item.key)}
+                  />
+                </span>
+                {problem ? (
+                  <span role="alert" className="text-sm text-danger-text">
+                    {problem}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>

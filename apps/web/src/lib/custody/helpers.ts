@@ -1,4 +1,4 @@
-import type { Asset, AssignmentSummary } from '@/lib/registry/types';
+import type { Asset, AssignmentSummary, CheckinRequest } from '@/lib/registry/types';
 
 /**
  * Pure helpers of the custody flows (M2-LIFE-07): which actions an asset offers, due dates, the
@@ -51,12 +51,11 @@ export function dateAfter(
   return isoDate(date);
 }
 
-/** True when `expected` (a date) is before today: the asset is overdue. */
+/** The server decides what is overdue (`overdue` is computed against today's UTC date); never derive it here. */
 export function isOverdue(
-  assignment: Pick<AssignmentSummary, 'expected_return'> | null | undefined,
-  now: Date = new Date(),
+  assignment: Pick<AssignmentSummary, 'overdue'> | null | undefined,
 ): boolean {
-  return !!assignment?.expected_return && assignment.expected_return < today(now);
+  return assignment?.overdue === true;
 }
 
 export type TargetType = 'person' | 'location' | 'asset';
@@ -76,22 +75,14 @@ export function holderOf(asset: Pick<Asset, 'current_assignment'>): {
   };
 }
 
-/** The condition choices of the check-in form. The API has no condition field: it travels in the note. */
-export const CONDITIONS = ['good', 'fair', 'damaged'] as const;
+/** The condition choices of the check-in form: `CheckinRequest.condition` of the contract. */
+export const CONDITIONS = [
+  'good',
+  'fair',
+  'poor',
+  'damaged',
+] as const satisfies readonly NonNullable<CheckinRequest['condition']>[];
 export type Condition = (typeof CONDITIONS)[number];
-
-/** "Condition: Fair. <note>" - the note the check-in is sent with (empty when there is nothing to say). */
-export function noteWithCondition(
-  note: string,
-  condition: Condition | '',
-  conditionLabel: (condition: Condition) => string,
-  prefix: string,
-): string {
-  const trimmed = note.trim();
-  if (!condition) return trimmed;
-  const head = `${prefix}: ${conditionLabel(condition)}.`;
-  return trimmed ? `${head} ${trimmed}` : head;
-}
 
 /**
  * Retry key for one logical request. The same key may be sent again only with the same body (a

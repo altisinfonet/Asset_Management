@@ -1,11 +1,7 @@
 import { ApiError } from '@assettracker/api-client';
 import { assetsApi } from '@/lib/registry/api';
 import type { Asset, ScanAction } from '@/lib/registry/types';
-import {
-  availableActions,
-  type CustodyAction,
-  type CustodyPermission,
-} from '@/lib/custody/helpers';
+import type { CustodyAction } from '@/lib/custody/helpers';
 import { extractScanCode, isScannable } from './parse';
 
 export type ScanOutcome =
@@ -18,16 +14,18 @@ export type ScanOutcome =
       code: string;
     }
   | { kind: 'not_found'; code: string }
+  /** `409 conflict`: several assets share this serial number. */
   | { kind: 'ambiguous'; code: string };
 
 const CUSTODY: ReadonlySet<ScanAction> = new Set(['checkout', 'checkin', 'transfer']);
 
 /**
- * Resolve scanned or typed text to an asset: `GET /v1/scan/resolve` (label code or tag, also from
- * a label URL), then an exact serial number lookup as a fallback. Only `404` means "no match";
- * every other failure is thrown for the caller to report.
+ * Resolve scanned or typed text to an asset with one call, `GET /v1/scan/resolve`: the server
+ * matches the label code, then the asset tag, then an exact serial number (also from a label URL).
+ * `404` means "no match" and `409` that a serial belongs to several assets; every other failure is
+ * thrown for the caller to report.
  */
-export async function resolveScan(raw: string, can: CustodyPermission): Promise<ScanOutcome> {
+export async function resolveScan(raw: string): Promise<ScanOutcome> {
   const code = extractScanCode(raw);
   if (!isScannable(code)) return { kind: 'not_found', code };
   try {
@@ -40,18 +38,8 @@ export async function resolveScan(raw: string, can: CustodyPermission): Promise<
       code,
     };
   } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 404) throw err;
+    if (err instanceof ApiError && err.status === 404) return { kind: 'not_found', code };
+    if (err instanceof ApiError && err.status === 409) return { kind: 'ambiguous', code };
+    throw err;
   }
-  const bySerial = await assetsApi.list({ serial: code, limit: 2, archived: 'exclude' });
-  if (bySerial.data.length === 1) {
-    const asset = bySerial.data[0]!;
-    return {
-      kind: 'found',
-      asset,
-      allowed: availableActions(asset, can),
-      matchedBy: 'serial',
-      code,
-    };
-  }
-  return bySerial.data.length > 1 ? { kind: 'ambiguous', code } : { kind: 'not_found', code };
 }

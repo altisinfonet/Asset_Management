@@ -35,6 +35,15 @@ export type MockAttachment = Rec<S['Attachment']> & {
   archived_at?: string | null;
 };
 
+/** The stored files settings; the effective cap is derived on read (`tier_max_upload_bytes` is the plan's). */
+export interface MockFilesSettings {
+  strip_exif_original: boolean;
+  max_upload_bytes: number | null;
+  tier_max_upload_bytes: number;
+  /** The ETag of the settings (the tenant row version). */
+  version: number;
+}
+
 export interface RegistryData {
   categories: MockCategory[];
   customFields: MockField[];
@@ -49,6 +58,8 @@ export interface RegistryData {
   assignments: MockAssignment[];
   attachments: MockAttachment[];
   history: S['HistoryEvent'][];
+  /** `GET/PUT /v1/settings/files`: the organisation's plan cap and its own override. */
+  filesSettings: MockFilesSettings;
   /** Next tag number per full tag prefix (template prefix + category prefix), as the API counts. */
   tagCounters: Record<string, number>;
   /** The tenant's tag numbering template and its settings version (the ETag of the template). */
@@ -78,11 +89,14 @@ export function uid(kind: Kind, n: number): string {
   return `0190a6b2-${KIND_CODE[kind]}-7000-8000-${String(n).padStart(12, '0')}`;
 }
 
-/** Ids a created resource gets (kept apart from the seeded ranges). */
+/**
+ * Ids a created resource gets (kept apart from the seeded ranges). A well-formed UUID: the API
+ * validates ids with `z.uuid()`, so the last group stays at 12 digits.
+ */
 let created = 0;
 export function newResourceId(kind: Kind): string {
   created += 1;
-  return uid(kind, 900_000 + Date.now() + created);
+  return uid(kind, 800_000_000_000 + (Date.now() % 100_000_000_000) + created);
 }
 
 // ---- roles ---------------------------------------------------------------------------------
@@ -491,7 +505,10 @@ export function buildSeed(): RegistryData {
         event_type: 'created',
         actor_type: 'user',
         actor_id: '0190a6b2-0000-7000-8000-000000000001',
-        summary: 'Created',
+        assignment_id: null,
+        transfer_id: null,
+        summary: `Asset ${asset.asset_tag} created`,
+        payload: { status_id: asset.status_id, location_id: asset.location_id },
       });
       tagCounters[category.tag_prefix || 'AT-'] = n + 1;
     }
@@ -590,6 +607,13 @@ export function buildSeed(): RegistryData {
     assignments: custody.assignments,
     attachments: custody.attachments,
     history,
+    // the mock organisation is on the 25 MiB plan (`TIER_MAX_BYTES.starter` of the API)
+    filesSettings: {
+      strip_exif_original: false,
+      max_upload_bytes: null,
+      tier_max_upload_bytes: 25 * 1024 * 1024,
+      version: 1,
+    },
     tagCounters,
     tagTemplate: { prefix: '', width: 5, use_category_prefix: true },
     settingsVersion: 1,

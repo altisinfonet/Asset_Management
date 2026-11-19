@@ -165,16 +165,7 @@ export interface CustodyOutcome<T> {
   replayed: boolean;
 }
 
-/**
- * The typed client remembers the ETag of every response under the request's own path and replays
- * it as `If-Match`. For an action path (`/v1/assets/{id}/checkout`) that ETag is the asset's version
- * after the *previous* action, never the one the user saw: forget it, so only the ETag the caller
- * passes (or none) is sent.
- */
-function forgetActionEtag(id: string, action: 'checkout' | 'checkin' | 'transfer') {
-  getApi().etags.forget(`/v1/assets/${id}/${action}`);
-}
-
+/** The client never records or replays ETags of POST action paths: `If-Match` is the caller's only. */
 const custodyHeaders = (options: CustodyCallOptions) => ({
   'Idempotency-Key': options.idempotencyKey,
   ...(options.etag ? { 'If-Match': options.etag } : {}),
@@ -194,7 +185,6 @@ export const custodyApi = {
     body: CheckoutRequest,
     options: CustodyCallOptions,
   ): Promise<CustodyOutcome<CustodyResult>> {
-    forgetActionEtag(id, 'checkout');
     const { data, response } = await http().POST('/v1/assets/{id}/checkout', {
       params: { path: { id }, header: custodyHeaders(options) },
       body,
@@ -206,7 +196,6 @@ export const custodyApi = {
     body: CheckinRequest,
     options: CustodyCallOptions,
   ): Promise<CustodyOutcome<CustodyResult>> {
-    forgetActionEtag(id, 'checkin');
     const { data, response } = await http().POST('/v1/assets/{id}/checkin', {
       params: { path: { id }, header: custodyHeaders(options) },
       body,
@@ -218,7 +207,6 @@ export const custodyApi = {
     body: TransferRequest,
     options: CustodyCallOptions,
   ): Promise<CustodyOutcome<TransferResult>> {
-    forgetActionEtag(id, 'transfer');
     const { data, response } = await http().POST('/v1/assets/{id}/transfer', {
       params: { path: { id }, header: custodyHeaders(options) },
       body,
@@ -519,6 +507,32 @@ export const peopleApi = {
     await http().DELETE('/v1/people/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
     });
+  },
+  /**
+   * Deactivate a person (`PATCH status: inactive`). One who still holds assets answers `409` with
+   * `usage.open_assignments`; `force` with a `reason` deactivates anyway (audited, not stored).
+   */
+  async deactivate(
+    id: string,
+    options: { force?: boolean; reason?: string } = {},
+    etag?: string,
+  ): Promise<Versioned<Person>> {
+    const ifMatch = await freshEtag(etag, () => peopleApi.get(id));
+    const { data } = await http().PATCH('/v1/people/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+      body: {
+        status: 'inactive',
+        ...(options.force ? { force: true, reason: options.reason } : {}),
+      },
+    });
+    return versioned(data as Person, `/v1/people/${id}`);
+  },
+  /** `GET /v1/people/{id}/history`: the custody events of everything the person held, newest first. */
+  async history(id: string, query: Query<'listPersonHistory'> = {}): Promise<Page<HistoryEvent>> {
+    const { data } = await http().GET('/v1/people/{id}/history', {
+      params: { path: { id }, query },
+    });
+    return data as Page<HistoryEvent>;
   },
   /** `GET /v1/people/{id}/assignments`: custody periods of the person (open ones by default). */
   async assignments(

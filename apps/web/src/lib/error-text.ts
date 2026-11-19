@@ -11,6 +11,7 @@ const USAGE_LABELS = {
   locations: 'usage.locations',
   open_assignments: 'usage.openAssignments',
   assignments: 'usage.openAssignments',
+  login_accounts: 'usage.loginAccounts',
 } as const;
 
 /** "12 assets, 3 models" for the `usage` of a 409; empty when the problem carried none. */

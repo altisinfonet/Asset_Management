@@ -15,12 +15,14 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useI18n } from '@/i18n';
+import { useI18n, type Translator } from '@/i18n';
 import type { HistoryEvent } from '@/lib/registry/types';
+import { routes } from '@/lib/routes';
 
 type EventType = HistoryEvent['event_type'];
 
@@ -50,13 +52,123 @@ export const HISTORY_FILTERS = {
 };
 export type HistoryFilter = keyof typeof HISTORY_FILTERS;
 
-/** "from -> to" of a change event when the payload carries plain values for both. */
-function change(payload: HistoryEvent['payload']): string | null {
-  const from = payload?.from;
-  const to = payload?.to;
-  const plain = (v: unknown): v is string | number =>
-    typeof v === 'string' || typeof v === 'number';
-  return plain(from) && plain(to) ? `${from} → ${to}` : null;
+const isText = (v: unknown): v is string => typeof v === 'string' && v !== '';
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * The facts of an event's `payload`, one short line each, by the shapes the contract documents per
+ * `event_type`: a status or location change (`from_name -> to_name`), the due date and status of a
+ * check-out, the condition and status of a check-in, the two holders of a transfer, the number of
+ * photos. The note has its own line.
+ */
+export function eventFacts(
+  event: Pick<HistoryEvent, 'event_type' | 'payload'>,
+  t: Translator['t'],
+  formatDate: (value: string, options?: Intl.DateTimeFormatOptions) => string,
+): string[] {
+  const p = event.payload ?? {};
+  const facts: string[] = [];
+  const arrow = (from: unknown, to: unknown) =>
+    isText(from) && isText(to) ? `${from} → ${to}` : null;
+  switch (event.event_type) {
+    case 'status_changed':
+    case 'location_changed': {
+      const line = arrow(p.from_name, p.to_name);
+      if (line) facts.push(line);
+      break;
+    }
+    case 'checked_out': {
+      if (isText(p.expected_return)) {
+        facts.push(
+          t('history.due', {
+            date: formatDate(`${p.expected_return}T00:00:00Z`, { timeZone: 'UTC' }),
+          }),
+        );
+      }
+      if (isRecord(p.status)) {
+        const line = arrow(p.status.from, p.status.to);
+        if (line) facts.push(t('history.statusLine', { change: line }));
+      }
+      break;
+    }
+    case 'checked_in': {
+      if (isText(p.condition)) {
+        facts.push(
+          t('custody.conditionNamed', {
+            condition: t(`custody.conditions.${p.condition as 'good'}`),
+          }),
+        );
+      }
+      if (isRecord(p.status)) {
+        const line = arrow(p.status.from, p.status.to);
+        if (line) facts.push(t('history.statusLine', { change: line }));
+      }
+      break;
+    }
+    case 'transferred': {
+      const from = isRecord(p.from) ? p.from.name : null;
+      const to = isRecord(p.to) ? p.to.name : null;
+      const line = arrow(from, to);
+      if (line) facts.push(line);
+      if (isText(p.reason)) facts.push(t('history.reason', { reason: p.reason }));
+      break;
+    }
+  }
+  if (Array.isArray(p.attachment_ids) && p.attachment_ids.length > 0) {
+    facts.push(t('history.photos', { count: p.attachment_ids.length }));
+  }
+  return facts;
+}
+
+/**
+ * One event of a timeline: icon, what happened, who did it, the server's summary, the facts of the
+ * payload and the note. `showAsset` adds the asset (tag, linked) for a per-person timeline.
+ */
+export function HistoryEventItem({
+  event,
+  showAsset,
+}: {
+  event: HistoryEvent;
+  showAsset?: boolean;
+}) {
+  const { t, formatDateTime, formatDate } = useI18n();
+  const Icon = ICONS[event.event_type] ?? Pencil;
+  const facts = eventFacts(event, t, formatDate);
+  const note = typeof event.payload?.note === 'string' ? event.payload.note : null;
+  const actor =
+    event.actor?.display_name ?? (event.actor_type === 'system' ? t('history.system') : null);
+  return (
+    <li className="flex items-start gap-3 py-3">
+      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-sunken text-muted">
+        <Icon aria-hidden className="size-4" />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="flex flex-wrap items-baseline gap-x-2 text-base">
+          <span className="font-medium">{t(`assetView.events.${event.event_type}`)}</span>
+          {showAsset ? (
+            <Link
+              href={routes.assetView(event.asset_id)}
+              className="rounded-sm font-tag text-primary-text underline underline-offset-2"
+            >
+              {event.asset_tag ?? event.asset_id.slice(0, 8)}
+            </Link>
+          ) : null}
+          {actor ? <span className="text-muted">{t('history.by', { name: actor })}</span> : null}
+        </p>
+        {event.summary ? <p className="break-words text-base">{event.summary}</p> : null}
+        {facts.map((fact) => (
+          <p key={fact} className="text-sm text-muted">
+            {fact}
+          </p>
+        ))}
+        {note ? <p className="break-words text-sm text-muted">{`“${note}”`}</p> : null}
+        <time dateTime={event.at} className="font-tag text-xs text-muted">
+          {formatDateTime(event.at)}
+        </time>
+      </div>
+    </li>
+  );
 }
 
 export interface HistoryTimelineProps {
@@ -87,7 +199,7 @@ export function HistoryTimeline({
   onFilterChange,
   onRetry,
 }: HistoryTimelineProps) {
-  const { t, formatDateTime } = useI18n();
+  const { t } = useI18n();
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       <label className="flex w-fit items-center gap-2 text-sm font-medium">
@@ -118,35 +230,9 @@ export function HistoryTimeline({
           aria-label={t('assetView.tabs.history')}
           className="flex flex-col divide-y divide-border"
         >
-          {events.map((event) => {
-            const Icon = ICONS[event.event_type] ?? Pencil;
-            const detail = change(event.payload);
-            const note = typeof event.payload?.note === 'string' ? event.payload.note : null;
-            const actor =
-              event.actor?.display_name ??
-              (event.actor_type === 'system' ? t('history.system') : null);
-            return (
-              <li key={event.id} className="flex items-start gap-3 py-3">
-                <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-sunken text-muted">
-                  <Icon aria-hidden className="size-4" />
-                </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <p className="flex flex-wrap items-baseline gap-x-2 text-base">
-                    <span className="font-medium">{t(`assetView.events.${event.event_type}`)}</span>
-                    {actor ? (
-                      <span className="text-muted">{t('history.by', { name: actor })}</span>
-                    ) : null}
-                  </p>
-                  {event.summary ? <p className="break-words text-base">{event.summary}</p> : null}
-                  {detail ? <p className="text-sm text-muted">{detail}</p> : null}
-                  {note ? <p className="break-words text-sm text-muted">{`“${note}”`}</p> : null}
-                  <time dateTime={event.at} className="font-tag text-xs text-muted">
-                    {formatDateTime(event.at)}
-                  </time>
-                </div>
-              </li>
-            );
-          })}
+          {events.map((event) => (
+            <HistoryEventItem key={event.id} event={event} />
+          ))}
         </ol>
       )}
       {hasMore ? (

@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AssetStatusBadge } from '@/components/registry/asset-details';
-import { ConfirmDialog } from '@/components/registry/confirm-dialog';
+import { HistoryEventItem } from '@/components/registry/history-timeline';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -24,9 +24,10 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { availableActions, isOverdue } from '@/lib/custody/helpers';
 import { assetsApi, peopleApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
-import type { Asset, Assignment, Person } from '@/lib/registry/types';
+import type { Asset, Assignment, HistoryEvent, Person } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
 import { PersonFormDialog } from '../person-form';
+import { PersonArchiveDialog } from './person-archive-dialog';
 
 const TABS = ['overview', 'assets', 'history'] as const;
 type Tab = (typeof TABS)[number];
@@ -136,7 +137,7 @@ function PersonById({ id }: { id: string }) {
   const manage = can('person:manage');
   const refresh = async () => {
     await Promise.all(
-      ['person', 'people', 'person-held', 'person-history'].map((key) =>
+      ['person', 'people', 'person-held', 'person-history', 'person-returned'].map((key) =>
         client.invalidateQueries({ queryKey: [key] }),
       ),
     );
@@ -209,6 +210,7 @@ function PersonById({ id }: { id: string }) {
             onRetry={() => void held.refetch()}
             onDone={refresh}
           />
+          <ReturnedAssets personId={id} personName={value.display_name} />
         </TabsContent>
         <TabsContent value="history">
           <PersonHistory personId={id} />
@@ -224,29 +226,21 @@ function PersonById({ id }: { id: string }) {
           toast({ variant: 'success', title: t('people.updated', { name: saved.display_name }) });
         }}
       />
-      <ConfirmDialog
+      <PersonArchiveDialog
         open={archiving}
         onOpenChange={setArchiving}
-        title={t('personView.archiveTitle', { name: value.display_name })}
-        description={t('personView.archiveDescription')}
-        confirmLabel={t('common.archive')}
-        destructive
-        onConfirm={async () => {
-          await peopleApi.archive(id, etag);
+        person={{ value, etag }}
+        onDone={async (outcome) => {
           await refresh();
           toast({
             variant: 'success',
-            title: t('personView.archived', { name: value.display_name }),
+            title: t(outcome === 'archived' ? 'personView.archived' : 'personView.deactivated', {
+              name: value.display_name,
+            }),
           });
-          router.replace(routes.people);
+          if (outcome === 'archived') router.replace(routes.people);
         }}
-      >
-        {(held.data?.data.length ?? 0) > 0 ? (
-          <Banner tone="warning">
-            {t('personView.archiveHolding', { count: held.data?.data.length ?? 0 })}
-          </Banner>
-        ) : null}
-      </ConfirmDialog>
+      />
     </>
   );
 }
@@ -419,40 +413,109 @@ function HeldAssets({
   );
 }
 
-/** The asset of an assignment row: tag and name, fetched once and cached (the API sends only the id). */
-function AssetRef({ id }: { id: string }) {
-  const query = useQuery({
-    queryKey: ['asset-ref', id],
-    queryFn: async () => (await assetsApi.get(id)).value,
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
-  const asset = query.data;
-  if (!asset) return <span className="font-tag text-muted">{id.slice(0, 8)}</span>;
-  return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-2">
-      <Link
-        href={routes.assetView(asset.id)}
-        className="rounded-sm font-tag text-primary-text underline underline-offset-2"
-      >
-        {asset.asset_tag}
-      </Link>
-      <span>{asset.name ?? ''}</span>
-    </span>
-  );
-}
-
-function PersonHistory({ personId }: { personId: string }) {
-  const { t, formatDateTime, formatDate } = useI18n();
-  const history = useInfiniteQuery({
-    queryKey: ['person-history', personId],
+/**
+ * What the person handed back: the closed custody periods (`GET /v1/people/{id}/assignments?state=closed`).
+ * The rows carry the asset's tag and name, the condition it came back in and the check-in note, so
+ * no asset is fetched per row.
+ */
+function ReturnedAssets({ personId, personName }: { personId: string; personName: string }) {
+  const { t, formatDateTime } = useI18n();
+  const returned = useInfiniteQuery({
+    queryKey: ['person-returned', personId],
     queryFn: ({ pageParam }) =>
-      peopleApi.assignments(personId, { state: 'all', cursor: pageParam, limit: 20 }),
+      peopleApi.assignments(personId, { state: 'closed', cursor: pageParam, limit: 20 }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) =>
       last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
   });
-  const rows: Assignment[] = history.data?.pages.flatMap((page) => page.data) ?? [];
+  const rows: Assignment[] = returned.data?.pages.flatMap((page) => page.data) ?? [];
+
+  return (
+    <section
+      aria-labelledby="person-returned-heading"
+      className="mt-6 flex max-w-3xl flex-col gap-2"
+    >
+      <h2 id="person-returned-heading" className="text-lg font-semibold">
+        {t('personView.returnedSection')}
+      </h2>
+      {returned.isLoading ? (
+        <Skeleton className="h-16 w-full" />
+      ) : returned.error ? (
+        <Banner
+          tone="danger"
+          action={<Button onClick={() => void returned.refetch()}>{t('common.retry')}</Button>}
+        >
+          {t('common.loadFailed')}
+        </Banner>
+      ) : rows.length === 0 ? (
+        <p className="text-base text-muted">{t('personView.noReturned')}</p>
+      ) : (
+        <ul
+          aria-label={t('personView.returnedLabel', { name: personName })}
+          className="flex flex-col divide-y divide-border"
+        >
+          {rows.map((row) => (
+            <li key={row.id} className="flex flex-col gap-0.5 py-3">
+              <p className="flex flex-wrap items-baseline gap-x-2 text-base">
+                {row.asset_id ? (
+                  <>
+                    <Link
+                      href={routes.assetView(row.asset_id)}
+                      className="rounded-sm font-tag text-primary-text underline underline-offset-2"
+                    >
+                      {row.asset_tag ?? row.asset_id.slice(0, 8)}
+                    </Link>
+                    <span>{row.asset_name ?? ''}</span>
+                  </>
+                ) : (
+                  t('personView.accessory', { count: row.quantity })
+                )}
+              </p>
+              <p className="text-sm text-muted">
+                {t('personView.returnedRow', {
+                  out: formatDateTime(row.checked_out_at),
+                  back: row.checked_in_at ? formatDateTime(row.checked_in_at) : '',
+                })}
+              </p>
+              {row.checkin_condition ? (
+                <p className="text-sm text-muted">
+                  {t('personView.conditionNote', {
+                    condition: t(`custody.conditions.${row.checkin_condition}`),
+                  })}
+                </p>
+              ) : null}
+              {row.checkin_note ? (
+                <p className="break-words text-sm text-muted">{`“${row.checkin_note}”`}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+      {returned.hasNextPage ? (
+        <div>
+          <Button
+            loading={returned.isFetchingNextPage}
+            onClick={() => void returned.fetchNextPage()}
+          >
+            {t('assetView.loadMore')}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Everything that happened to what this person held (`GET /v1/people/{id}/history`), newest first. */
+function PersonHistory({ personId }: { personId: string }) {
+  const { t } = useI18n();
+  const history = useInfiniteQuery({
+    queryKey: ['person-history', personId],
+    queryFn: ({ pageParam }) => peopleApi.history(personId, { cursor: pageParam, limit: 20 }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) =>
+      last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
+  });
+  const events: HistoryEvent[] = history.data?.pages.flatMap((page) => page.data) ?? [];
 
   if (history.isLoading) return <Skeleton className="h-24 w-full max-w-3xl" />;
   if (history.error) {
@@ -465,37 +528,17 @@ function PersonHistory({ personId }: { personId: string }) {
       </Banner>
     );
   }
-  if (rows.length === 0) return <p className="text-base text-muted">{t('personView.noHistory')}</p>;
+  if (events.length === 0) {
+    return <p className="text-base text-muted">{t('personView.noHistory')}</p>;
+  }
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       <ol
         aria-label={t('personView.tabs.history')}
         className="flex flex-col divide-y divide-border"
       >
-        {rows.map((row) => (
-          <li key={row.id} className="flex flex-col gap-0.5 py-3">
-            <p className="text-base">
-              {row.asset_id ? (
-                <AssetRef id={row.asset_id} />
-              ) : (
-                t('personView.accessory', { count: row.quantity })
-              )}
-            </p>
-            <p className="text-sm text-muted">
-              {t('personView.checkedOutOn', { date: formatDateTime(row.checked_out_at) })}
-              {row.expected_return
-                ? ` - ${t('personView.dueOn', { date: formatDate(`${row.expected_return}T00:00:00Z`, { timeZone: 'UTC' }) })}`
-                : ''}
-              {' - '}
-              {row.checked_in_at
-                ? t('personView.returnedOn', { date: formatDateTime(row.checked_in_at) })
-                : t('personView.stillOut')}
-            </p>
-            {row.note ? <p className="break-words text-sm text-muted">{`“${row.note}”`}</p> : null}
-            {row.checkin_note ? (
-              <p className="break-words text-sm text-muted">{`“${row.checkin_note}”`}</p>
-            ) : null}
-          </li>
+        {events.map((event) => (
+          <HistoryEventItem key={event.id} event={event} showAsset />
         ))}
       </ol>
       {history.hasNextPage ? (

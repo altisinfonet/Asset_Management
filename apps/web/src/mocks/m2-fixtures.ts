@@ -211,10 +211,20 @@ export function seedCustody(input: {
       actor_type: 'user',
       actor_id: actor[0],
       assignment_id: assignmentId,
+      transfer_id: null,
       summary,
       payload,
     });
   };
+  const statusName = (stateType: MockStatus['state_type']) =>
+    input.statusLabels.find((s) => s.state_type === stateType)?.name ?? '';
+  /** Payload keys every custody event carries (`HistoryEvent.payload` of the contract). */
+  const custodyPayload = (assignment: MockAssignment, holder: MockPerson) => ({
+    assignment_id: assignment.id,
+    target_type: 'person',
+    target_id: holder.id,
+    target_name: holder.display_name,
+  });
 
   let k = 0;
   for (const asset of input.assets) {
@@ -243,6 +253,9 @@ export function seedCustody(input: {
       acceptance_state: 'not_required',
       note: null,
       checkin_note: null,
+      checkin_condition: null,
+      attachment_ids: [],
+      checkin_attachment_ids: [],
       _v: 1,
     };
     assignments.push(assignment);
@@ -261,7 +274,11 @@ export function seedCustody(input: {
       'checked_out',
       `Checked out to ${holder.display_name}`,
       assignment.id,
-      { person_id: holder.id, ...(due ? { expected_return: due } : {}) },
+      {
+        ...custodyPayload(assignment, holder),
+        expected_return: due,
+        status: { from: statusName('deployable'), to: statusName('deployed') },
+      },
     );
     k += 1;
   }
@@ -269,6 +286,7 @@ export function seedCustody(input: {
   // Past custody of the first ready assets: out and back, with a note on the way in.
   const ready = input.statusLabels.find((s) => s.state_type === 'deployable');
   let closed = 0;
+  const photos: MockAttachment[] = [];
   for (const asset of input.assets) {
     if (closed >= 12) break;
     if (asset.archived_at || !ready || asset.status_id !== ready.id || asset.current_assignment) {
@@ -278,6 +296,8 @@ export function seedCustody(input: {
     a += 1;
     const out = NOW - (70 + closed * 3) * DAY;
     const back = out + 25 * DAY;
+    const condition = (['fair', 'good', null] as const)[closed % 3] ?? null;
+    const note = closed % 3 === 0 ? 'Cracked bezel' : null;
     const assignment: MockAssignment = {
       id: uid('assignment', a),
       asset_id: asset.id,
@@ -296,9 +316,38 @@ export function seedCustody(input: {
       checkin_location_id: asset.location_id,
       acceptance_state: 'not_required',
       note: null,
-      checkin_note: closed % 3 === 0 ? 'Condition: Fair. Cracked bezel.' : null,
+      checkin_note: note,
+      checkin_condition: condition,
+      attachment_ids: [],
+      checkin_attachment_ids: [],
       _v: 1,
     };
+    // The first return came with a photo of the damage (listed under the assignment).
+    if (closed === 0) {
+      const photoId = uid('attachment', 100);
+      assignment.checkin_attachment_ids = [photoId];
+      photos.push({
+        id: photoId,
+        entity_type: 'assignment',
+        entity_id: assignment.id,
+        kind: 'photo',
+        filename: 'bezel-damage.jpg',
+        content_type: 'image/jpeg',
+        size_bytes: 148_200,
+        sha256: null,
+        scan_status: 'clean',
+        scan_detail: null,
+        width: 1200,
+        height: 900,
+        uploaded_at: assignment.checked_in_at,
+        created_at: assignment.checked_in_at!,
+        archived_at: null,
+        stored_bytes: 148_200,
+        scan_due_at: null,
+        scan_result: 'clean',
+        _v: 1,
+      } as MockAttachment);
+    }
     assignments.push(assignment);
     event(
       asset,
@@ -307,7 +356,9 @@ export function seedCustody(input: {
       `Checked out to ${holder.display_name}`,
       assignment.id,
       {
-        person_id: holder.id,
+        ...custodyPayload(assignment, holder),
+        expected_return: assignment.expected_return,
+        status: { from: statusName('deployable'), to: statusName('deployed') },
       },
     );
     event(
@@ -317,7 +368,13 @@ export function seedCustody(input: {
       `Checked in from ${holder.display_name}`,
       assignment.id,
       {
-        ...(assignment.checkin_note ? { note: assignment.checkin_note } : {}),
+        ...custodyPayload(assignment, holder),
+        status: { from: statusName('deployed'), to: statusName('deployable') },
+        ...(condition ? { condition } : {}),
+        ...(note ? { note } : {}),
+        ...(assignment.checkin_attachment_ids!.length > 0
+          ? { attachment_ids: assignment.checkin_attachment_ids }
+          : {}),
       },
     );
     closed += 1;
@@ -325,7 +382,7 @@ export function seedCustody(input: {
 
   // ---- attachments on AT-00124 ------------------------------------------------------------------------
   const target = input.assets.find((x) => x.asset_tag === 'AT-00124');
-  const attachments: MockAttachment[] = [];
+  const attachments: MockAttachment[] = [...photos];
   if (target) {
     const att = (
       n: number,
@@ -345,12 +402,15 @@ export function seedCustody(input: {
         size_bytes,
         sha256: null,
         scan_status,
+        scan_detail: scan_status === 'infected' ? 'Eicar-Test-Signature' : null,
+        width: content_type.startsWith('image/') ? 640 : null,
+        height: content_type.startsWith('image/') ? 480 : null,
         uploaded_at: iso(NOW - n * DAY),
         created_at: iso(NOW - n * DAY),
         archived_at: null,
         stored_bytes: size_bytes,
         scan_due_at: null,
-        scan_result: 'clean',
+        scan_result: scan_status === 'infected' ? 'infected' : 'clean',
         _v: 1,
       } as MockAttachment;
       attachments.push(attachment);

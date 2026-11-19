@@ -29,7 +29,7 @@ export interface ProblemDetails {
   detail?: string;
   code?: string;
   request_id?: string;
-  errors?: Array<{ pointer: string; message: string }>;
+  errors?: Array<{ pointer: string; message: string; code?: string }>;
   /** On a `409` that refuses to delete or change something still in use: what references it. */
   usage?: Record<string, number>;
 }
@@ -50,6 +50,8 @@ export type ApiErrorKind =
 export interface FieldError {
   pointer: string;
   message: string;
+  /** Machine code of the complaint (`duplicate`, `not-found`, `wrong-owner`, `type-not-allowed` ...). */
+  code?: string;
 }
 
 export interface UiError {

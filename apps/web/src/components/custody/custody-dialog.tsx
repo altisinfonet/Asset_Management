@@ -30,7 +30,6 @@ import {
   CONDITIONS,
   createKeyKeeper,
   holderOf,
-  noteWithCondition,
   today,
   type Condition,
   type CustodyAction,
@@ -262,6 +261,66 @@ function fieldErrorsOf(ui: UiError): FieldErrors {
   return out;
 }
 
+/** What each `422` code of a photo (`/attachment_ids/<index>`) means to the person at the form. */
+const PHOTO_ERROR_KEYS = {
+  'not-found': 'custody.photoErrors.notFound',
+  'wrong-owner': 'custody.photoErrors.wrongOwner',
+  rejected: 'custody.photoErrors.rejected',
+} as const;
+
+/**
+ * The refusals of the photos by attachment id: the pointer `/attachment_ids/<i>` names the i-th id
+ * of the request, which is the file the user attached i-th.
+ */
+function photoErrorsOf(
+  t: ReturnType<typeof useI18n>['t'],
+  ui: UiError | null,
+  ids: readonly string[] = [],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const fe of ui?.fieldErrors ?? []) {
+    const match = /^\/attachment_ids\/(\d+)$/.exec(fe.pointer);
+    const id = match ? ids[Number(match[1])] : undefined;
+    if (!id) continue;
+    out[id] =
+      fe.code && fe.code in PHOTO_ERROR_KEYS
+        ? t(PHOTO_ERROR_KEYS[fe.code as keyof typeof PHOTO_ERROR_KEYS])
+        : fe.message;
+  }
+  return out;
+}
+
+/** The optional photos of one asset's custody change, uploaded against the asset and linked by the request. */
+function PhotoField({
+  asset,
+  photos,
+  onChange,
+  onBusyChange,
+  errors,
+}: {
+  asset: Asset;
+  photos: string[];
+  onChange: (ids: string[]) => void;
+  onBusyChange: (busy: boolean) => void;
+  errors: Record<string, string>;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-base font-medium">{t('custody.photo')}</span>
+      <UploadSlot
+        entityType="asset"
+        entityId={asset.id}
+        kind="photo"
+        value={photos}
+        onChange={onChange}
+        onBusyChange={onBusyChange}
+        errors={errors}
+      />
+    </div>
+  );
+}
+
 /** Shared mechanics of the three forms: submit state, the banner for an error, refresh after success. */
 function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: FormProps) {
   const { t } = useI18n();
@@ -272,6 +331,9 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
   const [failure, setFailure] = useState<{ ui: UiError; atEtag: string | undefined } | null>(null);
   const error = failure && failure.atEtag === etag ? failure.ui : null;
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  // The refused photos by attachment id, resolved against the ids that were sent (the list the user
+  // sees can change afterwards, the pointer's index cannot).
+  const [photoErrors, setPhotoErrors] = useState<Record<string, string>>({});
   const [results, setResults] = useState<BulkResult[] | null>(null);
   const keeper = useRef(createKeyKeeper());
   const bulkKeys = useRef(new Map<string, ReturnType<typeof createKeyKeeper>>());
@@ -303,6 +365,7 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
     setBusy(true);
     setFailure(null);
     setFieldErrors({});
+    setPhotoErrors({});
     try {
       if (assets.length === 1) {
         const target = assets[0]!;
@@ -342,6 +405,7 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
     } catch (err) {
       const ui = getApi().toUiError(err);
       setFieldErrors(fieldErrorsOf(ui));
+      setPhotoErrors(photoErrorsOf(t, ui, (body as { attachment_ids?: string[] }).attachment_ids));
       setFailure({ ui, atEtag: etag });
       // A definitive refusal changes the situation; a dropped connection keeps the key for the retry.
       if (ui.kind !== 'network' && ui.kind !== 'server') keeper.current.renew();
@@ -369,7 +433,7 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
       }}
     />
   );
-  return { busy, error, fieldErrors, submit, onKeyDown, banner, resultsDialog };
+  return { busy, error, fieldErrors, photoErrors, submit, onKeyDown, banner, resultsDialog };
 }
 
 function CustodyError({
@@ -410,6 +474,13 @@ function CustodyError({
     return (
       <Banner tone="danger" title={t('custody.errors.notOutTitle')} action={reloadButton}>
         {t('custody.errors.notOut')}
+      </Banner>
+    );
+  }
+  if (error.code === 'asset-not-deployable') {
+    return (
+      <Banner tone="danger" title={t('custody.errors.notDeployableTitle')} action={reloadButton}>
+        {t('custody.errors.notDeployable')}
       </Banner>
     );
   }
@@ -489,12 +560,19 @@ function CheckoutForm(props: FormProps) {
   const { t } = useI18n();
   const flow = useCustodyFlow(props);
   const [target, setTarget] = useState<TargetState>(EMPTY_TARGET);
+  const single = props.assets.length === 1;
   const [expected, setExpected] = useState('');
+  const [statusId, setStatusId] = useState('');
   const [note, setNote] = useState('');
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [local, setLocal] = useState<FieldErrors>({});
   const errors = { ...flow.fieldErrors, ...local };
   const targetError =
     local.target ?? errors.person_id ?? errors.location_id ?? errors.target_asset_id;
+  const deployed = props.lookups.statuses.filter(
+    (s) => !s.archived_at && s.state_type === 'deployed',
+  );
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -506,7 +584,9 @@ function CheckoutForm(props: FormProps) {
     const body: CheckoutRequest = {
       ...targetBody(target),
       ...(expected ? { expected_return: expected } : {}),
+      ...(statusId ? { status_label_id: statusId } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
+      ...(photos.length > 0 ? { attachment_ids: photos } : {}),
     };
     const who =
       target.type === 'person'
@@ -540,12 +620,38 @@ function CheckoutForm(props: FormProps) {
         onChange={setExpected}
         error={errors.expected_return}
       />
+      {deployed.length > 1 ? (
+        <Field label={t('custody.checkout.statusAfter')} error={errors.status_label_id}>
+          {(control) => (
+            <Select
+              {...control}
+              invalid={!!errors.status_label_id}
+              value={statusId || NONE}
+              onValueChange={(v) => setStatusId(v === NONE ? '' : v)}
+              options={[
+                { value: NONE, label: t('custody.checkout.statusDefault') },
+                ...deployed.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+            />
+          )}
+        </Field>
+      ) : null}
       <NoteField label={t('custody.note')} value={note} onChange={setNote} error={errors.note} />
+      {single ? (
+        <PhotoField
+          asset={props.asset}
+          photos={photos}
+          onChange={setPhotos}
+          onBusyChange={setUploading}
+          errors={flow.photoErrors}
+        />
+      ) : null}
       <Footer
         busy={flow.busy}
+        disabled={uploading}
         label={t('custody.checkout.submit')}
         onCancel={props.onClose}
-        hint={t('custody.shortcut')}
+        hint={uploading ? t('custody.waitingForPhoto') : t('custody.shortcut')}
       />
       {flow.resultsDialog}
     </form>
@@ -572,16 +678,11 @@ function CheckinForm(props: FormProps) {
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const text = noteWithCondition(
-      note,
-      condition,
-      (c) => t(`custody.conditions.${c}`),
-      t('custody.checkin.conditionPrefix'),
-    );
     const body: CheckinRequest = {
       ...(statusId ? { status_id: statusId } : {}),
       ...(locationId ? { checkin_location_id: locationId } : {}),
-      ...(text ? { note: text } : {}),
+      ...(condition ? { condition } : {}),
+      ...(note.trim() ? { note: note.trim() } : {}),
       ...(photos.length > 0 ? { attachment_ids: photos } : {}),
     };
     void flow.submit<CustodyResult>(
@@ -596,10 +697,15 @@ function CheckinForm(props: FormProps) {
   return (
     <form onSubmit={onSubmit} onKeyDown={flow.onKeyDown} noValidate className="flex flex-col gap-4">
       {flow.banner}
-      <Field label={t('custody.checkin.condition')} hint={t('custody.checkin.conditionHint')}>
+      <Field
+        label={t('custody.checkin.condition')}
+        hint={t('custody.checkin.conditionHint')}
+        error={errors.condition}
+      >
         {(control) => (
           <Select
             {...control}
+            invalid={!!errors.condition}
             value={condition || NONE}
             onValueChange={(v) => setCondition(v === NONE ? '' : (v as Condition))}
             options={[
@@ -640,17 +746,13 @@ function CheckinForm(props: FormProps) {
       </Field>
       <NoteField label={t('custody.note')} value={note} onChange={setNote} error={errors.note} />
       {single ? (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-base font-medium">{t('custody.checkin.photo')}</span>
-          <UploadSlot
-            entityType="asset"
-            entityId={props.asset.id}
-            kind="photo"
-            value={photos}
-            onChange={setPhotos}
-            onBusyChange={setUploading}
-          />
-        </div>
+        <PhotoField
+          asset={props.asset}
+          photos={photos}
+          onChange={setPhotos}
+          onBusyChange={setUploading}
+          errors={flow.photoErrors}
+        />
       ) : null}
       <Footer
         busy={flow.busy}
@@ -675,6 +777,8 @@ function TransferForm(props: FormProps) {
   const [expected, setExpected] = useState('');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [local, setLocal] = useState<FieldErrors>({});
   const errors = { ...flow.fieldErrors, ...local };
   const targetError =
@@ -693,6 +797,7 @@ function TransferForm(props: FormProps) {
       ...(expected ? { expected_return: expected } : {}),
       ...(reason.trim() ? { reason: reason.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
+      ...(photos.length > 0 ? { attachment_ids: photos } : {}),
     };
     const who =
       target.type === 'person'
@@ -757,11 +862,19 @@ function TransferForm(props: FormProps) {
         )}
       </Field>
       <NoteField label={t('custody.note')} value={note} onChange={setNote} error={errors.note} />
+      <PhotoField
+        asset={props.asset}
+        photos={photos}
+        onChange={setPhotos}
+        onBusyChange={setUploading}
+        errors={flow.photoErrors}
+      />
       <Footer
         busy={flow.busy}
+        disabled={uploading}
         label={t('custody.transfer.submit')}
         onCancel={props.onClose}
-        hint={t('custody.shortcut')}
+        hint={uploading ? t('custody.waitingForPhoto') : t('custody.shortcut')}
       />
       {flow.resultsDialog}
     </form>

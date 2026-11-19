@@ -961,7 +961,8 @@ export function pushHistory(
   asset: MockAsset,
   event_type: S['HistoryEvent']['event_type'],
   summary: string,
-  actorId?: string,
+  actorId: string | undefined,
+  payload: Record<string, unknown> = {},
 ) {
   data.history.push({
     id: newResourceId('history'),
@@ -969,8 +970,11 @@ export function pushHistory(
     at: nowIso(),
     event_type,
     actor_type: 'user',
-    ...(actorId ? { actor_id: actorId } : {}),
+    actor_id: actorId ?? null,
+    assignment_id: null,
+    transfer_id: null,
     summary,
+    payload,
   });
 }
 
@@ -980,6 +984,14 @@ export function pushHistory(
 function applyAssetPatch(data: RegistryData, id: string, body: Body, actorId: string): MockAsset {
   const target = data.assets.find((a) => a.id === id)!;
   const before = { status: target.status_id, location: target.location_id };
+  /** The names of the fields whose value really changed (the `updated` event lists them). */
+  const changed: string[] = [];
+  const assign = (key: string, value: unknown) => {
+    const record = target as Record<string, unknown>;
+    if (JSON.stringify(record[key]) === JSON.stringify(value)) return;
+    record[key] = value;
+    changed.push(key);
+  };
   const simple = [
     'name',
     'serial',
@@ -988,35 +1000,56 @@ function applyAssetPatch(data: RegistryData, id: string, body: Body, actorId: st
     'purchase_date',
     'warranty_end',
   ] as const;
-  for (const key of simple)
-    if (body[key] !== undefined) (target as Record<string, unknown>)[key] = text(body[key]) ?? null;
+  for (const key of simple) if (body[key] !== undefined) assign(key, text(body[key]) ?? null);
   if (body.asset_tag !== undefined && text(body.asset_tag))
-    target.asset_tag = text(body.asset_tag)!;
-  if (body.category_id !== undefined) target.category_id = body.category_id as string;
-  if (body.model_id !== undefined) target.model_id = body.model_id as string | null;
-  if (body.status_id !== undefined) target.status_id = body.status_id as string;
-  if (body.location_id !== undefined) target.location_id = body.location_id as string | null;
-  if (body.vendor_id !== undefined) target.vendor_id = body.vendor_id as string | null;
-  if (body.purchase_cost !== undefined)
-    target.purchase_cost = body.purchase_cost as S['Money'] | null;
+    assign('asset_tag', text(body.asset_tag));
+  if (body.category_id !== undefined) assign('category_id', body.category_id);
+  if (body.model_id !== undefined) assign('model_id', body.model_id);
+  if (body.status_id !== undefined) assign('status_id', body.status_id);
+  if (body.location_id !== undefined) assign('location_id', body.location_id);
+  if (body.vendor_id !== undefined) assign('vendor_id', body.vendor_id);
+  if (body.purchase_cost !== undefined) assign('purchase_cost', body.purchase_cost);
   if (body.custom_data !== undefined) {
     const merged = { ...target.custom_data } as Record<string, unknown>;
     for (const [k, v] of Object.entries(body.custom_data as Record<string, unknown>)) {
       if (v === null || v === '') delete merged[k];
       else merged[k] = v;
     }
-    target.custom_data = merged;
+    assign('custom_data', merged);
   }
   target.updated_at = nowIso();
   target._v += 1;
-  pushHistory(data, target, 'updated', 'Updated', actorId);
+  // The events of the API: a status change, a location change, then one `updated` for the rest.
   if (target.status_id !== before.status) {
-    const from = data.statusLabels.find((s) => s.id === before.status)?.name;
-    const to = data.statusLabels.find((s) => s.id === target.status_id)?.name;
-    pushHistory(data, target, 'status_changed', `Status ${from} -> ${to}`, actorId);
+    const from = data.statusLabels.find((s) => s.id === before.status)?.name ?? null;
+    const to = data.statusLabels.find((s) => s.id === target.status_id)?.name ?? null;
+    pushHistory(data, target, 'status_changed', `Status changed from ${from} to ${to}`, actorId, {
+      from: before.status,
+      to: target.status_id,
+      from_name: from,
+      to_name: to,
+    });
   }
   if (target.location_id !== before.location) {
-    pushHistory(data, target, 'location_changed', 'Location changed', actorId);
+    const name = (locationId: string | null | undefined) =>
+      locationId ? (data.locations.find((l) => l.id === locationId)?.name ?? 'unknown') : null;
+    pushHistory(
+      data,
+      target,
+      'location_changed',
+      `Moved from ${name(before.location) ?? 'no location'} to ${name(target.location_id) ?? 'no location'}`,
+      actorId,
+      {
+        from: before.location ?? null,
+        to: target.location_id ?? null,
+        from_name: name(before.location),
+        to_name: name(target.location_id),
+      },
+    );
+  }
+  const other = changed.filter((key) => key !== 'status_id' && key !== 'location_id');
+  if (other.length > 0) {
+    pushHistory(data, target, 'updated', `Updated ${other.join(', ')}`, actorId, { fields: other });
   }
   return target;
 }
@@ -1034,7 +1067,7 @@ function setAssetArchived(
     data,
     target,
     archive ? 'archived' : 'restored',
-    archive ? 'Archived' : 'Restored',
+    archive ? 'Asset archived' : 'Asset restored',
     actorId,
   );
   return target;
@@ -1109,8 +1142,16 @@ export function expandAsset(asset: MockAsset, expand: string[]): Record<string, 
     const v = data.vendors.find((x) => x.id === asset.vendor_id);
     if (v) expanded.vendor = strip(v);
   }
+  const holder = asset.current_assignment;
   return {
     ...pub,
+    // `overdue` is the server's: the custody is open and its due date is before today (UTC)
+    current_assignment: holder
+      ? {
+          ...holder,
+          overdue: !!holder.expected_return && holder.expected_return < nowIso().slice(0, 10),
+        }
+      : null,
     status: status
       ? { id: status.id, name: status.name, state_type: status.state_type }
       : undefined,
@@ -1345,7 +1386,10 @@ const assetHandlers: HttpHandler[] = [
         _v: 1,
       };
       data.assets.push(created);
-      pushHistory(data, created, 'created', 'Created', guard.user.id);
+      pushHistory(data, created, 'created', `Asset ${created.asset_tag} created`, guard.user.id, {
+        status_id: created.status_id,
+        location_id: created.location_id,
+      });
       return created;
     });
     return oneAsset(asset, [], 201, { Location: `/v1/assets/${asset.id}` });

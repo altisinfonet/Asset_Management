@@ -9,9 +9,9 @@ import { IconButton } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
-import { getApi } from '@/lib/api';
-import { uiErrorText } from '@/lib/error-text';
 import { attachmentsApi, isImage } from '@/lib/files/api';
+import { megabytes, scanProblemText } from '@/lib/files/messages';
+import { useUploadLimit } from '@/lib/files/use-upload-limit';
 import { useUploads } from '@/lib/files/use-uploads';
 import type { Attachment, AttachmentEntity, AttachmentKind } from '@/lib/registry/types';
 import { FileDropzone, FileTypeIcon, formatBytes, ScanBadge, UploadList } from './file-parts';
@@ -53,11 +53,13 @@ export function AttachmentsPanel({
   });
   const files = useMemo(() => list.data?.data ?? [], [list.data]);
 
+  const limit = useUploadLimit();
   const uploads = useUploads({
     entityType,
     entityId,
     kind,
     pollScan: false,
+    maxBytes: limit,
     onServerChange: () =>
       void client.invalidateQueries({ queryKey: listKey(entityType, entityId) }),
   });
@@ -67,24 +69,19 @@ export function AttachmentsPanel({
     (item) => !(item.attachment && known.has(item.attachment.id) && item.status !== 'failed'),
   );
 
-  const download = async (attachment: Attachment) => {
-    try {
-      const fresh = await attachmentsApi.get(attachment.id);
-      if (!fresh.download_url) {
-        toast({ variant: 'warning', title: t('files.notReady') });
-        return;
-      }
-      const link = document.createElement('a');
-      link.href = fresh.download_url;
-      link.download = attachment.filename;
-      link.rel = 'noopener';
-      document.body.append(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      const ui = getApi().toUiError(err);
-      toast({ variant: 'danger', title: uiErrorText(t, ui), requestId: ui.requestId });
+  /** The list items carry their own short-lived `download_url` once clean: no request per file. */
+  const download = (attachment: Attachment) => {
+    if (!attachment.download_url) {
+      toast({ variant: 'warning', title: t('files.notReady') });
+      return;
     }
+    const link = document.createElement('a');
+    link.href = attachment.download_url;
+    link.download = attachment.filename;
+    link.rel = 'noopener';
+    document.body.append(link);
+    link.click();
+    link.remove();
   };
 
   return (
@@ -94,12 +91,13 @@ export function AttachmentsPanel({
           onFiles={uploads.add}
           buttonLabel={t('files.choose')}
           dropLabel={t('files.dropHere')}
-          hint={t('files.limits')}
+          hint={limit ? t('files.limitsWithSize', { limit: megabytes(limit) }) : t('files.limits')}
         />
       ) : null}
 
       <UploadList
         label={t('files.uploads')}
+        limit={limit}
         items={inFlight}
         onCancel={uploads.remove}
         onRetry={uploads.retry}
@@ -131,6 +129,9 @@ export function AttachmentsPanel({
                   {' - '}
                   {formatDateTime(file.uploaded_at ?? file.created_at)}
                 </p>
+                {file.scan_status === 'infected' || file.scan_status === 'error' ? (
+                  <p className="break-words text-sm text-danger-text">{scanProblemText(t, file)}</p>
+                ) : null}
               </div>
               <ScanBadge status={file.scan_status} />
               <div className="flex items-center gap-1">
@@ -139,7 +140,7 @@ export function AttachmentsPanel({
                     icon={Download}
                     size="icon-sm"
                     label={t('files.download', { name: file.filename })}
-                    onClick={() => void download(file)}
+                    onClick={() => download(file)}
                   />
                 ) : null}
                 {canWrite ? (
@@ -174,17 +175,10 @@ export function AttachmentsPanel({
   );
 }
 
-/** Thumbnail of a clean image (its short-lived `download_url` is fetched on demand); an icon otherwise. */
+/** Thumbnail of a clean image, from the `thumbnail_url` of the list item (once it exists); an icon otherwise. */
 function Thumb({ attachment }: { attachment: Attachment }) {
-  const clean = attachment.scan_status === 'clean' && isImage(attachment);
-  const detail = useQuery({
-    queryKey: ['attachment-url', attachment.id],
-    queryFn: () => attachmentsApi.get(attachment.id),
-    enabled: clean,
-    staleTime: 4 * 60_000,
-  });
-  const url = detail.data?.download_url;
-  if (clean && url) {
+  const url = attachment.thumbnail_url;
+  if (attachment.scan_status === 'clean' && isImage(attachment) && url) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- a signed storage URL, not an optimisable asset
       <img src={url} alt="" loading="lazy" className="size-12 shrink-0 rounded-md object-cover" />

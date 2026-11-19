@@ -24,6 +24,8 @@ export interface UploadItem {
   error?: UiError;
   /** A non-API failure: the storage PUT failed (`status` 0 = network). */
   uploadFailure?: { status: number };
+  /** Refused here, before anything was sent: over the organisation's cap, or empty. */
+  rejection?: { code: 'too-large' | 'empty'; limit?: number };
 }
 
 export interface UseUploadsOptions {
@@ -38,6 +40,8 @@ export interface UseUploadsOptions {
   onRemoved?: (attachment: Attachment) => void;
   /** Poll `GET /v1/attachments/{id}` until the scan answers (default). Off when a list polls already. */
   pollScan?: boolean;
+  /** The organisation's upload cap (`GET /v1/settings/files`): a larger file is refused before it is sent. */
+  maxBytes?: number;
 }
 
 const MAX_PARALLEL = 3;
@@ -97,8 +101,24 @@ export function useUploads(options: UseUploadsOptions) {
       if (!file) return;
       const controller = new AbortController();
       controllers.current.set(key, controller);
-      const { entityType, entityId, kind } = optionsRef.current;
-      patch(key, { status: 'uploading', progress: 0, error: undefined, uploadFailure: undefined });
+      const { entityType, entityId, kind, maxBytes } = optionsRef.current;
+      patch(key, {
+        status: 'uploading',
+        progress: 0,
+        error: undefined,
+        uploadFailure: undefined,
+        rejection: undefined,
+      });
+      if (file.size === 0 || (maxBytes !== undefined && file.size > maxBytes)) {
+        patch(key, {
+          status: 'failed',
+          rejection: file.size === 0 ? { code: 'empty' } : { code: 'too-large', limit: maxBytes },
+        });
+        controllers.current.delete(key);
+        running.current -= 1;
+        pumpRef.current();
+        return;
+      }
       try {
         const sha256 = await sha256Hex(file);
         const created = await attachmentsApi.create({
@@ -175,7 +195,13 @@ export function useUploads(options: UseUploadsOptions) {
 
   const retry = useCallback(
     (key: string) => {
-      patch(key, { status: 'queued', progress: 0, error: undefined, uploadFailure: undefined });
+      patch(key, {
+        status: 'queued',
+        progress: 0,
+        error: undefined,
+        uploadFailure: undefined,
+        rejection: undefined,
+      });
       queue.current.push(key);
       pumpRef.current();
     },

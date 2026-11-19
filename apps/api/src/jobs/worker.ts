@@ -174,12 +174,17 @@ export class JobWorker {
               jobsProcessed.inc({ queue, result: 'skipped' });
               return;
             }
-            await tenancy.withTenantTx({ tenantId, actorId: job.id, requestId }, (tx) =>
+            const run = (tx: Parameters<Parameters<typeof tenancy.withTenantTx>[1]>[0]) =>
               (handler.handle as TenantJobHandler<Record<string, unknown>>)(
                 { ...data, tenantId: tenantId! },
                 { ...base, tenantId: tenantId!, tx },
-              ),
-            );
+              );
+            const txContext = { tenantId, actorId: job.id, requestId };
+            // [M2-W2 LABELS] a queue may ask for a longer transaction than the 30 s default (PDF rendering)
+            const txSeconds = queueDefinition(queue)?.transactionTimeoutSeconds;
+            await (txSeconds
+              ? tenancy.withTenantTx(txContext, run, { timeoutMs: txSeconds * 1000 })
+              : tenancy.withTenantTx(txContext, run));
             jobsProcessed.inc({ queue, result: 'completed' });
           },
         ),

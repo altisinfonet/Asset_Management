@@ -693,7 +693,8 @@ S_.HistoryEvent = obj({
     '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
     '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
     '- `restored`: `{}` or `{was_disposed: true}`',
-    '- `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)',
+    '- `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch',
+    '- `repair_opened`, `repair_completed`, `imported`: reserved for later milestones (an empty object until then)',
   ].join('\n') },
 }, ['id', 'asset_id', 'at', 'event_type', 'actor_type']);
 S_.HistoryEventList = obj({ data: arr(S('HistoryEvent')), page: S('PageInfo') }, ['data', 'page']);
@@ -760,24 +761,83 @@ S_.RepairCompleteRequest = obj({
 }, [], { additionalProperties: false });
 
 // labels
+// [M2-W2 LABELS] BEGIN - M2-TAG-02: fixed templates (read, calibrate) and asynchronous label batches (replaces the first
+// draft's synchronous `POST /v1/labels/render`).
+const LABEL_FIELD_VALUES = ['asset_tag', 'name', 'serial', 'location', 'model', 'organisation'];
 S_.LabelTemplate = obj({
   id: uuid(),
-  key: str(),
+  key: str({ description: 'Stable key, the `template_key` of a batch.' }),
   name: str(),
   page_size: en(['letter', 'a4', 'custom']),
   page_width_mm: { type: 'number' }, page_height_mm: { type: 'number' },
   label_width_mm: { type: 'number' }, label_height_mm: { type: 'number' },
   cols: int(), rows: int(),
-  code_type: en(['qr', 'code128', 'qr_and_code128']),
-  fields: arr(str()),
-  is_system: bool({ description: 'System templates are read-only in the MVP; the editor arrives in v1.1.' }),
-}, ['id', 'key', 'name', 'page_size', 'cols', 'rows', 'code_type']);
+  slots: int({ description: 'Labels per sheet (`cols` x `rows`): the upper bound of a batch\'s `start_position`.' }),
+  margin_top_mm: { type: 'number' }, margin_left_mm: { type: 'number' },
+  gap_x_mm: { type: 'number', description: 'Space between two columns of labels.' }, gap_y_mm: { type: 'number', description: 'Space between two rows of labels.' },
+  offset_x_mm: { type: 'number', minimum: -10, maximum: 10, description: 'Calibration: shifts the whole sheet to the right (negative: left). Change it with `PATCH` after a test print (M2-TAG-04).' },
+  offset_y_mm: { type: 'number', minimum: -10, maximum: 10, description: 'Calibration: shifts the whole sheet down (negative: up).' },
+  code_type: en(['qr', 'code128', 'qr_and_code128'], { description: 'The codes the template draws unless a batch says otherwise.' }),
+  fields: arr(en(LABEL_FIELD_VALUES), { description: 'The text lines the template prints unless a batch says otherwise, first line first.' }),
+  is_system: bool({ description: 'System templates are fixed in the MVP (the editor arrives in v1.1): only the two calibration offsets can change.' }),
+}, ['id', 'key', 'name', 'page_size', 'page_width_mm', 'page_height_mm', 'label_width_mm', 'label_height_mm', 'cols', 'rows', 'slots', 'offset_x_mm', 'offset_y_mm', 'code_type', 'fields', 'is_system']);
 S_.LabelTemplateList = obj({ data: arr(S('LabelTemplate')) }, ['data']);
-S_.LabelRenderRequest = obj({
+S_.LabelTemplateUpdate = obj({
+  offset_x_mm: { type: 'number', minimum: -10, maximum: 10, multipleOf: 0.01 },
+  offset_y_mm: { type: 'number', minimum: -10, maximum: 10, multipleOf: 0.01 },
+}, [], { additionalProperties: false, minProperties: 1, description: 'Calibration of a fixed template. At least one offset.' });
+S_.LabelAssetFilter = obj({
+  q: str({ minLength: 1, maxLength: 200 }),
+  archived: en(['exclude', 'include', 'only'], { default: 'exclude' }),
+  tag: str(), serial: str(),
+  status_id: arr(uuid(), { maxItems: 200 }),
+  state_type: arr(en(['deployable', 'deployed', 'pending', 'undeployable', 'archived', 'lost'])),
+  category_id: arr(uuid(), { maxItems: 200 }),
+  model_id: arr(uuid(), { maxItems: 200 }),
+  manufacturer_id: uuid(),
+  location_id: uuid(),
+  include_sublocations: bool({ default: true }),
+  assigned: bool(), assigned_person_id: uuid(), overdue: bool(),
+  company_id: uuid(), vendor_id: uuid(), parent_asset_id: uuid(),
+  warranty_end_before: date(), warranty_end_after: date(),
+  purchase_date_from: date(), purchase_date_to: date(),
+  updated_since: dt(),
+  sort: str({ description: 'As the `sort` of `GET /v1/assets` (`asset_tag` by default here, so a sheet reads in tag order).', maxLength: 200 }),
+}, [], { additionalProperties: false, description: 'The filters of `GET /v1/assets` that narrow the set (no paging, no `cf[...]` custom-field filters), as JSON: lists are arrays, flags are booleans.' });
+S_.LabelBatchCreate = obj({
   template_key: str({ description: 'Key from `GET /v1/labels/templates`.' }),
-  asset_ids: arr(uuid(), { minItems: 1, maxItems: 500, uniqueItems: true }),
-  start_position: int({ minimum: 1, default: 1, description: 'First label slot to use on the first sheet (re-use a partly used sheet).' }),
-}, ['template_key', 'asset_ids'], { additionalProperties: false });
+  asset_ids: arr(uuid(), { minItems: 1, maxItems: 2000, uniqueItems: true, description: 'The assets, printed in this order. Send this or `filter`.' }),
+  filter: S('LabelAssetFilter'),
+  start_position: int({ minimum: 1, maximum: 1000, default: 1, description: '1-based slot of the first label on the first sheet (re-use a partly used sheet); at most the template\'s `slots`. Slots are numbered row by row, left to right.' }),
+  copies: int({ minimum: 1, maximum: 10, default: 1, description: 'Labels per asset, printed next to each other.' }),
+  codes: arr(en(['qr', 'code128']), { maxItems: 2, uniqueItems: true, description: 'Which codes to draw; default: the template\'s `code_type`. The QR encodes `<web base url>/s/<label_code>` (an opaque code, never an internal id), the Code128 encodes the asset tag (printable ASCII only). An empty list prints text only.' }),
+  fields: arr(en(LABEL_FIELD_VALUES), { maxItems: 6, uniqueItems: true, description: 'The text lines to print, first line first and largest; default: the template\'s `fields`. Text shrinks to fit and ends with an ellipsis when it still does not.' }),
+  logo_attachment_id: nuuid('Optional logo: a clean PNG or JPEG attachment of your organisation (at most 2 MiB), printed small above the text.'),
+  outlines: bool({ default: false, description: 'Draw a hairline around every label: for calibration prints on plain paper.' }),
+}, ['template_key'], { additionalProperties: false, description: 'Exactly one of `asset_ids` and `filter`. At most 2000 assets and 2000 labels (assets x copies) per batch.' });
+S_.LabelBatch = obj({
+  id: ro(uuid()),
+  status: ro(en(['queued', 'ready', 'failed', 'expired'], { description: '`queued` until the worker has rendered the PDF, then `ready` (download it), `failed` (see `error`) or, after `expires_at`, `expired` (the file is deleted).' })),
+  template_key: str(),
+  source: en(['asset_ids', 'filter']),
+  asset_count: int(), copies: int(), label_count: int({ description: 'Labels printed: `asset_count` x `copies`.' }),
+  start_position: int(),
+  codes: arr(en(['qr', 'code128'])),
+  fields: arr(en(LABEL_FIELD_VALUES)),
+  outlines: bool(),
+  logo_attachment_id: nuuid(),
+  page_count: { type: ['integer', 'null'], description: 'Sheets in the PDF, once rendered.' },
+  filename: nstr({ description: 'Suggested file name, once ready.' }),
+  size_bytes: { type: ['integer', 'null'], format: 'int64' },
+  created_at: ro(dt()),
+  rendered_at: ro(ndt()),
+  expires_at: ro(dt({ description: 'After this moment the file is deleted and the batch becomes `expired`.' })),
+  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'A short-lived presigned URL of the PDF; only when `ready`. A fresh one comes with every read.' }),
+  download_expires_at: ro(ndt()),
+  error: ro({ oneOf: [obj({ code: str({ description: 'e.g. `logo-invalid`, `render-failed`.' }), detail: str() }, ['code', 'detail']), { type: 'null' }], description: 'Why the batch failed; `null` otherwise.' }),
+}, ['id', 'status', 'template_key', 'source', 'asset_count', 'copies', 'label_count', 'start_position', 'codes', 'fields', 'outlines', 'page_count', 'created_at', 'expires_at', 'download_url', 'error'], { description: 'One request to print labels. Visible to the user (or API key) that made it, nobody else.' });
+S_.LabelBatchList = obj({ data: arr(S('LabelBatch')), page: S('PageInfo') }, ['data', 'page']);
+// [M2-W2 LABELS] END
 
 // attachments
 S_.Attachment = obj({
@@ -1718,18 +1778,41 @@ addOp('/v1/repairs/{id}/complete', 'post', {
 });
 
 // ---------------------------------------------------------------- LABELS
+// [M2-W2 LABELS] BEGIN - M2-TAG-02 (see ADR 0007)
 addOp('/v1/labels/templates', 'get', {
   tag: 'Labels', id: 'listLabelTemplates', summary: 'List fixed label templates', perm: 'asset:label', hasId: false,
-  description: 'Standard sheet templates (US Letter 30-up, A4 21-up, 10-up, single 50x25 mm). Read-only in the MVP; a template editor arrives in v1.1.',
+  description: 'The fixed sheet templates: US Letter 30-up (Avery 5160 layout), A4 21-up (L7160) and 24-up 3 x 8 (L7159), US Letter 10-up (5163), and two single-label pages for roll and thermal printers (50 x 25 mm and 2 x 1 inch). Geometry is fixed in the MVP (the editor arrives in v1.1); only the calibration offsets can change.',
   success: { 200: okResp(200, 'All templates.', S('LabelTemplateList'), { replay: false }) },
 });
-addOp('/v1/labels/render', 'post', {
-  tag: 'Labels', id: 'renderLabels', summary: 'Render a PDF label sheet', perm: 'asset:label', hasId: false, conflict: false, idem: 'none',
-  description: 'Renders QR / Code128 labels for up to 500 assets into a PDF (synchronously). Each QR encodes `https://<host>/s/<label_code>`. Writes a `label_printed` history event per asset.',
-  body: jsonBody(S('LabelRenderRequest')),
-  success: { 200: { description: 'The PDF.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'attachment filename.', schema: str() } }, content: { 'application/pdf': { schema: str({ format: 'binary' }) } } } },
-  extraErrors: [404],
+addOp('/v1/labels/templates/{id}', 'get', {
+  tag: 'Labels', id: 'getLabelTemplate', summary: 'Get a label template', perm: 'asset:label', params: [ID],
+  success: { 200: okResp(200, 'The template.', S('LabelTemplate'), { etag: true, replay: false }) },
 });
+addOp('/v1/labels/templates/{id}', 'patch', {
+  tag: 'Labels', id: 'updateLabelTemplate', summary: 'Calibrate a label template', perm: 'catalog:manage', params: [ID], ifMatch: true,
+  description: 'Sets the calibration offsets of a template after a test print on real label stock (M2-TAG-04). The geometry itself cannot be changed.',
+  body: jsonBody(S('LabelTemplateUpdate')),
+  success: { 200: okResp(200, 'The calibrated template.', S('LabelTemplate'), { etag: true }) },
+});
+addOp('/v1/labels/batches', 'post', {
+  tag: 'Labels', id: 'createLabelBatch', summary: 'Request a PDF label sheet', perm: 'asset:label', hasId: false, idem: 'required',
+  description: 'Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.',
+  problems: { 422: { codes: ['validation'], text: 'Validation failed: unknown template or asset, `start_position` beyond the template\'s slots, neither or both of `asset_ids` and `filter`, a filter that matches nothing or more than 2000 assets, more than 2000 labels, a tag that cannot be a readable Code128 (`barcode-unprintable`), or a logo that is not a clean PNG/JPEG.' } },
+  body: jsonBody(S('LabelBatchCreate')),
+  success: { 202: okResp(202, 'Accepted: the batch is queued.', S('LabelBatch'), { location: true }) },
+});
+addOp('/v1/labels/batches', 'get', {
+  tag: 'Labels', id: 'listLabelBatches', summary: 'List my label batches', perm: 'asset:label',
+  description: 'The label batches the caller requested, newest first. Nobody sees another user\'s batches.',
+  params: [P('Cursor'), P('Limit'), P('IncludeTotal'), arrQ('status', en(['queued', 'ready', 'failed', 'expired']), 'Filter by status.'), sortParam(['created_at'], ['-created_at'])],
+  success: { 200: okResp(200, 'A page of batches.', S('LabelBatchList'), { replay: false }) },
+});
+addOp('/v1/labels/batches/{id}', 'get', {
+  tag: 'Labels', id: 'getLabelBatch', summary: 'Get a label batch', perm: 'asset:label', params: [ID],
+  description: 'The status of a batch (poll this) and, once `ready`, a fresh presigned `download_url` (valid for a couple of minutes; read again for a new one). `404` for a batch someone else requested.',
+  success: { 200: okResp(200, 'The batch.', S('LabelBatch'), { replay: false }) },
+});
+// [M2-W2 LABELS] END
 
 // ---------------------------------------------------------------- ATTACHMENTS
 addOp('/v1/attachments', 'get', {

@@ -30,6 +30,8 @@ export const PRODUCERS: readonly Producer[] = [
   },
   // M2-FILE-02: orphan sweep (abandoned uploads, lost scan jobs), every 5 minutes per tenant.
   { name: 'attachment-sweep', queue: 'attachment.sweep', everySeconds: 300, perTenant: true },
+  // [M2-W2 LABELS] expired label files and lost render jobs, every 10 minutes per tenant.
+  { name: 'label-sweep', queue: 'label.sweep', everySeconds: 600, perTenant: true },
 ];
 
 export interface SchedulerDeps {

@@ -35,6 +35,7 @@ export const FACADE_MODULES = [
   'storage',
   'scanner',
   'files',
+  'tagging',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [

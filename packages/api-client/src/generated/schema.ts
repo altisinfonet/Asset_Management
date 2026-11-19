@@ -6276,7 +6276,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+                entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
                 entity_id: string;
                 /** @description Filter by kind. */
                 kind?: "photo" | "document" | "signature" | "import_file" | "other";

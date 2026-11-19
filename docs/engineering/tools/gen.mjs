@@ -1712,7 +1712,7 @@ addOp('/v1/labels/render', 'post', {
 // ---------------------------------------------------------------- ATTACHMENTS
 addOp('/v1/attachments', 'get', {
   tag: 'Attachments', id: 'listAttachments', summary: 'List attachments of a record', perm: 'attachment:read',
-  params: [P('Cursor'), P('Limit'), { name: 'entity_type', in: 'query', required: true, schema: en(['asset', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']) }, { name: 'entity_id', in: 'query', required: true, schema: uuid() }, qp('kind', en(['photo', 'document', 'signature', 'import_file', 'other']), 'Filter by kind.')],
+  params: [P('Cursor'), P('Limit'), { name: 'entity_type', in: 'query', required: true, schema: en(['asset', 'asset_model', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']) }, { name: 'entity_id', in: 'query', required: true, schema: uuid() }, qp('kind', en(['photo', 'document', 'signature', 'import_file', 'other']), 'Filter by kind.')],
   success: { 200: okResp(200, 'A page of attachments.', S('AttachmentList'), { replay: false }) },
 });
 addOp('/v1/attachments', 'post', {

@@ -49,6 +49,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'ok',
   },
   'deployed, checked out': {
     checkout: 'asset-already-checked-out',
@@ -59,6 +60,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'asset-already-checked-out',
   },
   'deployed status, nobody holds it': {
     checkout: 'asset-not-deployable',
@@ -69,6 +71,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'ok',
   },
   pending: {
     checkout: 'asset-not-deployable',
@@ -79,6 +82,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'ok',
   },
   'undeployable (in repair, broken)': {
     checkout: 'asset-not-deployable',
@@ -89,6 +93,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'ok',
   },
   lost: {
     checkout: 'asset-not-deployable',
@@ -99,6 +104,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'ok',
     move: 'ok',
     update: 'ok',
+    open_repair: 'conflict',
   },
   'archived-type status (retired)': {
     checkout: 'asset-not-deployable',
@@ -109,6 +115,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'ok',
     update: 'ok',
+    open_repair: 'conflict',
   },
   // an archived asset refuses every action (restore is the only way back)
   'archived (archived_at set)': {
@@ -120,6 +127,7 @@ const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
     mark_found: 'conflict',
     move: 'conflict',
     update: 'conflict',
+    open_repair: 'conflict',
   },
 };
 

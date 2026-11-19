@@ -32,6 +32,7 @@ export { type LocationCounts, locationDto } from './dto.js';
 export {
   type ChangeRecord,
   RegistryBase,
+  type TxScope,
   duplicate,
   inUse,
   invalidRef,

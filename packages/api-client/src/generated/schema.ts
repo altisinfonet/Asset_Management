@@ -2204,7 +2204,7 @@ export interface paths {
         };
         /**
          * Saved views I can use
-         * @description The caller's own views plus the views shared in the organisation, own first, then by name.
+         * @description The caller's own views plus the views shared in the organisation, ordered by name (`is_owner` tells them apart).
          */
         get: operations["listSavedViews"];
         put?: never;
@@ -3735,14 +3735,14 @@ export interface components {
              */
             restore_status_id?: string | null;
             /**
-             * @description Initial status (`open` by default; `in_progress` also sets `started_at`).
+             * @description Initial status (`in_progress` also sets `started_at`). A record is closed by `POST /v1/repairs/{id}/complete` or by cancelling it.
              * @default open
              * @enum {string}
              */
-            status?: "open" | "in_progress" | "cancelled";
+            status?: "open" | "in_progress";
             /**
              * Format: uuid
-             * @description Status label to put the asset in while the repair is open (typically an undeployable label such as "In repair").
+             * @description Status label to put the asset in while the repair is open (typically an undeployable label such as "In repair"). Required with `force_checkin`.
              */
             set_status_id?: string;
             /** @description Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record. */
@@ -11826,8 +11826,8 @@ export interface operations {
                 reported_from?: string;
                 /** @description Reported before. */
                 reported_to?: string;
-                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: reported_at, completed_at, created_at. A unique tiebreaker (`id`) is always appended. */
-                sort?: ("reported_at" | "-reported_at" | "completed_at" | "-completed_at" | "created_at" | "-created_at")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: reported_at, created_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("reported_at" | "-reported_at" | "created_at" | "-created_at")[];
             };
             header?: never;
             path?: never;

@@ -117,6 +117,42 @@ export const QUEUES = {
     expireInSeconds: 5 * MINUTE,
     dedupeSeconds: 5 * MINUTE,
   },
+  // ---- M2 wave 2 (notifications, exports) -----------------------------------------------------
+  /** Daily per tenant: one digest email per user with notifications waiting in the digest (M2-NOT-01). */
+  'notification.digest': {
+    name: 'notification.digest',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 3,
+    retryDelay: 60,
+    retryDelayMax: 15 * MINUTE,
+    expireInSeconds: 10 * MINUTE,
+    dedupeSeconds: 6 * 60 * MINUTE,
+  },
+  /** Writes one CSV export through the StorageAdapter (M2-REG-02). Ids only: { tenantId, exportId }. */
+  'export.run': {
+    name: 'export.run',
+    tenantScoped: true,
+    priorityClass: 'bulk',
+    runsIn: 'worker',
+    retryLimit: 2,
+    retryDelay: 30,
+    retryDelayMax: 5 * MINUTE,
+    expireInSeconds: 30 * MINUTE,
+    dedupeSeconds: 5 * MINUTE,
+  },
+  /** Deletes the files of exports older than their retention and marks them expired (per tenant, hourly). */
+  'export.sweep': {
+    name: 'export.sweep',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 1,
+    retryDelay: 30,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 30 * MINUTE,
+  },
 } as const satisfies Record<string, QueueDefinition>;
 
 export type QueueName = keyof typeof QUEUES;

@@ -1877,7 +1877,13 @@ S_.Me.required.push('mfa_policy');
   S_.RepairCreate.properties.attachment_ids = attachmentIds;
   S_.RepairCreate.properties.force_checkin = bool({ default: false, description: 'The asset is checked out: close its custody period (a check-in) and open the repair in one step. Needs `asset:checkin` as well as `repair:manage`, and `force_note`. Without it a checked-out asset is refused with `409 asset-already-checked-out` (check it in first).' });
   S_.RepairCreate.properties.force_note = str({ minLength: 1, maxLength: 500, description: 'Why the custody period is closed (recorded on the check-in, the history and the audit log). Required with `force_checkin`.' });
-  S_.RepairCreate.properties.status.description = 'Initial status (`open` by default; `in_progress` also sets `started_at`).';
+  S_.RepairCreate.properties.status = en(['open', 'in_progress'], { default: 'open', description: 'Initial status (`in_progress` also sets `started_at`). A record is closed by `POST /v1/repairs/{id}/complete` or by cancelling it.' });
+  S_.RepairCreate.properties.set_status_id.description += ' Required with `force_checkin`.';
+  // Sorting by the nullable `completed_at` is not supported (keyset cursors cannot carry a NULL).
+  {
+    const sortIndex = doc.paths['/v1/repairs'].get.parameters.findIndex((p) => p.name === 'sort');
+    doc.paths['/v1/repairs'].get.parameters[sortIndex] = sortParam(['reported_at', 'created_at'], ['-reported_at']);
+  }
   // The asset of a record never changes: open a new record for another asset.
   delete S_.RepairUpdate.properties.asset_id;
   S_.RepairUpdate.properties.status = en(['open', 'in_progress', 'cancelled'], { description: 'Move to `in_progress`, or `cancelled` (restores the asset status like a completion). A closed record (`completed`, `cancelled`) keeps its status.' });
@@ -2052,7 +2058,7 @@ S_.Me.required.push('mfa_policy');
   const VIEW_403 = { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session with a valid `X-CSRF-Token`.' } };
   addOp('/v1/saved-views', 'get', {
     tag: 'Views', id: 'listSavedViews', summary: 'Saved views I can use', selfService: true, hasId: false,
-    description: 'The caller\'s own views plus the views shared in the organisation, own first, then by name.',
+    description: 'The caller\'s own views plus the views shared in the organisation, ordered by name (`is_owner` tells them apart).',
     params: [P('Cursor'), P('Limit'), qp('resource', en(['assets']), 'The list (default `assets`).'), qp('scope', en(['all', 'mine', 'shared']), '`mine` = created by the caller, `shared` = shared by anybody, `all` (default) = both.')],
     problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
     success: { 200: okResp(200, 'A page of views.', S('SavedViewList'), { replay: false }) },

@@ -8,6 +8,10 @@ import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
 import { LifecycleModule } from './lifecycle/index.js';
 import { LocationsModule } from './locations/index.js';
+import { MaintenanceModule } from './maintenance/index.js';
+import { NotificationsModule } from './notifications/index.js';
+import { ExportsModule } from './exports/index.js';
+import { ViewsModule } from './views/index.js';
 import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
 import { PeopleModule } from './people/index.js';
@@ -50,6 +54,11 @@ export class AppModule {
               PeopleModule,
               LifecycleModule,
               FilesModule,
+              // M2 wave 2
+              MaintenanceModule,
+              NotificationsModule,
+              ViewsModule,
+              ExportsModule,
             ]
           : []),
         HealthModule,

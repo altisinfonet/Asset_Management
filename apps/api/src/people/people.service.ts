@@ -21,6 +21,7 @@ import {
   duplicate,
   inUse,
   invalidRef,
+  type TxScope,
   stalePrecondition,
 } from '../registry/index.js';
 import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
@@ -84,7 +85,7 @@ export class PeopleService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------ reads
 
-  async list(auth: AuthContext, query: PersonListQuery): Promise<Page<Record<string, unknown>>> {
+  async list(auth: TxScope, query: PersonListQuery): Promise<Page<Record<string, unknown>>> {
     return this.tx(auth, async (trx) => {
       const archived =
         query.archived === 'only'

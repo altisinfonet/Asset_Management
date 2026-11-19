@@ -10,6 +10,7 @@ import {
   FILES_TAGS,
   REGISTRY_TAGS,
   WAVE1_TAGS,
+  WAVE2_NOT_TAGS,
   loadContract,
   loadProblemCodes,
   ruleOf,
@@ -119,6 +120,16 @@ describe('route access rules', async () => {
     const files = operations.filter((o) => FILES_TAGS.has(o.tag));
     expect(files.length).toBeGreaterThanOrEqual(9);
     const missing = files
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every operation of the M2 wave-2 tags (repairs, notifications, saved views, exports)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const wave2 = operations.filter((o) => WAVE2_NOT_TAGS.has(o.tag));
+    expect(wave2.length).toBeGreaterThanOrEqual(25);
+    const missing = wave2
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

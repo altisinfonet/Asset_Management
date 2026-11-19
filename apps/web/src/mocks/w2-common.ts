@@ -14,6 +14,8 @@ const CATALOG = {
   'precondition-failed': [412, 'Precondition failed'],
   'idempotency-key-required': [400, 'Idempotency-Key required'],
   'idempotency-key-reuse': [422, 'Idempotency-Key reused with a different request'],
+  'insufficient-stock': [409, 'Not enough stock'],
+  'asset-already-checked-out': [409, 'Asset already checked out'],
 } as const;
 
 export function fail(code: keyof typeof CATALOG, extra: ProblemExtra = {}) {

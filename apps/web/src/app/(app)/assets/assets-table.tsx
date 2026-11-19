@@ -111,7 +111,9 @@ export function AssetsTable() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState<Asset | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
+  // The notifications "labels ready" and "export ready" link here with the job to follow.
+  const [followedExport, setFollowedExport] = useState<string | null>(() => params.get('export'));
+  const [exportOpen, setExportOpen] = useState(() => !!params.get('export'));
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -123,6 +125,14 @@ export function AssetsTable() {
     setCursors([]);
     setSelected(new Set());
   }, []);
+
+  const followedBatch = params.get('label_batch');
+  useEffect(() => {
+    if (!followedBatch && !params.get('export')) return;
+    if (followedBatch) labels.open({ kind: 'batch', id: followedBatch });
+    // the job is followed once; the address goes back to the plain list
+    router.replace(routes.assets);
+  }, [followedBatch, params, labels, router]);
 
   const debouncedSearch = useDebounced(searchText, 300);
   useEffect(() => {
@@ -537,7 +547,13 @@ export function AssetsTable() {
         ) : null}
         <span className="ml-auto flex flex-wrap items-center gap-2">
           {can(EXPORT_PERMISSION) ? (
-            <Button size="sm" onClick={() => setExportOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setFollowedExport(null);
+                setExportOpen(true);
+              }}
+            >
               <Download aria-hidden className="size-4" />
               {t('exports.button')}
             </Button>
@@ -739,7 +755,13 @@ export function AssetsTable() {
         fields={lookups.fields}
         onChange={(next) => setState((s) => ({ ...s, columns: next }))}
       />
-      <ExportDialog open={exportOpen} onOpenChange={setExportOpen} query={toAssetQuery(state)} />
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        resource="assets"
+        query={toAssetQuery(state)}
+        jobId={followedExport ?? undefined}
+      />
       <BulkEditDialog
         open={bulkEditOpen}
         onOpenChange={setBulkEditOpen}

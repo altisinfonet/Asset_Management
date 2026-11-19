@@ -1,7 +1,7 @@
 'use client';
 
 import { useT } from '@/i18n';
-import type { LabelCodeType, LabelField, LabelTemplate } from '@/lib/labels/api';
+import type { LabelCode, LabelField, LabelTemplate } from '@/lib/labels/api';
 import { mm, showsBarcode, showsQr } from '@/lib/labels/helpers';
 import { Code128Svg, PAPER, QrSvg } from './code-graphics';
 
@@ -10,6 +10,7 @@ export interface LabelSample {
   name: string | null;
   location: string;
   serial: string | null;
+  model: string | null;
   organisation: string;
   /** Opaque code the QR carries (`/s/<code>`). */
   code: string;
@@ -23,33 +24,31 @@ type Size = Pick<LabelTemplate, 'label_width_mm' | 'label_height_mm'>;
  */
 export function LabelPreview({
   template,
-  codeType,
+  codes,
   fields,
   sample,
 }: {
   template: Size;
-  codeType: LabelCodeType;
+  codes: readonly LabelCode[];
   fields: readonly LabelField[];
   sample: LabelSample;
 }) {
   const t = useT();
   const width = template.label_width_mm ?? 50;
   const height = template.label_height_mm ?? 25;
-  const qr = showsQr(codeType);
-  const barcode = showsBarcode(codeType);
+  const qr = showsQr(codes);
+  const barcode = showsBarcode(codes);
 
-  const lines: Array<{ key: LabelField; text: string; strong?: boolean }> = [];
-  if (fields.includes('tag')) lines.push({ key: 'tag', text: sample.tag, strong: true });
-  if (fields.includes('name') && sample.name) lines.push({ key: 'name', text: sample.name });
-  if (fields.includes('location') && sample.location) {
-    lines.push({ key: 'location', text: sample.location });
-  }
-  if (fields.includes('serial') && sample.serial) {
-    lines.push({ key: 'serial', text: sample.serial });
-  }
-  if (fields.includes('organisation') && sample.organisation) {
-    lines.push({ key: 'organisation', text: sample.organisation });
-  }
+  // The lines come in the order the fields are listed (first line first); an empty value is skipped.
+  const text: Record<LabelField, string | null> = {
+    asset_tag: sample.tag,
+    name: sample.name,
+    serial: sample.serial,
+    location: sample.location,
+    model: sample.model,
+    organisation: sample.organisation,
+  };
+  const lines = fields.flatMap((key) => (text[key] ? [{ key, text: text[key]! }] : []));
 
   const barcodeHeight = barcode ? height * 0.28 : 0;
   const bodyHeight = height - barcodeHeight - 2;
@@ -84,7 +83,7 @@ export function LabelPreview({
           {lines.map((line) => (
             <p
               key={line.key}
-              className={line.strong ? 'truncate font-tag font-semibold' : 'truncate'}
+              className={line.key === 'asset_tag' ? 'truncate font-tag font-semibold' : 'truncate'}
             >
               {line.text}
             </p>

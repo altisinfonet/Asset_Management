@@ -33,7 +33,16 @@ export type RepairQuery = NonNullable<operations['listRepairs']['parameters']['q
 const ifMatchOf = async (etag: string | undefined, load: () => Promise<Versioned<unknown>>) =>
   etag ?? (await load()).etag ?? '';
 
+export type RepairSummary = S['RepairSummary'];
+
 export const repairsApi = {
+  /** Counts and the total cost per currency of an asset's repairs (cancelled and archived ones excluded). */
+  async summary(assetId: string): Promise<RepairSummary> {
+    const { data } = await http().GET('/v1/assets/{id}/repair-summary', {
+      params: { path: { id: assetId } },
+    });
+    return data as RepairSummary;
+  },
   async list(query: RepairQuery = {}): Promise<Page<Repair>> {
     const { data } = await http().GET('/v1/repairs', { params: { query } });
     return data as Page<Repair>;

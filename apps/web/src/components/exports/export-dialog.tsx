@@ -17,39 +17,45 @@ import {
 import { useI18n } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
 import { uiErrorText } from '@/lib/error-text';
-import { exportsApi, isFinished, type ExportJob } from '@/lib/exports/api';
-import type { AssetListQuery } from '@/lib/registry/api';
+import {
+  exportFilters,
+  exportsApi,
+  isFinished,
+  type ExportJob,
+  type ExportResource,
+} from '@/lib/exports/api';
 
 const POLL_MS = 1500;
 
-/** The list query an export repeats: the filters and sort of the list, never its page. */
-export function exportQuery(query: AssetListQuery): Record<string, unknown> {
-  const { cursor: _cursor, limit: _limit, include_total: _total, expand: _expand, ...rest } = query;
-  return rest;
-}
-
 /**
- * CSV export of the asset list (M2-REG-02): starts the job with the list's current filters, shows
- * its progress and offers the short-lived download when it is ready. Opening the dialog starts the
- * export, so the button that opens it is the user's decision.
+ * CSV export of a list (M2-REG-02): starts the job with the list's current filters (the same query
+ * parameters as the list, without paging), shows its progress and offers the short-lived download
+ * when it is ready. Opening the dialog starts the export, so the button that opens it is the user's
+ * decision. With `jobId` it follows an export that was started earlier instead (the notification
+ * "your export is ready" opens it).
  */
 export function ExportDialog({
   open,
   onOpenChange,
+  resource,
   query,
+  jobId: followed,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  query: AssetListQuery;
+  resource: ExportResource;
+  /** The query of the list (paging and presentation members are left out). */
+  query: object;
+  jobId?: string;
 }) {
   const { t, formatDateTime } = useI18n();
   const client = useQueryClient();
   const [job, setJob] = useState<ExportJob | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const latestQuery = useRef(query);
+  const latest = useRef({ query, resource });
   useEffect(() => {
-    latestQuery.current = query;
+    latest.current = { query, resource };
   });
 
   useEffect(() => {
@@ -58,8 +64,13 @@ export function ExportDialog({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a new run starts from nothing
     setJob(null);
     setError(null);
-    exportsApi
-      .create({ entity: 'asset', query: exportQuery(latestQuery.current) })
+    const start = followed
+      ? exportsApi.get(followed)
+      : exportsApi.create({
+          resource: latest.current.resource,
+          filters: exportFilters(latest.current.query),
+        });
+    start
       .then((created) => {
         if (!cancelled) setJob(created);
       })
@@ -69,7 +80,7 @@ export function ExportDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, attempt]);
+  }, [open, attempt, followed]);
 
   const jobId = job?.id;
   const polled = useQuery({
@@ -83,14 +94,16 @@ export function ExportDialog({
   const current = polled.data ?? job;
   const failed = current?.status === 'failed';
   const expired = current?.status === 'expired';
-  const ready = current?.status === 'ready' && !!current.download_url;
+  const ready = current?.status === 'succeeded' && !!current.download_url;
   const pollError = polled.error ? getApi().toUiError(polled.error) : null;
   const shownError = error ?? pollError;
 
-  // a finished export raises an `export.ready` notification: the bell reads again
+  // a finished export raises an `export.completed` notification: the bell reads again
   const finishedStatus = current?.status;
   useEffect(() => {
-    if (finishedStatus === 'ready') void client.invalidateQueries({ queryKey: ['notifications'] });
+    if (finishedStatus === 'succeeded') {
+      void client.invalidateQueries({ queryKey: ['notifications'] });
+    }
   }, [finishedStatus, client]);
 
   return (
@@ -135,7 +148,7 @@ export function ExportDialog({
         <p className="text-sm text-muted">{t('exports.audited')}</p>
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>{t('common.close')}</Button>
-          {failed || expired || error ? (
+          {(failed || expired || error) && !followed ? (
             <Button variant="primary" onClick={() => setAttempt((n) => n + 1)}>
               {t('exports.retry')}
             </Button>

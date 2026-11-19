@@ -3,6 +3,7 @@ import { SAVED_VIEWS_KEY, defaultViewState } from '@/lib/registry/asset-view';
 import {
   MIGRATED_KEY,
   degradeState,
+  applyWarnings,
   fromDefinition,
   migrateLocalViews,
   pendingLocalViews,
@@ -76,6 +77,39 @@ describe('a view that refers to things that no longer exist', () => {
   });
 });
 
+describe('the warnings of the server', () => {
+  const state = {
+    ...defaultViewState(),
+    status_id: 'gone',
+    category_id: 'c1',
+    location_id: 'archived-one',
+    person_id: 'p1',
+    person_name: 'Ada',
+  };
+
+  it('clears the filters whose reference no longer resolves and says which', () => {
+    const { state: next, dropped } = applyWarnings(state, [
+      { field: 'status_id', id: 'gone', reason: 'not-found' },
+      { field: 'location_id', id: 'archived-one', reason: 'archived' },
+      { field: 'assigned_person_id', id: 'other', reason: 'not-found' },
+      { field: 'person_id', id: 'p1', reason: 'not-found' },
+      { field: 'vendor_id', id: 'v', reason: 'not-found' },
+    ]);
+    expect(next).toMatchObject({
+      status_id: '',
+      category_id: 'c1',
+      location_id: '',
+      person_id: '',
+      person_name: '',
+    });
+    expect(dropped.sort()).toEqual(['location', 'person', 'status']);
+  });
+
+  it('leaves a view without warnings alone', () => {
+    expect(applyWarnings(state, [])).toEqual({ state, dropped: [] });
+  });
+});
+
 describe('moving the views kept in this browser', () => {
   beforeEach(() => window.localStorage.clear());
 
@@ -91,17 +125,19 @@ describe('moving the views kept in this browser', () => {
     const result = await migrateLocalViews(
       pendingLocalViews(),
       [
-        { name: 'laptops', shared: false, owner_user_id: 'me' },
-        { name: 'Projectors', shared: true, owner_user_id: 'someone-else' },
+        { name: 'laptops', is_owner: true },
+        { name: 'Projectors', is_owner: false },
       ],
-      'me',
       create,
     );
     expect(result).toEqual({ moved: 2, skipped: 1, failed: 0 });
-    expect(create.mock.calls.map(([view]) => [view.name, view.shared])).toEqual([
-      ['Projectors', false],
-      ['Mine', false],
-    ]);
+    expect(create.mock.calls.map(([view]) => view.name)).toEqual(['Projectors', 'Mine']);
+    // the definition travels flat: filters, columns and sort
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      filters: expect.any(Object),
+      columns: expect.any(Array),
+      sort: null,
+    });
     expect(window.localStorage.getItem(SAVED_VIEWS_KEY)).toBeNull();
     expect(window.localStorage.getItem(MIGRATED_KEY)).toBeTruthy();
     expect(pendingLocalViews()).toEqual([]);
@@ -110,7 +146,7 @@ describe('moving the views kept in this browser', () => {
   it('keeps the local views when one cannot be moved, so the next load tries again', async () => {
     local(['A', 'B']);
     const create = vi.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('offline'));
-    const result = await migrateLocalViews(pendingLocalViews(), [], 'me', create);
+    const result = await migrateLocalViews(pendingLocalViews(), [], create);
     expect(result).toEqual({ moved: 1, skipped: 0, failed: 1 });
     expect(window.localStorage.getItem(SAVED_VIEWS_KEY)).not.toBeNull();
     expect(window.localStorage.getItem(MIGRATED_KEY)).toBeNull();

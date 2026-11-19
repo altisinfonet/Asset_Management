@@ -41,8 +41,10 @@ describe('AssetsTable: saved views on the server', () => {
     expect(screen.queryByRole('columnheader', { name: 'Assigned to' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Location' })).toBeVisible();
     expect(screen.getByText('shared by Sam Lee')).toBeVisible();
-    // the owner holds view:share ("*"), so the shared view can be changed
-    expect(screen.getByRole('button', { name: 'Rename or share' })).toBeVisible();
+    // only the owner of a view changes it (the API answers 404 to everybody else), also an administrator
+    expect(screen.queryByRole('button', { name: 'Rename or share' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update view' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete view' })).not.toBeInTheDocument();
   });
 
   it('saves the current state as a personal view that survives a reload', async () => {
@@ -102,7 +104,7 @@ describe('AssetsTable: saved views on the server', () => {
       await screen.findByText('View "All kit" now uses the current search, filters and columns.'),
     ).toBeVisible();
     const stored = (await savedViewsApi.list()).find((v) => v.name === 'All kit')!;
-    expect(stored.definition.filters).toMatchObject({ q: 'TAB-' });
+    expect(stored.filters).toMatchObject({ q: 'TAB-' });
 
     await user.click(screen.getByRole('button', { name: 'Delete view' }));
     const confirm = await screen.findByRole('dialog', { name: 'Delete view "All kit"?' });
@@ -158,11 +160,7 @@ describe('AssetsTable: saved views on the server', () => {
       status_id: '0190a6b2-0003-7000-8000-999999999999',
       category_id: '0190a6b2-0001-7000-8000-000000000003',
     };
-    await savedViewsApi.create({
-      name: 'Stale tablets',
-      shared: false,
-      definition: toDefinition(state),
-    });
+    await savedViewsApi.create({ name: 'Stale tablets', ...toDefinition(state) });
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.click(await viewSelect());
@@ -267,10 +265,9 @@ describe('AssetsTable: CSV export and labels', () => {
       'href',
       expect.stringMatching(/^\/mock-storage\/exports\/.+\.csv$/),
     );
-    expect(within(dialog).getByTestId('export-status')).toHaveTextContent('10 assets exported.');
-    expect(sent).toMatchObject({ entity: 'asset', query: { q: 'PRJ-', archived: 'exclude' } });
-    expect((sent as { query: Record<string, unknown> }).query).not.toHaveProperty('limit');
-    expect((sent as { query: Record<string, unknown> }).query).not.toHaveProperty('cursor');
+    expect(within(dialog).getByTestId('export-status')).toHaveTextContent('10 rows exported.');
+    // the list's filters as flat members, never its paging or presentation
+    expect(sent).toEqual({ resource: 'assets', filters: { q: 'PRJ-', archived: 'exclude' } });
     await expectNoA11yViolations(dialog);
   });
 
@@ -289,15 +286,22 @@ describe('AssetsTable: CSV export and labels', () => {
     expect(within(dialog).queryByRole('link', { name: 'Download CSV' })).not.toBeInTheDocument();
   });
 
-  it('hides the export from someone who cannot read assets, and the labels from someone who cannot print', async () => {
+  it('hides the export from someone without export:run, and the labels from someone who cannot print', async () => {
     seedSession(MOCK_ACCOUNTS.viewer);
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
-    // viewers read assets (so they can export) but hold no asset:label
-    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+    // viewers read assets but hold neither export:run nor asset:label
+    expect(screen.queryByRole('button', { name: 'Export CSV' })).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Print labels for this filter' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('gives the export to a manager, who holds export:run', async () => {
+    seedSession(MOCK_ACCOUNTS.manager);
+    renderApp(<AssetsTable />, { workflows: true });
+    await loaded();
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeVisible();
   });
 
   it('prints labels for the current filter and for a selection', async () => {

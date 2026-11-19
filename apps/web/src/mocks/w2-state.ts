@@ -6,27 +6,48 @@ import { onMockReset } from './state';
 
 /**
  * State of the M2 wave 2 mock endpoints: accessories and consumables (with the stock ledger and the
- * accessory hand-outs), repairs, notifications and their preferences, saved views, exports and the
- * label templates. Held in memory and mirrored to `localStorage` on every change (like the registry),
+ * accessory hand-outs), repairs, notifications with their preferences and rules, saved views,
+ * exports and label batches. Held in memory and mirrored to `localStorage` on every change (like the registry),
  * so a full page load keeps what a user did. The first use seeds a small, deterministic data set.
  */
 type S = components['schemas'];
 
-export type MockAccessory = Rec<S['Accessory']>;
-export type MockConsumable = Rec<S['Consumable']> & { qty_on_hand: number };
+/** What is stored: `qty_checked_out`, `qty_available` and `low_stock` are derived on every read. */
+export type MockAccessory = Rec<
+  Omit<S['Accessory'], 'qty_checked_out' | 'qty_available' | 'low_stock'>
+>;
+export type MockConsumable = Rec<Omit<S['Consumable'], 'low_stock'>>;
 export type MockRepair = Rec<S['Repair']>;
 export type MockStockMovement = S['StockMovement'];
 /** A hand-out of accessory units (an `Assignment` with `accessory_id`). */
 export type MockHandout = Rec<S['Assignment']>;
 export type MockNotification = S['Notification'] & { user_id: string };
-export type MockSavedView = S['SavedView'];
-export type MockExport = S['ExportJob'] & {
-  /** The CSV the download link serves, filled in when the job is ready. */
+/** What is stored: `is_owner` and `warnings` depend on who asks and on the catalogue. */
+export type MockSavedView = Omit<S['SavedView'], 'is_owner' | 'warnings'> & { _v: number };
+export type MockExport = S['Export'] & {
+  /** The CSV the download link serves, filled in when the job has finished. */
   csv?: string;
+  /** How many rows the file will have; `row_count` shows it once the job has succeeded. */
+  rows?: number;
   /** Epoch ms at which the job finishes (the mock "worker"). */
   ready_at: number;
   fail?: boolean;
 };
+export type MockLabelBatch = { -readonly [K in keyof S['LabelBatch']]: S['LabelBatch'][K] } & {
+  user_id: string;
+  /** The assets of the batch, in print order. */
+  asset_ids: string[];
+  /** Epoch ms at which the sheet is rendered (the mock "worker"). */
+  ready_at: number;
+  /** A reason the render fails with (`render-failed`, `logo-invalid`). */
+  fail?: 'render-failed' | 'logo-invalid';
+};
+/** The organisation's rule of a notification type (absent = enabled for the default recipients). */
+export interface MockRule {
+  enabled: boolean;
+  recipient_roles: string[] | null;
+  updated_at: string;
+}
 
 export interface W2Data {
   accessories: MockAccessory[];
@@ -35,15 +56,23 @@ export interface W2Data {
   movements: MockStockMovement[];
   repairs: MockRepair[];
   notifications: MockNotification[];
-  /** `user id` -> `event type` -> delivery. */
-  preferences: Record<string, Record<string, S['NotificationPreference']['delivery']>>;
+  /** `user id` -> `type` -> what the user chose (absent fields keep the default). */
+  preferences: Record<
+    string,
+    Record<string, { in_app?: boolean; email?: S['NotificationPreference']['email'] }>
+  >;
+  /** `type` -> rule. */
+  rules: Record<string, MockRule>;
+  /** Users whose inbox was seeded. */
+  seeded: string[];
   savedViews: MockSavedView[];
   exports: MockExport[];
+  labelBatches: MockLabelBatch[];
   /** `Idempotency-Key` -> what the first request answered (for the stock-changing POSTs). */
   idempotency: Record<string, { signature: string; status: number; body: JsonBodyType }>;
 }
 
-const KEY = 'at-mock-w2';
+const KEY = 'at-mock-w2-v2';
 const NOW = Date.UTC(2026, 10, 17, 9, 0, 0);
 const DAY = 86_400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -59,6 +88,7 @@ const KIND_CODE = {
   export: '00a7',
   template: '00a8',
   handout: '00a9',
+  batch: '00aa',
 } as const;
 export type W2Kind = keyof typeof KIND_CODE;
 
@@ -78,14 +108,102 @@ export function newW2Id(kind: W2Kind): string {
 const OWNER_ID = '0190a6b2-0000-7000-8000-000000000001';
 const MANAGER_ID = '0190a6b2-0000-7000-8000-000000000007';
 
+/** The opaque QR payload of an item's label: 32 hex digits, never an id. */
+export function labelCode(kind: string, n: number | string): string {
+  const seed = `${kind}${n}`;
+  let hash = 0;
+  for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return (hash.toString(16).padStart(8, '0') + '0'.repeat(24)).slice(0, 32);
+}
+
+/**
+ * The notification types of the API (`apps/api/src/notifications/types.ts`): the preferences and the
+ * organisation's rules are generated from this table there, and from here in the mock.
+ */
+export interface MockNotificationType {
+  type: string;
+  label: string;
+  description: string;
+  recipients: string;
+  role_configurable: boolean;
+  defaults: { in_app: boolean; email: S['NotificationPreference']['email'] };
+}
+export const NOTIFICATION_TYPES: MockNotificationType[] = [
+  {
+    type: 'attachment.infected',
+    label: 'File blocked by the virus scan',
+    description: 'A file you uploaded was found to contain malware and was removed.',
+    recipients: 'The user who uploaded the file.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'immediate' },
+  },
+  {
+    type: 'asset.checked_out',
+    label: 'Asset assigned to you',
+    description: 'An asset was checked out to you.',
+    recipients: 'The person the asset was checked out to, when they have a login.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'off' },
+  },
+  {
+    type: 'export.completed',
+    label: 'Export ready',
+    description: 'A CSV export you requested is ready to download.',
+    recipients: 'The user who requested the export.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'off' },
+  },
+  {
+    type: 'consumable.low_stock',
+    label: 'Low stock',
+    description: 'A consumable fell to or below its reorder level.',
+    recipients: 'Users who manage consumables.',
+    role_configurable: true,
+    defaults: { in_app: true, email: 'digest' },
+  },
+  {
+    type: 'label.batch.ready',
+    label: 'Labels ready',
+    description: 'A batch of labels you asked for is ready to print.',
+    recipients: 'The user who requested the batch.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'off' },
+  },
+  {
+    type: 'loan.overdue',
+    label: 'Loan overdue',
+    description: 'A loaned asset was not returned by its due date.',
+    recipients: 'The borrower (when they have a login) and users who manage loaner pools.',
+    role_configurable: true,
+    defaults: { in_app: true, email: 'immediate' },
+  },
+  {
+    type: 'loan.due_soon',
+    label: 'Loan due soon',
+    description: 'A loaned asset is due back shortly.',
+    recipients: 'The borrower, when they have a login.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'immediate' },
+  },
+  {
+    type: 'import.completed',
+    label: 'Import finished',
+    description: 'An import you started has finished.',
+    recipients: 'The user who ran the import.',
+    role_configurable: false,
+    defaults: { in_app: true, email: 'immediate' },
+  },
+];
+
 /** Notifications every user starts with (the mock has one inbox shape for all). */
 export function seedNotifications(userId: string): MockNotification[] {
   const base = (n: number, extra: Partial<MockNotification>): MockNotification => ({
     id: w2Id('notification', n + Number(userId.slice(-4)) * 100),
     user_id: userId,
-    event_type: 'stock.low',
+    type: 'consumable.low_stock',
     title: '',
     body: null,
+    link: null,
     entity_type: null,
     entity_id: null,
     read_at: null,
@@ -94,46 +212,43 @@ export function seedNotifications(userId: string): MockNotification[] {
   });
   return [
     base(1, {
-      event_type: 'stock.low',
-      title: 'Toner HP 26A is low on stock',
-      body: '2 on hand; the minimum is 3.',
+      type: 'consumable.low_stock',
+      title: 'Low stock: Toner HP 26A',
+      body: 'Toner HP 26A is at or below its reorder level. 2 left (reorder level 3).',
+      // the API's link is the consumables list, which this app does not have as a page of its own
+      link: '/consumables',
       entity_type: 'consumable',
       entity_id: w2Id('consumable', 2),
     }),
     base(5, {
-      event_type: 'loan.overdue',
-      title: 'A loan is overdue',
-      body: 'AT-00031 was due 3 days ago.',
+      type: 'loan.overdue',
+      title: 'Overdue: AT-00031',
+      body: 'AT-00031 was due back 3 days ago.',
+      link: '/assets/view?id=0190a6b2-0008-7000-8000-000000000031',
       entity_type: 'asset',
       entity_id: '0190a6b2-0008-7000-8000-000000000031',
     }),
     base(9, {
-      event_type: 'import.completed',
-      title: 'Import finished: 120 assets created',
-      body: null,
+      type: 'import.completed',
+      title: 'Import finished',
+      body: 'The import of assets.csv finished: 120 created, 0 updated, 0 rows with errors.',
     }),
     base(30, {
-      event_type: 'attachment.infected',
-      title: 'A file was rejected by the virus scan',
-      body: 'receipt.pdf on a repair was blocked.',
+      type: 'attachment.infected',
+      title: 'A file you uploaded was blocked',
+      body: '"receipt.pdf" was removed because the virus scan found a virus.',
       read_at: iso(NOW - 28 * 3_600_000),
     }),
     base(52, {
-      event_type: 'label.batch.ready',
-      title: 'Your label sheet is ready',
+      type: 'label.batch.ready',
+      title: 'Your labels are ready',
+      body: 'Your batch of labels is ready to print.',
+      entity_type: 'label_batch',
+      entity_id: w2Id('batch', 1),
       read_at: iso(NOW - 50 * 3_600_000),
     }),
   ];
 }
-
-export const NOTIFICATION_EVENTS: Array<[string, S['NotificationPreference']['delivery']]> = [
-  ['stock.low', 'immediate'],
-  ['loan.overdue', 'immediate'],
-  ['import.completed', 'immediate'],
-  ['attachment.infected', 'immediate'],
-  ['label.batch.ready', 'daily_digest'],
-  ['export.ready', 'daily_digest'],
-];
 
 function buildSeed(): W2Data {
   const stamp = { created_at: iso(NOW - 120 * DAY), updated_at: iso(NOW - 10 * DAY) };
@@ -163,8 +278,7 @@ function buildSeed(): W2Data {
     purchase_date: dateOnly(NOW - 200 * DAY),
     purchase_cost: null,
     notes: null,
-    qty_checked_out: 0,
-    qty_available: total,
+    label_code: labelCode('accessory', n),
     _v: 1,
     ...extra,
   });
@@ -249,6 +363,7 @@ function buildSeed(): W2Data {
     unit_cost: null,
     notes: null,
     qty_on_hand: onHand,
+    label_code: labelCode('consumable', n),
     _v: 1,
   });
   const consumables: MockConsumable[] = [
@@ -298,35 +413,36 @@ function buildSeed(): W2Data {
     repairs: [],
     notifications: [],
     preferences: {},
+    rules: {},
+    seeded: [],
     savedViews: [
       {
         id: w2Id('view', 1),
-        entity: 'asset',
+        resource: 'assets',
         name: 'Teacher devices',
-        shared: true,
-        owner_user_id: MANAGER_ID,
-        owner_name: 'Sam Lee',
-        definition: {
-          filters: {
-            q: '',
-            status_id: '',
-            category_id: '0190a6b2-0001-7000-8000-000000000002',
-            location_id: '',
-            include_sublocations: true,
-            assigned: '',
-            person_id: '',
-            person_name: '',
-            archived: 'exclude',
-            cf: null,
-          },
-          columns: ['tag', 'name', 'status', 'location'],
-          sort: null,
+        filters: {
+          q: '',
+          status_id: '',
+          category_id: '0190a6b2-0001-7000-8000-000000000002',
+          location_id: '',
+          include_sublocations: true,
+          assigned: '',
+          person_id: '',
+          person_name: '',
+          archived: 'exclude',
+          cf: null,
         },
+        columns: ['tag', 'name', 'status', 'location'],
+        sort: null,
+        is_shared: true,
+        owner: { id: MANAGER_ID, display_name: 'Sam Lee' },
         created_at: iso(NOW - 30 * DAY),
         updated_at: iso(NOW - 30 * DAY),
+        _v: 1,
       },
     ],
     exports: [],
+    labelBatches: [],
     idempotency: {},
   };
 }
@@ -448,3 +564,38 @@ export function resetW2(): void {
 }
 
 onMockReset(resetW2);
+
+/**
+ * Raise an in-app notification for `userId` the way the API's notifier does: nothing when the
+ * organisation switched the type off or the user turned it off in their preferences.
+ */
+export function notify(
+  data: W2Data,
+  userId: string,
+  notification: {
+    type: string;
+    title: string;
+    body?: string | null;
+    link?: string | null;
+    entity_type?: string | null;
+    entity_id?: string | null;
+  },
+): void {
+  const rule = data.rules[notification.type];
+  if (rule && !rule.enabled) return;
+  const defaults = NOTIFICATION_TYPES.find((t) => t.type === notification.type)?.defaults;
+  const chosen = data.preferences[userId]?.[notification.type];
+  if ((chosen?.in_app ?? defaults?.in_app ?? true) === false) return;
+  data.notifications.push({
+    id: newW2Id('notification'),
+    user_id: userId,
+    type: notification.type,
+    title: notification.title,
+    body: notification.body ?? null,
+    link: notification.link ?? null,
+    entity_type: notification.entity_type ?? null,
+    entity_id: notification.entity_id ?? null,
+    created_at: new Date().toISOString(),
+    read_at: null,
+  });
+}

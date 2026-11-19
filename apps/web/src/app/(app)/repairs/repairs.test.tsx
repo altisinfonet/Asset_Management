@@ -165,7 +165,11 @@ describe('RepairsScreen', () => {
     await user.click(await screen.findByRole('option', { name: new RegExp(held.asset_tag) }));
     await user.type(within(dialog).getByRole('textbox', { name: /^What needs doing/ }), 'Broken');
     await user.click(within(dialog).getByRole('button', { name: 'Log repair' }));
-    expect(await within(dialog).findByText('The asset is checked out.')).toBeVisible();
+    expect(
+      await within(dialog).findByText(
+        'The asset is checked out. Check it in first, or open the repair with force_checkin and a note.',
+      ),
+    ).toBeVisible();
     expect(within(dialog).getByRole('textbox', { name: /^What needs doing/ })).toHaveValue(
       'Broken',
     );

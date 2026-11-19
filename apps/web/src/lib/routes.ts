@@ -51,6 +51,10 @@ export const routes = {
   /** Repair log; `id` opens one repair's drawer. */
   repairs: (id?: string) => (id ? `/repairs?id=${encodeURIComponent(id)}` : '/repairs'),
   notificationSettings: '/account/notifications',
+  /** The asset list with the progress of a label batch open (the "labels ready" notification). */
+  labelBatch: (id: string) => `/assets?label_batch=${encodeURIComponent(id)}`,
+  /** The asset list with the progress of a CSV export open (the "export ready" notification). */
+  exportJob: (id: string) => `/assets?export=${encodeURIComponent(id)}`,
   people: '/people',
   personView: (id: string, tab?: string) =>
     `/people/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,

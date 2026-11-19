@@ -10,6 +10,7 @@ import { ConfirmDialog } from '@/components/registry/confirm-dialog';
 import { FormDialog, type FormValues } from '@/components/registry/form-dialog';
 import { LocationPicker } from '@/components/registry/location-picker';
 import { LocationTree } from '@/components/registry/location-tree';
+import { ExportButton } from '@/components/exports/export-button';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
 import { Badge } from '@/components/ui/badge';
@@ -121,12 +122,15 @@ export function LocationsScreen() {
         title={t('locations.title')}
         description={t('locations.description')}
         actions={
-          manage ? (
-            <Button variant="primary" onClick={() => add(selectedId ?? '')}>
-              <Plus aria-hidden className="size-4" />
-              {t('locations.add')}
-            </Button>
-          ) : null
+          <>
+            <ExportButton resource="locations" query={{}} />
+            {manage ? (
+              <Button variant="primary" onClick={() => add(selectedId ?? '')}>
+                <Plus aria-hidden className="size-4" />
+                {t('locations.add')}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

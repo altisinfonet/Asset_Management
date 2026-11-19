@@ -336,6 +336,11 @@ describe('StockView: consumable', () => {
     await user.clear(field);
     await user.type(field, '20');
     expect(await within(dialog).findByTestId('count-delta')).toHaveTextContent('Change: -4');
+    // the API wants the reason of a count: nothing is sent without one
+    await user.click(within(dialog).getByRole('button', { name: 'Save count' }));
+    expect(await within(dialog).findByText('Say why the stock differs.')).toBeVisible();
+    expect((await consumablesApi.get(paper.id)).value.qty_on_hand).toBe(24);
+    await user.type(within(dialog).getByRole('textbox', { name: /^Note/ }), 'Stock count');
     await user.click(within(dialog).getByRole('button', { name: 'Save count' }));
     expect(await screen.findByText('Count saved. 20 on hand.')).toBeVisible();
     const ledger = await screen.findByRole('table', { name: 'Stock movements' });

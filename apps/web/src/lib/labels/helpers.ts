@@ -1,22 +1,25 @@
-import type { LabelCodeType, LabelField, LabelTemplate } from './api';
+import type { AssetListQuery } from '@/lib/registry/api';
+import type { LabelAssetFilter, LabelCode, LabelCodeType, LabelField, LabelTemplate } from './api';
 
 /**
  * Pure helpers of the label dialog: sheet arithmetic (which slot a label lands in), what a
  * template allows, and the remembered choice.
  */
 
-/** Hard limit of one render request (`LabelRenderRequest.asset_ids`). */
-export const MAX_LABELS = 500;
+/** Hard limit of one batch: assets (`asset_ids` or a filter) and labels (assets x copies). */
+export const MAX_LABELS = 2000;
 
+/** The text lines a label can carry, in the order the API lists them. */
 export const LABEL_FIELDS: readonly LabelField[] = [
-  'tag',
+  'asset_tag',
   'name',
-  'location',
   'serial',
+  'location',
+  'model',
   'organisation',
 ];
 
-export const CODE_TYPES: readonly LabelCodeType[] = ['qr', 'code128', 'qr_and_code128'];
+export const LABEL_CODES: readonly LabelCode[] = ['qr', 'code128'];
 
 export function slotsPerSheet(template: Pick<LabelTemplate, 'cols' | 'rows'>): number {
   return Math.max(1, template.cols * template.rows);
@@ -75,24 +78,49 @@ export function isSingleLabel(template: Pick<LabelTemplate, 'cols' | 'rows'>): b
   return slotsPerSheet(template) === 1;
 }
 
-/** Template codes -> what the template can print. `qr_and_code128` templates print both. */
-export function codeTypeOf(template: Pick<LabelTemplate, 'code_type'>): LabelCodeType {
-  return template.code_type;
+/** The codes a template type draws: `qr_and_code128` draws both. */
+export function codesOfType(type: LabelCodeType): LabelCode[] {
+  return type === 'qr_and_code128' ? ['qr', 'code128'] : [type];
 }
 
-export function showsQr(type: LabelCodeType): boolean {
-  return type === 'qr' || type === 'qr_and_code128';
-}
-export function showsBarcode(type: LabelCodeType): boolean {
-  return type === 'code128' || type === 'qr_and_code128';
+/** The codes a template draws unless a batch says otherwise. */
+export const codesOf = (template: Pick<LabelTemplate, 'code_type'>): LabelCode[] =>
+  codesOfType(template.code_type);
+
+export const showsQr = (codes: readonly LabelCode[]): boolean => codes.includes('qr');
+export const showsBarcode = (codes: readonly LabelCode[]): boolean => codes.includes('code128');
+
+/** From the two checkboxes of the form to the API's `codes` list (an empty list prints text only). */
+export function codesFrom(qr: boolean, barcode: boolean): LabelCode[] {
+  return [...(qr ? (['qr'] as const) : []), ...(barcode ? (['code128'] as const) : [])];
 }
 
-/** From the two checkboxes of the form to the API's code type; `null` when neither is ticked. */
-export function codeTypeFrom(qr: boolean, barcode: boolean): LabelCodeType | null {
-  if (qr && barcode) return 'qr_and_code128';
-  if (qr) return 'qr';
-  if (barcode) return 'code128';
-  return null;
+export function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item) => b.includes(item));
+}
+
+/**
+ * The `filter` of a batch for a list query: the filters of `GET /v1/assets` without paging
+ * (`LabelAssetFilter`). `null` when the list uses something a batch filter cannot express (custom
+ * field filters): the dialog then sends the asset ids instead.
+ */
+export function toLabelFilter(query: AssetListQuery): LabelAssetFilter | null {
+  if (query.cf && Object.keys(query.cf).length > 0) return null;
+  const filter: LabelAssetFilter = {};
+  if (query.q) filter.q = query.q;
+  if (query.archived) filter.archived = query.archived;
+  if (query.status_id?.length) filter.status_id = query.status_id;
+  if (query.category_id?.length) filter.category_id = query.category_id;
+  if (query.location_id) {
+    filter.location_id = query.location_id;
+    if (query.include_sublocations !== undefined) {
+      filter.include_sublocations = query.include_sublocations;
+    }
+  }
+  if (query.assigned !== undefined) filter.assigned = query.assigned;
+  if (query.assigned_person_id) filter.assigned_person_id = query.assigned_person_id;
+  if (query.sort?.length) filter.sort = query.sort.join(',');
+  return filter;
 }
 
 /** Template fields as far as this UI knows them (an unknown name from a newer API is dropped). */
@@ -109,7 +137,7 @@ export const LABEL_CHOICE_KEY = 'at-label-choice';
 
 export interface LabelChoice {
   template_key: string;
-  code_type?: LabelCodeType;
+  codes?: LabelCode[];
   fields?: LabelField[];
 }
 
@@ -122,8 +150,8 @@ export function readLabelChoice(): LabelChoice | null {
     if (typeof record.template_key !== 'string' || !record.template_key) return null;
     return {
       template_key: record.template_key.slice(0, 80),
-      ...(CODE_TYPES.includes(record.code_type as LabelCodeType)
-        ? { code_type: record.code_type as LabelCodeType }
+      ...(Array.isArray(record.codes)
+        ? { codes: LABEL_CODES.filter((c) => (record.codes as unknown[]).includes(c)) }
         : {}),
       ...(Array.isArray(record.fields)
         ? { fields: LABEL_FIELDS.filter((f) => (record.fields as unknown[]).includes(f)) }

@@ -4,7 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { Bell, CheckCheck, Circle } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { createElement, useState } from 'react';
 import { Banner } from '@/components/ui/banner';
 import { Button, IconButton } from '@/components/ui/button';
 import {
@@ -22,9 +22,10 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/cn';
 import {
   badgeCount,
-  eventLabelKey,
   notificationHref,
+  notificationIcon,
   notificationsApi,
+  typeLabelKey,
   type AppNotification,
 } from '@/lib/notifications/api';
 import { routes } from '@/lib/routes';
@@ -43,13 +44,13 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const count = useQuery({
     queryKey: COUNT_KEY,
-    queryFn: () => notificationsApi.list({ unread: true, limit: 1 }),
+    queryFn: () => notificationsApi.unreadCount(),
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: true,
     retry: false,
     staleTime: 20_000,
   });
-  const unread = count.data?.unread_count ?? 0;
+  const unread = count.data ?? 0;
 
   return (
     <>
@@ -105,7 +106,14 @@ function NotificationsPanel({
     retry: false,
   });
   const rows = list.data?.pages.flatMap((page) => page.data) ?? [];
-  const unread = list.data?.pages[0]?.unread_count ?? 0;
+  const unreadCount = useQuery({
+    queryKey: COUNT_KEY,
+    queryFn: () => notificationsApi.unreadCount(),
+    enabled: open,
+    retry: false,
+    staleTime: 20_000,
+  });
+  const unread = unreadCount.data ?? 0;
 
   const refresh = () => client.invalidateQueries({ queryKey: ['notifications'] });
 
@@ -241,16 +249,20 @@ function NotificationRow({
   const { t, formatDateTime } = useI18n();
   const unread = !notification.read_at;
   const href = notificationHref(notification);
-  const eventKey = eventLabelKey(notification.event_type);
+  const typeKey = typeLabelKey(notification.type);
   return (
     <li
       className={cn('flex gap-3 p-4', unread && 'bg-primary-subtle/40')}
       data-unread={unread || undefined}
     >
-      <span className="mt-1 shrink-0" aria-hidden>
+      <span className="mt-0.5 flex shrink-0 items-start gap-1.5" aria-hidden>
         <Circle
-          className={cn('size-3', unread ? 'fill-primary text-primary' : 'text-border-strong')}
+          className={cn(
+            'mt-1.5 size-2.5',
+            unread ? 'fill-primary text-primary' : 'text-border-strong',
+          )}
         />
+        {createElement(notificationIcon(notification.type), { className: 'size-5 text-muted' })}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <p className="text-base">
@@ -259,7 +271,7 @@ function NotificationRow({
         </p>
         {notification.body ? <p className="text-sm text-muted">{notification.body}</p> : null}
         <p className="text-xs text-muted">
-          {eventKey ? t(eventKey) : notification.event_type}
+          {typeKey ? t(typeKey) : notification.type}
           {' · '}
           {formatDateTime(notification.created_at)}
         </p>

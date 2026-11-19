@@ -6,22 +6,26 @@ import {
   type AssetViewState,
   type SavedView as LocalSavedView,
 } from '@/lib/registry/asset-view';
-import type { SavedView, SavedViewDefinition } from './api';
+import type { SavedView, SavedViewWarning, ViewDefinition } from './api';
 
 /**
  * Saved views on the server (M2-REG-01): the wire shape `{ filters, columns, sort }` and the list's
  * `AssetViewState` convert into each other here; a view that points at something that no longer
  * exists degrades to the closest valid state plus a list of what was dropped (so the screen can warn).
+ * The server reports the id references it could not resolve (`warnings`); custom fields and columns
+ * are checked here, against the catalogue.
  */
 
 /** The server definition of a list state. */
-export function toDefinition(state: AssetViewState): SavedViewDefinition {
+export function toDefinition(state: AssetViewState): ViewDefinition {
   const { columns, sort, ...filters } = state;
   return { filters: { ...filters }, columns: [...columns], sort: sort || null };
 }
 
 /** The list state of a definition; anything malformed falls back to the defaults. */
-export function fromDefinition(definition: SavedViewDefinition): AssetViewState {
+export function fromDefinition(
+  definition: Pick<SavedView, 'filters' | 'columns' | 'sort'>,
+): AssetViewState {
   return sanitiseState({
     ...definition.filters,
     columns: definition.columns,
@@ -30,7 +34,41 @@ export function fromDefinition(definition: SavedViewDefinition): AssetViewState 
 }
 
 /** What a stored view refers to that the catalogue no longer has. */
-export type DroppedPart = 'status' | 'category' | 'location' | 'field' | 'column';
+export type DroppedPart = 'status' | 'category' | 'location' | 'person' | 'field' | 'column';
+
+/** The list-state filter an id reference of a server warning belongs to. */
+const WARNED_PART: Record<string, DroppedPart> = {
+  status_id: 'status',
+  category_id: 'category',
+  location_id: 'location',
+  person_id: 'person',
+  assigned_person_id: 'person',
+};
+
+/**
+ * Apply the warnings of the server (references that no longer resolve, or were archived): the
+ * filter is cleared, so the list still opens with the rest of the view.
+ */
+export function applyWarnings(
+  state: AssetViewState,
+  warnings: readonly SavedViewWarning[],
+): { state: AssetViewState; dropped: DroppedPart[] } {
+  const dropped = new Set<DroppedPart>();
+  const next: AssetViewState = { ...state };
+  for (const warning of warnings) {
+    const part = WARNED_PART[warning.field];
+    if (!part) continue;
+    if (part === 'status' && next.status_id === warning.id) next.status_id = '';
+    else if (part === 'category' && next.category_id === warning.id) next.category_id = '';
+    else if (part === 'location' && next.location_id === warning.id) next.location_id = '';
+    else if (part === 'person' && next.person_id === warning.id) {
+      next.person_id = '';
+      next.person_name = '';
+    } else continue;
+    dropped.add(part);
+  }
+  return { state: next, dropped: [...dropped] };
+}
 
 export interface ViewReferences {
   statusIds: ReadonlySet<string>;
@@ -116,17 +154,10 @@ export interface MigrationResult {
  */
 export async function migrateLocalViews(
   local: LocalSavedView[],
-  existing: Pick<SavedView, 'name' | 'shared' | 'owner_user_id'>[],
-  userId: string,
-  create: (view: {
-    name: string;
-    shared: boolean;
-    definition: SavedViewDefinition;
-  }) => Promise<unknown>,
+  existing: Pick<SavedView, 'name' | 'is_owner'>[],
+  create: (view: { name: string } & ViewDefinition) => Promise<unknown>,
 ): Promise<MigrationResult> {
-  const taken = new Set(
-    existing.filter((v) => v.owner_user_id === userId).map((v) => v.name.toLowerCase()),
-  );
+  const taken = new Set(existing.filter((v) => v.is_owner).map((v) => v.name.toLowerCase()));
   const result: MigrationResult = { moved: 0, skipped: 0, failed: 0 };
   for (const view of local) {
     if (taken.has(view.name.toLowerCase())) {
@@ -134,7 +165,7 @@ export async function migrateLocalViews(
       continue;
     }
     try {
-      await create({ name: view.name, shared: false, definition: toDefinition(view.state) });
+      await create({ name: view.name, ...toDefinition(view.state) });
       taken.add(view.name.toLowerCase());
       result.moved += 1;
     } catch {

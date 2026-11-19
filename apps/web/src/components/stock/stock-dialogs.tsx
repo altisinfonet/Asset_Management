@@ -85,15 +85,17 @@ function NoteField({
   value,
   onChange,
   error,
+  required,
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  required?: boolean;
 }) {
   return (
-    <Field label={label} hint={hint} error={error}>
+    <Field label={label} hint={hint} error={error} required={required}>
       {(control) => (
         <Textarea
           {...control}
@@ -378,6 +380,8 @@ export function MovementDialog({
       if (adjustmentDelta(onHand, count) === 0) {
         return { quantity: t('stockActions.movement.errors.noChange') };
       }
+      // the API wants the reason of a count (a note) before it changes the stock
+      if (!note.trim()) return { note: t('stockActions.movement.errors.noteRequired') };
       return {};
     }
     if (count === null || count < 1)
@@ -470,10 +474,15 @@ export function MovementDialog({
           ) : null}
           <NoteField
             label={t('stockActions.movement.note')}
-            hint={t('stockActions.movement.noteHint')}
+            hint={
+              mode === 'adjust'
+                ? t('stockActions.movement.adjust.noteHint')
+                : t('stockActions.movement.noteHint')
+            }
             value={note}
             onChange={setNote}
             error={errors.note}
+            required={mode === 'adjust'}
           />
         </>
       )}

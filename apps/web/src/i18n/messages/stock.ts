@@ -235,6 +235,7 @@ export const stockMessages = {
         change: 'Change: {delta}',
         noChange: 'That is what the system already shows.',
         submit: 'Save count',
+        noteHint: 'Say why the stock differs, for example "Stock count".',
         done: 'Count saved. {balance} on hand.',
       },
       note: 'Note',
@@ -244,6 +245,7 @@ export const stockMessages = {
         tooMany: 'Only {max} are on hand.',
         count: 'Enter a whole number, 0 or more.',
         noChange: 'The count matches what is on hand. Nothing to record.',
+        noteRequired: 'Say why the stock differs.',
       },
     },
     minimum: {

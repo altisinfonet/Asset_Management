@@ -1,7 +1,7 @@
 /**
  * English messages of the notifications (M2-NOT-02): the bell, the panel and the preferences page.
- * Event types are addressed with underscores (`stock_low` for `stock.low`) because dots separate
- * the levels of this catalogue.
+ * Notification types are addressed with underscores (`consumable_low_stock` for
+ * `consumable.low_stock`) because dots separate the levels of this catalogue.
  */
 export const notificationsMessages = {
   notifications: {
@@ -29,33 +29,41 @@ export const notificationsMessages = {
     settings: {
       link: 'Notification settings',
       title: 'Notification settings',
-      description: 'Choose how you hear about each kind of event.',
-      table: 'Notification delivery by event',
-      event: 'Event',
-      delivery: 'How you hear about it',
-      deliveryNamed: 'Delivery for {event}',
+      description: 'Choose how you hear about each kind of notification.',
+      table: 'Notification delivery by type',
+      event: 'Notification',
+      inApp: 'In the bell',
+      inAppNamed: 'Show {event} in the bell',
+      email: 'By e-mail',
+      emailNamed: 'E-mail for {event}',
+      isDefault: 'Default',
       save: 'Save changes',
       saved: 'Notification settings saved.',
       saveFailed: 'We could not save your settings.',
       loadFailed: 'We could not load your notification settings.',
       none: 'There are no notification types to set yet.',
       unsaved: 'You have unsaved changes.',
-      hint: 'In-app notifications always appear in the bell. "Right away" and "Daily summary" also send e-mail.',
+      hint: '"Right away" sends one e-mail per notification, "Daily summary" collects them into one e-mail a day.',
+      partial: 'Some changes could not be saved. Try again.',
     },
-    delivery: {
+    email: {
       immediate: 'Right away',
-      daily_digest: 'Daily summary',
+      digest: 'Daily summary',
       off: 'Off',
     },
-    events: {
-      stock_low: 'Stock is low',
-      loan_overdue: 'A loan is overdue',
-      import_completed: 'An import finished',
-      attachment_infected: 'A file was rejected by the virus scan',
-      label_batch_ready: 'A label sheet is ready',
-      export_ready: 'An export is ready',
-      repair_opened: 'A repair was opened',
-      repair_completed: 'A repair was closed',
+    types: {
+      consumable_low_stock: 'Low stock',
+      accessory_low_stock: 'Low stock',
+      label_batch_ready: 'Labels ready',
+      label_batch_failed: 'Labels failed',
+      export_completed: 'Export ready',
+      attachment_infected: 'File blocked',
+      asset_checked_out: 'Asset assigned',
+      loan_overdue: 'Loan overdue',
+      loan_due_soon: 'Loan due soon',
+      import_completed: 'Import finished',
+      repair_opened: 'Repair opened',
+      repair_completed: 'Repair closed',
     },
   },
 } as const;

@@ -11,10 +11,13 @@ import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
+import { getApi } from '@/lib/api';
+import { uiErrorText } from '@/lib/error-text';
 import { defaultViewState, type AssetViewState } from '@/lib/registry/asset-view';
 import type { Lookups } from '@/lib/registry/queries';
 import { savedViewsApi, SHARE_PERMISSION, type SavedView } from '@/lib/views/api';
 import {
+  applyWarnings,
   degradeState,
   fromDefinition,
   migrateLocalViews,
@@ -61,7 +64,11 @@ export function SavedViewsBar({
     retry: false,
     staleTime: 30_000,
   });
-  const list = useMemo(() => views.data ?? [], [views.data]);
+  // The API lists by name; the user's own views come first.
+  const list = useMemo(() => {
+    const all = views.data ?? [];
+    return [...all.filter((view) => view.is_owner), ...all.filter((view) => !view.is_owner)];
+  }, [views.data]);
   const active = list.find((view) => view.id === activeId);
 
   // Views from this browser (the earlier version) move to the account the first time the list loads.
@@ -70,7 +77,7 @@ export function SavedViewsBar({
     migrated.current = true;
     const local = pendingLocalViews();
     if (local.length === 0) return;
-    void migrateLocalViews(local, views.data, userId, (view) => savedViewsApi.create(view)).then(
+    void migrateLocalViews(local, views.data, (view) => savedViewsApi.create(view)).then(
       (result) => {
         if (result.moved > 0) {
           toast({ variant: 'success', title: t('savedViews.migrated', { count: result.moved }) });
@@ -101,17 +108,20 @@ export function SavedViewsBar({
     }
     const view = list.find((candidate) => candidate.id === id);
     if (!view) return;
-    const result = degradeState(fromDefinition(view.definition), refs);
-    if (result.dropped.length > 0) setDropped({ name: view.name, parts: result.dropped });
+    // what the server could not resolve, then what the catalogue here no longer has
+    const warned = applyWarnings(fromDefinition(view), view.warnings);
+    const result = degradeState(warned.state, refs);
+    const parts = [...new Set([...warned.dropped, ...result.dropped])];
+    if (parts.length > 0) setDropped({ name: view.name, parts });
     onApply(result.state);
   };
 
   const refresh = () => client.invalidateQueries({ queryKey: SAVED_VIEWS_KEY });
-  const isOwner = (view: SavedView) => view.owner_user_id === userId;
-  const mayChange = (view: SavedView) => isOwner(view) || (view.shared && canShare);
+  // Only the owner changes or deletes a view; everybody else can use it or save a copy.
+  const mayChange = (view: SavedView) => view.is_owner;
 
   const label = (view: SavedView) =>
-    view.shared ? t('savedViews.sharedOption', { name: view.name }) : view.name;
+    view.is_shared ? t('savedViews.sharedOption', { name: view.name }) : view.name;
 
   const nameField: FormFieldSpec = {
     name: 'name',
@@ -152,7 +162,7 @@ export function SavedViewsBar({
             size="sm"
             onClick={() => {
               void savedViewsApi
-                .update(active.id, { definition: toDefinition(current) })
+                .update(active.id, toDefinition(current))
                 .then(() => {
                   toast({
                     variant: 'success',
@@ -160,7 +170,15 @@ export function SavedViewsBar({
                   });
                   return refresh();
                 })
-                .catch(() => toast({ variant: 'danger', title: t('error.unknown') }));
+                .catch((err: unknown) => {
+                  const ui = getApi().toUiError(err);
+                  toast({
+                    variant: 'danger',
+                    title: t('savedViews.updateFailed'),
+                    description: uiErrorText(t, ui),
+                    requestId: ui.requestId,
+                  });
+                });
             }}
           >
             <RefreshCw aria-hidden className="size-4" />
@@ -181,9 +199,9 @@ export function SavedViewsBar({
           {t('savedViews.loadFailed')}
         </span>
       ) : null}
-      {active && !isOwner(active) ? (
+      {active && !active.is_owner ? (
         <span className="text-sm text-muted">
-          {t('savedViews.sharedBy', { name: active.owner_name ?? '' })}
+          {t('savedViews.sharedBy', { name: active.owner.display_name })}
         </span>
       ) : null}
 
@@ -207,11 +225,24 @@ export function SavedViewsBar({
         submitLabel={t('assets.views.save')}
         onSubmit={async (values) => {
           const name = String(values.name).trim();
-          const created = await savedViewsApi.create({
-            name,
-            shared: canShare && values.shared === true,
-            definition: toDefinition(current),
-          });
+          const created = await savedViewsApi.create({ name, ...toDefinition(current) });
+          // A view is private until it is shared: a second call that needs the view:share permission.
+          if (canShare && values.shared === true) {
+            try {
+              await savedViewsApi.share(created.id, true);
+            } catch (err) {
+              await refresh();
+              setActiveId(created.id);
+              const ui = getApi().toUiError(err);
+              toast({
+                variant: 'warning',
+                title: t('savedViews.shareFailed', { name }),
+                description: uiErrorText(t, ui),
+                requestId: ui.requestId,
+              });
+              return;
+            }
+          }
           await refresh();
           setActiveId(created.id);
           setDropped(null);
@@ -224,15 +255,15 @@ export function SavedViewsBar({
         title={t('savedViews.editTitle', { name: active?.name ?? '' })}
         description={t('savedViews.editDescription')}
         fields={fields}
-        initial={{ name: active?.name ?? '', shared: active?.shared ?? false }}
+        initial={{ name: active?.name ?? '', shared: active?.is_shared ?? false }}
         submitLabel={t('common.save')}
         onSubmit={async (values) => {
           if (!active) return;
           const name = String(values.name).trim();
-          await savedViewsApi.update(active.id, {
-            name,
-            ...(canShare ? { shared: values.shared === true } : {}),
-          });
+          if (name !== active.name) await savedViewsApi.update(active.id, { name });
+          if (canShare && (values.shared === true) !== active.is_shared) {
+            await savedViewsApi.share(active.id, values.shared === true);
+          }
           await refresh();
           toast({ variant: 'success', title: t('savedViews.renamed', { name }) });
         }}

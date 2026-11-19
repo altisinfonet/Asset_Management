@@ -2,7 +2,6 @@ import { http, HttpResponse, type HttpHandler } from 'msw';
 import { checkIfMatch, etagOf, requireSession } from './http';
 import {
   nowIso,
-  one,
   paginate,
   readBody,
   strip,
@@ -26,8 +25,10 @@ import {
   trimmed,
 } from './w2-common';
 import {
+  labelCode,
   mutateW2,
   newW2Id,
+  notify,
   w2,
   type MockAccessory,
   type MockConsumable,
@@ -51,10 +52,40 @@ const openHandouts = (data: W2Data, accessoryId: string) =>
 
 function accessoryView(a: MockAccessory) {
   const out = openHandouts(w2(), a.id).reduce((sum, h) => sum + outstanding(h), 0);
-  return { ...strip(a), qty_checked_out: out, qty_available: a.qty_total - out };
+  const available = a.qty_total - out;
+  return {
+    ...strip(a),
+    qty_checked_out: out,
+    qty_available: available,
+    low_stock: isLow(available, a.min_qty ?? 0),
+  };
 }
 
-const isLow = (available: number, min: number) => available <= min;
+/** The consumable as the API shows it: `low_stock` is derived from the stock and the minimum. */
+function consumableView(c: MockConsumable) {
+  return { ...strip(c), low_stock: isLow(c.qty_on_hand, c.min_qty ?? 0) };
+}
+
+/** Low stock: a minimum is set (> 0) and the quantity is at or below it. */
+const isLow = (available: number, min: number) => min > 0 && available <= min;
+
+/** An assignment of an accessory with the names the API adds to its lists. */
+function assignmentView(h: MockHandout, accessoryName: string) {
+  const data = registry();
+  const target = h.person_id
+    ? data.people.find((p) => p.id === h.person_id)?.display_name
+    : h.location_id
+      ? data.locations.find((l) => l.id === h.location_id)?.name
+      : (() => {
+          const asset = data.assets.find((a) => a.id === h.target_asset_id);
+          return asset
+            ? asset.name
+              ? `${asset.asset_tag} ${asset.name}`
+              : asset.asset_tag
+            : undefined;
+        })();
+  return { ...strip(h), accessory_name: accessoryName, target_name: target ?? null };
+}
 
 // ---- accessories --------------------------------------------------------------------------------------
 
@@ -180,8 +211,10 @@ const accessoryHandlers: HttpHandler[] = [
         purchase_date: (body.purchase_date as string | null | undefined) ?? null,
         purchase_cost: (body.purchase_cost as MockAccessory['purchase_cost']) ?? null,
         notes: trimmed(body.notes),
+        label_code: '',
         _v: 1,
       };
+      accessory.label_code = labelCode('accessory', accessory.id);
       data.accessories.push(accessory);
       return accessory;
     });
@@ -303,7 +336,7 @@ const accessoryHandlers: HttpHandler[] = [
       const quantity = (body.quantity as number | undefined) ?? 1;
       const available = accessoryView(found).qty_available;
       if (quantity > available) {
-        return fail('conflict', {
+        return fail('insufficient-stock', {
           detail: `Only ${available} of ${found.name} are available; ${quantity} were requested.`,
         });
       }
@@ -338,8 +371,8 @@ const accessoryHandlers: HttpHandler[] = [
       });
       return {
         status: 201,
-        body: strip(handout),
-        headers: { Location: `/v1/accessories/${found.id}/assignments/${handout.id}` },
+        body: assignmentView(handout, found.name),
+        headers: { Location: `/v1/accessories/${found.id}/assignments` },
       };
     });
   }),
@@ -394,7 +427,7 @@ const accessoryHandlers: HttpHandler[] = [
         }
         handout._v += 1;
       });
-      return { status: 200, body: strip(handout) };
+      return { status: 200, body: assignmentView(handout, found.name) };
     });
   }),
 
@@ -420,7 +453,7 @@ const accessoryHandlers: HttpHandler[] = [
       },
       (h) => {
         const { archived_at: _archived, ...rest } = h;
-        return strip(rest);
+        return assignmentView(rest, found.name);
       },
     );
   }),
@@ -497,7 +530,7 @@ function appendMovement(
   return movement;
 }
 
-/** `stock.low` once per crossing: when the stock goes from above the minimum to at or below it. */
+/** `consumable.low_stock` once per crossing: when the stock goes from above the minimum to at or below it. */
 function maybeAlertLow(
   data: W2Data,
   consumable: MockConsumable,
@@ -506,16 +539,14 @@ function maybeAlertLow(
 ): void {
   const min = consumable.min_qty ?? 0;
   if (min > 0 && before > min && consumable.qty_on_hand <= min) {
-    data.notifications.push({
-      id: newW2Id('notification'),
-      user_id: userId,
-      event_type: 'stock.low',
-      title: `${consumable.name} is low on stock`,
-      body: `${consumable.qty_on_hand} on hand; the minimum is ${min}.`,
+    notify(data, userId, {
+      type: 'consumable.low_stock',
+      title: `Low stock: ${consumable.name}`,
+      body: `${consumable.name} is at or below its reorder level. ${consumable.qty_on_hand} left (reorder level ${min}).`,
+      // the API's link: the consumables list
+      link: '/consumables',
       entity_type: 'consumable',
       entity_id: consumable.id,
-      read_at: null,
-      created_at: nowIso(),
     });
   }
 }
@@ -526,17 +557,22 @@ const consumableHandlers: HttpHandler[] = [
   http.get('/v1/consumables', ({ request }) => {
     const guard = requireSession(request, { permission: 'consumable:read' });
     if (!guard.ok) return guard.response;
-    return paginate(request, w2().consumables, {
-      sorts: CONSUMABLE_SORTS,
-      defaultSort: 'name',
-      haystack: (c) => [c.name, c.model_number],
-      filter: (c, p) => {
-        if (p.get('category_id') && c.category_id !== p.get('category_id')) return false;
-        if (p.get('location_id') && c.location_id !== p.get('location_id')) return false;
-        if (p.get('low_stock') === 'true' && !isLow(c.qty_on_hand, c.min_qty ?? 0)) return false;
-        return true;
+    return paginate(
+      request,
+      w2().consumables,
+      {
+        sorts: CONSUMABLE_SORTS,
+        defaultSort: 'name',
+        haystack: (c) => [c.name, c.model_number],
+        filter: (c, p) => {
+          if (p.get('category_id') && c.category_id !== p.get('category_id')) return false;
+          if (p.get('location_id') && c.location_id !== p.get('location_id')) return false;
+          if (p.get('low_stock') === 'true' && !isLow(c.qty_on_hand, c.min_qty ?? 0)) return false;
+          return true;
+        },
       },
-    });
+      (c) => consumableView(c),
+    );
   }),
 
   http.post('/v1/consumables', async ({ request }) => {
@@ -564,8 +600,10 @@ const consumableHandlers: HttpHandler[] = [
         unit_cost: (body.unit_cost as MockConsumable['unit_cost']) ?? null,
         notes: trimmed(body.notes),
         qty_on_hand: 0,
+        label_code: '',
         _v: 1,
       };
+      consumable.label_code = labelCode('consumable', consumable.id);
       data.consumables.push(consumable);
       const initial = (body.initial_qty as number | undefined) ?? 0;
       if (initial > 0) {
@@ -578,7 +616,7 @@ const consumableHandlers: HttpHandler[] = [
       }
       return consumable;
     });
-    return HttpResponse.json(strip(created), {
+    return HttpResponse.json(consumableView(created), {
       status: 201,
       headers: { ETag: etagOf(created._v), Location: `/v1/consumables/${created.id}` },
     });
@@ -589,7 +627,7 @@ const consumableHandlers: HttpHandler[] = [
     if (!guard.ok) return guard.response;
     const found = w2().consumables.find((c) => c.id === params.id);
     if (!found) return notFound('Consumable');
-    return one(found);
+    return HttpResponse.json(consumableView(found), { headers: { ETag: etagOf(found._v) } });
   }),
 
   http.patch('/v1/consumables/:id', async ({ request, params }) => {
@@ -613,7 +651,7 @@ const consumableHandlers: HttpHandler[] = [
       found.updated_at = nowIso();
       found._v += 1;
     });
-    return one(found);
+    return HttpResponse.json(consumableView(found), { headers: { ETag: etagOf(found._v) } });
   }),
 
   http.delete('/v1/consumables/:id', ({ request, params }) => {
@@ -641,10 +679,19 @@ const consumableHandlers: HttpHandler[] = [
     if (reasons.some((r) => !REASONS.includes(r))) {
       return fail('bad-request', { detail: 'Unsupported reason filter' });
     }
+    const people = registry().people;
     const rows = w2()
       .movements.filter((m) => m.consumable_id === found.id)
       .filter((m) => reasons.length === 0 || reasons.includes(m.reason))
-      .map((m) => ({ ...m, archived_at: null, _v: 1 }));
+      .map((m) => ({
+        ...m,
+        consumable_name: found.name,
+        person_name: m.person_id
+          ? (people.find((p) => p.id === m.person_id)?.display_name ?? null)
+          : null,
+        archived_at: null,
+        _v: 1,
+      }));
     return paginate(request, rows, { sorts: { at: (m) => m.at }, defaultSort: '-at' }, (m) => {
       const { archived_at: _archived, _v: _version, ...rest } = m;
       return rest;
@@ -677,6 +724,30 @@ const consumableHandlers: HttpHandler[] = [
     }
     if (!REASONS.includes(String(body.reason))) {
       errors.push({ pointer: '/reason', message: 'Invalid option', code: 'invalid_value' });
+    } else {
+      const reason = String(body.reason);
+      if (typeof body.qty_delta === 'number' && body.qty_delta !== 0) {
+        if ((reason === 'receive' || reason === 'return') && body.qty_delta < 0) {
+          errors.push({
+            pointer: '/qty_delta',
+            message: `a ${reason} adds stock: use a positive quantity`,
+            code: 'custom',
+          });
+        } else if (reason === 'issue' && body.qty_delta > 0) {
+          errors.push({
+            pointer: '/qty_delta',
+            message: 'an issue takes stock out: use a negative quantity',
+            code: 'custom',
+          });
+        }
+      }
+      if ((reason === 'adjust' || reason === 'correction') && !trimmed(body.note)) {
+        errors.push({
+          pointer: '/note',
+          message: `a ${reason} needs a note saying why`,
+          code: 'custom',
+        });
+      }
     }
     if (isUuid(body.person_id) && !registry().people.some((p) => p.id === body.person_id)) {
       errors.push(missing('/person_id', 'No such person.'));
@@ -686,7 +757,7 @@ const consumableHandlers: HttpHandler[] = [
     return idempotent(request, w2(), `${request.method} ${text}`, () => {
       const delta = body.qty_delta as number;
       if (found.qty_on_hand + delta < 0) {
-        return fail('conflict', {
+        return fail('insufficient-stock', {
           detail: `Only ${found.qty_on_hand} of ${found.name} are on hand; stock cannot go negative.`,
         });
       }
@@ -705,7 +776,7 @@ const consumableHandlers: HttpHandler[] = [
       return {
         status: 201,
         body: movement,
-        headers: { Location: `/v1/consumables/${found.id}/movements/${movement.id}` },
+        headers: { Location: `/v1/consumables/${found.id}/movements` },
       };
     });
   }),

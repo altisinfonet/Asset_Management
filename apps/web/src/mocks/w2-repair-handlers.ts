@@ -58,10 +58,18 @@ const SORTS: ListConfig<MockRepair>['sorts'] = {
   created_at: (r) => r.created_at,
 };
 
-/** The repair with the tag and name of its asset (`asset_tag`, `asset_name`). */
+/** The repair with the names the API adds: tag and name of its asset, the vendor's name. */
 function repairView(repair: MockRepair) {
-  const asset = registry().assets.find((a) => a.id === repair.asset_id);
-  return { ...strip(repair), asset_tag: asset?.asset_tag ?? null, asset_name: asset?.name ?? null };
+  const data = registry();
+  const asset = data.assets.find((a) => a.id === repair.asset_id);
+  const vendor = data.vendors.find((v) => v.id === repair.vendor_id);
+  return {
+    ...strip(repair),
+    set_status_id: repair.set_status_id ?? null,
+    asset_tag: asset?.asset_tag ?? null,
+    asset_name: asset?.name ?? null,
+    vendor_name: vendor?.name ?? null,
+  };
 }
 
 const isInstant = (value: unknown) => typeof value === 'string' && !Number.isNaN(Date.parse(value));
@@ -144,6 +152,32 @@ function repairHistory(
 }
 
 export const repairHandlers: HttpHandler[] = [
+  http.get('/v1/assets/:id/repair-summary', ({ request, params }) => {
+    const guard = requireSession(request, { permission: 'repair:read' });
+    if (!guard.ok) return guard.response;
+    const asset = registry().assets.find((a) => a.id === params.id);
+    if (!asset) return notFound('Asset');
+    const counted = w2().repairs.filter(
+      (r) => r.asset_id === asset.id && !r.archived_at && r.status !== 'cancelled',
+    );
+    // one total per currency: amounts in different currencies are never added together
+    const totals = new Map<string, number>();
+    for (const repair of counted) {
+      if (repair.cost) {
+        totals.set(
+          repair.cost.currency,
+          (totals.get(repair.cost.currency) ?? 0) + repair.cost.amount_minor,
+        );
+      }
+    }
+    return HttpResponse.json({
+      asset_id: asset.id,
+      open_count: counted.filter((r) => r.status === 'open' || r.status === 'in_progress').length,
+      total_count: counted.length,
+      total_cost: [...totals].map(([currency, amount_minor]) => ({ amount_minor, currency })),
+    });
+  }),
+
   http.get('/v1/repairs', ({ request }) => {
     const guard = requireSession(request, { permission: 'repair:read' });
     if (!guard.ok) return guard.response;
@@ -185,14 +219,26 @@ export const repairHandlers: HttpHandler[] = [
     const asset = registry().assets.find((a) => a.id === body.asset_id && !a.archived_at);
     if (!asset) return validation([missing('/asset_id', 'No such asset.')]);
     if (asset.current_assignment) {
+      // the sentence of the API's asset state machine (`open_repair`)
+      return fail('asset-already-checked-out', {
+        detail:
+          'The asset is checked out. Check it in first, or open the repair with force_checkin and a note.',
+      });
+    }
+    const stateType = registry().statusLabels.find((s) => s.id === asset.status_id)?.state_type;
+    if (stateType === 'lost') {
       return fail('conflict', {
-        detail: `${asset.asset_tag} is checked out. Check it in before opening a repair.`,
-        errors: [
-          { pointer: '/asset_id', message: 'The asset is checked out.', code: 'checked-out' },
-        ],
+        detail: 'The asset is marked lost. Mark it found before repairing it.',
+      });
+    }
+    if (stateType === 'archived') {
+      return fail('conflict', {
+        detail: 'The asset is retired. Give it another status before repairing it.',
       });
     }
     const setStatus = body.set_status_id as string | undefined;
+    // the asset's status only moves (and is restored later) when the repair names another one
+    const moves = setStatus !== undefined && setStatus !== asset.status_id;
     const created = mutateW2((data) => {
       const stamp = nowIso();
       const repair: MockRepair = {
@@ -211,7 +257,10 @@ export const repairHandlers: HttpHandler[] = [
         ticket_ref: trimmed(body.ticket_ref),
         cost: (body.cost as MockRepair['cost']) ?? null,
         // the status the asset had before, unless the caller said where it goes afterwards
-        restore_status_id: (body.restore_status_id as string | null | undefined) ?? asset.status_id,
+        restore_status_id: moves
+          ? ((body.restore_status_id as string | null | undefined) ?? asset.status_id)
+          : null,
+        set_status_id: moves ? setStatus : null,
         status: (body.status as MockRepair['status']) ?? 'open',
         completed_at: null,
         resolution_notes: null,
@@ -220,7 +269,7 @@ export const repairHandlers: HttpHandler[] = [
       data.repairs.push(repair);
       return repair;
     });
-    if (setStatus) setAssetStatus(asset.id, setStatus);
+    if (moves) setAssetStatus(asset.id, setStatus);
     repairHistory(asset.id, 'repair_opened', `Repair opened: ${created.title}`, guard.user.id, {
       repair_id: created.id,
     });

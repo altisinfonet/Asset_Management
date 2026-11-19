@@ -3,7 +3,10 @@ import { CODE128_PATTERNS, code128Bars, code128Values } from './code128';
 import {
   LABEL_CHOICE_KEY,
   cellSlot,
-  codeTypeFrom,
+  codesFrom,
+  codesOf,
+  sameSet,
+  toLabelFilter,
   isSingleLabel,
   knownFields,
   readLabelChoice,
@@ -91,23 +94,71 @@ describe('sheet arithmetic', () => {
 });
 
 describe('codes and fields', () => {
-  it('turns the two checkboxes into the API code type and back', () => {
-    expect(codeTypeFrom(true, true)).toBe('qr_and_code128');
-    expect(codeTypeFrom(true, false)).toBe('qr');
-    expect(codeTypeFrom(false, true)).toBe('code128');
-    expect(codeTypeFrom(false, false)).toBeNull();
-    expect([showsQr('qr'), showsBarcode('qr')]).toEqual([true, false]);
-    expect([showsQr('code128'), showsBarcode('code128')]).toEqual([false, true]);
-    expect([showsQr('qr_and_code128'), showsBarcode('qr_and_code128')]).toEqual([true, true]);
+  it('turns the two checkboxes into the API codes list and back', () => {
+    expect(codesFrom(true, true)).toEqual(['qr', 'code128']);
+    expect(codesFrom(true, false)).toEqual(['qr']);
+    expect(codesFrom(false, true)).toEqual(['code128']);
+    // no code at all prints text only, which the API allows
+    expect(codesFrom(false, false)).toEqual([]);
+    expect([showsQr(['qr']), showsBarcode(['qr'])]).toEqual([true, false]);
+    expect([showsQr(['code128']), showsBarcode(['code128'])]).toEqual([false, true]);
+    expect([showsQr([]), showsBarcode([])]).toEqual([false, false]);
   });
 
-  it('keeps only the fields this screen knows, in its own order', () => {
-    expect(knownFields(['name', 'tag', 'colour', 'organisation'])).toEqual([
-      'tag',
+  it('reads the codes a template draws from its code type', () => {
+    expect(codesOf({ code_type: 'qr' })).toEqual(['qr']);
+    expect(codesOf({ code_type: 'code128' })).toEqual(['code128']);
+    expect(codesOf({ code_type: 'qr_and_code128' })).toEqual(['qr', 'code128']);
+    expect(sameSet(['code128', 'qr'], ['qr', 'code128'])).toBe(true);
+    expect(sameSet(['qr'], ['qr', 'code128'])).toBe(false);
+  });
+
+  it('keeps only the fields this screen knows, in the API order', () => {
+    expect(knownFields(['name', 'asset_tag', 'colour', 'organisation', 'model'])).toEqual([
+      'asset_tag',
       'name',
+      'model',
       'organisation',
     ]);
     expect(knownFields(undefined)).toEqual([]);
+  });
+});
+
+describe('the filter of a batch', () => {
+  it('keeps what narrows the set and drops paging and presentation', () => {
+    expect(
+      toLabelFilter({
+        limit: 50,
+        cursor: 'x',
+        include_total: true,
+        expand: ['model'],
+        archived: 'exclude',
+        q: 'lap',
+        status_id: ['s1'],
+        category_id: ['c1'],
+        location_id: 'l1',
+        include_sublocations: false,
+        assigned: true,
+        assigned_person_id: 'p1',
+        sort: ['-name'],
+      }),
+    ).toEqual({
+      archived: 'exclude',
+      q: 'lap',
+      status_id: ['s1'],
+      category_id: ['c1'],
+      location_id: 'l1',
+      include_sublocations: false,
+      assigned: true,
+      assigned_person_id: 'p1',
+      sort: '-name',
+    });
+    // a sublocation flag without a location means nothing
+    expect(toLabelFilter({ include_sublocations: true })).toEqual({});
+  });
+
+  it('cannot express a custom field filter, so the dialog sends the ids instead', () => {
+    expect(toLabelFilter({ cf: { screen_size: '14' } })).toBeNull();
   });
 });
 
@@ -116,11 +167,15 @@ describe('the remembered choice', () => {
 
   it('round-trips through localStorage', () => {
     expect(readLabelChoice()).toBeNull();
-    writeLabelChoice({ template_key: 'a4-21up', code_type: 'qr', fields: ['tag', 'serial'] });
+    writeLabelChoice({
+      template_key: 'a4-21up-qr',
+      codes: ['qr'],
+      fields: ['asset_tag', 'serial'],
+    });
     expect(readLabelChoice()).toEqual({
-      template_key: 'a4-21up',
-      code_type: 'qr',
-      fields: ['tag', 'serial'],
+      template_key: 'a4-21up-qr',
+      codes: ['qr'],
+      fields: ['asset_tag', 'serial'],
     });
   });
 
@@ -131,9 +186,13 @@ describe('the remembered choice', () => {
     expect(readLabelChoice()).toBeNull();
     window.localStorage.setItem(
       LABEL_CHOICE_KEY,
-      JSON.stringify({ template_key: 'x', code_type: 'evil', fields: ['tag', '<script>'] }),
+      JSON.stringify({
+        template_key: 'x',
+        codes: ['evil', 'qr'],
+        fields: ['asset_tag', '<script>'],
+      }),
     );
-    expect(readLabelChoice()).toEqual({ template_key: 'x', fields: ['tag'] });
+    expect(readLabelChoice()).toEqual({ template_key: 'x', codes: ['qr'], fields: ['asset_tag'] });
   });
 
   it('survives storage that throws', () => {

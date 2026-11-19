@@ -22,26 +22,30 @@ import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { cn } from '@/lib/cn';
+import { createKeyKeeper } from '@/lib/custody/helpers';
 import { uiErrorText } from '@/lib/error-text';
 import {
+  isBatchFinished,
   labelsApi,
-  type LabelCodeType,
+  type LabelBatch,
+  type LabelBatchCreate,
   type LabelField,
-  type LabelRenderRequest,
   type LabelTemplate,
-  type RenderedLabels,
 } from '@/lib/labels/api';
 import {
   LABEL_FIELDS,
   MAX_LABELS,
-  codeTypeFrom,
+  codesFrom,
+  codesOf,
   isSingleLabel,
   knownFields,
   readLabelChoice,
+  sameSet,
   sheetCount,
   showsBarcode,
   showsQr,
   slotsPerSheet,
+  toLabelFilter,
   writeLabelChoice,
 } from '@/lib/labels/helpers';
 import { assetsApi, type AssetListQuery } from '@/lib/registry/api';
@@ -50,15 +54,19 @@ import type { Asset } from '@/lib/registry/types';
 import { LabelPreview, type LabelSample } from './label-preview';
 import { CELL_STYLE, SheetGrid } from './sheet-grid';
 
-/** What to print: assets already chosen (a selection, one asset), or everything a list filter shows. */
+/**
+ * What to print: assets already chosen (a selection, one asset), everything a list filter shows, or
+ * a batch that was already requested (the notification "your labels are ready" opens it).
+ */
 export type LabelsRequest =
   | { kind: 'assets'; assets: Asset[] }
-  | { kind: 'filter'; query: AssetListQuery; total?: number | null };
+  | { kind: 'filter'; query: AssetListQuery; total?: number | null }
+  | { kind: 'batch'; id: string };
 
 type Phase =
   | { kind: 'edit' }
-  | { kind: 'working' }
-  | { kind: 'ready'; url: string; rendered: RenderedLabels; labels: number; sheets: number }
+  | { kind: 'submitting' }
+  | { kind: 'tracking'; batch: LabelBatch }
   | { kind: 'failed'; error: unknown };
 
 interface Override {
@@ -69,17 +77,27 @@ interface Override {
   start?: number;
 }
 
-const samePage = 200;
+const PAGE = 200;
+/** How often a queued batch is read again. */
+const POLL_MS = 1500;
+/** A ready batch is read again now and then so its short-lived download link stays valid. */
+const REFRESH_READY_MS = 60_000;
 
-/** Assets a filter shows, up to one more than a PDF holds (so "too many" can be told apart). */
-async function collectAssets(query: AssetListQuery): Promise<Asset[]> {
+interface Source {
+  /** The assets to show a sample of (all of them for a selection, the first for a filter). */
+  assets: Asset[];
+  total: number;
+}
+
+/** Assets a filter shows, up to one more than a batch holds (so "too many" can be told apart). */
+async function collectAssets(query: AssetListQuery): Promise<Source> {
   const found: Asset[] = [];
   let cursor: string | undefined;
-  for (let guard = 0; guard < 4; guard += 1) {
+  for (let guard = 0; guard < MAX_LABELS / PAGE + 1; guard += 1) {
     const page = await assetsApi.list({
       ...query,
       cursor,
-      limit: samePage,
+      limit: PAGE,
       include_total: false,
       expand: undefined,
     });
@@ -87,7 +105,19 @@ async function collectAssets(query: AssetListQuery): Promise<Asset[]> {
     if (!page.page.has_more || !page.page.next_cursor || found.length > MAX_LABELS) break;
     cursor = page.page.next_cursor;
   }
-  return found;
+  return { assets: found, total: found.length };
+}
+
+/** The first asset of a filter (for the preview) and how many assets the filter matches. */
+async function headOfFilter(query: AssetListQuery): Promise<Source> {
+  const page = await assetsApi.list({
+    ...query,
+    cursor: undefined,
+    limit: 1,
+    include_total: true,
+    expand: undefined,
+  });
+  return { assets: page.data, total: page.page.total ?? page.data.length };
 }
 
 export interface LabelDialogProps {
@@ -97,8 +127,9 @@ export interface LabelDialogProps {
 
 /**
  * Print labels (WEB-15, M2-TAG-03): pick a sheet template, the first free position on a partly used
- * sheet (a visual grid), the codes and the text lines, check one label at its real size, then
- * generate the PDF and download it. The last template is remembered in this browser.
+ * sheet (a visual grid), the codes and the text lines, check one label at its real size, then queue
+ * the batch. The PDF is made in the background; the dialog follows the batch until it is ready (or
+ * failed) and offers the download. The last template is remembered in this browser.
  */
 export function LabelDialog({ request, onClose }: LabelDialogProps) {
   const { t } = useI18n();
@@ -106,7 +137,11 @@ export function LabelDialog({ request, onClose }: LabelDialogProps) {
     <Dialog open={!!request} onOpenChange={(open) => !open && onClose()}>
       <DialogContent size="lg" className="max-w-[960px]">
         {request ? (
-          <LabelBody request={request} onClose={onClose} />
+          request.kind === 'batch' ? (
+            <BatchOnly id={request.id} onClose={onClose} />
+          ) : (
+            <LabelBody request={request} onClose={onClose} />
+          )
         ) : (
           <>
             <DialogTitle className="sr-only">{t('labels.title')}</DialogTitle>
@@ -118,37 +153,51 @@ export function LabelDialog({ request, onClose }: LabelDialogProps) {
   );
 }
 
-function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () => void }) {
+function LabelBody({
+  request,
+  onClose,
+}: {
+  request: Exclude<LabelsRequest, { kind: 'batch' }>;
+  onClose: () => void;
+}) {
   const { t } = useI18n();
   const { me } = useAuth();
-  const queryClient = useQueryClient();
   const lookups = useLookups();
   const remembered = useMemo(() => readLabelChoice(), []);
   const [override, setOverride] = useState<Override>({});
   const [phase, setPhase] = useState<Phase>({ kind: 'edit' });
   const [sheet, setSheet] = useState(1);
-  const [codeError, setCodeError] = useState(false);
-  const abort = useRef<AbortController | null>(null);
+  const keys = useRef(createKeyKeeper());
 
   const templates = useQuery({
     queryKey: ['label-templates'],
     queryFn: () => labelsApi.templates(),
     staleTime: 5 * 60_000,
   });
-  const collected = useQuery({
+
+  // A filter is sent as the filter itself unless it holds something a batch filter cannot say.
+  const labelFilter = request.kind === 'filter' ? toLabelFilter(request.query) : null;
+  const viaFilter = request.kind === 'filter' && labelFilter !== null;
+  const rememberedTotal = request.kind === 'filter' ? (request.total ?? 0) : 0;
+  const source = useQuery({
     queryKey: ['label-assets', request.kind === 'filter' ? request.query : null],
-    queryFn: () => collectAssets((request as { query: AssetListQuery }).query),
-    enabled: request.kind === 'filter' && (request.total ?? 0) <= MAX_LABELS,
+    queryFn: () =>
+      viaFilter
+        ? headOfFilter((request as { query: AssetListQuery }).query)
+        : collectAssets((request as { query: AssetListQuery }).query),
+    enabled: request.kind === 'filter' && rememberedTotal <= MAX_LABELS,
     staleTime: 0,
     gcTime: 0,
   });
 
-  const assets: Asset[] = request.kind === 'assets' ? request.assets : (collected.data ?? []);
+  const assets: Asset[] = request.kind === 'assets' ? request.assets : (source.data?.assets ?? []);
   const knownTotal =
-    request.kind === 'assets' ? request.assets.length : (request.total ?? collected.data?.length);
+    request.kind === 'assets'
+      ? request.assets.length
+      : (request.total ?? source.data?.total ?? assets.length);
   const tooMany = (knownTotal ?? 0) > MAX_LABELS;
-  const collecting = request.kind === 'filter' && !tooMany && collected.isLoading;
-  const count = tooMany ? (knownTotal ?? 0) : assets.length;
+  const collecting = request.kind === 'filter' && !tooMany && source.isLoading;
+  const count = tooMany ? (knownTotal ?? 0) : (source.data?.total ?? knownTotal ?? assets.length);
 
   const list = templates.data ?? [];
   const rememberedTemplate = list.find((tpl) => tpl.key === remembered?.template_key);
@@ -157,11 +206,11 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
   const fromRemembered = !!template && remembered?.template_key === template.key;
 
   // What the template prints unless the user changed it (or the remembered choice for this template).
-  const baseType: LabelCodeType =
-    (fromRemembered && remembered?.code_type) || template?.code_type || 'qr';
-  const qr = override.qr ?? showsQr(baseType);
-  const barcode = override.barcode ?? showsBarcode(baseType);
-  const codeType = codeTypeFrom(qr, barcode);
+  const baseCodes =
+    (fromRemembered && remembered?.codes) || (template ? codesOf(template) : ['qr']);
+  const qr = override.qr ?? showsQr(baseCodes);
+  const barcode = override.barcode ?? showsBarcode(baseCodes);
+  const codes = codesFrom(qr, barcode);
   const fields: LabelField[] =
     override.fields ?? ((fromRemembered && remembered?.fields) || knownFields(template?.fields));
   const perSheet = template ? slotsPerSheet(template) : 1;
@@ -174,72 +223,49 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
   const sample: LabelSample | null = first
     ? {
         tag: first.asset_tag,
-        name: first.name ?? lookups.modelById.get(first.model_id ?? '')?.name ?? null,
+        name: first.name ?? null,
         location: lookups.locationLabel(first.location_id).split(' > ').pop() ?? '',
         serial: first.serial ?? null,
+        model: lookups.modelById.get(first.model_id ?? '')?.name ?? null,
         organisation: me?.tenant.name ?? '',
         code: first.label_code ?? first.asset_tag,
       }
     : null;
 
-  // Release the PDF's object URL when it is replaced or the dialog closes.
-  const url = phase.kind === 'ready' ? phase.url : null;
-  useEffect(() => {
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [url]);
-  useEffect(() => () => abort.current?.abort(), []);
-
-  const set = (patch: Override) => {
-    setOverride((current) => ({ ...current, ...patch }));
-    setCodeError(false);
-  };
+  const set = (patch: Override) => setOverride((current) => ({ ...current, ...patch }));
 
   const generate = async () => {
-    if (!template || !codeType) {
-      setCodeError(true);
-      return;
-    }
-    if (assets.length === 0 || assets.length > MAX_LABELS) return;
-    const body: LabelRenderRequest = {
+    if (!template || count === 0 || tooMany) return;
+    const body: LabelBatchCreate = {
       template_key: template.key,
-      asset_ids: assets.map((asset) => asset.id),
+      ...(viaFilter && labelFilter
+        ? { filter: labelFilter }
+        : { asset_ids: assets.map((asset) => asset.id) }),
       ...(!single && start > 1 ? { start_position: start } : {}),
       // Only what differs from the template is sent, so a plain request stays a plain request.
-      ...(codeType !== template.code_type ? { code_type: codeType } : {}),
-      ...(sameFields(fields, knownFields(template.fields)) ? {} : { fields }),
+      ...(sameSet(codes, codesOf(template)) ? {} : { codes }),
+      ...(sameSet(fields, template.fields) ? {} : { fields }),
     };
-    const controller = new AbortController();
-    abort.current = controller;
-    setPhase({ kind: 'working' });
+    setPhase({ kind: 'submitting' });
     try {
-      const rendered = await labelsApi.render(body, controller.signal);
-      writeLabelChoice({ template_key: template.key, code_type: codeType, fields });
+      const batch = await labelsApi.createBatch(body, keys.current.keyFor(body));
+      keys.current.renew();
+      writeLabelChoice({ template_key: template.key, codes, fields });
       setSheet(1);
-      setPhase({
-        kind: 'ready',
-        url: URL.createObjectURL(rendered.blob),
-        rendered,
-        labels: assets.length,
-        sheets,
-      });
-      void queryClient.invalidateQueries({ queryKey: ['asset-history'] });
+      setPhase({ kind: 'tracking', batch });
     } catch (err) {
-      if (controller.signal.aborted) setPhase({ kind: 'edit' });
-      else setPhase({ kind: 'failed', error: err });
+      setPhase({ kind: 'failed', error: err });
     }
   };
 
   const labelsText = t('labels.labelCount', { count });
-  const sheetsText = t('labels.sheetCount', { count: sheets });
   const sourceText =
     request.kind === 'assets'
       ? t('labels.sourceSelection', { count })
       : t('labels.sourceFilter', { count });
-  const busy = phase.kind === 'working';
+  const busy = phase.kind === 'submitting';
   const canGenerate =
-    !!template && !!codeType && count > 0 && !tooMany && !collecting && !busy && !!sample;
+    !!template && count > 0 && !tooMany && !collecting && !busy && (!!sample || viaFilter);
 
   return (
     <>
@@ -252,35 +278,12 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
         <DialogDescription>{t('labels.description')}</DialogDescription>
       </DialogHeader>
 
-      {phase.kind === 'ready' ? (
-        <div role="status" className="flex flex-col gap-4" data-testid="labels-ready">
-          <Banner tone="success" title={t('labels.readyTitle')}>
-            {t('labels.readyDescription', {
-              labels: t('labels.labelCount', { count: phase.labels }),
-              sheets: t('labels.sheetCount', { count: phase.sheets }),
-            })}
-          </Banner>
-          <p className="flex items-center gap-2 text-base">
-            <FileText aria-hidden className="size-5 text-muted" />
-            <span className="font-tag">{phase.rendered.filename}</span>
-          </p>
-          <p className="text-sm text-muted">{t('labels.printedHint')}</p>
-          <DialogFooter>
-            <Button onClick={() => setPhase({ kind: 'edit' })}>{t('labels.another')}</Button>
-            <Button asChild>
-              <a href={phase.url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink aria-hidden className="size-4" />
-                {t('labels.open')}
-              </a>
-            </Button>
-            <Button asChild variant="primary">
-              <a href={phase.url} download={phase.rendered.filename}>
-                <Download aria-hidden className="size-4" />
-                {t('labels.download')}
-              </a>
-            </Button>
-          </DialogFooter>
-        </div>
+      {phase.kind === 'tracking' ? (
+        <BatchProgress
+          initial={phase.batch}
+          onAgain={() => setPhase({ kind: 'edit' })}
+          onClose={onClose}
+        />
       ) : (
         <form
           noValidate
@@ -299,11 +302,11 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
           {tooMany ? (
             <Banner tone="warning">{t('labels.tooMany', { max: MAX_LABELS })}</Banner>
           ) : null}
-          {request.kind === 'filter' && collected.error ? (
+          {request.kind === 'filter' && source.error ? (
             <Banner tone="danger">{t('labels.collectFailed')}</Banner>
           ) : null}
           {templates.error ? <Banner tone="danger">{t('labels.templatesFailed')}</Banner> : null}
-          {request.kind === 'filter' && collected.isSuccess && assets.length === 0 ? (
+          {request.kind === 'filter' && source.isSuccess && count === 0 ? (
             <Banner tone="info">{t('labels.nothingToPrint')}</Banner>
           ) : null}
 
@@ -323,7 +326,6 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
                     onValueChange={(key) => {
                       setOverride({ template_key: key });
                       setSheet(1);
-                      setCodeError(false);
                     }}
                     options={list.map((tpl) => ({ value: tpl.key, label: tpl.name }))}
                   />
@@ -344,9 +346,9 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
                   disabled={busy}
                   onCheckedChange={(v) => set({ barcode: v === true })}
                 />
-                {codeError || (!qr && !barcode) ? (
-                  <p role="alert" className="text-sm text-danger-text">
-                    {t('labels.codesRequired')}
+                {!qr && !barcode ? (
+                  <p role="status" className="text-sm text-muted">
+                    {t('labels.codesNone')}
                   </p>
                 ) : null}
               </fieldset>
@@ -378,7 +380,7 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
                   <div className="overflow-x-auto pb-1">
                     <LabelPreview
                       template={template}
-                      codeType={codeType ?? 'qr'}
+                      codes={codes}
                       fields={fields}
                       sample={sample}
                     />
@@ -452,24 +454,13 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
 
           {busy ? (
             <div role="status" className="flex flex-col gap-2" data-testid="labels-working">
-              <p className="text-base">
-                {t('labels.generating', { labels: labelsText, sheets: sheetsText })}
-              </p>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-sunken">
-                <div className="h-full w-1/3 animate-[at-pulse_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
-              </div>
+              <p className="text-base">{t('labels.generating', { labels: labelsText })}</p>
+              <Progress />
             </div>
           ) : null}
 
           <DialogFooter>
-            <Button
-              onClick={() => {
-                abort.current?.abort();
-                onClose();
-              }}
-            >
-              {t('common.cancel')}
-            </Button>
+            <Button onClick={onClose}>{t('common.cancel')}</Button>
             <Button type="submit" variant="primary" loading={busy} disabled={!canGenerate && !busy}>
               <Printer aria-hidden className="size-4" />
               {phase.kind === 'failed' ? t('labels.retry') : t('labels.generate')}
@@ -481,9 +472,188 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
   );
 }
 
-function sameFields(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((field) => b.includes(field));
+/** A batch that was requested earlier (the notification opens it): only its progress is shown. */
+function BatchOnly({ id, onClose }: { id: string; onClose: () => void }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{t('labels.title')}</DialogTitle>
+        <DialogDescription>{t('labels.batchDescription')}</DialogDescription>
+      </DialogHeader>
+      <BatchProgress batchId={id} onClose={onClose} />
+    </>
+  );
 }
+
+function Progress() {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-sunken" aria-hidden>
+      <div className="h-full w-1/3 animate-[at-pulse_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
+    </div>
+  );
+}
+
+/**
+ * Follows a label batch until it has an outcome: queued (a progress bar; the dialog may be closed,
+ * a notification arrives), ready (download), failed (the reason and a way back) or expired.
+ */
+function BatchProgress({
+  initial,
+  batchId,
+  onAgain,
+  onClose,
+}: {
+  initial?: LabelBatch;
+  batchId?: string;
+  onAgain?: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const client = useQueryClient();
+  const id = initial?.id ?? batchId!;
+  const query = useQuery({
+    queryKey: ['label-batch', id],
+    queryFn: () => labelsApi.batch(id),
+    initialData: initial,
+    // the batch handed over by the create call is only the start: read it again at once
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchInterval: (state) => {
+      const batch = state.state.data;
+      if (!batch || !isBatchFinished(batch)) return POLL_MS;
+      return batch.status === 'ready' ? REFRESH_READY_MS : false;
+    },
+    retry: false,
+  });
+  const batch = query.data;
+  const status = batch?.status;
+
+  // Every printed asset gets a "label printed" history entry, and the bell may have a new entry.
+  useEffect(() => {
+    if (status === 'ready') {
+      void client.invalidateQueries({ queryKey: ['asset-history'] });
+      void client.invalidateQueries({ queryKey: ['notifications'] });
+    }
+    if (status === 'failed') void client.invalidateQueries({ queryKey: ['notifications'] });
+  }, [status, client]);
+
+  if (!batch) {
+    return query.error ? (
+      <>
+        <Banner tone="danger">{t('labels.batchLoadFailed')}</Banner>
+        <DialogFooter>
+          <Button onClick={onClose}>{t('labels.close')}</Button>
+          <Button variant="primary" onClick={() => void query.refetch()}>
+            {t('common.retry')}
+          </Button>
+        </DialogFooter>
+      </>
+    ) : (
+      <div role="status" className="flex flex-col gap-2">
+        <Skeleton className="h-6 w-64" />
+        <span className="sr-only">{t('common.loading')}</span>
+      </div>
+    );
+  }
+
+  const labels = t('labels.labelCount', { count: batch.label_count });
+  const sheets = t('labels.sheetCount', { count: batch.page_count ?? 0 });
+
+  if (batch.status === 'ready') {
+    const url = batch.download_url;
+    return (
+      <div role="status" className="flex flex-col gap-4" data-testid="labels-ready">
+        <Banner tone="success" title={t('labels.readyTitle')}>
+          {t('labels.readyDescription', { labels, sheets })}
+        </Banner>
+        {batch.filename ? (
+          <p className="flex items-center gap-2 text-base">
+            <FileText aria-hidden className="size-5 text-muted" />
+            <span className="font-tag">{batch.filename}</span>
+          </p>
+        ) : null}
+        <p className="text-sm text-muted">{t('labels.printedHint')}</p>
+        <DialogFooter>
+          {onAgain ? <Button onClick={onAgain}>{t('labels.another')}</Button> : null}
+          <Button onClick={onClose}>{t('labels.close')}</Button>
+          {url ? (
+            <>
+              <Button asChild>
+                <a href={url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink aria-hidden className="size-4" />
+                  {t('labels.open')}
+                </a>
+              </Button>
+              <Button asChild variant="primary">
+                <a href={url} download={batch.filename ?? undefined}>
+                  <Download aria-hidden className="size-4" />
+                  {t('labels.download')}
+                </a>
+              </Button>
+            </>
+          ) : null}
+        </DialogFooter>
+      </div>
+    );
+  }
+
+  if (batch.status === 'failed') {
+    const code = batch.error?.code;
+    const known =
+      code && code in FAILURE_KEYS ? FAILURE_KEYS[code as keyof typeof FAILURE_KEYS] : null;
+    return (
+      <div className="flex flex-col gap-4" data-testid="labels-failed">
+        <Banner tone="danger" title={t('labels.failedTitle')}>
+          {known ? t(known) : (batch.error?.detail ?? t('labels.failed'))}
+        </Banner>
+        <DialogFooter>
+          <Button onClick={onClose}>{t('labels.close')}</Button>
+          {onAgain ? (
+            <Button variant="primary" onClick={onAgain}>
+              {t('labels.retry')}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </div>
+    );
+  }
+
+  if (batch.status === 'expired') {
+    return (
+      <div className="flex flex-col gap-4" data-testid="labels-expired">
+        <Banner tone="warning" title={t('labels.expiredTitle')}>
+          {t('labels.expiredDescription')}
+        </Banner>
+        <DialogFooter>
+          <Button onClick={onClose}>{t('labels.close')}</Button>
+          {onAgain ? (
+            <Button variant="primary" onClick={onAgain}>
+              {t('labels.another')}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </div>
+    );
+  }
+
+  return (
+    <div role="status" className="flex flex-col gap-3" data-testid="labels-queued">
+      <p className="text-base font-medium">{t('labels.queuedTitle')}</p>
+      <p className="text-base">{t('labels.working', { labels })}</p>
+      <Progress />
+      <p className="text-sm text-muted">{t('labels.queuedHint')}</p>
+      <DialogFooter>
+        <Button onClick={onClose}>{t('labels.close')}</Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+const FAILURE_KEYS = {
+  'logo-invalid': 'labels.failedCodes.logo-invalid',
+  'render-failed': 'labels.failedCodes.render-failed',
+} as const;
 
 function templateHint(t: ReturnType<typeof useI18n>['t'], template: LabelTemplate | undefined) {
   if (!template) return undefined;

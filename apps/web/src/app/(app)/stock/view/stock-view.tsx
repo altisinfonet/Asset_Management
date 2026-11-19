@@ -29,7 +29,6 @@ import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
-import { assetsApi, peopleApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
 import type { Page, Versioned } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
@@ -542,7 +541,10 @@ function AssignmentsList({
   );
 }
 
-/** The name of whoever or wherever an assignment points at, resolved (and cached) per id. */
+/**
+ * The name of whoever or wherever an assignment points at: the API sends it with the assignment
+ * (`target_name`), so a long list needs no lookup per row. A person and an asset link to their page.
+ */
 function HolderName({
   assignment,
   render,
@@ -550,43 +552,22 @@ function HolderName({
   assignment: Assignment;
   render: (name: string) => ReactNode;
 }) {
-  const lookups = useLookups();
-  const personId = assignment.person_id ?? undefined;
-  const assetId = assignment.target_asset_id ?? undefined;
-  const person = useQuery({
-    queryKey: ['person', personId],
-    queryFn: () => peopleApi.get(personId!),
-    enabled: !!personId,
-    retry: false,
-    staleTime: 60_000,
-  });
-  const asset = useQuery({
-    queryKey: ['asset', assetId],
-    queryFn: () => assetsApi.get(assetId!),
-    enabled: !!assetId,
-    retry: false,
-    staleTime: 60_000,
-  });
-  const name = personId
-    ? (person.data?.value.display_name ?? '...')
-    : assignment.location_id
-      ? lookups.locationLabel(assignment.location_id)
-      : (asset.data?.value.asset_tag ?? '...');
+  const name = assignment.target_name ?? '';
   const content = render(name);
-  if (personId && typeof content === 'string') {
+  if (assignment.person_id && typeof content === 'string') {
     return (
       <Link
-        href={routes.personView(personId)}
+        href={routes.personView(assignment.person_id)}
         className="rounded-sm text-primary-text underline underline-offset-2"
       >
         {content}
       </Link>
     );
   }
-  if (assetId && typeof content === 'string') {
+  if (assignment.target_asset_id && typeof content === 'string') {
     return (
       <Link
-        href={routes.assetView(assetId)}
+        href={routes.assetView(assignment.target_asset_id)}
         className="rounded-sm text-primary-text underline underline-offset-2"
       >
         {content}

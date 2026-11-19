@@ -11,6 +11,15 @@ export {
   openAssignmentSummaries,
   withStatus,
 } from './asset-queries.js';
+// [M2-W2 LABELS] bulk selection by ids or by the list's own filter language
+export {
+  ASSET_SELECTION_KEYS,
+  type AssetSelectionFilter,
+  type LabelAssetRow,
+  loadLabelAssets,
+  parseAssetSelection,
+  selectAssetIds,
+} from './asset-selection.js';
 export {
   ASSET_ACTIONS,
   type AssetAction,

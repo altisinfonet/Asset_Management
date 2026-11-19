@@ -5424,50 +5424,174 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
-  /v1/labels/render:
+  /v1/labels/batches:
     post:
       tags:
         - Labels
-      operationId: renderLabels
-      summary: Render a PDF label sheet
+      operationId: createLabelBatch
+      summary: Request a PDF label sheet
       description: |-
-        Renders QR / Code128 labels for up to 500 assets into a PDF (synchronously). Each QR encodes `https://<host>/s/<label_code>`. Writes a `label_printed` history event per asset.
+        Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.
 
         Requires permission `asset:label`.
       x-permission: asset:label
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/LabelRenderRequest"
+              $ref: "#/components/schemas/LabelBatchCreate"
       responses:
-        "200":
-          description: The PDF.
+        "202":
+          description: "Accepted: the batch is queued."
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
-            Content-Disposition:
-              description: attachment filename.
-              schema:
-                type: string
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Location:
+              $ref: "#/components/headers/Location"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
           content:
-            application/pdf:
+            application/json:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/LabelBatch"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: "Validation failed: unknown template or asset, `start_position` beyond the template's slots, neither or both of `asset_ids` and `filter`, a filter that matches nothing or more than 2000 assets, more than 2000 labels, a tag that cannot be a readable Code128 (`barcode-unprintable`), or a logo that is not a clean PNG/JPEG. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    get:
+      tags:
+        - Labels
+      operationId: listLabelBatches
+      summary: List my label batches
+      description: |-
+        The label batches the caller requested, newest first. Nobody sees another user's batches.
+
+        Requires permission `asset:label`.
+      x-permission: asset:label
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/IncludeTotal"
+        - name: status
+          in: query
+          description: Filter by status.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - queued
+                - ready
+                - failed
+                - expired
+        - name: sort
+          in: query
+          style: form
+          explode: false
+          description: "Comma-separated sort keys, `-` prefix = descending. Allowed: created_at. A unique tiebreaker (`id`) is always appended."
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - created_at
+                - -created_at
+            default:
+              - -created_at
+      responses:
+        "200":
+          description: A page of batches.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabelBatchList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/labels/batches/{id}:
+    get:
+      tags:
+        - Labels
+      operationId: getLabelBatch
+      summary: Get a label batch
+      description: |-
+        The status of a batch (poll this) and, once `ready`, a fresh presigned `download_url` (valid for a couple of minutes; read again for a new one). `404` for a batch someone else requested.
+
+        Requires permission `asset:label`.
+      x-permission: asset:label
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The batch.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabelBatch"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "422":
-          $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/labels/templates:
@@ -5477,7 +5601,7 @@ paths:
       operationId: listLabelTemplates
       summary: List fixed label templates
       description: |-
-        Standard sheet templates (US Letter 30-up, A4 21-up, 10-up, single 50x25 mm). Read-only in the MVP; a template editor arrives in v1.1.
+        The fixed sheet templates: US Letter 30-up (Avery 5160 layout), A4 21-up (L7160) and 24-up 3 x 8 (L7159), US Letter 10-up (5163), and two single-label pages for roll and thermal printers (50 x 25 mm and 2 x 1 inch). Geometry is fixed in the MVP (the editor arrives in v1.1); only the calibration offsets can change.
 
         Requires permission `asset:label`.
       x-permission: asset:label
@@ -5501,6 +5625,101 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/labels/templates/{id}:
+    get:
+      tags:
+        - Labels
+      operationId: getLabelTemplate
+      summary: Get a label template
+      description: Requires permission `asset:label`.
+      x-permission: asset:label
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabelTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    patch:
+      tags:
+        - Labels
+      operationId: updateLabelTemplate
+      summary: Calibrate a label template
+      description: |-
+        Sets the calibration offsets of a template after a test print on real label stock (M2-TAG-04). The geometry itself cannot be changed.
+
+        Requires permission `catalog:manage`.
+      x-permission: catalog:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LabelTemplateUpdate"
+      responses:
+        "200":
+          description: The calibrated template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabelTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/loaner-pools:
@@ -12696,7 +12915,8 @@ components:
             - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
             - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
             - `restored`: `{}` or `{was_disposed: true}`
-            - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
+            - `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch
+            - `repair_opened`, `repair_completed`, `imported`: reserved for later milestones (an empty object until then)
       required:
         - id
         - asset_id
@@ -12983,6 +13203,7 @@ components:
           format: uuid
         key:
           type: string
+          description: Stable key, the `template_key` of a batch.
         name:
           type: string
         page_size:
@@ -13003,27 +13224,68 @@ components:
           type: integer
         rows:
           type: integer
+        slots:
+          type: integer
+          description: "Labels per sheet (`cols` x `rows`): the upper bound of a batch's `start_position`."
+        margin_top_mm:
+          type: number
+        margin_left_mm:
+          type: number
+        gap_x_mm:
+          type: number
+          description: Space between two columns of labels.
+        gap_y_mm:
+          type: number
+          description: Space between two rows of labels.
+        offset_x_mm:
+          type: number
+          minimum: -10
+          maximum: 10
+          description: "Calibration: shifts the whole sheet to the right (negative: left). Change it with `PATCH` after a test print (M2-TAG-04)."
+        offset_y_mm:
+          type: number
+          minimum: -10
+          maximum: 10
+          description: "Calibration: shifts the whole sheet down (negative: up)."
         code_type:
           type: string
           enum:
             - qr
             - code128
             - qr_and_code128
+          description: The codes the template draws unless a batch says otherwise.
         fields:
           type: array
           items:
             type: string
+            enum:
+              - asset_tag
+              - name
+              - serial
+              - location
+              - model
+              - organisation
+          description: The text lines the template prints unless a batch says otherwise, first line first.
         is_system:
           type: boolean
-          description: System templates are read-only in the MVP; the editor arrives in v1.1.
+          description: "System templates are fixed in the MVP (the editor arrives in v1.1): only the two calibration offsets can change."
       required:
         - id
         - key
         - name
         - page_size
+        - page_width_mm
+        - page_height_mm
+        - label_width_mm
+        - label_height_mm
         - cols
         - rows
+        - slots
+        - offset_x_mm
+        - offset_y_mm
         - code_type
+        - fields
+        - is_system
     LabelTemplateList:
       type: object
       properties:
@@ -13033,7 +13295,116 @@ components:
             $ref: "#/components/schemas/LabelTemplate"
       required:
         - data
-    LabelRenderRequest:
+    LabelTemplateUpdate:
+      type: object
+      properties:
+        offset_x_mm:
+          type: number
+          minimum: -10
+          maximum: 10
+          multipleOf: 0.01
+        offset_y_mm:
+          type: number
+          minimum: -10
+          maximum: 10
+          multipleOf: 0.01
+      additionalProperties: false
+      minProperties: 1
+      description: Calibration of a fixed template. At least one offset.
+    LabelAssetFilter:
+      type: object
+      properties:
+        q:
+          type: string
+          minLength: 1
+          maxLength: 200
+        archived:
+          type: string
+          enum:
+            - exclude
+            - include
+            - only
+          default: exclude
+        tag:
+          type: string
+        serial:
+          type: string
+        status_id:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 200
+        state_type:
+          type: array
+          items:
+            type: string
+            enum:
+              - deployable
+              - deployed
+              - pending
+              - undeployable
+              - archived
+              - lost
+        category_id:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 200
+        model_id:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 200
+        manufacturer_id:
+          type: string
+          format: uuid
+        location_id:
+          type: string
+          format: uuid
+        include_sublocations:
+          type: boolean
+          default: true
+        assigned:
+          type: boolean
+        assigned_person_id:
+          type: string
+          format: uuid
+        overdue:
+          type: boolean
+        company_id:
+          type: string
+          format: uuid
+        vendor_id:
+          type: string
+          format: uuid
+        parent_asset_id:
+          type: string
+          format: uuid
+        warranty_end_before:
+          type: string
+          format: date
+        warranty_end_after:
+          type: string
+          format: date
+        purchase_date_from:
+          type: string
+          format: date
+        purchase_date_to:
+          type: string
+          format: date
+        updated_since:
+          type: string
+          format: date-time
+        sort:
+          type: string
+          description: As the `sort` of `GET /v1/assets` (`asset_tag` by default here, so a sheet reads in tag order).
+          maxLength: 200
+      additionalProperties: false
+      description: "The filters of `GET /v1/assets` that narrow the set (no paging, no `cf[...]` custom-field filters), as JSON: lists are arrays, flags are booleans."
+    LabelBatchCreate:
       type: object
       properties:
         template_key:
@@ -13045,17 +13416,206 @@ components:
             type: string
             format: uuid
           minItems: 1
-          maxItems: 500
+          maxItems: 2000
           uniqueItems: true
+          description: The assets, printed in this order. Send this or `filter`.
+        filter:
+          $ref: "#/components/schemas/LabelAssetFilter"
         start_position:
           type: integer
           minimum: 1
+          maximum: 1000
           default: 1
-          description: First label slot to use on the first sheet (re-use a partly used sheet).
+          description: 1-based slot of the first label on the first sheet (re-use a partly used sheet); at most the template's `slots`. Slots are numbered row by row, left to right.
+        copies:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 1
+          description: Labels per asset, printed next to each other.
+        codes:
+          type: array
+          items:
+            type: string
+            enum:
+              - qr
+              - code128
+          maxItems: 2
+          uniqueItems: true
+          description: "Which codes to draw; default: the template's `code_type`. The QR encodes `<web base url>/s/<label_code>` (an opaque code, never an internal id), the Code128 encodes the asset tag (printable ASCII only). An empty list prints text only."
+        fields:
+          type: array
+          items:
+            type: string
+            enum:
+              - asset_tag
+              - name
+              - serial
+              - location
+              - model
+              - organisation
+          maxItems: 6
+          uniqueItems: true
+          description: "The text lines to print, first line first and largest; default: the template's `fields`. Text shrinks to fit and ends with an ellipsis when it still does not."
+        logo_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Optional logo: a clean PNG or JPEG attachment of your organisation (at most 2 MiB), printed small above the text."
+        outlines:
+          type: boolean
+          default: false
+          description: "Draw a hairline around every label: for calibration prints on plain paper."
       required:
         - template_key
-        - asset_ids
       additionalProperties: false
+      description: Exactly one of `asset_ids` and `filter`. At most 2000 assets and 2000 labels (assets x copies) per batch.
+    LabelBatch:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        status:
+          type: string
+          enum:
+            - queued
+            - ready
+            - failed
+            - expired
+          description: "`queued` until the worker has rendered the PDF, then `ready` (download it), `failed` (see `error`) or, after `expires_at`, `expired` (the file is deleted)."
+          readOnly: true
+        template_key:
+          type: string
+        source:
+          type: string
+          enum:
+            - asset_ids
+            - filter
+        asset_count:
+          type: integer
+        copies:
+          type: integer
+        label_count:
+          type: integer
+          description: "Labels printed: `asset_count` x `copies`."
+        start_position:
+          type: integer
+        codes:
+          type: array
+          items:
+            type: string
+            enum:
+              - qr
+              - code128
+        fields:
+          type: array
+          items:
+            type: string
+            enum:
+              - asset_tag
+              - name
+              - serial
+              - location
+              - model
+              - organisation
+        outlines:
+          type: boolean
+        logo_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        page_count:
+          type:
+            - integer
+            - "null"
+          description: Sheets in the PDF, once rendered.
+        filename:
+          type:
+            - string
+            - "null"
+          description: Suggested file name, once ready.
+        size_bytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        rendered_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          description: After this moment the file is deleted and the batch becomes `expired`.
+          readOnly: true
+        download_url:
+          type:
+            - string
+            - "null"
+          format: uri
+          description: A short-lived presigned URL of the PDF; only when `ready`. A fresh one comes with every read.
+          readOnly: true
+        download_expires_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+        error:
+          oneOf:
+            - type: object
+              properties:
+                code:
+                  type: string
+                  description: e.g. `logo-invalid`, `render-failed`.
+                detail:
+                  type: string
+              required:
+                - code
+                - detail
+            - type: "null"
+          description: Why the batch failed; `null` otherwise.
+          readOnly: true
+      required:
+        - id
+        - status
+        - template_key
+        - source
+        - asset_count
+        - copies
+        - label_count
+        - start_position
+        - codes
+        - fields
+        - outlines
+        - page_count
+        - created_at
+        - expires_at
+        - download_url
+        - error
+      description: One request to print labels. Visible to the user (or API key) that made it, nobody else.
+    LabelBatchList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabelBatch"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
     Attachment:
       type: object
       properties:

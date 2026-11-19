@@ -1385,22 +1385,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/labels/render": {
+    "/v1/labels/batches": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Render a PDF label sheet
-         * @description Renders QR / Code128 labels for up to 500 assets into a PDF (synchronously). Each QR encodes `https://<host>/s/<label_code>`. Writes a `label_printed` history event per asset.
+         * List my label batches
+         * @description The label batches the caller requested, newest first. Nobody sees another user's batches.
          *
          *     Requires permission `asset:label`.
          */
-        post: operations["renderLabels"];
+        get: operations["listLabelBatches"];
+        put?: never;
+        /**
+         * Request a PDF label sheet
+         * @description Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.
+         *
+         *     Requires permission `asset:label`.
+         */
+        post: operations["createLabelBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/labels/batches/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a label batch
+         * @description The status of a batch (poll this) and, once `ready`, a fresh presigned `download_url` (valid for a couple of minutes; read again for a new one). `404` for a batch someone else requested.
+         *
+         *     Requires permission `asset:label`.
+         */
+        get: operations["getLabelBatch"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1416,7 +1444,7 @@ export interface paths {
         };
         /**
          * List fixed label templates
-         * @description Standard sheet templates (US Letter 30-up, A4 21-up, 10-up, single 50x25 mm). Read-only in the MVP; a template editor arrives in v1.1.
+         * @description The fixed sheet templates: US Letter 30-up (Avery 5160 layout), A4 21-up (L7160) and 24-up 3 x 8 (L7159), US Letter 10-up (5163), and two single-label pages for roll and thermal printers (50 x 25 mm and 2 x 1 inch). Geometry is fixed in the MVP (the editor arrives in v1.1); only the calibration offsets can change.
          *
          *     Requires permission `asset:label`.
          */
@@ -1427,6 +1455,32 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/labels/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a label template
+         * @description Requires permission `asset:label`.
+         */
+        get: operations["getLabelTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Calibrate a label template
+         * @description Sets the calibration offsets of a template after a test print on real label stock (M2-TAG-04). The geometry itself cannot be changed.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        patch: operations["updateLabelTemplate"];
         trace?: never;
     };
     "/v1/loaner-pools": {
@@ -3900,7 +3954,8 @@ export interface components {
              *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
              *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
              *     - `restored`: `{}` or `{was_disposed: true}`
-             *     - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
+             *     - `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch
+             *     - `repair_opened`, `repair_completed`, `imported`: reserved for later milestones (an empty object until then)
              */
             payload?: {
                 [key: string]: unknown;
@@ -4038,34 +4093,176 @@ export interface components {
         LabelTemplate: {
             /** Format: uuid */
             id: string;
+            /** @description Stable key, the `template_key` of a batch. */
             key: string;
             name: string;
             /** @enum {string} */
             page_size: "letter" | "a4" | "custom";
-            page_width_mm?: number;
-            page_height_mm?: number;
-            label_width_mm?: number;
-            label_height_mm?: number;
+            page_width_mm: number;
+            page_height_mm: number;
+            label_width_mm: number;
+            label_height_mm: number;
             cols: number;
             rows: number;
-            /** @enum {string} */
+            /** @description Labels per sheet (`cols` x `rows`): the upper bound of a batch's `start_position`. */
+            slots: number;
+            margin_top_mm?: number;
+            margin_left_mm?: number;
+            /** @description Space between two columns of labels. */
+            gap_x_mm?: number;
+            /** @description Space between two rows of labels. */
+            gap_y_mm?: number;
+            /** @description Calibration: shifts the whole sheet to the right (negative: left). Change it with `PATCH` after a test print (M2-TAG-04). */
+            offset_x_mm: number;
+            /** @description Calibration: shifts the whole sheet down (negative: up). */
+            offset_y_mm: number;
+            /**
+             * @description The codes the template draws unless a batch says otherwise.
+             * @enum {string}
+             */
             code_type: "qr" | "code128" | "qr_and_code128";
-            fields?: string[];
-            /** @description System templates are read-only in the MVP; the editor arrives in v1.1. */
-            is_system?: boolean;
+            /** @description The text lines the template prints unless a batch says otherwise, first line first. */
+            fields: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            /** @description System templates are fixed in the MVP (the editor arrives in v1.1): only the two calibration offsets can change. */
+            is_system: boolean;
         };
         LabelTemplateList: {
             data: components["schemas"]["LabelTemplate"][];
         };
-        LabelRenderRequest: {
+        /** @description Calibration of a fixed template. At least one offset. */
+        LabelTemplateUpdate: {
+            offset_x_mm?: number;
+            offset_y_mm?: number;
+        };
+        /** @description The filters of `GET /v1/assets` that narrow the set (no paging, no `cf[...]` custom-field filters), as JSON: lists are arrays, flags are booleans. */
+        LabelAssetFilter: {
+            q?: string;
+            /**
+             * @default exclude
+             * @enum {string}
+             */
+            archived?: "exclude" | "include" | "only";
+            tag?: string;
+            serial?: string;
+            status_id?: string[];
+            state_type?: ("deployable" | "deployed" | "pending" | "undeployable" | "archived" | "lost")[];
+            category_id?: string[];
+            model_id?: string[];
+            /** Format: uuid */
+            manufacturer_id?: string;
+            /** Format: uuid */
+            location_id?: string;
+            /** @default true */
+            include_sublocations?: boolean;
+            assigned?: boolean;
+            /** Format: uuid */
+            assigned_person_id?: string;
+            overdue?: boolean;
+            /** Format: uuid */
+            company_id?: string;
+            /** Format: uuid */
+            vendor_id?: string;
+            /** Format: uuid */
+            parent_asset_id?: string;
+            /** Format: date */
+            warranty_end_before?: string;
+            /** Format: date */
+            warranty_end_after?: string;
+            /** Format: date */
+            purchase_date_from?: string;
+            /** Format: date */
+            purchase_date_to?: string;
+            /** Format: date-time */
+            updated_since?: string;
+            /** @description As the `sort` of `GET /v1/assets` (`asset_tag` by default here, so a sheet reads in tag order). */
+            sort?: string;
+        };
+        /** @description Exactly one of `asset_ids` and `filter`. At most 2000 assets and 2000 labels (assets x copies) per batch. */
+        LabelBatchCreate: {
             /** @description Key from `GET /v1/labels/templates`. */
             template_key: string;
-            asset_ids: string[];
+            /** @description The assets, printed in this order. Send this or `filter`. */
+            asset_ids?: string[];
+            filter?: components["schemas"]["LabelAssetFilter"];
             /**
-             * @description First label slot to use on the first sheet (re-use a partly used sheet).
+             * @description 1-based slot of the first label on the first sheet (re-use a partly used sheet); at most the template's `slots`. Slots are numbered row by row, left to right.
              * @default 1
              */
             start_position?: number;
+            /**
+             * @description Labels per asset, printed next to each other.
+             * @default 1
+             */
+            copies?: number;
+            /** @description Which codes to draw; default: the template's `code_type`. The QR encodes `<web base url>/s/<label_code>` (an opaque code, never an internal id), the Code128 encodes the asset tag (printable ASCII only). An empty list prints text only. */
+            codes?: ("qr" | "code128")[];
+            /** @description The text lines to print, first line first and largest; default: the template's `fields`. Text shrinks to fit and ends with an ellipsis when it still does not. */
+            fields?: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            /**
+             * Format: uuid
+             * @description Optional logo: a clean PNG or JPEG attachment of your organisation (at most 2 MiB), printed small above the text.
+             */
+            logo_attachment_id?: string | null;
+            /**
+             * @description Draw a hairline around every label: for calibration prints on plain paper.
+             * @default false
+             */
+            outlines?: boolean;
+        };
+        /** @description One request to print labels. Visible to the user (or API key) that made it, nobody else. */
+        LabelBatch: {
+            /** Format: uuid */
+            readonly id: string;
+            /**
+             * @description `queued` until the worker has rendered the PDF, then `ready` (download it), `failed` (see `error`) or, after `expires_at`, `expired` (the file is deleted).
+             * @enum {string}
+             */
+            readonly status: "queued" | "ready" | "failed" | "expired";
+            template_key: string;
+            /** @enum {string} */
+            source: "asset_ids" | "filter";
+            asset_count: number;
+            copies: number;
+            /** @description Labels printed: `asset_count` x `copies`. */
+            label_count: number;
+            start_position: number;
+            codes: ("qr" | "code128")[];
+            fields: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            outlines: boolean;
+            /** Format: uuid */
+            logo_attachment_id?: string | null;
+            /** @description Sheets in the PDF, once rendered. */
+            page_count: number | null;
+            /** @description Suggested file name, once ready. */
+            filename?: string | null;
+            /** Format: int64 */
+            size_bytes?: number | null;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** Format: date-time */
+            readonly rendered_at?: string | null;
+            /**
+             * Format: date-time
+             * @description After this moment the file is deleted and the batch becomes `expired`.
+             */
+            readonly expires_at: string;
+            /**
+             * Format: uri
+             * @description A short-lived presigned URL of the PDF; only when `ready`. A fresh one comes with every read.
+             */
+            readonly download_url: string | null;
+            /** Format: date-time */
+            readonly download_expires_at?: string | null;
+            /** @description Why the batch failed; `null` otherwise. */
+            readonly error: {
+                /** @description e.g. `logo-invalid`, `render-failed`. */
+                code: string;
+                detail: string;
+            } | null;
+        };
+        LabelBatchList: {
+            data: components["schemas"]["LabelBatch"][];
+            page: components["schemas"]["PageInfo"];
         };
         Attachment: {
             /** Format: uuid */
@@ -9438,39 +9635,132 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
-    renderLabels: {
+    listLabelBatches: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Also return `page.total` (an extra count query; avoid on large lists). */
+                include_total?: components["parameters"]["IncludeTotal"];
+                /** @description Filter by status. */
+                status?: ("queued" | "ready" | "failed" | "expired")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("created_at" | "-created_at")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of batches. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelBatchList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createLabelBatch: {
         parameters: {
             query?: never;
-            header?: {
+            header: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
             };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LabelRenderRequest"];
+                "application/json": components["schemas"]["LabelBatchCreate"];
             };
         };
         responses: {
-            /** @description The PDF. */
-            200: {
+            /** @description Accepted: the batch is queued. */
+            202: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
-                    /** @description attachment filename. */
-                    "Content-Disposition"?: string;
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/pdf": string;
+                    "application/json": components["schemas"]["LabelBatch"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description Validation failed: unknown template or asset, `start_position` beyond the template's slots, neither or both of `asset_ids` and `filter`, a filter that matches nothing or more than 2000 assets, more than 2000 labels, a tag that cannot be a readable Code128 (`barcode-unprintable`), or a logo that is not a clean PNG/JPEG. Codes: `validation`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLabelBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The batch. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelBatch"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -9498,6 +9788,87 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLabelTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelTemplate"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateLabelTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description The calibrated template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

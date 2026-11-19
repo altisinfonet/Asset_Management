@@ -240,6 +240,13 @@ describe('role x operation matrix', () => {
     archiveAttachment: ['tenant_admin', 'asset_manager', 'technician'],
     getFilesSettings: ALL,
     putFilesSettings: ['tenant_admin', 'asset_manager'],
+    // [M2-W2 LABELS] printing needs asset:label; calibrating a template needs catalog:manage
+    listLabelTemplates: ['tenant_admin', 'asset_manager', 'technician'],
+    getLabelTemplate: ['tenant_admin', 'asset_manager', 'technician'],
+    updateLabelTemplate: ['tenant_admin', 'asset_manager'],
+    createLabelBatch: ['tenant_admin', 'asset_manager', 'technician'],
+    listLabelBatches: ['tenant_admin', 'asset_manager', 'technician'],
+    getLabelBatch: ['tenant_admin', 'asset_manager', 'technician'],
   };
   it.each(Object.entries(allowed))('%s is allowed for exactly %j', (operationId, expectedRoles) => {
     const op = operations.find((o) => o.operationId === operationId);

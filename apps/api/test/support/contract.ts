@@ -146,6 +146,8 @@ export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
 export const FILES_TAGS = new Set(['Attachments']);
 /** [M2-W2 ACC] Tags of the accessories and consumables module: every operation is implemented. */
 export const ACC_TAGS = new Set(['Accessories', 'Consumables']);
+/** [M2-W2 LABELS] Tags whose operations the tagging module (M2-TAG-02) owns: every one must be implemented. */
+export const LABELS_TAGS = new Set(['Labels']);
 
 /** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
 export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];

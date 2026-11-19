@@ -72,6 +72,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     /** an accessory and a consumable of tenant B */
     ownAccessoryId: string;
     ownConsumableId: string;
+    // [M2-W2 LABELS] a template and a label batch of A
+    labelTemplateId: string;
+    labelBatchId: string;
     /** strings that must never show up in a response to tenant B */
     markers: string[];
   }
@@ -295,6 +298,43 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
           expect: [200],
         },
       ],
+      // ---- [M2-W2 LABELS] templates are per tenant; a batch belongs to its requester
+      'get /v1/labels/templates': [list('/v1/labels/templates')],
+      'get /v1/labels/templates/:id': [
+        notFound('GET', `/v1/labels/templates/${c.labelTemplateId}`),
+      ],
+      'patch /v1/labels/templates/:id': [
+        notFound('PATCH', `/v1/labels/templates/${c.labelTemplateId}`, { offset_x_mm: 2 }),
+      ],
+      'post /v1/labels/batches': [
+        // A's asset, A's asset by filter, A's logo: refused; B's own asset: B's own batch
+        custody(
+          '/v1/labels/batches',
+          { template_key: 'letter-30up-qr', asset_ids: [c.assetId] },
+          [422],
+        ),
+        custody(
+          '/v1/labels/batches',
+          { template_key: 'letter-30up-qr', filter: { tag: c.assetTag } },
+          [422],
+        ),
+        custody(
+          '/v1/labels/batches',
+          {
+            template_key: 'letter-30up-qr',
+            asset_ids: [c.ownAssetId],
+            logo_attachment_id: c.attachmentId,
+          },
+          [422],
+        ),
+        custody(
+          '/v1/labels/batches',
+          { template_key: 'letter-30up-qr', asset_ids: [c.ownAssetId] },
+          [202],
+        ),
+      ],
+      'get /v1/labels/batches': [list('/v1/labels/batches?limit=200')],
+      'get /v1/labels/batches/:id': [notFound('GET', `/v1/labels/batches/${c.labelBatchId}`)],
       'get /v1/search': [
         list(`/v1/search?q=${c.assetTag}`),
         list(`/v1/search?q=${c.serial}`),
@@ -673,6 +713,15 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     }>;
     const key = (await a.post('/v1/api-keys', { name: `${marker}-key`, scopes: ['asset:read'] }))
       .body;
+    // [M2-W2 LABELS]
+    const aTemplates = (await a.get('/v1/labels/templates')).body.data as Array<{ id: string }>;
+    const aBatch = (
+      await a.post(
+        '/v1/labels/batches',
+        { template_key: 'letter-30up-qr', asset_ids: [asset.id] },
+        { headers: { 'idempotency-key': `seed-labels-${marker}` } },
+      )
+    ).body;
     fx = {
       categoryId: category.id,
       manufacturerId: manufacturer.id,
@@ -708,7 +757,11 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       consumableCategoryId: conCategory.id,
       ownAccessoryId: bAccessory.id,
       ownConsumableId: bConsumable.id,
+      labelTemplateId: aTemplates[0]!.id,
+      labelBatchId: aBatch.id,
       markers: [
+        aTemplates[0]!.id,
+        aBatch.id,
         marker,
         accessory.id,
         accessory.label_code,
@@ -789,6 +842,15 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       ),
       consumables: String((await A.admin.get('/v1/consumables?limit=200')).body.data.length),
       template: await etag('/v1/settings/asset-tag-template'),
+      labelTemplate: await etag(`/v1/labels/templates/${fx.labelTemplateId}`),
+      labelBatch: JSON.stringify(
+        (
+          (await A.admin.get('/v1/labels/batches?limit=200')).body.data as Array<{
+            id: string;
+            status: string;
+          }>
+        ).map((x) => [x.id, x.status]),
+      ),
       files: await etag('/v1/settings/files'),
       attachments: JSON.stringify(
         (
@@ -821,7 +883,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     expect(stale, 'replay cases for routes that no longer exist').toEqual([]);
     // the registry is what this harness exists for: it must be covered, not exempted
     for (const r of routes.filter((r) =>
-      /^\/v1\/(assets|attachments|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users|locations|people)/.test(
+      /^\/v1\/(assets|attachments|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users|locations|people|labels)/.test(
         r.path,
       ),
     )) {

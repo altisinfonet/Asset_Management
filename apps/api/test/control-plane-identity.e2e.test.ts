@@ -44,6 +44,9 @@ const TENANT_TABLES = [
   'app.accessory',
   'app.consumable',
   'app.stock_movement',
+  // M2 wave 2 labels
+  'app.label_template',
+  'app.label_batch',
   'app.idempotency_key',
   'app.outbox_event',
   'app.audit_log',
@@ -97,6 +100,8 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
         'app.audit_log': 1,
         'app.outbox_event': 1,
         'app.asset': 0,
+        'app.label_template': 6, // seeded by bootstrapTenant (app.seed_label_templates)
+        'app.label_batch': 0,
       });
       expect(await rowCounts(b.tenantId)).toEqual(countsA);
 

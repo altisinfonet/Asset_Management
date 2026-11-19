@@ -39,6 +39,11 @@ export interface QueueDefinition {
   expireInSeconds: number;
   /** `singletonSeconds` applied when `enqueue` receives a `singletonKey` (time-slot dedupe). */
   dedupeSeconds?: number;
+  /**
+   * Time limit of the tenant transaction the handler runs in (default 30 s, `DEFAULT_TX_OPTIONS`). Only
+   * for jobs that legitimately compute for longer, such as rendering a large PDF.
+   */
+  transactionTimeoutSeconds?: number;
 }
 
 export const DEAD_LETTER_QUEUE = 'dead-letter';
@@ -116,6 +121,31 @@ export const QUEUES = {
     retryDelay: 30,
     expireInSeconds: 5 * MINUTE,
     dedupeSeconds: 5 * MINUTE,
+  },
+  // ---- [M2-W2 LABELS] M2-TAG-02 ------------------------------------------------------------
+  /** Render a label batch into a PDF (pdfkit + bwip-js), store it, flip the batch to ready. */
+  'label.render': {
+    name: 'label.render',
+    tenantScoped: true,
+    priorityClass: 'interactive',
+    runsIn: 'worker',
+    retryLimit: 3,
+    retryDelay: 10,
+    retryDelayMax: 5 * MINUTE,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 10 * MINUTE,
+    transactionTimeoutSeconds: 2 * MINUTE,
+  },
+  /** Delete expired label files, re-queue render jobs that were lost (per tenant, from the scheduler). */
+  'label.sweep': {
+    name: 'label.sweep',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 1,
+    retryDelay: 30,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 10 * MINUTE,
   },
 } as const satisfies Record<string, QueueDefinition>;
 

@@ -21,12 +21,16 @@ describe('shipped migrations', async () => {
     for (const wave1 of ['location', 'person', 'assignment', 'transfer', 'asset_history']) {
       expect(tables).toContain(`app.${wave1}`);
     }
-    // built by the other M2 agents (accessories, loaners, repairs, labels, imports): not in this range
     // [M2-W2 ACC] accessories and consumables (0080-0089)
     for (const stock of ['accessory', 'consumable', 'stock_movement']) {
       expect(tables).toContain(`app.${stock}`);
     }
-    for (const later of ['maintenance_record', 'label_template', 'import_job']) {
+    // [M2-W2 LABELS] labels (0070-0079)
+    for (const labels of ['label_template', 'label_batch']) {
+      expect(tables).toContain(`app.${labels}`);
+    }
+    // built by the other M2 agents (repairs, imports): not in this range
+    for (const later of ['maintenance_record', 'import_job']) {
       expect(tables).not.toContain(`app.${later}`);
     }
     for (const m1 of [

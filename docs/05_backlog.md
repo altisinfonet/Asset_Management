@@ -857,6 +857,7 @@ Size: M - Owner: Claude - Deps: M1-REG-05, M1-REG-08
 
 #### M2-TAG-02 - Label rendering worker
 Size: L - Owner: Claude - Deps: M2-TAG-01, M2-FILE-01
+Status: done (M2 wave 2, ADR 0007) - `POST /v1/labels/batches` (explicit ids or the list filter, template, start position, copies, QR and/or Code128, fields, optional logo) queues `label.render`; the worker renders the PDF with pdfkit + bwip-js, stores it through the StorageAdapter and emits `label.batch.ready`; polling and presigned download on `GET /v1/labels/batches/{id}`; six fixed templates (the three asked for plus Avery 5163, A4 24-up and a 50 x 25 mm page) with calibration offsets (`PATCH /v1/labels/templates/{id}`). 500 labels render in about 2 s; sampled pages are rasterised and every QR and Code128 decoded back in the tests. The PDF is kept on `label_batch` (7 days), not in `attachment` (ADR 0007 section 3). Open: die-line geometry is unverified until M2-TAG-04.
 - [ ] Worker job renders QR and Code128 (bwip-js or equivalent) into PDF sheets with fixed templates (at least Avery 5160 Letter 30-up, A4 3x8, and a single-label 2x1 inch page for thermal/roll printers), with per-template offset calibration values.
 - [ ] Label content: tag, asset name, organisation name, optional logo; text auto-shrinks to fit.
 - [ ] A 500-label job completes under 30 s and is written as an attachment (tenant-scoped, short-lived download).

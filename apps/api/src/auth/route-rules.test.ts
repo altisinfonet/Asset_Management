@@ -9,6 +9,7 @@ import {
   ACC_TAGS,
   M2_OPERATIONS,
   FILES_TAGS,
+  LABELS_TAGS,
   REGISTRY_TAGS,
   WAVE1_TAGS,
   loadContract,
@@ -132,6 +133,23 @@ describe('route access rules', async () => {
     const files = operations.filter((o) => FILES_TAGS.has(o.tag));
     expect(files.length).toBeGreaterThanOrEqual(9);
     const missing = files
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every Labels operation of the contract (M2-TAG-02: templates, calibration, label batches)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const labels = operations.filter((o) => LABELS_TAGS.has(o.tag));
+    expect(labels.map((o) => o.operationId).sort()).toEqual([
+      'createLabelBatch',
+      'getLabelBatch',
+      'getLabelTemplate',
+      'listLabelBatches',
+      'listLabelTemplates',
+      'updateLabelTemplate',
+    ]);
+    const missing = labels
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

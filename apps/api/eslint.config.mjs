@@ -29,6 +29,9 @@ export const FACADE_MODULES = [
   'observability',
   'registry',
   'openapi',
+  'storage',
+  'scanner',
+  'files',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [
@@ -48,10 +51,13 @@ export const KERNEL_DIRS = [
   'ids',
   'db',
   'context',
+  'storage',
+  'scanner',
 ];
 /** Domain modules (architecture 4); they depend on the kernel, never the other way round. */
 export const DOMAIN_DIRS = [
   'registry',
+  'files',
   'lifecycle',
   'tagging',
   'licenses',
@@ -87,6 +93,8 @@ const DRIVER_MESSAGE =
   'The database client may only be imported inside src/tenancy (and src/db). Use TenancyService.withTenantTx / TenantRepository.';
 const INTERNALS_MESSAGE =
   'Import a module only through its facade (src/<module>/index.ts), never its internals.';
+const AWS_MESSAGE =
+  'Object storage is reached through the StorageAdapter port (src/ports); only src/storage may import the AWS SDK.';
 const KERNEL_MESSAGE =
   'The platform kernel must not import domain modules or application entry points (dependencies point downward).';
 
@@ -100,7 +108,7 @@ const UNSAFE_RAW_SELECTOR =
 const dirs = (list) => list.flatMap((d) => [`**/${d}`, `**/${d}/**`]);
 
 /** `no-restricted-imports` options for a file group. */
-function restricted({ driver, kernel, allowPgBoss = false }) {
+function restricted({ driver, kernel, allowPgBoss = false, allowAws = false }) {
   const patterns = [
     ...FACADE_MODULES.map((m) => ({
       group: [`**/${m}/*`, `!**/${m}/index.js`],
@@ -110,6 +118,9 @@ function restricted({ driver, kernel, allowPgBoss = false }) {
   ];
   if (kernel) {
     patterns.push({ group: dirs([...DOMAIN_DIRS, ...APP_DIRS]), message: KERNEL_MESSAGE });
+  }
+  if (!allowAws) {
+    patterns.push({ group: ['@aws-sdk/*', '@smithy/*'], message: AWS_MESSAGE });
   }
   const paths = [];
   if (driver) {
@@ -155,7 +166,7 @@ export default tseslint.config(
   },
   // Kernel code that must not touch the database client: platform, control-plane, identity, config, ...
   {
-    files: srcOf(KERNEL_DIRS.filter((d) => !['tenancy', 'db', 'jobs'].includes(d))),
+    files: srcOf(KERNEL_DIRS.filter((d) => !['tenancy', 'db', 'jobs', 'storage'].includes(d))),
     ignores: testFiles,
     rules: {
       '@typescript-eslint/no-restricted-imports': restricted({ driver: true, kernel: true }),
@@ -170,6 +181,18 @@ export default tseslint.config(
         driver: true,
         kernel: true,
         allowPgBoss: true,
+      }),
+    },
+  },
+  // The storage adapters: the one place that may import the AWS SDK (and, like the rest of the kernel, no database client).
+  {
+    files: srcOf(['storage']),
+    ignores: testFiles,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': restricted({
+        driver: true,
+        kernel: true,
+        allowAws: true,
       }),
     },
   },

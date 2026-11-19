@@ -482,6 +482,8 @@ export interface paths {
          * Start an upload
          * @description Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.
          *
+         *     The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
+         *
          *     Requires permission `attachment:write`.
          */
         post: operations["createAttachment"];
@@ -509,7 +511,9 @@ export interface paths {
         post?: never;
         /**
          * Archive an attachment
-         * @description Requires permission `attachment:write`.
+         * @description Soft delete. `409` while the attachment is the primary picture of an asset or model (clear it there first).
+         *
+         *     Requires permission `attachment:write`.
          */
         delete: operations["archiveAttachment"];
         options?: never;
@@ -528,7 +532,7 @@ export interface paths {
         put?: never;
         /**
          * Confirm an upload
-         * @description Verifies the object exists (and its size / sha256 when provided) and queues the virus scan.
+         * @description Verifies the object exists with exactly the declared size, checks that its first bytes are really of the declared type, and queues the virus scan. Idempotent: confirming twice returns the same attachment. A rejected upload (wrong size, content that does not match its type) is archived with `scan_status=error` and its object deleted.
          *
          *     Requires permission `attachment:write`.
          */
@@ -1079,6 +1083,30 @@ export interface paths {
          * @description Requires permission `catalog:manage`.
          */
         patch: operations["updateCustomFieldDef"];
+        trace?: never;
+    };
+    "/v1/files/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a file from local storage (presigned)
+         * @description Only with the **local filesystem** storage driver: the short-lived URL returned as `download_url` / `thumbnail_url`. The signed token is the credential; no cookie is read or set. The response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a content type from the allow-list and `Content-Disposition: attachment` for everything except raster images.
+         */
+        get: operations["downloadLocalFile"];
+        /**
+         * Upload a file to local storage (presigned)
+         * @description Only with the **local filesystem** storage driver (the self-hosted fallback): the "presigned PUT" URL returned by `POST /v1/attachments`. The signed token is the credential (no cookie or API key is read). Send exactly the promised content type and byte count as the raw request body. With the S3 driver the upload URL points at the object store and this route answers `404`.
+         */
+        put: operations["uploadLocalFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/health": {
@@ -1784,7 +1812,7 @@ export interface paths {
         };
         /**
          * Resolve a scanned code
-         * @description Accepts the opaque QR `label_code` (the last path segment of the label URL) or a Code128 `asset_tag` and returns the asset with the actions allowed right now. `404` when nothing matches in the caller's tenant and scope.
+         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) or a Code128 `asset_tag`, and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for the rest of the window; hits are never limited. The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`.
          *
          *     Requires permission `asset:read`.
          */
@@ -1844,6 +1872,34 @@ export interface paths {
          *     Requires permission `catalog:manage`.
          */
         put: operations["putAssetTagTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the file settings
+         * @description Upload cap (tier default, override, effective) and the EXIF-stripping option of the organisation.
+         *
+         *     Requires permission `catalog:read`.
+         */
+        get: operations["getFilesSettings"];
+        /**
+         * Replace the file settings
+         * @description Replaces `strip_exif_original` and `max_upload_bytes`. The override can only lower the cap that the plan allows.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        put: operations["putFilesSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2473,6 +2529,11 @@ export interface components {
             /** Format: date */
             eol_date?: string | null;
             notes?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it.
+             */
+            image_attachment_id?: string | null;
         };
         AssetModelCreate: {
             /**
@@ -2504,6 +2565,11 @@ export interface components {
             /** Format: date */
             eol_date?: string | null;
             notes?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it.
+             */
+            image_attachment_id?: string | null;
         };
         AssetModelList: {
             data: components["schemas"]["AssetModel"][];
@@ -3305,6 +3371,11 @@ export interface components {
             readonly expanded?: {
                 [key: string]: unknown;
             };
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
+             */
+            image_attachment_id?: string | null;
         };
         AssetCreate: {
             /** @description Unique per tenant (case-insensitive). If omitted on create, generated from the category `tag_prefix`. */
@@ -3392,6 +3463,11 @@ export interface components {
             /** @description Origin system, e.g. `snipe_it`, `google_admin`. Set together with `external_id`. */
             external_source?: string | null;
             external_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
+             */
+            image_attachment_id?: string | null;
         };
         AssetList: {
             data: components["schemas"]["Asset"][];
@@ -3403,6 +3479,11 @@ export interface components {
             asset: components["schemas"]["Asset"];
             /** @description Actions valid for the asset in its current state and for the caller. */
             allowed_actions: ("checkout" | "checkin" | "transfer" | "update" | "open_repair")[];
+            /**
+             * @description Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
+             * @enum {string}
+             */
+            entity_type: "asset";
         };
         /** @description One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set. */
         Assignment: {
@@ -3703,7 +3784,7 @@ export interface components {
             /** Format: uuid */
             readonly id: string;
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+            entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
             /** Format: uuid */
             entity_id: string;
             /** @enum {string} */
@@ -3719,15 +3800,26 @@ export interface components {
             readonly uploaded_at?: string | null;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description Why the status is what it is: the signature name when `infected`, a short reason when `error` (`size-mismatch`, `content-mismatch`, `upload-abandoned`...), `scan-disabled` when the deployment runs without a scanner. */
+            readonly scan_detail?: string | null;
+            /** @description Pixel width of an image, once its thumbnail exists. */
+            readonly width?: number | null;
+            /** @description Pixel height of an image, once its thumbnail exists. */
+            readonly height?: number | null;
             /**
              * Format: uri
-             * @description Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`.
+             * @description Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.
+             */
+            readonly thumbnail_url?: string | null;
+            /**
+             * Format: uri
+             * @description Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`. Images are served inline, everything else as an attachment download.
              */
             readonly download_url?: string | null;
         };
         AttachmentCreate: {
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
+            entity_type: "asset" | "asset_model" | "accessory" | "consumable" | "location" | "person" | "maintenance_record" | "assignment" | "import_job";
             /** Format: uuid */
             entity_id: string;
             /**
@@ -3762,6 +3854,20 @@ export interface components {
         AttachmentList: {
             data: components["schemas"]["Attachment"][];
             page: components["schemas"]["PageInfo"];
+        };
+        FilesSettings: {
+            /** @description Re-encode every uploaded image without EXIF/GPS metadata (the stored original is replaced). Thumbnails are always metadata-free. */
+            strip_exif_original: boolean;
+            /** @description Lower the upload cap below the tier default; `null` = the tier default. It can never raise the cap above the tier. */
+            max_upload_bytes: number | null;
+            /** @description The cap that applies: the smaller of the override (or tier default) and the deployment ceiling. */
+            readonly effective_max_upload_bytes?: number;
+            /** @description The cap of the organisation's plan. */
+            readonly tier_max_upload_bytes?: number;
+        };
+        FilesSettingsUpdate: {
+            strip_exif_original: boolean;
+            max_upload_bytes: number | null;
         };
         ImportJob: {
             /** Format: uuid */
@@ -5639,6 +5745,44 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            /** @description The file is larger than the organisation's upload cap. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The file type is not allowed, or does not match the file name extension. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -5744,7 +5888,82 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description No object was uploaded yet. Codes: `upload-missing`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/upload-missing",
+                     *       "title": "upload missing",
+                     *       "status": 409,
+                     *       "code": "upload-missing",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The uploaded object is larger than declared or allowed. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The content does not match the declared type. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The uploaded size differs from the declared size. Codes: `validation`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -7817,6 +8036,217 @@ export interface operations {
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    downloadLocalFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Signed, short-lived download token from the presigned URL. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file bytes. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description inline for raster images, attachment otherwise. */
+                    "Content-Disposition"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The token is malformed, forged or not a download token, the file is gone, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-invalid",
+                     *       "title": "token invalid",
+                     *       "status": 404,
+                     *       "code": "token-invalid",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The download URL expired; fetch the attachment again for a new one. Codes: `token-expired`. */
+            410: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-expired",
+                     *       "title": "token expired",
+                     *       "status": 410,
+                     *       "code": "token-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    uploadLocalFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Signed, short-lived upload token from the presigned URL. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored. Now call `POST /v1/attachments/{id}/complete`. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The body has fewer bytes than the URL was issued for. Codes: `bad-request`. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/bad-request",
+                     *       "title": "bad request",
+                     *       "status": 400,
+                     *       "code": "bad-request",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The token is malformed, forged or not an upload token, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-invalid",
+                     *       "title": "token invalid",
+                     *       "status": 404,
+                     *       "code": "token-invalid",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description This upload URL was already used. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The upload URL expired. Codes: `token-expired`. */
+            410: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/token-expired",
+                     *       "title": "token expired",
+                     *       "status": 410,
+                     *       "code": "token-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description More bytes than the URL was issued for. Codes: `payload-too-large`. */
+            413: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/payload-too-large",
+                     *       "title": "payload too large",
+                     *       "status": 413,
+                     *       "code": "payload-too-large",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The Content-Type differs from the one the URL was issued for. Codes: `unsupported-media-type`. */
+            415: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/unsupported-media-type",
+                     *       "title": "unsupported media type",
+                     *       "status": 415,
+                     *       "code": "unsupported-media-type",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -9947,6 +10377,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetTagTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getFilesSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    putFilesSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilesSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The new settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilesSettings"];
                 };
             };
             400: components["responses"]["BadRequest"];

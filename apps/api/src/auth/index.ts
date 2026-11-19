@@ -20,6 +20,7 @@ export {
   type AccessSubject,
 } from './access.js';
 export { AuthModule } from './auth.module.js';
+export { ThrottleService } from './throttle.service.js';
 export { CurrentAuth, clientInfo, type AuthContext, type ClientInfo } from './auth-context.js';
 export {
   ADMIN_MARKER_PERMISSIONS,

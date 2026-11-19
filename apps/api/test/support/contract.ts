@@ -139,6 +139,9 @@ export const REGISTRY_TAGS = new Set([
   'Vendors',
 ]);
 
+/** Tags whose operations the files module (M2-FILE) owns: every one must be implemented. */
+export const FILES_TAGS = new Set(['Attachments']);
+
 /** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
 export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];
 

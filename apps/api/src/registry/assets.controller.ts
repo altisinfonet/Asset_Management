@@ -162,6 +162,8 @@ export class AssetsController {
   ) {
     const { data, version } = await this.assets.resolveScan(auth, query.code);
     setEtag(reply, version);
+    // A scan result is for the person who scanned: never cached by a shared proxy or the browser.
+    void reply.header('cache-control', 'private, no-store');
     return data;
   }
 }

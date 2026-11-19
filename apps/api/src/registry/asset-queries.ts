@@ -38,6 +38,8 @@ export interface AssetRow {
   updated_at: Date;
   archived_at: Date | null;
   version: number;
+  /** M2-FILE-03; optional so fixtures that predate the column still type-check. */
+  image_attachment_id?: string | null;
   status_name: string;
   status_state_type: string;
   [sortKey: `k${number}`]: string;
@@ -46,7 +48,8 @@ export interface AssetRow {
 export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name, a.serial, a.category_id,
   a.model_id, a.status_id, a.location_id, a.company_id, a.vendor_id, a.parent_asset_id, a.purchase_date,
   a.purchase_cost_minor, a.currency, a.order_number, a.warranty_end, a.notes, a.custom_data,
-  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version`;
+  a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version,
+  a.image_attachment_id`;
 
 /**
  * No join with the status label: it would let the planner start from the 7-row label table and
@@ -100,6 +103,7 @@ export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
     external_source: r.external_source,
     external_id: r.external_id,
     label_code: r.label_code,
+    image_attachment_id: r.image_attachment_id ?? null,
     current_assignment: null as null,
     status: { id: r.status_id, name: r.status_name, state_type: r.status_state_type },
     ...(expanded ? { expanded } : {}),

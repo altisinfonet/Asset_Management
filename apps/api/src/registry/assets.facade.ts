@@ -40,6 +40,7 @@ import {
   splitCustomFieldParams,
 } from './asset-queries.js';
 import { AssetTagService, tagExists } from './asset-tags.js';
+import { ScanResolveThrottle } from './scan-throttle.js';
 import { mergeCustomData, missingRequired, validateProvided } from './custom-fields.js';
 import { categoryDto, modelDto, vendorDto } from './dto.js';
 import { RegistryBase, duplicate, invalidRef, stalePrecondition } from './registry-base.js';
@@ -95,6 +96,7 @@ export class AssetsFacade extends RegistryBase {
     @Inject(AUDIT_WRITER) audit: AuditWriter,
     @Inject(OUTBOX_PUBLISHER) outbox: OutboxPublisher,
     private readonly tags: AssetTagService,
+    private readonly scanThrottle: ScanResolveThrottle,
   ) {
     super(tenancy, audit, outbox);
   }
@@ -282,7 +284,8 @@ export class AssetsFacade extends RegistryBase {
       const last = whole.split(/[?#]/)[0]!.split('/').filter(Boolean).pop();
       if (last && last !== whole) candidates.push(last);
     }
-    return this.tx(auth, async (trx) => {
+    await this.scanThrottle.assertAllowed(auth);
+    const found = await this.tx(auth, async (trx) => {
       let matchType: 'label_code' | 'asset_tag' = 'label_code';
       let row: AssetRow | undefined;
       for (const code of candidates) {
@@ -294,14 +297,25 @@ export class AssetsFacade extends RegistryBase {
         }
         if (row) break;
       }
-      if (!row) throw problem.notFound('No asset matches this code.');
+      if (!row) return null;
       const allowed: string[] = [];
       if (!row.archived_at && permits(auth.permissions, 'asset:update')) allowed.push('update');
       return {
-        data: { match_type: matchType, asset: assetDto(row), allowed_actions: allowed },
+        data: {
+          match_type: matchType,
+          entity_type: 'asset' as const,
+          asset: assetDto(row),
+          allowed_actions: allowed,
+        },
         version: row.version,
       };
     });
+    if (!found) {
+      // Misses (and only misses) are counted: see ScanResolveThrottle.
+      await this.scanThrottle.recordMiss(auth);
+      throw problem.notFound('No asset matches this code.');
+    }
+    return found;
   }
 
   // =========================================================================================
@@ -474,6 +488,24 @@ export class AssetsFacade extends RegistryBase {
       if (!status || status.archived_at)
         errors.push(invalidRef('/status_id', 'No such status label.'));
     }
+    if (body.image_attachment_id) {
+      const att = await trx.attachment.findFirst({
+        where: { id: body.image_attachment_id, archived_at: null },
+        select: { entity_type: true, entity_id: true, content_type: true, scan_status: true },
+      });
+      if (!att || att.entity_type !== 'asset' || att.entity_id !== current.id) {
+        errors.push(invalidRef('/image_attachment_id', 'No such image attachment of this asset.'));
+      } else if (
+        !att.content_type.startsWith('image/') ||
+        ['infected', 'error'].includes(att.scan_status)
+      ) {
+        errors.push({
+          pointer: '/image_attachment_id',
+          message: 'The attachment is not a usable image.',
+          code: 'invalid',
+        });
+      }
+    }
     await this.checkOthers(
       refs,
       {
@@ -549,6 +581,8 @@ export class AssetsFacade extends RegistryBase {
       set('purchase_cost_minor', minor, current.purchase_cost_minor === minor);
       set('currency', currency, current.currency === currency);
     }
+    if (body.image_attachment_id !== undefined)
+      set('image_attachment_id', body.image_attachment_id);
     if (body.order_number !== undefined) set('order_number', body.order_number);
     if (body.notes !== undefined) set('notes', body.notes);
     if (body.external_source !== undefined) set('external_source', body.external_source);

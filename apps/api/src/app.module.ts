@@ -9,6 +9,7 @@ import { IdentityModule } from './identity/index.js';
 import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
 import { PlatformModule } from './platform/index.js';
+import { FilesModule } from './files/index.js';
 import { RegistryModule } from './registry/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
@@ -38,7 +39,7 @@ export class AppModule {
         PlatformModule,
         ControlPlaneModule,
         IdentityModule,
-        ...(auth ? [AuthModule, RegistryModule] : []),
+        ...(auth ? [AuthModule, RegistryModule, FilesModule] : []),
         HealthModule,
         OpenApiModule,
         ...extraImports,

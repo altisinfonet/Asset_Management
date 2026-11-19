@@ -1724,6 +1724,8 @@ paths:
       description: |-
         Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.
 
+        The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
+
         Requires permission `attachment:write`.
       x-permission: attachment:write
       parameters:
@@ -1763,6 +1765,40 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          description: "The file is larger than the organisation's upload cap. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The file type is not allowed, or does not match the file name extension. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -1809,7 +1845,10 @@ paths:
         - Attachments
       operationId: archiveAttachment
       summary: Archive an attachment
-      description: Requires permission `attachment:write`.
+      description: |-
+        Soft delete. `409` while the attachment is the primary picture of an asset or model (clear it there first).
+
+        Requires permission `attachment:write`.
       x-permission: attachment:write
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -1846,7 +1885,7 @@ paths:
       operationId: completeAttachment
       summary: Confirm an upload
       description: |-
-        Verifies the object exists (and its size / sha256 when provided) and queues the virus scan.
+        Verifies the object exists with exactly the declared size, checks that its first bytes are really of the declared type, and queues the virus scan. Idempotent: confirming twice returns the same attachment. A rejected upload (wrong size, content that does not match its type) is archived with `scan_status=error` and its object deleted.
 
         Requires permission `attachment:write`.
       x-permission: attachment:write
@@ -1879,7 +1918,73 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "No object was uploaded yet. Codes: `upload-missing`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/upload-missing
+                title: upload missing
+                status: 409
+                code: upload-missing
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - upload-missing
+        "413":
+          description: "The uploaded object is larger than declared or allowed. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The content does not match the declared type. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
+        "422":
+          description: "The uploaded size differs from the declared size. Codes: `validation`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/validation
+                title: validation
+                status: 422
+                code: validation
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - validation
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/audit-log:
@@ -4149,6 +4254,216 @@ paths:
           $ref: "#/components/responses/PreconditionFailed"
         "428":
           $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/files/{token}:
+    put:
+      tags:
+        - Attachments
+      operationId: uploadLocalFile
+      summary: Upload a file to local storage (presigned)
+      description: 'Only with the **local filesystem** storage driver (the self-hosted fallback): the "presigned PUT" URL returned by `POST /v1/attachments`. The signed token is the credential (no cookie or API key is read). Send exactly the promised content type and byte count as the raw request body. With the S3 driver the upload URL points at the object store and this route answers `404`.'
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Signed, short-lived upload token from the presigned URL.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stored. Now call `POST /v1/attachments/{id}/complete`.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+        "400":
+          description: "The body has fewer bytes than the URL was issued for. Codes: `bad-request`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/bad-request
+                title: bad request
+                status: 400
+                code: bad-request
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - bad-request
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "The token is malformed, forged or not an upload token, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-invalid
+                title: token invalid
+                status: 404
+                code: token-invalid
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-invalid
+            - not-found
+        "409":
+          description: "This upload URL was already used. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+        "410":
+          description: "The upload URL expired. Codes: `token-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-expired
+                title: token expired
+                status: 410
+                code: token-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-expired
+        "413":
+          description: "More bytes than the URL was issued for. Codes: `payload-too-large`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/payload-too-large
+                title: payload too large
+                status: 413
+                code: payload-too-large
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - payload-too-large
+        "415":
+          description: "The Content-Type differs from the one the URL was issued for. Codes: `unsupported-media-type`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/unsupported-media-type
+                title: unsupported media type
+                status: 415
+                code: unsupported-media-type
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - unsupported-media-type
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    get:
+      tags:
+        - Attachments
+      operationId: downloadLocalFile
+      summary: Download a file from local storage (presigned)
+      description: "Only with the **local filesystem** storage driver: the short-lived URL returned as `download_url` / `thumbnail_url`. The signed token is the credential; no cookie is read or set. The response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`, `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, a content type from the allow-list and `Content-Disposition: attachment` for everything except raster images."
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Signed, short-lived download token from the presigned URL.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file bytes.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: inline for raster images, attachment otherwise.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: nosniff
+              schema:
+                type: string
+            Content-Security-Policy:
+              description: default-src 'none'; sandbox
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "The token is malformed, forged or not a download token, the file is gone, or this deployment does not use local storage. Codes: `token-invalid`, `not-found`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-invalid
+                title: token invalid
+                status: 404
+                code: token-invalid
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-invalid
+            - not-found
+        "410":
+          description: "The download URL expired; fetch the attachment again for a new one. Codes: `token-expired`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/token-expired
+                title: token expired
+                status: 410
+                code: token-expired
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - token-expired
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/health:
@@ -6680,7 +6995,7 @@ paths:
       operationId: resolveScan
       summary: Resolve a scanned code
       description: |-
-        Accepts the opaque QR `label_code` (the last path segment of the label URL) or a Code128 `asset_tag` and returns the asset with the actions allowed right now. `404` when nothing matches in the caller's tenant and scope.
+        Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) or a Code128 `asset_tag`, and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for the rest of the window; hits are never limited. The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`.
 
         Requires permission `asset:read`.
       x-permission: asset:read
@@ -6871,6 +7186,95 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AssetTagTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/settings/files:
+    get:
+      tags:
+        - Attachments
+      operationId: getFilesSettings
+      summary: Get the file settings
+      description: |-
+        Upload cap (tier default, override, effective) and the EXIF-stripping option of the organisation.
+
+        Requires permission `catalog:read`.
+      x-permission: catalog:read
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    put:
+      tags:
+        - Attachments
+      operationId: putFilesSettings
+      summary: Replace the file settings
+      description: |-
+        Replaces `strip_exif_original` and `max_upload_bytes`. The override can only lower the cap that the plan allows.
+
+        Requires permission `catalog:manage`.
+      x-permission: catalog:manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FilesSettingsUpdate"
+      responses:
+        "200":
+          description: The new settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesSettings"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -8440,6 +8844,7 @@ components:
         - insufficient-stock
         - no-loaner-available
         - import-stale-dry-run
+        - upload-missing
         - token-expired
         - invitation-expired
         - precondition-failed
@@ -8987,6 +9392,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it."
       required:
         - id
         - category_id
@@ -9063,6 +9474,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset_model`) of this model. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it."
       additionalProperties: false
       description: "Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field."
     AssetModelList:
@@ -10839,6 +11256,12 @@ components:
           additionalProperties: true
           description: Related objects requested through `expand` (model, category, location, vendor).
           readOnly: true
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create."
       required:
         - id
         - asset_tag
@@ -11016,6 +11439,12 @@ components:
           type:
             - string
             - "null"
+        image_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create."
       additionalProperties: false
       description: Partial update (merge semantics). `custom_data` is merged per key; set a key to null to remove it. Changing status or location writes history events.
     AssetList:
@@ -11051,8 +11480,14 @@ components:
               - update
               - open_repair
           description: Actions valid for the asset in its current state and for the caller.
+        entity_type:
+          type: string
+          enum:
+            - asset
+          description: Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
       required:
         - match_type
+        - entity_type
         - asset
         - allowed_actions
     Assignment:
@@ -11738,6 +12173,7 @@ components:
           type: string
           enum:
             - asset
+            - asset_model
             - accessory
             - consumable
             - location
@@ -11787,12 +12223,37 @@ components:
           type: string
           format: date-time
           readOnly: true
+        scan_detail:
+          type:
+            - string
+            - "null"
+          description: "Why the status is what it is: the signature name when `infected`, a short reason when `error` (`size-mismatch`, `content-mismatch`, `upload-abandoned`...), `scan-disabled` when the deployment runs without a scanner."
+          readOnly: true
+        width:
+          type:
+            - integer
+            - "null"
+          description: Pixel width of an image, once its thumbnail exists.
+          readOnly: true
+        height:
+          type:
+            - integer
+            - "null"
+          description: Pixel height of an image, once its thumbnail exists.
+          readOnly: true
+        thumbnail_url:
+          type:
+            - string
+            - "null"
+          format: uri
+          description: Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.
+          readOnly: true
         download_url:
           type:
             - string
             - "null"
           format: uri
-          description: Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`.
+          description: Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`. Images are served inline, everything else as an attachment download.
           readOnly: true
       required:
         - id
@@ -11811,6 +12272,7 @@ components:
           type: string
           enum:
             - asset
+            - asset_model
             - accessory
             - consumable
             - location
@@ -11893,6 +12355,43 @@ components:
       required:
         - data
         - page
+    FilesSettings:
+      type: object
+      properties:
+        strip_exif_original:
+          type: boolean
+          description: Re-encode every uploaded image without EXIF/GPS metadata (the stored original is replaced). Thumbnails are always metadata-free.
+        max_upload_bytes:
+          type:
+            - integer
+            - "null"
+          minimum: 1024
+          description: Lower the upload cap below the tier default; `null` = the tier default. It can never raise the cap above the tier.
+        effective_max_upload_bytes:
+          type: integer
+          description: "The cap that applies: the smaller of the override (or tier default) and the deployment ceiling."
+          readOnly: true
+        tier_max_upload_bytes:
+          type: integer
+          description: The cap of the organisation's plan.
+          readOnly: true
+      required:
+        - strip_exif_original
+        - max_upload_bytes
+    FilesSettingsUpdate:
+      type: object
+      properties:
+        strip_exif_original:
+          type: boolean
+        max_upload_bytes:
+          type:
+            - integer
+            - "null"
+          minimum: 1024
+      required:
+        - strip_exif_original
+        - max_upload_bytes
+      additionalProperties: false
     ImportJob:
       type: object
       properties:
@@ -13093,7 +13592,7 @@ x-problem-codes:
   token-invalid:
     status:
       - 404
-    description: The password-reset token is unknown or already used.
+    description: "The password-reset token is unknown or already used. Also: a local-storage file link (`/v1/files/{token}`) that is malformed, forged or of the wrong kind."
   invitation-not-found:
     status:
       - 404
@@ -13138,10 +13637,14 @@ x-problem-codes:
     status:
       - 409
     description: The dry run being committed is not the one reviewed.
+  upload-missing:
+    status:
+      - 409
+    description: "The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete."
   token-expired:
     status:
       - 410
-    description: The password-reset token has expired; request a new one.
+    description: "The password-reset token has expired; request a new one. Also: a local-storage file link (`/v1/files/{token}`) whose lifetime ended."
   invitation-expired:
     status:
       - 410
@@ -13153,11 +13656,11 @@ x-problem-codes:
   payload-too-large:
     status:
       - 413
-    description: The request body exceeds the size limit.
+    description: "The request body exceeds the size limit. For attachments: the file is larger than the organisation's upload cap (see `GET /v1/settings/files`) or than the size declared when the upload was started."
   unsupported-media-type:
     status:
       - 415
-    description: The Content-Type is not supported.
+    description: "The Content-Type is not supported. For attachments: the file type is not on the allow-list (images, PDF, Office documents, CSV; never SVG or HTML), or its content does not match the declared type or extension."
   validation:
     status:
       - 422

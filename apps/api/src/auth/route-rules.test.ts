@@ -7,6 +7,7 @@ import { loadConfig } from '../config/env.js';
 import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
   M2_OPERATIONS,
+  FILES_TAGS,
   REGISTRY_TAGS,
   loadContract,
   loadProblemCodes,
@@ -100,6 +101,16 @@ describe('route access rules', async () => {
       const op = operations.find((o) => o.operationId === id)!;
       expect(implemented.has(`${op.method} ${op.path}`), id).toBe(false);
     }
+  });
+
+  it('implements every Attachments operation of the contract (M2-FILE-01..03, settings, local file links)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const files = operations.filter((o) => FILES_TAGS.has(o.tag));
+    expect(files.length).toBeGreaterThanOrEqual(9);
+    const missing = files
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
   });
 
   it('every implemented contract route answers its documented success status (path, method, status code)', () => {

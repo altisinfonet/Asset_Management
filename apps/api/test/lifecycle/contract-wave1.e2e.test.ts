@@ -21,6 +21,7 @@ import {
   keyed,
   newAsset,
   newPerson,
+  newPhoto,
   newTenancy,
   startRegistryApp,
   unique,
@@ -239,7 +240,7 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
       body: { person_id: person.body.id },
     });
     await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 200, {
-      body: { note: 'back', attachment_ids: [uuid()] },
+      body: { note: 'back', attachment_ids: [await newPhoto(t.admin, asset.id)] },
       headers: keyed().headers,
     });
     await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 409, {

@@ -450,11 +450,19 @@ export class AttachmentsService {
           }),
       }),
     );
-    const data: AttachmentDto[] = [];
-    for (const raw of page.data) {
-      const row = raw as unknown as AttachmentRow;
-      data.push(toDto(row, { thumbnail: await this.thumbnailUrl(row) }));
-    }
+    // Both URLs ride along with the list, so a screen never needs a request per item. The download
+    // URL costs one storage HEAD per CLEAN item (the object must still be the scanned one); they run
+    // in parallel and a page holds at most the list limit.
+    const data = await Promise.all(
+      page.data.map(async (raw) => {
+        const row = raw as unknown as AttachmentRow;
+        const [download, thumbnail] = await Promise.all([
+          this.downloadUrl(row),
+          this.thumbnailUrl(row),
+        ]);
+        return toDto(row, { download, thumbnail });
+      }),
+    );
     return { data, page: page.page };
   }
 

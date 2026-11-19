@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
+import { AttachmentsService } from '../files/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
   type FieldError,
@@ -108,6 +109,7 @@ export class CustodyService extends RegistryBase {
     tenancy: TenancyService,
     @Inject(AUDIT_WRITER) audit: AuditWriter,
     @Inject(OUTBOX_PUBLISHER) outbox: OutboxPublisher,
+    private readonly attachments: AttachmentsService,
   ) {
     super(tenancy, audit, outbox);
   }
@@ -126,7 +128,7 @@ export class CustodyService extends RegistryBase {
       assertAssetAction('checkout', stateOf(current));
       const target = await this.resolveTarget(trx, body, current.id);
       this.checkDue(body.expected_return, '/expected_return');
-      const deployed = await this.statusOfType(trx, 'deployed');
+      const deployed = await this.checkoutStatus(trx, body.status_label_id);
 
       const assignmentId = uuidv7();
       await trx.assignment.create({
@@ -142,6 +144,7 @@ export class CustodyService extends RegistryBase {
           attachment_ids: body.attachment_ids ?? [],
         },
       });
+      await this.linkPhotos(trx, body.attachment_ids, current.id, assignmentId);
       await this.touchAsset(trx, auth, current, { status_id: deployed.id });
       const row = (await loadAsset(trx, current.id))!;
       const assignment = (await loadAssignment(trx, assignmentId))!;
@@ -208,7 +211,9 @@ export class CustodyService extends RegistryBase {
         locationId: body.checkin_location_id ?? null,
         note: body.note ?? null,
         attachmentIds: body.attachment_ids ?? [],
+        condition: body.condition ?? null,
       });
+      await this.linkPhotos(trx, body.attachment_ids, current.id, closed.id);
       const newLocation =
         body.checkin_location_id && body.checkin_location_id !== current.location_id
           ? body.checkin_location_id
@@ -236,7 +241,11 @@ export class CustodyService extends RegistryBase {
           holder: `${open.target_type}:${open.target_id}`,
         },
         after: { status_id: row.status_id, location_id: row.location_id, holder: null },
-        meta: { ...detail, ...(body.note ? { note: body.note } : {}) },
+        meta: {
+          ...detail,
+          ...(body.condition ? { condition: body.condition } : {}),
+          ...(body.note ? { note: body.note } : {}),
+        },
         refs: { assignmentId: closed.id },
       });
       await writeAssetHistory(trx, auth, {
@@ -248,6 +257,7 @@ export class CustodyService extends RegistryBase {
           ...detail,
           status: { from: current.status_name, to: status.name },
           ...(newLocation ? { location: { from: current.location_id, to: newLocation } } : {}),
+          ...(body.condition ? { condition: body.condition } : {}),
           ...(body.note ? { note: body.note } : {}),
           ...(body.attachment_ids?.length ? { attachment_ids: body.attachment_ids } : {}),
         },
@@ -296,6 +306,7 @@ export class CustodyService extends RegistryBase {
           locationId: body.to_location_id ?? null,
           note: body.reason ?? body.note ?? null,
           attachmentIds: [],
+          condition: null,
         });
       }
       const toId = uuidv7();
@@ -311,6 +322,7 @@ export class CustodyService extends RegistryBase {
           attachment_ids: body.attachment_ids ?? [],
         },
       });
+      await this.linkPhotos(trx, body.attachment_ids, current.id, toId);
       const newLocation =
         body.to_location_id && body.to_location_id !== current.location_id
           ? body.to_location_id
@@ -463,13 +475,19 @@ export class CustodyService extends RegistryBase {
     trx: Tx,
     auth: AuthContext,
     assignmentId: string,
-    close: { locationId: string | null; note: string | null; attachmentIds: string[] },
+    close: {
+      locationId: string | null;
+      note: string | null;
+      attachmentIds: string[];
+      condition: string | null;
+    },
   ): Promise<AssignmentRow> {
     const closed = await trx.$queryRaw<Array<{ id: string }>>`
       update app.assignment
          set checked_in_at = greatest(now(), checked_out_at), quantity_returned = quantity,
              checked_in_by = ${auth.userId}::uuid, checkin_location_id = ${close.locationId}::uuid,
-             checkin_note = ${close.note}::text, checkin_attachment_ids = ${close.attachmentIds}::uuid[]
+             checkin_note = ${close.note}::text, checkin_attachment_ids = ${close.attachmentIds}::uuid[],
+             checkin_condition = ${close.condition}::text
        where id = ${assignmentId}::uuid and checked_in_at is null
        returning id`;
     if (closed.length === 0) {
@@ -586,6 +604,48 @@ export class CustodyService extends RegistryBase {
       throw problem.conflict(
         `The tenant has no active status label of type "${stateType}". Create one in the status labels first.`,
       );
+    }
+    return label;
+  }
+
+  /**
+   * Photos and signatures sent with a custody action: each must be a live attachment of this tenant
+   * that is not rejected and that belongs to the asset (uploaded against it before the action). They
+   * are re-pointed at the assignment, so they list under it (`entity_type=assignment`). A bad id is a
+   * 422 with the pointer of the offending array item.
+   */
+  private linkPhotos(
+    trx: Tx,
+    ids: readonly string[] | undefined,
+    assetId: string,
+    assignmentId: string,
+  ): Promise<void> {
+    return this.attachments.linkToOwner(
+      trx,
+      ids ?? [],
+      { type: 'assignment', id: assignmentId },
+      { allowFrom: [{ type: 'asset', id: assetId }], pointer: '/attachment_ids' },
+    );
+  }
+
+  /** The status of a check-out: the requested `deployed` label, or the tenant's first one. */
+  private async checkoutStatus(
+    trx: Tx,
+    statusLabelId: string | undefined,
+  ): Promise<{ id: string; name: string }> {
+    if (!statusLabelId) return this.statusOfType(trx, 'deployed');
+    const label = await trx.status_label.findUnique({ where: { id: statusLabelId } });
+    if (!label || label.archived_at) {
+      throw problem.validation([invalidRef('/status_label_id', 'No such status label.')]);
+    }
+    if (label.state_type !== 'deployed') {
+      throw problem.validation([
+        {
+          pointer: '/status_label_id',
+          message: 'a checked-out asset needs a status label of type "deployed"',
+          code: 'invalid',
+        },
+      ]);
     }
     return label;
   }

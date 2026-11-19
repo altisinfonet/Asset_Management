@@ -304,7 +304,7 @@ export class AssetsFacade extends RegistryBase {
     }
     await this.scanThrottle.assertAllowed(auth);
     const found = await this.tx(auth, async (trx) => {
-      let matchType: 'label_code' | 'asset_tag' = 'label_code';
+      let matchType: 'label_code' | 'asset_tag' | 'serial' = 'label_code';
       let row: AssetRow | undefined;
       for (const code of candidates) {
         matchType = 'label_code';
@@ -312,6 +312,18 @@ export class AssetsFacade extends RegistryBase {
         if (!row) {
           matchType = 'asset_tag';
           [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
+        }
+        if (!row) {
+          // The serial number printed on the device. Not unique per tenant: an ambiguous one is
+          // refused rather than guessed (a wrong asset must never be checked out by a scan).
+          matchType = 'serial';
+          const bySerial = await loadAssetRows(trx, Prisma.sql`a.serial_key = lower(${code})`, 2);
+          if (bySerial.length > 1) {
+            throw problem.conflict(
+              'Several assets share this serial number. Scan the label or enter the asset tag instead.',
+            );
+          }
+          row = bySerial[0];
         }
         if (row) break;
       }

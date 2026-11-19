@@ -86,6 +86,23 @@ export async function newLocation(
   return { id: res.body.id, body: res.body };
 }
 
+/**
+ * A photo attached to an asset (metadata only, no bytes: `scan_status=pending`). Custody calls
+ * accept such an id in `attachment_ids`; a pending photo is as good as a clean one there.
+ */
+export async function newPhoto(admin: Client, assetId: string): Promise<string> {
+  const res = await admin.post('/v1/attachments', {
+    entity_type: 'asset',
+    entity_id: assetId,
+    kind: 'photo',
+    filename: `${unique('photo')}.png`,
+    content_type: 'image/png',
+    size_bytes: 50,
+  });
+  if (res.status !== 201) throw new Error(`create photo: ${res.status} ${res.raw}`);
+  return res.body.attachment.id;
+}
+
 /** History rows of an asset, oldest first. */
 export async function historyOf(admin: Client, assetId: string) {
   const rows: Array<Json> = [];

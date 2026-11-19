@@ -211,6 +211,7 @@ model assignment {
   created_at                                                  DateTime        @default(now()) @db.Timestamptz(6)
   updated_at                                                  DateTime        @default(now()) @db.Timestamptz(6)
   version                                                     Int             @default(1)
+  checkin_condition                                           String?
   asset_history                                               asset_history[]
   asset_assignment_tenant_id_asset_idToasset                  asset?          @relation("assignment_tenant_id_asset_idToasset", fields: [tenant_id, asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   location_assignment_tenant_id_checkin_location_idTolocation location?       @relation("assignment_tenant_id_checkin_location_idTolocation", fields: [tenant_id, checkin_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)

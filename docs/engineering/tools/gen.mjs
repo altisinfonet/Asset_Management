@@ -579,7 +579,8 @@ S_.AssetList = obj({ data: arr(S('Asset')), page: S('PageInfo') }, ['data', 'pag
 // M2 wave 1b (files): END
 
 S_.ScanResolveResult = obj({
-  match_type: en(['label_code', 'asset_tag']),
+  // [M2-INT] `serial`: the exact device serial number is accepted too
+  match_type: en(['label_code', 'asset_tag', 'serial'], { description: 'What the code was: the opaque `label_code` of the label, the `asset_tag`, or the device `serial` (checked in that order).' }),
   asset: S('Asset'),
   allowed_actions: arr(en(['checkout', 'checkin', 'transfer', 'update', 'open_repair']), { description: 'Actions valid for the asset in its current state and for the caller.' }),
   // M2 wave 1b (scan codes): BEGIN
@@ -607,6 +608,8 @@ S_.Assignment = obj({
   acceptance_state: en(['not_required', 'pending', 'accepted', 'declined']),
   note: nstr(),
   checkin_note: nstr(),
+  // [M2-INT] condition recorded at check-in
+  checkin_condition: { type: ['string', 'null'], enum: ['good', 'fair', 'poor', 'damaged', null], description: 'Condition of the asset when it came back (`CheckinRequest.condition`); `null` while the assignment is open or when none was stated.' },
   // [M2-W1]
   attachment_ids: arr(uuid(), { description: 'Photos / signatures linked at check-out (ids only; the attachments service owns the files).' }),
   checkin_attachment_ids: arr(uuid(), { description: 'Photos linked at check-in.' }),
@@ -620,15 +623,19 @@ S_.CheckoutRequest = {
     expected_return: date({ description: 'Required for loaner pool check-outs.' }),
     note: str({ maxLength: 2000 }),
     acceptance_required: bool({ default: false, description: 'Creates the assignment with `acceptance_state=pending`.' }),
-    attachment_ids: arr(uuid(), { description: 'Previously uploaded photos/signatures to link to the assignment.', maxItems: 10 }),
+    attachment_ids: arr(uuid(), { description: 'Photos/signatures uploaded against the asset beforehand (`POST /v1/attachments` with `entity_type=asset`; `pending` or `clean`). They are linked to the new assignment and then list under it (`entity_type=assignment`). `422` with the pointer `/attachment_ids/<index>` when an id is unknown, belongs to another asset or organisation, or was rejected (infected, error).', maxItems: 10 }),
+    // [M2-INT]
+    status_label_id: uuid('Status to give the asset: a non-archived label of type `deployed`. Default: the organisation\'s first deployed label.'),
   })],
   description: 'Check an asset out to a person, location or another asset.',
 };
 S_.CheckinRequest = obj({
   checkin_location_id: nuuid('Where the asset is now; also updates the asset location.'),
   status_id: nuuid('Status to set on check-in (default: the tenant default deployable status).'),
+  // [M2-INT]
+  condition: en(['good', 'fair', 'poor', 'damaged'], { description: 'Condition of the asset as it comes back; stored on the assignment (`checkin_condition`) and shown in the history.' }),
   note: str({ maxLength: 2000 }),
-  attachment_ids: arr(uuid(), { maxItems: 10 }),
+  attachment_ids: arr(uuid(), { maxItems: 10, description: 'Photos uploaded against the asset beforehand (`pending` or `clean`); linked to the closed assignment, same rules and `422` pointers as at check-out.' }),
 });
 S_.TransferRequest = {
   allOf: [S('AssignmentTarget'), obj({
@@ -636,7 +643,7 @@ S_.TransferRequest = {
     expected_return: date(),
     reason: str({ maxLength: 500 }),
     note: str({ maxLength: 2000 }),
-    attachment_ids: arr(uuid(), { maxItems: 10 }),
+    attachment_ids: arr(uuid(), { maxItems: 10, description: 'Photos uploaded against the asset beforehand; linked to the new assignment (same rules and `422` pointers as at check-out).' }),
   })],
   description: 'Atomic hand-over: closes the current assignment (if any) and opens a new one to the given target.',
 };
@@ -673,7 +680,21 @@ S_.HistoryEvent = obj({
   assignment_id: nuuid(),
   transfer_id: nuuid(),
   summary: nstr(),
-  payload: { type: 'object', additionalProperties: true, description: 'Event details, e.g. `{"from":"...","to":"..."}`.' },
+  // [M2-INT] payload shapes per event type
+  payload: { type: 'object', additionalProperties: true, description: [
+    'Event details; the keys depend on `event_type` (all ids are uuids, names are display strings, optional keys are absent when empty):',
+    '',
+    '- `created`: `{status_id, location_id, cloned_from?}`',
+    '- `updated`: `{fields: string[]}`, the names of the fields that changed',
+    '- `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`',
+    '- `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)',
+    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`',
+    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
+    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
+    '- `restored`: `{}` or `{was_disposed: true}`',
+    '- `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)',
+  ].join('\n') },
 }, ['id', 'asset_id', 'at', 'event_type', 'actor_type']);
 S_.HistoryEventList = obj({ data: arr(S('HistoryEvent')), page: S('PageInfo') }, ['data', 'page']);
 S_.AccessoryCheckoutRequest = {
@@ -777,7 +798,7 @@ S_.Attachment = obj({
   height: ro({ type: ['integer', 'null'], description: 'Pixel height of an image, once its thumbnail exists.' }),
   thumbnail_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived URL of the metadata-free WebP thumbnail (images only, once generated, and only when `scan_status=clean`). Present on list and get.' }),
   // M2 wave 1b (files): END
-  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`. Images are served inline, everything else as an attachment download.' }),
+  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'Short-lived signed URL, only when `scan_status=clean`; present on the list and on `GET /v1/attachments/{id}` alike (no per-item request needed). Images are served inline, everything else as an attachment download.' }),
 }, ['id', 'entity_type', 'entity_id', 'kind', 'filename', 'content_type', 'size_bytes', 'scan_status', 'created_at']);
 S_.AttachmentCreate = obj({
   entity_type: en(['asset', 'asset_model', 'accessory', 'consumable', 'location', 'person', 'maintenance_record', 'assignment', 'import_job']),
@@ -1509,7 +1530,8 @@ addOp('/v1/assets/{id}/assignments', 'get', {
 });
 addOp('/v1/scan/resolve', 'get', {
   tag: 'Assets', id: 'resolveScan', summary: 'Resolve a scanned code', perm: 'asset:read', hasId: true,
-  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) or a Code128 `asset_tag`, and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`.',
+  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
+  problems: { 409: { codes: ['conflict'], text: 'The serial number belongs to several assets; use the label or the asset tag.' } },
   params: [{ name: 'code', in: 'query', required: true, description: 'Scanned value.', schema: str({ minLength: 1, maxLength: 200 }) }],
   success: { 200: okResp(200, 'The matching asset.', S('ScanResolveResult'), { replay: false }) },
 });

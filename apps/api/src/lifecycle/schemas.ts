@@ -13,9 +13,9 @@ const isoDate = z.iso
   .refine((v) => new Date(`${v}T00:00:00Z`).getUTCFullYear() >= 1, 'year must be 1 or later');
 
 /**
- * Ids of photos / signatures to link to the custody record. Only the uuid format is checked here:
- * the attachments service (a parallel M2 story) owns the files, and the integrator adds the
- * existence / ownership validation when the two meet (see migration 0041).
+ * Ids of photos / signatures to link to the custody record. The format is checked here; that every
+ * id is a live, not rejected attachment of this tenant that belongs to the asset is checked in the
+ * custody transaction (`AttachmentsService.linkToOwner`), which also re-points them at the assignment.
  */
 const attachmentIds = z
   .array(z.uuid())
@@ -53,14 +53,18 @@ export const checkoutSchema = z
     expected_return: isoDate.optional(),
     note: str().trim().max(2000).optional(),
     acceptance_required: z.boolean().optional(),
+    status_label_id: z.uuid().optional(),
     attachment_ids: attachmentIds.optional(),
   })
   .superRefine(exactlyOneTarget);
 export type CheckoutBody = z.output<typeof checkoutSchema>;
 
+export const CHECKIN_CONDITIONS = ['good', 'fair', 'poor', 'damaged'] as const;
+
 export const checkinSchema = z.strictObject({
   checkin_location_id: z.uuid().nullable().optional(),
   status_id: z.uuid().nullable().optional(),
+  condition: z.enum(CHECKIN_CONDITIONS).optional(),
   note: str().trim().max(2000).optional(),
   attachment_ids: attachmentIds.optional(),
 });

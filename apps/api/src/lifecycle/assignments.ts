@@ -23,6 +23,7 @@ export interface AssignmentRow {
   checkin_note: string | null;
   attachment_ids: string[];
   checkin_attachment_ids: string[];
+  checkin_condition: string | null;
   version: number;
 }
 
@@ -60,6 +61,7 @@ export function assignmentDto(r: AssignmentRow, extras: AssignmentExtras = {}) {
     checkin_note: r.checkin_note,
     attachment_ids: r.attachment_ids,
     checkin_attachment_ids: r.checkin_attachment_ids,
+    checkin_condition: r.checkin_condition,
     overdue: r.checked_in_at === null && due !== null && due < todayUtc(),
     ...(extras.asset_tag !== undefined ? { asset_tag: extras.asset_tag } : {}),
     ...(extras.asset_name !== undefined ? { asset_name: extras.asset_name } : {}),
@@ -69,7 +71,7 @@ export function assignmentDto(r: AssignmentRow, extras: AssignmentExtras = {}) {
 export const ASSIGNMENT_COLUMNS = Prisma.sql`s.id, s.asset_id, s.accessory_id, s.person_id, s.location_id,
   s.target_asset_id, s.quantity, s.quantity_returned, s.loaner_pool_id, s.checked_out_at, s.checked_out_by,
   s.expected_return, s.checked_in_at, s.checked_in_by, s.checkin_location_id, s.acceptance_state, s.note,
-  s.checkin_note, s.attachment_ids, s.checkin_attachment_ids, s.version`;
+  s.checkin_note, s.attachment_ids, s.checkin_attachment_ids, s.checkin_condition, s.version`;
 
 export async function loadAssignment(trx: Tx, id: string): Promise<AssignmentRow | null> {
   const [row] = await trx.$queryRaw<AssignmentRow[]>`

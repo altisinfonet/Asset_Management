@@ -22,6 +22,7 @@ import {
   newAsset,
   newLocation,
   newPerson,
+  newPhoto,
   newTenancy,
   outboxRows,
   ownerTenantSql,
@@ -61,13 +62,14 @@ describe.skipIf(!dbEnabled)(`custody (${mode})`, () => {
       const person = await newPerson(a());
       const asset = await newAsset(a(), b.categoryId);
       const due = inDays(14);
+      const photoId = await newPhoto(a(), asset.id);
       const res = await a().post(
         `/v1/assets/${asset.id}/checkout`,
         {
           person_id: person.id,
           expected_return: due,
           note: 'Exam week',
-          attachment_ids: [randomUUID()],
+          attachment_ids: [photoId],
         },
         keyed(asset.etag),
       );
@@ -97,7 +99,7 @@ describe.skipIf(!dbEnabled)(`custody (${mode})`, () => {
         note: 'Exam week',
         overdue: false,
       });
-      expect(res.body.assignment.attachment_ids).toHaveLength(1);
+      expect(res.body.assignment.attachment_ids).toEqual([photoId]);
       expect(res.body.assignment.checked_out_by).toBeTruthy();
       // the ETag header is the asset's new version, and GET agrees
       const got = await a().get(`/v1/assets/${asset.id}`);
@@ -405,7 +407,7 @@ describe.skipIf(!dbEnabled)(`custody (${mode})`, () => {
         keyed(),
       );
       const k = randomUUID();
-      const photo = randomUUID();
+      const photo = await newPhoto(a(), asset.id);
       const res = await a().post(
         `/v1/assets/${asset.id}/checkin`,
         { note: 'Returned with a scratch', attachment_ids: [photo] },

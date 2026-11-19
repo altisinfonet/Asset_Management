@@ -1944,7 +1944,7 @@ export interface paths {
         };
         /**
          * Resolve a scanned code
-         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) or a Code128 `asset_tag`, and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`.
+         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
          *
          *     Requires permission `asset:read`.
          */
@@ -3634,8 +3634,11 @@ export interface components {
             page: components["schemas"]["PageInfo"];
         };
         ScanResolveResult: {
-            /** @enum {string} */
-            match_type: "label_code" | "asset_tag";
+            /**
+             * @description What the code was: the opaque `label_code` of the label, the `asset_tag`, or the device `serial` (checked in that order).
+             * @enum {string}
+             */
+            match_type: "label_code" | "asset_tag" | "serial";
             asset: components["schemas"]["Asset"];
             /** @description Actions valid for the asset in its current state and for the caller. */
             allowed_actions: ("checkout" | "checkin" | "transfer" | "update" | "open_repair")[];
@@ -3680,6 +3683,11 @@ export interface components {
             acceptance_state: "not_required" | "pending" | "accepted" | "declined";
             note?: string | null;
             checkin_note?: string | null;
+            /**
+             * @description Condition of the asset when it came back (`CheckinRequest.condition`); `null` while the assignment is open or when none was stated.
+             * @enum {string|null}
+             */
+            checkin_condition?: "good" | "fair" | "poor" | "damaged" | null;
             /** @description Photos / signatures linked at check-out (ids only; the attachments service owns the files). */
             attachment_ids?: string[];
             /** @description Photos linked at check-in. */
@@ -3708,8 +3716,13 @@ export interface components {
              * @default false
              */
             acceptance_required?: boolean;
-            /** @description Previously uploaded photos/signatures to link to the assignment. */
+            /** @description Photos/signatures uploaded against the asset beforehand (`POST /v1/attachments` with `entity_type=asset`; `pending` or `clean`). They are linked to the new assignment and then list under it (`entity_type=assignment`). `422` with the pointer `/attachment_ids/<index>` when an id is unknown, belongs to another asset or organisation, or was rejected (infected, error). */
             attachment_ids?: string[];
+            /**
+             * Format: uuid
+             * @description Status to give the asset: a non-archived label of type `deployed`. Default: the organisation's first deployed label.
+             */
+            status_label_id?: string;
         };
         CheckinRequest: {
             /**
@@ -3722,7 +3735,13 @@ export interface components {
              * @description Status to set on check-in (default: the tenant default deployable status).
              */
             status_id?: string | null;
+            /**
+             * @description Condition of the asset as it comes back; stored on the assignment (`checkin_condition`) and shown in the history.
+             * @enum {string}
+             */
+            condition?: "good" | "fair" | "poor" | "damaged";
             note?: string;
+            /** @description Photos uploaded against the asset beforehand (`pending` or `clean`); linked to the closed assignment, same rules and `422` pointers as at check-out. */
             attachment_ids?: string[];
         };
         /** @description Atomic hand-over: closes the current assignment (if any) and opens a new one to the given target. */
@@ -3736,6 +3755,7 @@ export interface components {
             expected_return?: string;
             reason?: string;
             note?: string;
+            /** @description Photos uploaded against the asset beforehand; linked to the new assignment (same rules and `422` pointers as at check-out). */
             attachment_ids?: string[];
         };
         Transfer: {
@@ -3795,7 +3815,20 @@ export interface components {
             /** Format: uuid */
             transfer_id?: string | null;
             summary?: string | null;
-            /** @description Event details, e.g. `{"from":"...","to":"..."}`. */
+            /**
+             * @description Event details; the keys depend on `event_type` (all ids are uuids, names are display strings, optional keys are absent when empty):
+             *
+             *     - `created`: `{status_id, location_id, cloned_from?}`
+             *     - `updated`: `{fields: string[]}`, the names of the fields that changed
+             *     - `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`
+             *     - `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)
+             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`
+             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
+             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
+             *     - `restored`: `{}` or `{was_disposed: true}`
+             *     - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
+             */
             payload?: {
                 [key: string]: unknown;
             };
@@ -3985,7 +4018,7 @@ export interface components {
             readonly thumbnail_url?: string | null;
             /**
              * Format: uri
-             * @description Short-lived signed URL; only on `GET /v1/attachments/{id}` and only when `scan_status=clean`. Images are served inline, everything else as an attachment download.
+             * @description Short-lived signed URL, only when `scan_status=clean`; present on the list and on `GET /v1/attachments/{id}` alike (no per-item request needed). Images are served inline, everything else as an attachment download.
              */
             readonly download_url?: string | null;
         };
@@ -10913,6 +10946,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description The serial number belongs to several assets; use the label or the asset tag. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };

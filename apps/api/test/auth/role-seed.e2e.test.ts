@@ -32,6 +32,34 @@ describe.skipIf(!dbEnabled)('built-in roles in the database', () => {
     }
   });
 
+  it('a freshly provisioned tenant keeps every grant of the later migrations (0011 search:read, 0094 view:share and export:run)', async () => {
+    const fixture = await createFixtureTenant(tenancy, 'RoleSeedWave2');
+    const roles = await tenancy.withTenantTx({ tenantId: fixture.id }, (trx) =>
+      trx.role.findMany({ where: { is_builtin: true } }),
+    );
+    const byKey = new Map(roles.map((r) => [r.key, r.permissions]));
+    // 0011: every role can search; 0094: the asset manager shares views and runs exports.
+    for (const [key, permissions] of byKey) {
+      expect(permissions.includes('*') || permissions.includes('search:read'), key).toBe(true);
+    }
+    expect(byKey.get('asset_manager')).toEqual(
+      expect.arrayContaining(['search:read', 'view:share', 'export:run']),
+    );
+    // the administrator holds everything through the wildcard; read-only roles hold neither
+    expect(byKey.get('tenant_admin')).toContain('*');
+    for (const [key, permissions] of byKey) {
+      if (key === 'asset_manager' || permissions.includes('*')) continue;
+      expect(permissions, key).not.toContain('export:run');
+      expect(permissions, key).not.toContain('view:share');
+    }
+    // label sheets are seeded per tenant by app.seed_label_templates (0070), not by provision_tenant
+    const templates = await tenancy.withTenantTx({ tenantId: fixture.id }, async (trx) => {
+      await trx.$executeRaw`select app.seed_label_templates(${fixture.id}::uuid)`;
+      return trx.label_template.count();
+    });
+    expect(templates).toBe(6);
+  });
+
   it('tenants that existed before migration 0011 were updated too', async () => {
     const all = await tenancy.withPreTenantTx((trx) =>
       trx.tenant_directory.findMany({ select: { tenant_id: true } }),

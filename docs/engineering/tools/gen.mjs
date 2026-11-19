@@ -1855,8 +1855,161 @@ addOp('/v1/audit-log', 'get', {
   success: { 200: { description: 'A page of audit entries.', headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('AuditEntryList') }, 'text/csv': { schema: str() } } } },
 });
 
+// ---------------------------------------------------------------- [M2-W2 WEB proposal]
+// BEGIN [M2-W2 WEB proposal] - shapes the web app of M2 wave 2 is built against where the contract had nothing yet.
+// The backend agents of the wave own the final shapes; the integrator reconciles this block with theirs.
+// Self-service operations use no permission, so the permission catalogue of the API does not change.
+
+// M2-AUTH-01: the MFA policy of the current user.
+S_.Me.properties.mfa_policy = obj({
+  required: bool({ description: 'True when the organisation policy enforces two-step verification for this user, so it cannot be turned off.' }),
+  scope: en(['off', 'admins', 'all'], { description: 'Who the policy applies to.' }),
+}, ['required', 'scope'], { description: 'Organisation MFA policy as it applies to the current user (`required` is false for API keys).' });
+
+// M2-MNT-02: the tag and name of the repaired asset, so a tenant-wide list needs no lookup per row.
+S_.Repair.properties.asset_tag = ro(nstr({ description: 'Tag of the asset.' }));
+S_.Repair.properties.asset_name = ro(nstr({ description: 'Name of the asset.' }));
+
+// M2-TAG-03: what a label shows. Both default to the template.
+S_.LabelRenderRequest.properties.code_type = en(['qr', 'code128', 'qr_and_code128'], { description: 'Which codes to print; defaults to the template\'s `code_type`. A template that cannot hold both codes answers 422.' });
+S_.LabelRenderRequest.properties.fields = arr(en(['tag', 'name', 'location', 'serial', 'organisation']), { uniqueItems: true, description: 'Text lines to print next to the code; defaults to the template\'s `fields`.' });
+
+// M2-NOT-02: in-app notifications of the signed-in user.
+S_.Notification = obj({
+  id: uuid(),
+  event_type: str({ description: 'Open set, e.g. `stock.low`, `loan.overdue`, `import.completed`, `attachment.infected`, `label.batch.ready`, `export.ready`.' }),
+  title: str(),
+  body: nstr(),
+  entity_type: nstr({ description: 'Kind of record the notification is about, e.g. `asset`, `consumable`.' }),
+  entity_id: nuuid(),
+  read_at: ndt(),
+  created_at: dt(),
+}, ['id', 'event_type', 'title', 'created_at']);
+S_.NotificationList = obj({
+  data: arr(S('Notification')),
+  page: S('PageInfo'),
+  unread_count: int({ minimum: 0, description: 'Unread notifications of the caller in total, whatever the filter or page.' }),
+}, ['data', 'page', 'unread_count']);
+S_.NotificationPreference = obj({
+  event_type: str(),
+  delivery: en(['immediate', 'daily_digest', 'off']),
+}, ['event_type', 'delivery']);
+S_.NotificationPreferences = obj({ data: arr(S('NotificationPreference')) }, ['data']);
+S_.NotificationPreferencesUpdate = obj({ data: arr(S('NotificationPreference'), { minItems: 1 }) }, ['data'], { additionalProperties: false });
+S_.NotificationsReadAllResult = obj({ updated: int({ minimum: 0 }) }, ['updated']);
+doc.tags.push({ name: 'Notifications', description: 'In-app notifications and per-user delivery preferences (self-service).' });
+addOp('/v1/notifications', 'get', {
+  tag: 'Notifications', id: 'listNotifications', summary: 'My notifications', selfService: true, hasId: false,
+  description: 'Newest first; `unread_count` is the total of unread ones regardless of paging.',
+  params: [P('Cursor'), P('Limit'), qp('unread', bool(), 'Only unread notifications.')],
+  success: { 200: okResp(200, 'A page of notifications.', S('NotificationList'), { replay: false }) },
+});
+addOp('/v1/notifications/{id}/read', 'post', {
+  tag: 'Notifications', id: 'markNotificationRead', summary: 'Mark a notification read', selfService: true, params: [ID], conflict: false, idem: 'none',
+  description: 'Idempotent: an already read notification keeps its `read_at`.',
+  success: { 200: okResp(200, 'The notification.', S('Notification'), { replay: false }) },
+});
+addOp('/v1/notifications/read-all', 'post', {
+  tag: 'Notifications', id: 'markAllNotificationsRead', summary: 'Mark all notifications read', selfService: true, hasId: false, conflict: false, idem: 'none',
+  success: { 200: okResp(200, 'How many were unread.', S('NotificationsReadAllResult'), { replay: false }) },
+});
+addOp('/v1/notifications/preferences', 'get', {
+  tag: 'Notifications', id: 'getNotificationPreferences', summary: 'My delivery preferences', selfService: true, hasId: false,
+  description: 'One entry per event type the organisation can send.',
+  success: { 200: okResp(200, 'The preferences.', S('NotificationPreferences'), { replay: false }) },
+});
+addOp('/v1/notifications/preferences', 'put', {
+  tag: 'Notifications', id: 'updateNotificationPreferences', summary: 'Change my delivery preferences', selfService: true, hasId: false, conflict: false, idem: 'none',
+  description: 'Sets the delivery of the listed event types; types left out keep their setting.',
+  body: jsonBody(S('NotificationPreferencesUpdate')),
+  success: { 200: okResp(200, 'The preferences after the change.', S('NotificationPreferences'), { replay: false }) },
+});
+
+// M2-REG-01: saved views of a list (personal, or shared with the organisation).
+S_.SavedViewDefinition = obj({
+  filters: { type: 'object', additionalProperties: true, description: 'Filter state of the list (opaque to the API).' },
+  columns: arr(str()),
+  sort: nstr({ description: 'Sort key with `-` for descending, or null for the default.' }),
+}, ['filters', 'columns', 'sort']);
+S_.SavedView = obj({
+  id: uuid(),
+  entity: en(['asset']),
+  name: str({ minLength: 1, maxLength: 80 }),
+  shared: bool({ description: 'Visible to everyone in the organisation. Needs the permission `view:share` to set.' }),
+  owner_user_id: uuid(),
+  owner_name: nstr(),
+  definition: S('SavedViewDefinition'),
+  created_at: dt(),
+  updated_at: dt(),
+}, ['id', 'entity', 'name', 'shared', 'owner_user_id', 'definition', 'created_at', 'updated_at']);
+S_.SavedViewList = obj({ data: arr(S('SavedView')), page: S('PageInfo') }, ['data', 'page']);
+S_.SavedViewCreate = obj({
+  entity: en(['asset']),
+  name: str({ minLength: 1, maxLength: 80 }),
+  shared: bool({ default: false }),
+  definition: S('SavedViewDefinition'),
+}, ['entity', 'name', 'definition'], { additionalProperties: false });
+S_.SavedViewUpdate = obj({
+  name: str({ minLength: 1, maxLength: 80 }),
+  shared: bool(),
+  definition: S('SavedViewDefinition'),
+}, [], { additionalProperties: false });
+doc.tags.push({ name: 'Saved views', description: 'Saved list views, personal or shared with the organisation.' });
+addOp('/v1/saved-views', 'get', {
+  tag: 'Saved views', id: 'listSavedViews', summary: 'My and shared views', selfService: true, hasId: false,
+  description: 'The caller\'s own views and every shared one, own first, then by name.',
+  params: [P('Cursor'), P('Limit'), qp('entity', en(['asset']), 'Only views of this list.')],
+  success: { 200: okResp(200, 'A page of views.', S('SavedViewList'), { replay: false }) },
+});
+addOp('/v1/saved-views', 'post', {
+  tag: 'Saved views', id: 'createSavedView', summary: 'Save a view', selfService: true, hasId: false,
+  description: '`shared: true` needs the permission `view:share` (403 otherwise). A name is unique per owner and entity (409 `conflict`).',
+  body: jsonBody(S('SavedViewCreate')),
+  success: { 201: okResp(201, 'The view.', S('SavedView'), { etag: true, location: true }) },
+});
+addOp('/v1/saved-views/{id}', 'patch', {
+  tag: 'Saved views', id: 'updateSavedView', summary: 'Rename, re-share or replace a view', selfService: true, params: [ID], ifMatch: true,
+  description: 'Only the owner (or, for a shared view, a holder of `view:share`) may change it.',
+  body: jsonBody(S('SavedViewUpdate')),
+  success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+});
+addOp('/v1/saved-views/{id}', 'delete', {
+  tag: 'Saved views', id: 'deleteSavedView', summary: 'Delete a view', selfService: true, params: [ID], ifMatch: true,
+  success: { 204: { description: 'Deleted.', headers: { 'X-Request-Id': H('RequestId') } } },
+});
+
+// M2-REG-02: CSV export of a list with its current filters, as a job.
+S_.ExportCreate = obj({
+  entity: en(['asset']),
+  query: { type: 'object', additionalProperties: true, description: 'The query parameters of the matching list operation (`GET /v1/assets`) without `cursor` and `limit`.' },
+  columns: arr(str(), { description: 'Column ids to export, in order; default: all standard columns.' }),
+}, ['entity'], { additionalProperties: false });
+S_.ExportJob = obj({
+  id: uuid(),
+  entity: en(['asset']),
+  status: en(['queued', 'running', 'ready', 'failed', 'expired']),
+  row_count: { type: ['integer', 'null'], description: 'Rows written; set when `ready`.' },
+  error: nstr({ description: 'Why it failed; set when `failed`.' }),
+  download_url: nstr({ description: 'Short-lived download link; set when `ready`.' }),
+  expires_at: ndt({ description: 'When the download stops working.' }),
+  created_at: dt(),
+  completed_at: ndt(),
+}, ['id', 'entity', 'status', 'created_at']);
+doc.tags.push({ name: 'Exports', description: 'CSV exports of lists, produced by a background job.' });
+addOp('/v1/exports', 'post', {
+  tag: 'Exports', id: 'createExport', summary: 'Export a list to CSV', perm: 'asset:read', hasId: false, conflict: false,
+  description: 'Queues a job that writes the rows the list would show with `query`. Audited as a sensitive read. Poll `GET /v1/exports/{id}` until `status` is `ready`.',
+  body: jsonBody(S('ExportCreate')),
+  success: { 202: { description: 'Export queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter') }, content: { 'application/json': { schema: S('ExportJob') } } } },
+});
+addOp('/v1/exports/{id}', 'get', {
+  tag: 'Exports', id: 'getExport', summary: 'Export job', perm: 'asset:read', params: [ID],
+  success: { 200: okResp(200, 'The job.', S('ExportJob'), { replay: false }) },
+});
+// END [M2-W2 WEB proposal]
+
 // ---------------------------------------------------------------- prune unused components, order, emit
-const text = () => JSON.stringify({ paths: doc.paths, security: doc.security });
+const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {
   const used = { schemas: new Set(), parameters: new Set(), responses: new Set(), headers: new Set() };
   const scan = (node) => {

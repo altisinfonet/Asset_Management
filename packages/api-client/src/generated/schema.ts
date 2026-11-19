@@ -1199,6 +1199,48 @@ export interface paths {
         patch: operations["updateCustomFieldDef"];
         trace?: never;
     };
+    "/v1/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a list to CSV
+         * @description Queues a job that writes the rows the list would show with `query`. Audited as a sensitive read. Poll `GET /v1/exports/{id}` until `status` is `ready`.
+         *
+         *     Requires permission `asset:read`.
+         */
+        post: operations["createExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export job
+         * @description Requires permission `asset:read`.
+         */
+        get: operations["getExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/{token}": {
         parameters: {
             query?: never;
@@ -1737,6 +1779,87 @@ export interface paths {
         patch: operations["updateAssetModel"];
         trace?: never;
     };
+    "/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My notifications
+         * @description Newest first; `unread_count` is the total of unread ones regardless of paging.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a notification read
+         * @description Idempotent: an already read notification keeps its `read_at`.
+         */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My delivery preferences
+         * @description One entry per event type the organisation can send.
+         */
+        get: operations["getNotificationPreferences"];
+        /**
+         * Change my delivery preferences
+         * @description Sets the delivery of the listed event types; types left out keep their setting.
+         */
+        put: operations["updateNotificationPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark all notifications read */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/people": {
         parameters: {
             query?: never;
@@ -1933,6 +2056,51 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My and shared views
+         * @description The caller's own views and every shared one, own first, then by name.
+         */
+        get: operations["listSavedViews"];
+        put?: never;
+        /**
+         * Save a view
+         * @description `shared: true` needs the permission `view:share` (403 otherwise). A name is unique per owner and entity (409 `conflict`).
+         */
+        post: operations["createSavedView"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a view */
+        delete: operations["deleteSavedView"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename, re-share or replace a view
+         * @description Only the owner (or, for a shared view, a holder of `view:share`) may change it.
+         */
+        patch: operations["updateSavedView"];
         trace?: never;
     };
     "/v1/scan/resolve": {
@@ -3365,6 +3533,10 @@ export interface components {
             /** Format: date-time */
             readonly completed_at?: string | null;
             readonly resolution_notes?: string | null;
+            /** @description Tag of the asset. */
+            readonly asset_tag?: string | null;
+            /** @description Name of the asset. */
+            readonly asset_name?: string | null;
         };
         RepairCreate: {
             /** Format: uuid */
@@ -3984,6 +4156,13 @@ export interface components {
              * @default 1
              */
             start_position?: number;
+            /**
+             * @description Which codes to print; defaults to the template's `code_type`. A template that cannot hold both codes answers 422.
+             * @enum {string}
+             */
+            code_type?: "qr" | "code128" | "qr_and_code128";
+            /** @description Text lines to print next to the code; defaults to the template's `fields`. */
+            fields?: ("tag" | "name" | "location" | "serial" | "organisation")[];
         };
         Attachment: {
             /** Format: uuid */
@@ -4287,6 +4466,16 @@ export interface components {
             session: components["schemas"]["SessionExpiry"] | null;
             /** @description Only for cookie sessions. */
             csrf_token?: string;
+            /** @description Organisation MFA policy as it applies to the current user (`required` is false for API keys). */
+            mfa_policy?: {
+                /** @description True when the organisation policy enforces two-step verification for this user, so it cannot be turned off. */
+                required: boolean;
+                /**
+                 * @description Who the policy applies to.
+                 * @enum {string}
+                 */
+                scope: "off" | "admins" | "all";
+            };
         };
         SessionExpiry: {
             /**
@@ -4599,6 +4788,118 @@ export interface components {
              */
             location_id?: string | null;
             note?: string;
+        };
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @description Open set, e.g. `stock.low`, `loan.overdue`, `import.completed`, `attachment.infected`, `label.batch.ready`, `export.ready`. */
+            event_type: string;
+            title: string;
+            body?: string | null;
+            /** @description Kind of record the notification is about, e.g. `asset`, `consumable`. */
+            entity_type?: string | null;
+            /** Format: uuid */
+            entity_id?: string | null;
+            /** Format: date-time */
+            read_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        NotificationList: {
+            data: components["schemas"]["Notification"][];
+            page: components["schemas"]["PageInfo"];
+            /** @description Unread notifications of the caller in total, whatever the filter or page. */
+            unread_count: number;
+        };
+        NotificationPreference: {
+            event_type: string;
+            /** @enum {string} */
+            delivery: "immediate" | "daily_digest" | "off";
+        };
+        NotificationPreferences: {
+            data: components["schemas"]["NotificationPreference"][];
+        };
+        NotificationPreferencesUpdate: {
+            data: components["schemas"]["NotificationPreference"][];
+        };
+        NotificationsReadAllResult: {
+            updated: number;
+        };
+        SavedViewDefinition: {
+            /** @description Filter state of the list (opaque to the API). */
+            filters: {
+                [key: string]: unknown;
+            };
+            columns: string[];
+            /** @description Sort key with `-` for descending, or null for the default. */
+            sort: string | null;
+        };
+        SavedView: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            entity: "asset";
+            name: string;
+            /** @description Visible to everyone in the organisation. Needs the permission `view:share` to set. */
+            shared: boolean;
+            /** Format: uuid */
+            owner_user_id: string;
+            owner_name?: string | null;
+            definition: components["schemas"]["SavedViewDefinition"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedViewList: {
+            data: components["schemas"]["SavedView"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SavedViewCreate: {
+            /** @enum {string} */
+            entity: "asset";
+            name: string;
+            /** @default false */
+            shared?: boolean;
+            definition: components["schemas"]["SavedViewDefinition"];
+        };
+        SavedViewUpdate: {
+            name?: string;
+            shared?: boolean;
+            definition?: components["schemas"]["SavedViewDefinition"];
+        };
+        ExportCreate: {
+            /** @enum {string} */
+            entity: "asset";
+            /** @description The query parameters of the matching list operation (`GET /v1/assets`) without `cursor` and `limit`. */
+            query?: {
+                [key: string]: unknown;
+            };
+            /** @description Column ids to export, in order; default: all standard columns. */
+            columns?: string[];
+        };
+        ExportJob: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            entity: "asset";
+            /** @enum {string} */
+            status: "queued" | "running" | "ready" | "failed" | "expired";
+            /** @description Rows written; set when `ready`. */
+            row_count?: number | null;
+            /** @description Why it failed; set when `failed`. */
+            error?: string | null;
+            /** @description Short-lived download link; set when `ready`. */
+            download_url?: string | null;
+            /**
+             * Format: date-time
+             * @description When the download stops working.
+             */
+            expires_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string | null;
         };
     };
     responses: {
@@ -8670,6 +8971,74 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    createExport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportCreate"];
+            };
+        };
+        responses: {
+            /** @description Export queued. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    Location: components["headers"]["Location"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     downloadLocalFile: {
         parameters: {
             query?: never;
@@ -10335,6 +10704,168 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Only unread notifications. */
+                unread?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of notifications. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preferences. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferencesUpdate"];
+            };
+        };
+        responses: {
+            /** @description The preferences after the change. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many were unread. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationsReadAllResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listPeople: {
         parameters: {
             query?: {
@@ -10914,6 +11445,168 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listSavedViews: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Only views of this list. */
+                entity?: "asset";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of views. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedViewList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createSavedView: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewCreate"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewUpdate"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

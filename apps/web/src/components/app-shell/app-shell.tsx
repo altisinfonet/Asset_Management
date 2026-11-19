@@ -42,8 +42,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
+import { useScan } from '@/components/scan/scan-provider';
 import { NAV_ITEMS, normalizePathname, type NavItem } from './nav-config';
 import { ShortcutsDialog } from './shortcuts-dialog';
+import { WorkflowProviders } from './workflow-providers';
 import { Brand, SidebarCollapseButton, SidebarNav } from './sidebar';
 import { ThemeToggle } from './theme-toggle';
 import { useShortcuts, type GoToTarget } from './use-shortcuts';
@@ -61,8 +63,17 @@ interface AppShellProps {
  * collapsible to a 56px rail, off-canvas below `lg`), top bar (breadcrumbs, scan field, command
  * palette, theme, user menu) and the content area (max 1440px). Landmarks: header, nav, main.
  */
-export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
+export function AppShell(props: AppShellProps) {
+  return (
+    <WorkflowProviders>
+      <AppShellFrame {...props} />
+    </WorkflowProviders>
+  );
+}
+
+function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
   const t = useT();
+  const scan = useScan();
   const router = useRouter();
   const pathname = normalizePathname(usePathname());
   const { setTheme } = useTheme();
@@ -239,6 +250,13 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
               ]
             : []),
           {
+            id: 'batch-scan',
+            label: t('palette.batchScan'),
+            icon: ScanLine,
+            keywords: ['scan', 'barcode', 'check in', 'check out'],
+            onSelect: scan.openPanel,
+          },
+          {
             id: 'security',
             label: t('palette.security'),
             icon: ShieldCheck,
@@ -334,16 +352,15 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
     live.data,
     liveQuery,
     canCreateAsset,
+    scan.openPanel,
   ]);
 
   const onScanSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const code = new FormData(event.currentTarget).get('scan');
     if (typeof code === 'string' && code.trim()) {
-      const trimmed = code.trim();
-      if (isAssetCode(trimmed)) pushRecent({ type: 'asset', code: trimmed });
-      router.push(routes.assetByCode(trimmed));
       event.currentTarget.reset();
+      void scan.scan(code, 'field');
     }
   };
 
@@ -419,6 +436,13 @@ export function AppShell({ children, navItems = NAV_ITEMS }: AppShellProps) {
               </Kbd>
             </label>
           </form>
+
+          <IconButton
+            icon={ScanLine}
+            label={t('scan.openPanel')}
+            onClick={scan.openPanel}
+            variant="secondary"
+          />
 
           <Button variant="secondary" onClick={togglePalette}>
             <Search aria-hidden className="size-4" />
@@ -526,6 +550,11 @@ export function breadcrumbTrail(pathname: string, t: ReturnType<typeof useT>): C
       { label: t('nav.assets'), href: routes.assets },
       { label: t(pathname === '/assets/new' ? 'assetForm.newTitle' : 'assetForm.editTitle') },
     ];
+  }
+  if (pathname === '/locations') return [{ label: t('nav.locations') }];
+  if (pathname === '/people') return [{ label: t('nav.people') }];
+  if (pathname === '/people/view') {
+    return [{ label: t('nav.people'), href: routes.people }, { label: t('personView.title') }];
   }
   if (pathname === '/account/security') {
     return [{ label: t('nav.account') }, { label: t('security.title') }];

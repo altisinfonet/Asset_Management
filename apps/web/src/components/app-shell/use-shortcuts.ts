@@ -7,6 +7,11 @@ export const GO_TO_KEYS = { d: 'dashboard', a: 'assets', s: 'settings' } as cons
 export type GoToTarget = (typeof GO_TO_KEYS)[keyof typeof GO_TO_KEYS];
 
 const SEQUENCE_WINDOW_MS = 1000;
+/**
+ * `c` waits this long and is dropped when another key follows at once: a keyboard-wedge scanner
+ * types a code (which may start with a c) as a burst of keys, and must not start a new asset.
+ */
+const SCANNER_GUARD_MS = 70;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -34,11 +39,20 @@ export function useShortcuts({
 }): void {
   useEffect(() => {
     let pendingG: number | undefined;
+    let pendingC: number | undefined;
 
     const clear = () => {
       if (pendingG !== undefined) window.clearTimeout(pendingG);
       pendingG = undefined;
     };
+
+    /** Runs in the capture phase, before the scan listener can swallow the key. */
+    function dropPendingNewAsset() {
+      if (pendingC !== undefined) {
+        window.clearTimeout(pendingC);
+        pendingC = undefined;
+      }
+    }
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -61,7 +75,10 @@ export function useShortcuts({
       }
       if (event.key === 'c' && onNewAsset) {
         event.preventDefault();
-        onNewAsset();
+        pendingC = window.setTimeout(() => {
+          pendingC = undefined;
+          onNewAsset();
+        }, SCANNER_GUARD_MS);
         return;
       }
       if (event.key.toLowerCase() === 'g' && !event.shiftKey) {
@@ -69,9 +86,12 @@ export function useShortcuts({
       }
     }
 
+    window.addEventListener('keydown', dropPendingNewAsset, true);
     window.addEventListener('keydown', onKeyDown);
     return () => {
+      window.removeEventListener('keydown', dropPendingNewAsset, true);
       window.removeEventListener('keydown', onKeyDown);
+      if (pendingC !== undefined) window.clearTimeout(pendingC);
       clear();
     };
   }, [onHelp, onGoTo, onNewAsset]);

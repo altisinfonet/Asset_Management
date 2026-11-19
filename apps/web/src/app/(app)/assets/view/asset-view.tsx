@@ -1,11 +1,28 @@
 'use client';
 
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Copy, PackageSearch, Pencil, RotateCcw } from 'lucide-react';
+import {
+  Archive,
+  ArrowRightLeft,
+  Copy,
+  LogIn,
+  LogOut,
+  PackageSearch,
+  Pencil,
+  RotateCcw,
+  type LucideIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useCustody } from '@/components/custody/custody-provider';
+import { AttachmentsPanel } from '@/components/files/attachments-panel';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
+import {
+  HISTORY_FILTERS,
+  HistoryTimeline,
+  type HistoryFilter,
+} from '@/components/registry/history-timeline';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
@@ -20,7 +37,7 @@ import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { assetsApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
-import type { HistoryEvent } from '@/lib/registry/types';
+import { availableActions, type CustodyAction } from '@/lib/custody/helpers';
 import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
 
@@ -89,7 +106,7 @@ function AssetByCode({ code }: { code: string }) {
     retry: false,
   });
   useEffect(() => {
-    if (resolved.data) router.replace(routes.assetView(resolved.data.id));
+    if (resolved.data) router.replace(routes.assetView(resolved.data.asset.id));
   }, [resolved.data, router]);
 
   if (resolved.error) {
@@ -132,14 +149,18 @@ function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
 }
 
 function AssetById({ id }: { id: string }) {
-  const { t, formatDateTime } = useI18n();
+  const { t } = useI18n();
   const router = useRouter();
   const params = useSearchParams();
   const { can } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const lookups = useLookups();
+  const custody = useCustody();
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const primaryAction = useRef<HTMLButtonElement>(null);
+  const scanned = params.get('scanned') === '1';
   const tabParam = params.get('tab');
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? '')
     ? (tabParam as Tab)
@@ -151,13 +172,24 @@ function AssetById({ id }: { id: string }) {
     retry: false,
   });
   const history = useInfiniteQuery({
-    queryKey: ['asset-history', id],
-    queryFn: ({ pageParam }) => assetsApi.history(id, { cursor: pageParam, limit: 20 }),
+    queryKey: ['asset-history', id, historyFilter],
+    queryFn: ({ pageParam }) =>
+      assetsApi.history(id, {
+        cursor: pageParam,
+        limit: 20,
+        ...(historyFilter === 'all' ? {} : { event_type: HISTORY_FILTERS[historyFilter] }),
+      }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) =>
       last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
     enabled: asset.isSuccess,
   });
+
+  // Arriving from a scan: the primary custody action takes focus, so Enter starts the hand-over.
+  const loaded = asset.isSuccess;
+  useEffect(() => {
+    if (scanned && loaded) primaryAction.current?.focus();
+  }, [scanned, loaded]);
 
   if (asset.isLoading) {
     return (
@@ -189,6 +221,14 @@ function AssetById({ id }: { id: string }) {
     await queryClient.invalidateQueries({ queryKey: ['assets'] });
   };
 
+  const actions = availableActions(value, can);
+  const ACTION_ICON: Record<CustodyAction, LucideIcon> = {
+    checkout: LogOut,
+    checkin: LogIn,
+    transfer: ArrowRightLeft,
+  };
+  const holder = value.current_assignment;
+
   const setTab = (next: string) => {
     const query = new URLSearchParams(params.toString());
     if (next === 'overview') query.delete('tab');
@@ -217,6 +257,20 @@ function AssetById({ id }: { id: string }) {
               </span>
             ) : null}
             <AssetStatusBadge asset={value} lookups={lookups} />
+            {holder ? (
+              <span data-testid="asset-holder">
+                {holder.target_type === 'person' ? (
+                  <Link
+                    href={routes.personView(holder.target_id)}
+                    className="rounded-sm text-primary-text underline underline-offset-2"
+                  >
+                    {t('custody.assignedTo', { name: holder.target_name ?? '' })}
+                  </Link>
+                ) : (
+                  t('custody.assignedTo', { name: holder.target_name ?? '' })
+                )}
+              </span>
+            ) : null}
             {archived ? (
               <span className="font-medium text-warning-text">{t('assetView.archivedBadge')}</span>
             ) : null}
@@ -224,6 +278,20 @@ function AssetById({ id }: { id: string }) {
         }
         actions={
           <>
+            {actions.map((action, index) => {
+              const Icon = ACTION_ICON[action];
+              return (
+                <Button
+                  key={action}
+                  ref={index === 0 ? primaryAction : undefined}
+                  variant={index === 0 ? 'primary' : 'secondary'}
+                  onClick={() => custody.open({ assets: [value], action, onDone: refresh })}
+                >
+                  <Icon aria-hidden className="size-4" />
+                  {t(`custody.tabs.${action}`)}
+                </Button>
+              );
+            })}
             <Button
               onClick={() => {
                 void navigator.clipboard
@@ -302,21 +370,32 @@ function AssetById({ id }: { id: string }) {
           </div>
         </TabsContent>
         <TabsContent value="history">
-          <HistoryList
+          <HistoryTimeline
             events={historyEvents}
             loading={history.isLoading}
             error={history.error}
             hasMore={!!history.hasNextPage}
             loadingMore={history.isFetchingNextPage}
             onMore={() => void history.fetchNextPage()}
-            format={formatDateTime}
+            filter={historyFilter}
+            onFilterChange={setHistoryFilter}
+            onRetry={() => void history.refetch()}
           />
         </TabsContent>
-        {(['repairs', 'attachments'] as const).map((placeholder) => (
-          <TabsContent key={placeholder} value={placeholder}>
-            <p className="text-base text-muted">{t('assetView.tabPlaceholder')}</p>
-          </TabsContent>
-        ))}
+        <TabsContent value="repairs">
+          <p className="text-base text-muted">{t('assetView.tabPlaceholder')}</p>
+        </TabsContent>
+        <TabsContent value="attachments">
+          {can('attachment:read') ? (
+            <AttachmentsPanel
+              entityType="asset"
+              entityId={id}
+              canWrite={can('attachment:write') && !archived}
+            />
+          ) : (
+            <p className="text-base text-muted">{t('files.noAccess')}</p>
+          )}
+        </TabsContent>
       </Tabs>
 
       <ConfirmDialog
@@ -333,51 +412,5 @@ function AssetById({ id }: { id: string }) {
         }}
       />
     </>
-  );
-}
-
-function HistoryList({
-  events,
-  loading,
-  error,
-  hasMore,
-  loadingMore,
-  onMore,
-  format,
-}: {
-  events: HistoryEvent[];
-  loading: boolean;
-  error: unknown;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onMore: () => void;
-  format: (value: string) => string;
-}) {
-  const { t } = useI18n();
-  if (loading) return <Skeleton className="h-24 w-full max-w-3xl" />;
-  if (error) return <Banner tone="danger">{t('common.loadFailed')}</Banner>;
-  if (events.length === 0)
-    return <p className="text-base text-muted">{t('assetView.noHistory')}</p>;
-  return (
-    <div className="flex max-w-3xl flex-col gap-3">
-      <ol aria-label={t('assetView.tabs.history')} className="flex flex-col divide-y divide-border">
-        {events.map((event) => (
-          <li key={event.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
-            <time dateTime={event.at} className="font-tag text-sm text-muted">
-              {format(event.at)}
-            </time>
-            <span className="font-medium">{t(`assetView.events.${event.event_type}`)}</span>
-            {event.summary ? <span className="text-muted">{event.summary}</span> : null}
-          </li>
-        ))}
-      </ol>
-      {hasMore ? (
-        <div>
-          <Button loading={loadingMore} onClick={onMore}>
-            {t('assetView.loadMore')}
-          </Button>
-        </div>
-      ) : null}
-    </div>
   );
 }

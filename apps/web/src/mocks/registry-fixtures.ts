@@ -1,5 +1,6 @@
 import type { components } from '@assettracker/api-client';
 import { MOCK_ACCOUNTS } from './fixtures';
+import { seedCustody } from './m2-fixtures';
 
 /**
  * Seed data of the mock registry: categories with custom fields, manufacturers, models, status
@@ -20,6 +21,19 @@ export type MockModel = Rec<S['AssetModel']>;
 export type MockVendor = Rec<S['Vendor']>;
 export type MockLocation = Rec<S['Location']>;
 export type MockUserRecord = Rec<S['User']> & { invitation_expires_at?: string };
+export type MockPerson = Rec<S['Person']>;
+export type MockAssignment = Rec<S['Assignment']>;
+/** An attachment plus what the mock storage and scanner know about it. */
+export type MockAttachment = Rec<S['Attachment']> & {
+  /** Bytes the mock storage received through the presigned PUT (undefined until uploaded). */
+  stored_bytes?: number;
+  /** When the (simulated) virus scan answers; `null` = never (stays pending). */
+  scan_due_at?: number | null;
+  /** What the scan answers when it is due. */
+  scan_result?: 'clean' | 'infected';
+  /** Soft delete (`DELETE /v1/attachments/{id}`). */
+  archived_at?: string | null;
+};
 
 export interface RegistryData {
   categories: MockCategory[];
@@ -31,6 +45,9 @@ export interface RegistryData {
   locations: MockLocation[];
   assets: MockAsset[];
   users: MockUserRecord[];
+  people: MockPerson[];
+  assignments: MockAssignment[];
+  attachments: MockAttachment[];
   history: S['HistoryEvent'][];
   /** Next tag number per full tag prefix (template prefix + category prefix), as the API counts. */
   tagCounters: Record<string, number>;
@@ -50,6 +67,9 @@ const KIND_CODE = {
   asset: '0008',
   history: '0009',
   role: '0010',
+  person: '0011',
+  assignment: '0012',
+  attachment: '0013',
 } as const;
 
 type Kind = keyof typeof KIND_CODE;
@@ -67,6 +87,23 @@ export function newResourceId(kind: Kind): string {
 
 // ---- roles ---------------------------------------------------------------------------------
 
+/** Read permissions every built-in role holds (mirrors READ in apps/api/src/auth/permissions.ts). */
+const READ = [
+  'asset:read',
+  'catalog:read',
+  'location:read',
+  'person:read',
+  'accessory:read',
+  'consumable:read',
+  'loaner:read',
+  'repair:read',
+  'import:read',
+  'attachment:read',
+  'company:read',
+  'search:read',
+];
+
+/** The built-in roles with the permission bundles of apps/api/src/auth/permissions.ts. */
 export const MOCK_ROLES: S['Role'][] = [
   {
     id: uid('role', 1),
@@ -81,7 +118,23 @@ export const MOCK_ROLES: S['Role'][] = [
     key: 'asset_manager',
     name: 'Asset Manager',
     description: 'Manages the asset registry and catalogue.',
-    permissions: ['asset:*', 'catalog:manage', 'catalog:read', 'location:read', 'search:read'],
+    permissions: [
+      ...READ,
+      'asset:create',
+      'asset:update',
+      'asset:delete',
+      'asset:checkout',
+      'asset:checkin',
+      'asset:transfer',
+      'asset:label',
+      'catalog:manage',
+      'location:manage',
+      'person:manage',
+      'attachment:write',
+      'audit:read',
+      'user:read',
+      'role:read',
+    ],
     is_builtin: true,
   },
   {
@@ -89,7 +142,15 @@ export const MOCK_ROLES: S['Role'][] = [
     key: 'technician',
     name: 'Technician',
     description: 'Checks assets in and out and logs repairs.',
-    permissions: ['asset:read', 'asset:update', 'catalog:read', 'location:read', 'search:read'],
+    permissions: [
+      ...READ,
+      'asset:update',
+      'asset:checkout',
+      'asset:checkin',
+      'asset:transfer',
+      'asset:label',
+      'attachment:write',
+    ],
     is_builtin: true,
   },
   {
@@ -97,7 +158,7 @@ export const MOCK_ROLES: S['Role'][] = [
     key: 'auditor',
     name: 'Auditor',
     description: 'Read-only access including the audit log.',
-    permissions: ['asset:read', 'catalog:read', 'location:read', 'audit:read', 'search:read'],
+    permissions: [...READ, 'audit:read', 'user:read', 'role:read'],
     is_builtin: true,
   },
   {
@@ -105,7 +166,7 @@ export const MOCK_ROLES: S['Role'][] = [
     key: 'viewer',
     name: 'Viewer',
     description: 'Read-only access to assets.',
-    permissions: ['asset:read', 'catalog:read', 'location:read', 'search:read'],
+    permissions: [...READ],
     is_builtin: true,
   },
 ];
@@ -429,6 +490,7 @@ export function buildSeed(): RegistryData {
         at: asset.created_at!,
         event_type: 'created',
         actor_type: 'user',
+        actor_id: '0190a6b2-0000-7000-8000-000000000001',
         summary: 'Created',
       });
       tagCounters[category.tag_prefix || 'AT-'] = n + 1;
@@ -505,6 +567,15 @@ export function buildSeed(): RegistryData {
     }),
   ] as MockUserRecord[];
 
+  const custody = seedCustody({
+    assets,
+    statusLabels,
+    users,
+    locationIds: rooms,
+    assetHistoryStart: historyN,
+  });
+  history.push(...custody.history);
+
   return {
     categories,
     customFields,
@@ -515,6 +586,9 @@ export function buildSeed(): RegistryData {
     locations,
     assets,
     users,
+    people: custody.people,
+    assignments: custody.assignments,
+    attachments: custody.attachments,
     history,
     tagCounters,
     tagTemplate: { prefix: '', width: 5, use_category_prefix: true },

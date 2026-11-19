@@ -161,7 +161,9 @@ describe('mock registry (owner)', () => {
     const restored = await assetsApi.restore(id);
     expect(restored.value.archived_at).toBeNull();
     const history = await assetsApi.history(id, {});
-    expect(history.data.map((e) => e.event_type)).toEqual(['restored', 'archived', 'created']);
+    const types = history.data.map((e) => e.event_type);
+    expect(types.slice(0, 2)).toEqual(['restored', 'archived']);
+    expect(types.at(-1)).toBe('created');
   });
 
   it('refuses to archive a category in use, naming the counts, and a free one goes', async () => {
@@ -255,8 +257,8 @@ describe('mock registry (owner)', () => {
   });
 
   it('scan resolve finds an asset by label code or tag, 404 otherwise', async () => {
-    expect((await assetsApi.resolve('LBL00124')).asset_tag).toBe('AT-00124');
-    expect((await assetsApi.resolve('at-00124')).asset_tag).toBe('AT-00124');
+    expect((await assetsApi.resolve('LBL00124')).asset.asset_tag).toBe('AT-00124');
+    expect((await assetsApi.resolve('at-00124')).asset.asset_tag).toBe('AT-00124');
     expect((await fails(assetsApi.resolve('nope'))).status).toBe(404);
   });
 

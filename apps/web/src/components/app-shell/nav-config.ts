@@ -7,6 +7,7 @@ import {
   Repeat,
   Settings,
   Upload,
+  Users,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -61,10 +62,20 @@ export const NAV_ITEMS: NavItem[] = [
   {
     id: 'locations',
     labelKey: 'nav.locations',
-    href: '/locations',
+    href: routes.locations(),
     icon: MapPin,
     isActive: prefix('/locations'),
-    available: false,
+    available: true,
+    permission: 'location:read',
+  },
+  {
+    id: 'people',
+    labelKey: 'nav.people',
+    href: routes.people,
+    icon: Users,
+    isActive: prefix('/people'),
+    available: true,
+    permission: 'person:read',
   },
   {
     id: 'loaner',

@@ -24,7 +24,7 @@ describe('AssetsTable against the mock registry', () => {
   });
 
   it('loads the first page of 50 with the total, resolving ids to names', async () => {
-    const { container } = renderApp(<AssetsTable />);
+    const { container } = renderApp(<AssetsTable />, { workflows: true });
     expect(await range()).toHaveTextContent('Showing 1-50 of 195');
     const row = await screen.findByRole('row', { name: /PRJ-00010/ });
     expect(within(row).getAllByText('EB-992F').length).toBe(2); // name and model, resolved from the lookups
@@ -34,7 +34,7 @@ describe('AssetsTable against the mock registry', () => {
 
   it('sorts by the tag column through the server and pages with cursors', async () => {
     const user = userEvent.setup();
-    renderApp(<AssetsTable />);
+    renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.click(within(screen.getByRole('columnheader', { name: /Tag/ })).getByRole('button'));
     await waitFor(() =>
@@ -52,7 +52,7 @@ describe('AssetsTable against the mock registry', () => {
 
   it('search narrows the list (debounced) and shows the filtered-empty state with a way out', async () => {
     const user = userEvent.setup();
-    renderApp(<AssetsTable />);
+    renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'LAP-0002');
     expect(await screen.findByText('Showing 1-10 of 10')).toBeVisible();
@@ -65,7 +65,7 @@ describe('AssetsTable against the mock registry', () => {
 
   it('keyboard: Space selects a row, Enter opens the full page, a click opens the drawer', async () => {
     const user = userEvent.setup();
-    renderApp(<AssetsTable />);
+    renderApp(<AssetsTable />, { workflows: true });
     const row = await screen.findByRole('row', { name: /PRJ-00010/ });
     row.focus();
     await user.keyboard(' ');
@@ -85,7 +85,7 @@ describe('AssetsTable against the mock registry', () => {
 
   it('bulk archive asks first, lists the tags, and removes the rows from the active list', async () => {
     const user = userEvent.setup();
-    renderApp(<AssetsTable />);
+    renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
     expect(await screen.findByText('Showing 1-10 of 10')).toBeVisible();
@@ -101,7 +101,7 @@ describe('AssetsTable against the mock registry', () => {
 
   it('bulk edit reports the assets that failed instead of stopping at the first one', async () => {
     const user = userEvent.setup();
-    renderApp(<AssetsTable />);
+    renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
     await screen.findByText('Showing 1-10 of 10');

@@ -134,6 +134,12 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 - **Assignment time columns**: a custody period is closed with `checked_in_at = greatest(now(), checked_out_at)` and `quantity_returned = quantity` in one UPDATE (ED-11); the asset row is locked (`FOR UPDATE`) first, and the partial unique index `assignment_one_open_per_asset_uq` is the database backstop of the 50-way check-out race.
 - Application rules not in the database: a location may be nested at most ten levels deep (`depth <= 9`), tree-shape changes of one tenant are serialised with a transaction advisory lock, an inactive person cannot receive assets, and the asset state machine of `registry/asset-actions.ts` (which action is allowed in which state type) decides every check-out, check-in, transfer, disposal, lost and found.
 
+#### 3.6.2 Wave 1 integration (migrations 0050 and 0060)
+
+- **`app.attachment`** (0050, files): `etag`, `scanned_at`, `scan_detail`, `thumb_key`, `thumb_content_type`, `width`, `height`, `exif_stripped`; `entity_type` also allows `asset_model`; `asset.image_attachment_id` and `asset_model.image_attachment_id` name the primary picture. The polymorphic owner is still resolved by the application, tenant-scoped.
+- **`assignment.checkin_attachment_ids` / `attachment_ids`** are no longer unchecked ids: custody calls validate them against `app.attachment` (same tenant, owned by the asset, not infected or rejected) and re-point each attachment at the assignment (`entity_type = 'assignment'`) in the custody transaction (`AttachmentsService.linkToOwner`). The arrays stay as the order in which the photos were attached.
+- **`assignment.checkin_condition`** (0060): `text`, nullable, one of `good`, `fair`, `poor`, `damaged`; set when the assignment is closed by a check-in.
+
 ### 3.7 Accessories and consumables (M2)
 
 | Entity | M | Purpose | Key columns | Notes |

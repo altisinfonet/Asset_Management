@@ -129,6 +129,12 @@ ClamAV is `healthy`; `docker compose ps` shows it). To develop without ClamAV, s
 `SCAN_REQUIRED=false` for the api and worker: uploads are then marked clean without a scan and a
 `attachment.scan_skipped` audit row records it. Design: [ADR 0006](adr/0006-files-scanning-and-thumbnails.md).
 
+The browser uploads straight to MinIO with a presigned URL, so the S3 endpoint the api signs for
+(`S3_PUBLIC_ENDPOINT`, `http://localhost:${MINIO_PORT}`) must be reachable from your browser: if you change
+`MINIO_PORT` in `.env`, the compose file follows it. The **first ClamAV start downloads the signature
+database and can take several minutes** (it needs internet and 1-2 GB of RAM); uploads wait as `pending`
+until it is `healthy`. The signatures live in the `clamdata` volume, so later starts are fast.
+
 ## 9. Troubleshooting
 
 | Symptom                                                                                | Fix                                                                                              |

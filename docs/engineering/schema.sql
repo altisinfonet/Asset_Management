@@ -821,6 +821,7 @@ CREATE TABLE app.assignment (
                       CHECK (acceptance_state IN ('not_required','pending','accepted','declined')),
   note                text,
   checkin_note        text,
+  checkin_condition   text CHECK (checkin_condition IS NULL OR checkin_condition IN ('good','fair','poor','damaged')), -- 0060
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   version             integer NOT NULL DEFAULT 1,

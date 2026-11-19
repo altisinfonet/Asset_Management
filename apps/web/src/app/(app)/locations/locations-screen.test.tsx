@@ -92,9 +92,7 @@ describe('LocationsScreen', () => {
     await user.click(await screen.findByRole('option', { name: /^Riverside Elementary/ }));
     await user.type(within(again).getByRole('textbox', { name: /^Name/ }), 'SCIENCE LAB');
     await user.click(within(again).getByRole('button', { name: 'Add location' }));
-    expect(
-      await within(again).findByText('A location with this name already exists here'),
-    ).toBeVisible();
+    expect(await within(again).findByText('This value is already in use.')).toBeVisible();
   });
 
   it('the move dialog cannot put a location inside itself', async () => {

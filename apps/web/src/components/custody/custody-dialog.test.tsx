@@ -156,7 +156,7 @@ describe('CustodyDialog', () => {
     expect(await screen.findByText(/checked out to Maria Reyes/)).toBeVisible();
   });
 
-  it('checks in with the condition in the note, a status and a location', async () => {
+  it('checks in with the condition, a status and a location', async () => {
     const [asset] = await held();
     let body: Record<string, unknown> | undefined;
     server.use(
@@ -172,7 +172,7 @@ describe('CustodyDialog', () => {
     await user.type(within(dialog).getByRole('textbox', { name: 'Notes' }), 'Cracked bezel');
     await user.click(within(dialog).getByRole('button', { name: 'Check in' }));
     expect(await screen.findByText(`${asset!.asset_tag} checked in.`)).toBeVisible();
-    expect(body).toMatchObject({ note: 'Condition: Fair. Cracked bezel' });
+    expect(body).toMatchObject({ note: 'Cracked bezel', condition: 'fair' });
     expect((await assetsApi.get(asset!.id)).value.current_assignment).toBeNull();
   });
 

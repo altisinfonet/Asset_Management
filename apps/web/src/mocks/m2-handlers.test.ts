@@ -129,7 +129,12 @@ describe('mock locations (owner)', () => {
       (await fails(locationsApi.archive(room.id))).body as { usage: Record<string, number> }
     ).usage;
     expect(roomUsage.assets).toBe(room.direct_asset_count);
-    expect(Object.keys(roomUsage).sort()).toEqual(['assets', 'children', 'open_assignments', 'people']);
+    expect(Object.keys(roomUsage).sort()).toEqual([
+      'assets',
+      'children',
+      'open_assignments',
+      'people',
+    ]);
 
     const empty = (await locationsApi.create({ name: 'Scratch', kind: 'other' })).value;
     await locationsApi.archive(empty.id);
@@ -264,9 +269,9 @@ describe('mock people: deactivation and history (owner)', () => {
     expect(new Set(all.map((e) => e.id)).size).toBe(all.length);
     const times = all.map((e) => e.at);
     expect([...times].sort().reverse()).toEqual(times);
-    expect(all.every((e) => ['checked_out', 'checked_in', 'transferred'].includes(e.event_type))).toBe(
-      true,
-    );
+    expect(
+      all.every((e) => ['checked_out', 'checked_in', 'transferred'].includes(e.event_type)),
+    ).toBe(true);
     expect((await fails(peopleApi.history(uid('person', 999_999)))).status).toBe(404);
   });
 
@@ -276,9 +281,13 @@ describe('mock people: deactivation and history (owner)', () => {
     const to = (await peopleApi.list({ q: 'Maria' })).data[0]!;
     await custodyApi.transfer(asset.id, { person_id: to.id }, { idempotencyKey: 'key-hist-xfer1' });
     const events = await fetchAll((cursor) => peopleApi.history(from, { cursor }));
-    expect(events.some((e) => e.event_type === 'transferred' && e.asset_id === asset.id)).toBe(true);
+    expect(events.some((e) => e.event_type === 'transferred' && e.asset_id === asset.id)).toBe(
+      true,
+    );
     const target = await fetchAll((cursor) => peopleApi.history(to.id, { cursor }));
-    expect(target.some((e) => e.event_type === 'transferred' && e.asset_id === asset.id)).toBe(true);
+    expect(target.some((e) => e.event_type === 'transferred' && e.asset_id === asset.id)).toBe(
+      true,
+    );
   });
 });
 
@@ -672,7 +681,9 @@ describe('mock attachments (owner)', () => {
     const notClean = list.data.filter((a) => a.scan_status !== 'clean');
     expect(notClean.length).toBeGreaterThan(0);
     expect(notClean.every((a) => a.download_url === null && a.thumbnail_url === null)).toBe(true);
-    const photo = list.data.find((a) => a.scan_status === 'clean' && a.content_type === 'image/jpeg');
+    const photo = list.data.find(
+      (a) => a.scan_status === 'clean' && a.content_type === 'image/png',
+    );
     expect(photo?.thumbnail_url).toMatch(/^data:/);
   });
 
@@ -704,7 +715,9 @@ describe('mock attachments (owner)', () => {
     );
     expect(type.status).toBe(415);
     expect(code(type)).toBe('unsupported-media-type');
-    expect((type.body as { errors: Array<{ pointer: string; code: string }> }).errors[0]).toMatchObject({
+    expect(
+      (type.body as { errors: Array<{ pointer: string; code: string }> }).errors[0],
+    ).toMatchObject({
       pointer: '/content_type',
       code: 'type-not-allowed',
     });
@@ -730,7 +743,9 @@ describe('mock attachments (owner)', () => {
     );
     expect(size.status).toBe(413);
     expect(code(size)).toBe('payload-too-large');
-    expect((size.body as { errors: Array<{ pointer: string; code: string }> }).errors[0]).toMatchObject({
+    expect(
+      (size.body as { errors: Array<{ pointer: string; code: string }> }).errors[0],
+    ).toMatchObject({
       pointer: '/size_bytes',
       code: 'too-large',
     });
@@ -771,10 +786,12 @@ describe('mock attachments (owner)', () => {
     const { data, response } = await getApi().http.GET('/v1/settings/files');
     const etag = response.headers.get('etag')!;
     expect(data).toMatchObject({ tier_max_upload_bytes: 25 * 1024 * 1024 });
-    const noMatch = await getApi().http.PUT('/v1/settings/files', {
-      params: { header: { 'If-Match': '"stale"' } },
-      body: { strip_exif_original: true, max_upload_bytes: 4096 },
-    }).catch((err: unknown) => err as ApiError);
+    const noMatch = await getApi()
+      .http.PUT('/v1/settings/files', {
+        params: { header: { 'If-Match': '"stale"' } },
+        body: { strip_exif_original: true, max_upload_bytes: 4096 },
+      })
+      .catch((err: unknown) => err as ApiError);
     expect((noMatch as ApiError).status).toBe(412);
     const put = await getApi().http.PUT('/v1/settings/files', {
       params: { header: { 'If-Match': etag } },
@@ -794,14 +811,12 @@ describe('mock attachments (owner)', () => {
     seedSession(MOCK_ACCOUNTS.viewer);
     expect((await filesSettingsApi.get()).effective_max_upload_bytes).toBe(4096);
     expect(
-      (
-        await getApi().http
-          .PUT('/v1/settings/files', {
-            params: { header: { 'If-Match': etag } },
-            body: { strip_exif_original: false, max_upload_bytes: null },
-          })
-          .catch((err: unknown) => err as ApiError)
-      ),
+      await getApi()
+        .http.PUT('/v1/settings/files', {
+          params: { header: { 'If-Match': etag } },
+          body: { strip_exif_original: false, max_upload_bytes: null },
+        })
+        .catch((err: unknown) => err as ApiError),
     ).toMatchObject({ status: 403 });
   });
 

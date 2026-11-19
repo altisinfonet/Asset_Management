@@ -88,7 +88,7 @@ describe('AttachmentsPanel', () => {
       file('setup.exe', 'application/x-msdownload'),
     );
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('This type of file is not allowed');
+    expect(alert).toHaveTextContent('Files of type "application/x-msdownload" are not accepted');
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });

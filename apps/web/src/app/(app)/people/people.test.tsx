@@ -48,7 +48,7 @@ describe('PeopleScreen', () => {
     await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Dana Reyes');
     await user.type(within(dialog).getByRole('textbox', { name: /^E-mail/ }), 'alice@example.org');
     await user.click(within(dialog).getByRole('button', { name: 'Add person' }));
-    expect(await within(dialog).findByText('This e-mail address is already in use')).toBeVisible();
+    expect(await within(dialog).findByText('This value is already in use.')).toBeVisible();
     const email = within(dialog).getByRole('textbox', { name: /^E-mail/ });
     await user.clear(email);
     await user.type(email, 'dana.reyes@school.example');
@@ -101,7 +101,8 @@ describe('PersonView', () => {
     renderApp(<PersonView />, { workflows: true });
     const history = await screen.findByRole('list', { name: 'History' });
     expect(within(history).getAllByRole('listitem').length).toBeGreaterThan(0);
-    expect(history).toHaveTextContent(/still out|returned/);
+    // the server timeline of the person (GET /v1/people/{id}/history): events with the asset tag
+    expect(history).toHaveTextContent(/Checked out/);
   });
 
   it('checks an asset in from the person page and the row disappears', async () => {
@@ -120,7 +121,7 @@ describe('PersonView', () => {
     );
   });
 
-  it('archiving a person who holds assets is refused with the reason', async () => {
+  it('archiving a person who holds assets is refused, then deactivating anyway needs a reason', async () => {
     const { personId } = await holder();
     window.history.pushState({}, '', `/people/view/?id=${personId}`);
     const user = userEvent.setup();
@@ -128,7 +129,13 @@ describe('PersonView', () => {
     await user.click(await screen.findByRole('button', { name: 'Archive' }));
     const dialog = await screen.findByRole('dialog', { name: /^Archive / });
     await user.click(within(dialog).getByRole('button', { name: 'Archive' }));
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/still checked out/);
+    expect(await within(dialog).findByText(/still holds assets/)).toBeVisible();
+    // the reason is required (the API refuses `force` without one)
+    await user.click(within(dialog).getByRole('button', { name: 'Deactivate anyway' }));
+    expect(await within(dialog).findByText('This field is required.')).toBeVisible();
+    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Left the school');
+    await user.click(within(dialog).getByRole('button', { name: 'Deactivate anyway' }));
+    expect(await screen.findByText(/deactivated\./)).toBeVisible();
   });
 
   it('shows the not-found screen for an unknown person', async () => {

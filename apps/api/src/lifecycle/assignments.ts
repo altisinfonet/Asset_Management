@@ -100,7 +100,12 @@ export async function listAssignments(
       Prisma.sql`(s.checked_out_at, s.id) < (${cur.after.ts}::timestamptz, ${cur.after.id}::uuid)`,
     );
   }
-  type Row = AssignmentRow & { asset_tag: string | null; asset_name: string | null; k0: string; k1: string };
+  type Row = AssignmentRow & {
+    asset_tag: string | null;
+    asset_name: string | null;
+    k0: string;
+    k1: string;
+  };
   const rows = await trx.$queryRaw<Row[]>`
     select ${ASSIGNMENT_COLUMNS}, a.asset_tag, a.name as asset_name,
            ${Prisma.raw(tsText('s.checked_out_at'))} as k0, s.id::text as k1

@@ -651,6 +651,7 @@ Status: todo - Founder walk-through; `docker compose up` then sign in as `owner@
 
 #### M2-LOC-01 - Location hierarchy
 Size: L - Owner: Claude - Deps: M1-TEN-01, M1-REG-05
+Status: done (M2 wave 1) - `app.location` with trigger-maintained `ancestor_ids` and `depth` (ED-07), ten-level limit (`too-deep`), cycle check (`cycle`) plus a per-tenant advisory lock for moves, `asset_count` / `direct_asset_count` / `child_count`, archive refused with usage counts; migration 0040.
 - [ ] `location` tenant table with parent, type (site, building, floor, room, other), address/notes, optional geo; unique name per parent; a subtree path encoding chosen by ADR (materialized path or `ltree`) with an index that supports "all descendants" queries.
 - [ ] Cycle creation and reparenting under a descendant are rejected; reparenting updates descendant paths in one transaction; depth limit documented.
 - [ ] CRUD API with `asset_count` per node (including descendants), audit and events.
@@ -658,6 +659,7 @@ Size: L - Owner: Claude - Deps: M1-TEN-01, M1-REG-05
 
 #### M2-LOC-02 - Asset location and moves
 Size: M - Owner: Claude - Deps: M2-LOC-01
+Status: partial (M2 wave 1) - `asset.location_id` FK, writable on create/update, `POST /v1/assets/{id}/move` and `bulk-move`, filters `location_id` + `include_sublocations`, `expand=location`, history events. Not done: the optional default location on models and categories (the contract has no field).
 - [ ] Expand migration adds nullable `asset.location_id` (composite FK) using the expand/contract pattern; `asset_model` and category gain an optional default location.
 - [ ] `POST /v1/assets/{id}/move` changes location with a note, writing a history event, audit and outbox event; bulk move through the bulk helper.
 - [ ] List and search filters include location with "include sublocations".
@@ -676,6 +678,7 @@ Size: M - Owner: Both - Deps: M2-LOC-01, M1-WEB-02
 
 #### M2-USR-01 - People (assignable users)
 Size: M - Owner: Claude - Deps: M1-AUTH-01, M2-LOC-01
+Status: done (M2 wave 1, ED-01 / ED-15) - separate `app.person` (not credential-less users), one person per login account by trigger (linked by email when the account is created), CRUD with unique email and employee id, forced deactivation with a reason, people search; no explicit link-to-login endpoint.
 Assignable-only people share the user model with login users (decision to be recorded in the data model doc).
 - [ ] `user_account` supports records without credentials ("person"): name, email, employee id, department (text field), job title, home location, manager (optional), status active/inactive; a person can be linked to a login account later.
 - [ ] CRUD API with unique email and employee id per tenant; deactivating a person with assets checked out is refused unless forced with a reason.
@@ -690,12 +693,14 @@ Size: M - Owner: Both - Deps: M2-USR-01, M1-WEB-02
 
 #### M2-LIFE-01 - Assignment model
 Size: M - Owner: Claude - Deps: M2-USR-01, M2-LOC-01
+Status: done (M2 wave 1) - `app.assignment` with the target check constraint, partial unique index for one open period per asset, composite FKs; `accessory_id` / `loaner_pool_id` columns await their tables (FKs added by the integrator).
 - [ ] `assignment` tenant table with exactly one target (`user_id` xor `location_id` xor `parent_asset_id`, enforced by a check constraint), `expected_return_at`, checked-out/in timestamps and actors, notes, quantity (for accessories), acceptance state placeholder.
 - [ ] Partial unique index guarantees at most one open assignment per individual asset.
 - [ ] Composite foreign keys; schema lint and isolation suite pass without exceptions.
 
 #### M2-LIFE-02 - Check-out API
 Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-PLAT-02
+Status: done (M2 wave 1) - `POST /v1/assets/{id}/checkout` returns `{asset, assignment}` with the asset ETag; row lock + unique index: 50 concurrent requests give one 201 and 49 `asset-already-checked-out`; Idempotency-Key required; p95 about 22 ms on the 50k dataset (perf job budget 300 ms).
 - [ ] `POST /v1/assets/{id}/checkout` with `Idempotency-Key` and `If-Match`; verifies the asset's state type allows check-out (ready only), locks the row (`SELECT ... FOR UPDATE`), inserts the assignment, moves status to an "assigned" label, writes audit and `asset.checked_out`.
 - [ ] 50 concurrent check-outs of the same asset yield exactly one 201 and 49 clean 409 responses (test).
 - [ ] Replaying a request with the same `Idempotency-Key` returns the original response and creates no second assignment.
@@ -703,23 +708,27 @@ Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-PLAT-02
 
 #### M2-LIFE-03 - Check-in API
 Size: M - Owner: Claude - Deps: M2-LIFE-02, M2-FILE-01
+Status: partial (M2 wave 1) - check-in with status, location, note and `attachment_ids` (stored as ids, uuid-checked only until the attachments service lands), `overdue` computed on the assignment and the asset plus the `overdue` filter.
 - [ ] `POST /v1/assets/{id}/checkin` with target status label, optional location, condition notes and attachment ids (photo); closes the open assignment; audit and `asset.checked_in`.
 - [ ] Check-in of an asset with no open assignment returns a clear 409; idempotent replay works.
 - [ ] Overdue state is derived from `expected_return_at` and exposed as a computed field and filter.
 
 #### M2-LIFE-04 - Transfer
 Size: M - Owner: Claude - Deps: M2-LIFE-02, M2-LIFE-03
+Status: done (M2 wave 1) - transfer in one transaction, one audit entry, one `transferred` history event, rollback test with an injected failure.
 - [ ] `POST /v1/assets/{id}/transfer` performs check-in and check-out in a single transaction (user to user, user to location, location to user) with one audit entry and one history event "transferred".
 - [ ] A failure in either half rolls back both (test); the asset is never left unassigned.
 
 #### M2-LIFE-05 - Retirement, disposal, lost and found
 Size: S - Owner: Claude - Deps: M2-LIFE-03
+Status: done (M2 wave 1) - dispose (reason enum + note + date, archived-type status, archived), mark-lost (closes the custody) and mark-found; the state-machine table test covers every state and action.
 - [ ] Disposal action sets an archived-type status with reason (enum + free text) and date; disposed assets are excluded from active counts and hidden from default lists.
 - [ ] Mark lost / mark found actions with notes; lost assets cannot be checked out; found returns them to a chosen ready status.
 - [ ] All transitions covered by a state-machine test table (which state types allow which actions).
 
 #### M2-LIFE-06 - Chain-of-custody history
 Size: M - Owner: Claude - Deps: M2-LIFE-04
+Status: partial (M2 wave 1) - `GET /v1/assets/{id}/history` and `GET /v1/people/{id}/history` (cursor, actor `{id, display_name}`, filters), rebuilt from the audit rows in a test; repair and attachment events come with their stories; location scoping with M2-LOC-03.
 - [ ] `GET /v1/assets/{id}/history` returns a unified, cursor-paginated timeline derived from assignments, moves, status changes, repairs and attachments, with actor and note; also available per person.
 - [ ] Timeline entries are reproducible from audit/events (a test rebuilds the timeline from audit rows and compares).
 - [ ] Respects location scoping (M2-LOC-03) when enabled.

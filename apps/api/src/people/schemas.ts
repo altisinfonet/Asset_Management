@@ -7,7 +7,8 @@ import { listQuerySchema } from '../platform/index.js';
  * non-persisted fields of a forced deactivation, `force` and `reason`.
  */
 
-const str = () => z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
+const str = () =>
+  z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
 const trimmed = (min: number, max: number) => str().trim().min(min).max(max);
 const nullableText = (max: number) => str().trim().max(max).nullable();
 const email = z.string().trim().toLowerCase().pipe(z.email().max(320));

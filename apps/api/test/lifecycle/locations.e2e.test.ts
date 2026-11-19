@@ -18,6 +18,7 @@ import {
   startRegistryApp,
   unique,
   type Basics,
+  type Resp,
   historyOf,
 } from './support.js';
 
@@ -53,7 +54,11 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       kind: 'building',
       parent_id: site.id,
     });
-    const room = await newLocation(a(), { name: unique('Room'), kind: 'room', parent_id: building.id });
+    const room = await newLocation(a(), {
+      name: unique('Room'),
+      kind: 'room',
+      parent_id: building.id,
+    });
     return { site, building, room };
   }
 
@@ -88,7 +93,10 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const root = await a().post('/v1/locations', { name: unique('Root') });
       expect((await a().post('/v1/locations', { name: root.body.name })).status).toBe(409);
       // archive frees the name
-      expect((await a().del(`/v1/locations/${root.body.id}`, undefined, ifMatch(root.headers.etag))).status).toBe(204);
+      expect(
+        (await a().del(`/v1/locations/${root.body.id}`, undefined, ifMatch(root.headers.etag)))
+          .status,
+      ).toBe(204);
       expect((await a().post('/v1/locations', { name: root.body.name })).status).toBe(201);
     });
 
@@ -109,7 +117,10 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       let parent: string | null = null;
       const ids: string[] = [];
       for (let level = 0; level < 10; level++) {
-        const res = await a().post('/v1/locations', { name: unique(`L${level}`), parent_id: parent });
+        const res = await a().post('/v1/locations', {
+          name: unique(`L${level}`),
+          parent_id: parent,
+        });
         expect(res.status, `level ${level}: ${res.raw}`).toBe(201);
         expect(res.body.depth).toBe(level);
         parent = res.body.id;
@@ -121,10 +132,18 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       // moving a 3-level subtree under level 8 would reach depth 10: refused; under level 6 it fits
       const { site } = await tree();
       const siteEtag = (await a().get(`/v1/locations/${site.id}`)).headers.etag;
-      const refused = await a().patch(`/v1/locations/${site.id}`, { parent_id: ids[8] }, ifMatch(siteEtag));
+      const refused = await a().patch(
+        `/v1/locations/${site.id}`,
+        { parent_id: ids[8] },
+        ifMatch(siteEtag),
+      );
       expect(refused.status).toBe(422);
       expect(refused.body.errors[0].code).toBe('too-deep');
-      const ok = await a().patch(`/v1/locations/${site.id}`, { parent_id: ids[6] }, ifMatch(siteEtag));
+      const ok = await a().patch(
+        `/v1/locations/${site.id}`,
+        { parent_id: ids[6] },
+        ifMatch(siteEtag),
+      );
       expect(ok.status, ok.raw).toBe(200);
       expect(ok.body.depth).toBe(7);
     });
@@ -133,7 +152,11 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const { site, building, room } = await tree();
       const other2 = await newLocation(a(), { name: unique('Site2'), kind: 'site' });
       const bEtag = (await a().get(`/v1/locations/${building.id}`)).headers.etag;
-      const moved = await a().patch(`/v1/locations/${building.id}`, { parent_id: other2.id }, ifMatch(bEtag));
+      const moved = await a().patch(
+        `/v1/locations/${building.id}`,
+        { parent_id: other2.id },
+        ifMatch(bEtag),
+      );
       expect(moved.status, moved.raw).toBe(200);
       expect(moved.body.ancestor_ids).toEqual([other2.id, building.id]);
       const r = await a().get(`/v1/locations/${room.id}`);
@@ -145,10 +168,17 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       expect((await a().get(`/v1/locations?descendants_of=${site.id}`)).body.data).toEqual([]);
       // a move to the root
       const rootEtag = (await a().get(`/v1/locations/${building.id}`)).headers.etag;
-      const root = await a().patch(`/v1/locations/${building.id}`, { parent_id: null }, ifMatch(rootEtag));
+      const root = await a().patch(
+        `/v1/locations/${building.id}`,
+        { parent_id: null },
+        ifMatch(rootEtag),
+      );
       expect(root.body).toMatchObject({ parent_id: null, depth: 0 });
       expect((await a().get(`/v1/locations/${room.id}`)).body.depth).toBe(1);
-      const audit = await auditRows(t.tenantId, `action = 'location.moved' and entity_id = '${building.id}'`);
+      const audit = await auditRows(
+        t.tenantId,
+        `action = 'location.moved' and entity_id = '${building.id}'`,
+      );
       expect(audit.length).toBeGreaterThanOrEqual(2);
       expect(audit[0]!.diff?.meta).toMatchObject({ moved_descendants: 1 });
     });
@@ -157,7 +187,11 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const { site, building, room } = await tree();
       const etag = async (id: string) => (await a().get(`/v1/locations/${id}`)).headers.etag;
       for (const parent_id of [site.id, room.id, building.id]) {
-        const res = await a().patch(`/v1/locations/${site.id}`, { parent_id }, ifMatch(await etag(site.id)));
+        const res = await a().patch(
+          `/v1/locations/${site.id}`,
+          { parent_id },
+          ifMatch(await etag(site.id)),
+        );
         expect(res.status, `site under ${parent_id}`).toBe(422);
         expect(res.body.errors[0]).toMatchObject({ pointer: '/parent_id', code: 'cycle' });
       }
@@ -169,7 +203,10 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
         a().patch(`/v1/locations/${y.id}`, { parent_id: x.id }, ifMatch(await etag(y.id))),
       ]);
       expect([r1.status, r2.status].sort()).toEqual([200, 422]);
-      const [lx, ly] = [(await a().get(`/v1/locations/${x.id}`)).body, (await a().get(`/v1/locations/${y.id}`)).body];
+      const [lx, ly] = [
+        (await a().get(`/v1/locations/${x.id}`)).body,
+        (await a().get(`/v1/locations/${y.id}`)).body,
+      ];
       expect(Math.max(lx.depth, ly.depth)).toBe(1);
       expect(lx.ancestor_ids.length + ly.ancestor_ids.length).toBe(3);
     });
@@ -192,7 +229,12 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const roomEtag = (await a().get(`/v1/locations/${room.id}`)).headers.etag;
       const withAssets = await a().del(`/v1/locations/${room.id}`, undefined, ifMatch(roomEtag));
       expect(withAssets.status).toBe(409);
-      expect(withAssets.body.usage).toMatchObject({ children: 0, assets: 1, people: 0, open_assignments: 0 });
+      expect(withAssets.body.usage).toMatchObject({
+        children: 0,
+        assets: 1,
+        people: 0,
+        open_assignments: 0,
+      });
       // a person living there blocks it too
       const emptyRoom = await newLocation(a(), { parent_id: site.id });
       await a().post('/v1/people', { display_name: unique('P'), location_id: emptyRoom.id });
@@ -200,7 +242,11 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       expect(withPeople.body.usage).toMatchObject({ people: 1 });
       // moving the asset away frees the room
       await a().post(`/v1/assets/${asset.id}/move`, { location_id: building.id });
-      const free = await a().del(`/v1/locations/${room.id}`, undefined, ifMatch((await a().get(`/v1/locations/${room.id}`)).headers.etag));
+      const free = await a().del(
+        `/v1/locations/${room.id}`,
+        undefined,
+        ifMatch((await a().get(`/v1/locations/${room.id}`)).headers.etag),
+      );
       expect(free.status).toBe(204);
       expect((await a().get(`/v1/locations/${room.id}`)).status).toBe(200); // archived rows stay readable
       expect((await a().get(`/v1/locations/${room.id}`)).body.archived_at).toBeTruthy();
@@ -208,20 +254,28 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
 
     it('lists with filters, search, sort and cursors; ETag and If-Match rules apply', async () => {
       const marker = unique('Zq');
-      const parent = await newLocation(a(), { name: `${marker} HQ`, kind: 'site', code: `${marker}-HQ` });
+      const parent = await newLocation(a(), {
+        name: `${marker} HQ`,
+        kind: 'site',
+        code: `${marker}-HQ`,
+      });
       for (let i = 0; i < 5; i++) {
         await newLocation(a(), { name: `${marker} room ${i}`, kind: 'room', parent_id: parent.id });
       }
       const seen: string[] = [];
       let cursor: string | null = null;
       do {
-        const page: { body: any } = await a().get(`/v1/locations?q=${marker}&limit=2${cursor ? `&cursor=${cursor}` : ''}`); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const page: Resp = await a().get(
+          `/v1/locations?q=${marker}&limit=2${cursor ? `&cursor=${cursor}` : ''}`,
+        );
         seen.push(...page.body.data.map((l: { id: string }) => l.id));
         cursor = page.body.page.next_cursor;
       } while (cursor);
       expect(seen).toHaveLength(6);
       expect(new Set(seen).size).toBe(6);
-      expect((await a().get(`/v1/locations?q=${marker}&kind=room&include_total=true`)).body.page.total).toBe(5);
+      expect(
+        (await a().get(`/v1/locations?q=${marker}&kind=room&include_total=true`)).body.page.total,
+      ).toBe(5);
       expect((await a().get(`/v1/locations?parent_id=${parent.id}`)).body.data).toHaveLength(5);
       expect((await a().get(`/v1/locations?q=${marker}&root=true`)).body.data).toHaveLength(1);
       expect((await a().get(`/v1/locations?q=${marker}-hq`)).body.data).toHaveLength(1); // by code
@@ -231,24 +285,51 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const got = await a().get(`/v1/locations/${parent.id}`);
       expect(got.headers.etag).toBe('W/"1"');
       expect((await a().patch(`/v1/locations/${parent.id}`, { notes: 'x' })).status).toBe(428);
-      expect((await a().patch(`/v1/locations/${parent.id}`, { notes: 'x' }, ifMatch('W/"9"'))).status).toBe(412);
-      const ok = await a().patch(`/v1/locations/${parent.id}`, { notes: 'x', latitude: 59.9, longitude: 10.7 }, ifMatch(got.headers.etag));
+      expect(
+        (await a().patch(`/v1/locations/${parent.id}`, { notes: 'x' }, ifMatch('W/"9"'))).status,
+      ).toBe(412);
+      const ok = await a().patch(
+        `/v1/locations/${parent.id}`,
+        { notes: 'x', latitude: 59.9, longitude: 10.7 },
+        ifMatch(got.headers.etag),
+      );
       expect(ok.status).toBe(200);
       expect(ok.body).toMatchObject({ notes: 'x', latitude: 59.9, longitude: 10.7 });
       expect(ok.headers.etag).toBe('W/"2"');
-      expect((await a().patch(`/v1/locations/${parent.id}`, { latitude: 99 }, ifMatch(ok.headers.etag))).status).toBe(422);
-      expect((await a().patch(`/v1/locations/${parent.id}`, { name: '' }, ifMatch(ok.headers.etag))).status).toBe(422);
+      expect(
+        (await a().patch(`/v1/locations/${parent.id}`, { latitude: 99 }, ifMatch(ok.headers.etag)))
+          .status,
+      ).toBe(422);
+      expect(
+        (await a().patch(`/v1/locations/${parent.id}`, { name: '' }, ifMatch(ok.headers.etag)))
+          .status,
+      ).toBe(422);
     });
 
     it('writes audit rows and outbox events for every change; only location:manage may write', async () => {
       const loc = await newLocation(a());
       const etag = (await a().get(`/v1/locations/${loc.id}`)).headers.etag;
       await a().patch(`/v1/locations/${loc.id}`, { notes: 'n' }, ifMatch(etag));
-      await a().del(`/v1/locations/${loc.id}`, undefined, ifMatch((await a().get(`/v1/locations/${loc.id}`)).headers.etag));
-      const audit = await auditRows(t.tenantId, `entity_type = 'location' and entity_id = '${loc.id}'`);
-      expect(audit.map((r) => r.action)).toEqual(['location.created', 'location.updated', 'location.archived']);
+      await a().del(
+        `/v1/locations/${loc.id}`,
+        undefined,
+        ifMatch((await a().get(`/v1/locations/${loc.id}`)).headers.etag),
+      );
+      const audit = await auditRows(
+        t.tenantId,
+        `entity_type = 'location' and entity_id = '${loc.id}'`,
+      );
+      expect(audit.map((r) => r.action)).toEqual([
+        'location.created',
+        'location.updated',
+        'location.archived',
+      ]);
       const events = await outboxRows(t.tenantId, `aggregate_id = '${loc.id}'`);
-      expect(events.map((e) => e.event_type)).toEqual(['location.created', 'location.updated', 'location.archived']);
+      expect(events.map((e) => e.event_type)).toEqual([
+        'location.created',
+        'location.updated',
+        'location.archived',
+      ]);
 
       const viewer = await createUser(app, t, 'viewer');
       const tech = await createUser(app, t, 'technician');
@@ -264,20 +345,38 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const { site, building } = await tree();
       const asset = await newAsset(a(), b.categoryId, { location_id: site.id });
       expect(asset.body.location_id).toBe(site.id);
-      const bad = await a().post('/v1/assets', { category_id: b.categoryId, location_id: crypto.randomUUID() });
+      const bad = await a().post('/v1/assets', {
+        category_id: b.categoryId,
+        location_id: crypto.randomUUID(),
+      });
       expect(bad.status).toBe(422);
       expect(bad.body.errors[0]).toMatchObject({ pointer: '/location_id', code: 'not-found' });
       const foreign = await newLocation(other.admin);
-      expect((await a().post('/v1/assets', { category_id: b.categoryId, location_id: foreign.id })).status).toBe(422);
+      expect(
+        (await a().post('/v1/assets', { category_id: b.categoryId, location_id: foreign.id }))
+          .status,
+      ).toBe(422);
 
-      const patched = await a().patch(`/v1/assets/${asset.id}`, { location_id: building.id }, ifMatch(asset.etag));
+      const patched = await a().patch(
+        `/v1/assets/${asset.id}`,
+        { location_id: building.id },
+        ifMatch(asset.etag),
+      );
       expect(patched.status, patched.raw).toBe(200);
       expect(patched.body.location_id).toBe(building.id);
-      const cleared = await a().patch(`/v1/assets/${asset.id}`, { location_id: null }, ifMatch(patched.headers.etag));
+      const cleared = await a().patch(
+        `/v1/assets/${asset.id}`,
+        { location_id: null },
+        ifMatch(patched.headers.etag),
+      );
       expect(cleared.body.location_id).toBeNull();
 
       const history = await historyOf(a(), asset.id);
-      expect(history.map((h) => h.event_type)).toEqual(['created', 'location_changed', 'location_changed']);
+      expect(history.map((h) => h.event_type)).toEqual([
+        'created',
+        'location_changed',
+        'location_changed',
+      ]);
       expect(history[1]!.payload).toMatchObject({ from: site.id, to: building.id });
       expect(history[2]!.payload).toMatchObject({ from: building.id, to: null });
     });
@@ -285,36 +384,74 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
     it('POST /assets/{id}/move changes the location with a note: history, audit, outbox; ETag and If-Match', async () => {
       const { site, building } = await tree();
       const asset = await newAsset(a(), b.categoryId, { location_id: site.id });
-      const stale = await a().post(`/v1/assets/${asset.id}/move`, { location_id: building.id }, ifMatch('W/"9"'));
+      const stale = await a().post(
+        `/v1/assets/${asset.id}/move`,
+        { location_id: building.id },
+        ifMatch('W/"9"'),
+      );
       expect(stale.status).toBe(412);
-      const moved = await a().post(`/v1/assets/${asset.id}/move`, { location_id: building.id, note: 'new rack' }, ifMatch(asset.etag));
+      const moved = await a().post(
+        `/v1/assets/${asset.id}/move`,
+        { location_id: building.id, note: 'new rack' },
+        ifMatch(asset.etag),
+      );
       expect(moved.status, moved.raw).toBe(200);
       expect(moved.body.location_id).toBe(building.id);
       expect(moved.headers.etag).toBe('W/"2"');
       // moving to where it already is changes nothing (no new version, no history)
       const same = await a().post(`/v1/assets/${asset.id}/move`, { location_id: building.id });
       expect(same.headers.etag).toBe('W/"2"');
-      expect((await historyOf(a(), asset.id)).filter((h) => h.event_type === 'location_changed')).toHaveLength(1);
+      expect(
+        (await historyOf(a(), asset.id)).filter((h) => h.event_type === 'location_changed'),
+      ).toHaveLength(1);
       const event = (await historyOf(a(), asset.id)).at(-1)!;
       expect(event).toMatchObject({ event_type: 'location_changed', actor_type: 'user' });
       expect(event.actor).toMatchObject({ display_name: expect.any(String) });
       expect(event.payload).toMatchObject({ from: site.id, to: building.id, note: 'new rack' });
       expect(event.summary).toContain('Moved from');
-      const audit = await auditRows(t.tenantId, `action = 'asset.moved' and entity_id = '${asset.id}'`);
+      const audit = await auditRows(
+        t.tenantId,
+        `action = 'asset.moved' and entity_id = '${asset.id}'`,
+      );
       expect(audit).toHaveLength(1);
-      expect(audit[0]!.diff).toMatchObject({ after: { location_id: building.id }, meta: { note: 'new rack' } });
-      expect((await outboxRows(t.tenantId, `event_type = 'asset.moved' and aggregate_id = '${asset.id}'`))[0]!.payload).toMatchObject({ toLocationId: building.id });
+      expect(audit[0]!.diff).toMatchObject({
+        after: { location_id: building.id },
+        meta: { note: 'new rack' },
+      });
+      expect(
+        (
+          await outboxRows(
+            t.tenantId,
+            `event_type = 'asset.moved' and aggregate_id = '${asset.id}'`,
+          )
+        )[0]!.payload,
+      ).toMatchObject({ toLocationId: building.id });
       // unknown location 422, unknown asset 404, archived asset 409
-      expect((await a().post(`/v1/assets/${asset.id}/move`, { location_id: crypto.randomUUID() })).status).toBe(422);
-      expect((await a().post(`/v1/assets/${crypto.randomUUID()}/move`, { location_id: null })).status).toBe(404);
-      await a().del(`/v1/assets/${asset.id}`, undefined, ifMatch((await a().get(`/v1/assets/${asset.id}`)).headers.etag));
-      expect((await a().post(`/v1/assets/${asset.id}/move`, { location_id: site.id })).status).toBe(409);
+      expect(
+        (await a().post(`/v1/assets/${asset.id}/move`, { location_id: crypto.randomUUID() }))
+          .status,
+      ).toBe(422);
+      expect(
+        (await a().post(`/v1/assets/${crypto.randomUUID()}/move`, { location_id: null })).status,
+      ).toBe(404);
+      await a().del(
+        `/v1/assets/${asset.id}`,
+        undefined,
+        ifMatch((await a().get(`/v1/assets/${asset.id}`)).headers.etag),
+      );
+      expect((await a().post(`/v1/assets/${asset.id}/move`, { location_id: site.id })).status).toBe(
+        409,
+      );
       // technicians may move, viewers may not
       const tech = await createUser(app, t, 'technician');
       const viewer = await createUser(app, t, 'viewer');
       const other2 = await newAsset(a(), b.categoryId);
-      expect((await tech.client.post(`/v1/assets/${other2.id}/move`, { location_id: site.id })).status).toBe(200);
-      expect((await viewer.client.post(`/v1/assets/${other2.id}/move`, { location_id: site.id })).status).toBe(403);
+      expect(
+        (await tech.client.post(`/v1/assets/${other2.id}/move`, { location_id: site.id })).status,
+      ).toBe(200);
+      expect(
+        (await viewer.client.post(`/v1/assets/${other2.id}/move`, { location_id: site.id })).status,
+      ).toBe(403);
     });
 
     it('bulk move reports one result per id and does not let one failure undo the others', async () => {
@@ -332,8 +469,13 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       expect(res.body.results.map((r: { status: number }) => r.status)).toEqual([200, 409, 404]);
       expect((await a().get(`/v1/assets/${x.id}`)).body.location_id).toBe(room.id);
       expect((await a().get(`/v1/assets/${y.id}`)).body.location_id).toBeNull();
-      expect((await a().post('/v1/assets/bulk-move', { ids: [], location_id: site.id })).status).toBe(422);
-      expect((await a().post('/v1/assets/bulk-move', { ids: [x.id], location_id: crypto.randomUUID() })).body.results[0].status).toBe(422);
+      expect(
+        (await a().post('/v1/assets/bulk-move', { ids: [], location_id: site.id })).status,
+      ).toBe(422);
+      expect(
+        (await a().post('/v1/assets/bulk-move', { ids: [x.id], location_id: crypto.randomUUID() }))
+          .body.results[0].status,
+      ).toBe(422);
       const bulk = await auditRows(t.tenantId, `action = 'asset.bulk_move'`);
       expect(bulk.at(-1)!.diff?.meta).toMatchObject({ operation: 'move', requested: 1 });
     });
@@ -343,13 +485,21 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
       const inRoom = await newAsset(a(), b.categoryId, { location_id: room.id });
       const inBuilding = await newAsset(a(), b.categoryId, { location_id: building.id });
       const ids = async (q: string) =>
-        ((await a().get(`/v1/assets?${q}`)).body.data as Array<{ id: string }>).map((x) => x.id).sort();
+        ((await a().get(`/v1/assets?${q}`)).body.data as Array<{ id: string }>)
+          .map((x) => x.id)
+          .sort();
       expect(await ids(`location_id=${site.id}`)).toEqual([inRoom.id, inBuilding.id].sort());
-      expect(await ids(`location_id=${site.id}&include_sublocations=true`)).toEqual([inRoom.id, inBuilding.id].sort());
+      expect(await ids(`location_id=${site.id}&include_sublocations=true`)).toEqual(
+        [inRoom.id, inBuilding.id].sort(),
+      );
       expect(await ids(`location_id=${site.id}&include_sublocations=false`)).toEqual([]);
-      expect(await ids(`location_id=${building.id}&include_sublocations=false`)).toEqual([inBuilding.id]);
+      expect(await ids(`location_id=${building.id}&include_sublocations=false`)).toEqual([
+        inBuilding.id,
+      ]);
       expect(await ids(`location_id=${room.id}`)).toEqual([inRoom.id]);
-      expect((await a().get(`/v1/assets?location_id=${site.id}&include_total=true`)).body.page.total).toBe(2);
+      expect(
+        (await a().get(`/v1/assets?location_id=${site.id}&include_total=true`)).body.page.total,
+      ).toBe(2);
       const expanded = await a().get(`/v1/assets/${inRoom.id}?expand=location`);
       expect(expanded.body.expanded.location).toMatchObject({ id: room.id, depth: 2 });
       expect((await a().get('/v1/assets?include_sublocations=maybe')).status).toBe(400);

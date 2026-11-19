@@ -21,6 +21,7 @@ import {
   testPorts,
   unique,
   type Basics,
+  type Resp,
 } from './support.js';
 
 /** M2-USR-01: people (assignable persons with or without a login, ED-01). */
@@ -60,7 +61,11 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     expect(person[0]).toMatchObject({ user_id: tech.id, display_name: 'User technician' });
     // a rename of the account renames the person
     const user = await a().get(`/v1/users/${tech.id}`);
-    const renamed = await a().patch(`/v1/users/${tech.id}`, { display_name: 'Renamed Tech' }, ifMatch(user.headers.etag));
+    const renamed = await a().patch(
+      `/v1/users/${tech.id}`,
+      { display_name: 'Renamed Tech' },
+      ifMatch(user.headers.etag),
+    );
     expect(renamed.status, renamed.raw).toBe(200);
     expect((await a().get(`/v1/people/${person[0].id}`)).body.display_name).toBe('Renamed Tech');
     // the other tenant has its own
@@ -91,20 +96,33 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     expect(res.headers.etag).toBe('W/"1"');
     expect(res.headers.location).toBe(`/v1/people/${res.body.id}`);
     expect(testPorts.mail.sent.length).toBe(mails); // persons never receive login emails
-    const audit = await auditRows(t.tenantId, `entity_type = 'person' and entity_id = '${res.body.id}'`);
+    const audit = await auditRows(
+      t.tenantId,
+      `entity_type = 'person' and entity_id = '${res.body.id}'`,
+    );
     expect(audit.map((r) => r.action)).toEqual(['person.created']);
-    expect((await outboxRows(t.tenantId, `aggregate_id = '${res.body.id}'`))[0]!.event_type).toBe('person.created');
+    expect((await outboxRows(t.tenantId, `aggregate_id = '${res.body.id}'`))[0]!.event_type).toBe(
+      'person.created',
+    );
     expect((await a().post('/v1/people', { display_name: '' })).status).toBe(422);
-    expect((await a().post('/v1/people', { display_name: 'X', email: 'not-an-email' })).status).toBe(422);
+    expect(
+      (await a().post('/v1/people', { display_name: 'X', email: 'not-an-email' })).status,
+    ).toBe(422);
     expect((await a().post('/v1/people', { display_name: 'X', kind: 'alien' })).status).toBe(422);
-    expect((await a().post('/v1/people', { display_name: 'X', location_id: crypto.randomUUID() })).status).toBe(422);
+    expect(
+      (await a().post('/v1/people', { display_name: 'X', location_id: crypto.randomUUID() }))
+        .status,
+    ).toBe(422);
   });
 
   it('email and employee number are unique per tenant among live people; archiving frees them', async () => {
     const email = `${unique('dup')}@example.test`;
     const ref = unique('EMP');
     const first = await newPerson(a(), { email, employee_ref: ref });
-    const sameEmail = await a().post('/v1/people', { display_name: 'Other', email: email.toUpperCase() });
+    const sameEmail = await a().post('/v1/people', {
+      display_name: 'Other',
+      email: email.toUpperCase(),
+    });
     expect(sameEmail.status).toBe(409);
     expect(sameEmail.body.errors[0]).toMatchObject({ pointer: '/email', code: 'duplicate' });
     const sameRef = await a().post('/v1/people', { display_name: 'Other', employee_ref: ref });
@@ -113,13 +131,22 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     // an update to somebody else's email conflicts too, but keeping your own is fine
     const second = await newPerson(a(), { email: `${unique('two')}@example.test` });
     const secondEtag = (await a().get(`/v1/people/${second.id}`)).headers.etag;
-    expect((await a().patch(`/v1/people/${second.id}`, { email }, ifMatch(secondEtag))).status).toBe(409);
-    expect((await a().patch(`/v1/people/${first.id}`, { email, notes: 'n' }, ifMatch('*'))).status).toBe(200);
+    expect(
+      (await a().patch(`/v1/people/${second.id}`, { email }, ifMatch(secondEtag))).status,
+    ).toBe(409);
+    expect(
+      (await a().patch(`/v1/people/${first.id}`, { email, notes: 'n' }, ifMatch('*'))).status,
+    ).toBe(200);
     // the other tenant may use the same values
-    expect((await other.admin.post('/v1/people', { display_name: 'Same', email, employee_ref: ref })).status).toBe(201);
+    expect(
+      (await other.admin.post('/v1/people', { display_name: 'Same', email, employee_ref: ref }))
+        .status,
+    ).toBe(201);
     // archive frees them
     expect((await a().del(`/v1/people/${first.id}`, undefined, ifMatch('*'))).status).toBe(204);
-    expect((await a().post('/v1/people', { display_name: 'Reuse', email, employee_ref: ref })).status).toBe(201);
+    expect(
+      (await a().post('/v1/people', { display_name: 'Reuse', email, employee_ref: ref })).status,
+    ).toBe(201);
   });
 
   it('lists, searches, filters and pages people', async () => {
@@ -151,7 +178,9 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     const names: string[] = [];
     let cursor: string | null = null;
     do {
-      const page: { body: any } = await q(`q=${marker}&limit=2&sort=-display_name${cursor ? `&cursor=${cursor}` : ''}`); // eslint-disable-line @typescript-eslint/no-explicit-any
+      const page: Resp = await q(
+        `q=${marker}&limit=2&sort=-display_name${cursor ? `&cursor=${cursor}` : ''}`,
+      );
       names.push(...page.body.data.map((p: { display_name: string }) => p.display_name));
       cursor = page.body.page.next_cursor;
     } while (cursor);
@@ -171,7 +200,11 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
 
   it('a person created before the login account is linked to it by email (no second person)', async () => {
     const email = `${unique('later')}@link.example`;
-    const early = await newPerson(a(), { display_name: 'Early Bird', email, employee_ref: unique('L') });
+    const early = await newPerson(a(), {
+      display_name: 'Early Bird',
+      email,
+      employee_ref: unique('L'),
+    });
     expect(early.body.user_id).toBeNull();
     const before = (await a().get('/v1/people?limit=200')).body.data.length;
     const user = await createUser(app, t, 'viewer', 'later');
@@ -193,15 +226,30 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
   it('deactivating a person who holds assets is refused unless forced with a reason; inactive people get nothing', async () => {
     const person = await newPerson(a());
     const asset = await newAsset(a(), b.categoryId);
-    const out = await a().post(`/v1/assets/${asset.id}/checkout`, { person_id: person.id }, keyed());
+    const out = await a().post(
+      `/v1/assets/${asset.id}/checkout`,
+      { person_id: person.id },
+      keyed(),
+    );
     expect(out.status, out.raw).toBe(201);
-    const etag = () => a().get(`/v1/people/${person.id}`).then((r) => String(r.headers.etag));
+    const etag = () =>
+      a()
+        .get(`/v1/people/${person.id}`)
+        .then((r) => String(r.headers.etag));
     expect((await a().get(`/v1/people/${person.id}`)).body.assets_held).toBe(1);
 
-    const refused = await a().patch(`/v1/people/${person.id}`, { status: 'inactive' }, ifMatch(await etag()));
+    const refused = await a().patch(
+      `/v1/people/${person.id}`,
+      { status: 'inactive' },
+      ifMatch(await etag()),
+    );
     expect(refused.status).toBe(409);
     expect(refused.body.usage).toEqual({ open_assignments: 1 });
-    const noReason = await a().patch(`/v1/people/${person.id}`, { status: 'inactive', force: true }, ifMatch(await etag()));
+    const noReason = await a().patch(
+      `/v1/people/${person.id}`,
+      { status: 'inactive', force: true },
+      ifMatch(await etag()),
+    );
     expect(noReason.status).toBe(422);
     expect(noReason.body.errors[0]).toMatchObject({ pointer: '/reason' });
     const forced = await a().patch(
@@ -212,23 +260,34 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     expect(forced.status, forced.raw).toBe(200);
     expect(forced.body.status).toBe('inactive');
     expect(forced.body).not.toHaveProperty('force');
-    const audit = await auditRows(t.tenantId, `entity_type = 'person' and entity_id = '${person.id}' and action = 'person.updated'`);
+    const audit = await auditRows(
+      t.tenantId,
+      `entity_type = 'person' and entity_id = '${person.id}' and action = 'person.updated'`,
+    );
     expect(audit.at(-1)!.diff?.meta).toMatchObject({
       forced_deactivation: true,
       reason: 'left the school, equipment on its way back',
       open_assignments: 1,
     });
     // the custody stays open; an inactive person cannot receive more
-    expect((await a().get(`/v1/assets/${asset.id}`)).body.current_assignment).toMatchObject({ target_id: person.id });
+    expect((await a().get(`/v1/assets/${asset.id}`)).body.current_assignment).toMatchObject({
+      target_id: person.id,
+    });
     const second = await newAsset(a(), b.categoryId);
-    const denied = await a().post(`/v1/assets/${second.id}/checkout`, { person_id: person.id }, keyed());
+    const denied = await a().post(
+      `/v1/assets/${second.id}/checkout`,
+      { person_id: person.id },
+      keyed(),
+    );
     expect(denied.status).toBe(422);
     expect(denied.body.errors[0]).toMatchObject({ pointer: '/person_id', code: 'inactive' });
     // a person without custody deactivates freely, and can be reactivated
     const idle = await newPerson(a());
     const idleOff = await a().patch(`/v1/people/${idle.id}`, { status: 'inactive' }, ifMatch('*'));
     expect(idleOff.status).toBe(200);
-    expect((await a().patch(`/v1/people/${idle.id}`, { status: 'active' }, ifMatch('*'))).body.status).toBe('active');
+    expect(
+      (await a().patch(`/v1/people/${idle.id}`, { status: 'active' }, ifMatch('*'))).body.status,
+    ).toBe('active');
   });
 
   it('archiving: refused while the person holds assets or has a login account; ETag rules apply', async () => {
@@ -240,11 +299,15 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     expect(blocked.body.usage).toMatchObject({ open_assignments: 1 });
     expect((await a().del(`/v1/people/${person.id}`)).status).toBe(428);
     await a().post(`/v1/assets/${asset.id}/checkin`, {}, keyed());
-    expect((await a().del(`/v1/people/${person.id}`, undefined, ifMatch('W/"99"'))).status).toBe(412);
+    expect((await a().del(`/v1/people/${person.id}`, undefined, ifMatch('W/"99"'))).status).toBe(
+      412,
+    );
     expect((await a().del(`/v1/people/${person.id}`, undefined, ifMatch('*'))).status).toBe(204);
     expect((await a().get(`/v1/people/${person.id}`)).body.archived_at).toBeTruthy();
     expect((await a().get(`/v1/people?q=${person.body.display_name}`)).body.data).toEqual([]);
-    expect((await a().patch(`/v1/people/${person.id}`, { notes: 'x' }, ifMatch('*'))).status).toBe(404);
+    expect((await a().patch(`/v1/people/${person.id}`, { notes: 'x' }, ifMatch('*'))).status).toBe(
+      404,
+    );
     // the login person cannot be archived
     const me = (await a().get(`/v1/people?q=${t.adminEmail}`)).body.data[0];
     const own = await a().del(`/v1/people/${me.id}`, undefined, ifMatch('*'));
@@ -256,26 +319,57 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     const person = await newPerson(a());
     const x = await newAsset(a(), b.categoryId, { name: 'Laptop X' });
     const y = await newAsset(a(), b.categoryId);
-    await a().post(`/v1/assets/${x.id}/checkout`, { person_id: person.id, expected_return: new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10) }, keyed());
+    await a().post(
+      `/v1/assets/${x.id}/checkout`,
+      {
+        person_id: person.id,
+        expected_return: new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10),
+      },
+      keyed(),
+    );
     await a().post(`/v1/assets/${y.id}/checkout`, { person_id: person.id }, keyed());
     await a().post(`/v1/assets/${y.id}/checkin`, { note: 'screen cracked' }, keyed());
     const open = await a().get(`/v1/people/${person.id}/assignments`);
     expect(open.body.data).toHaveLength(1);
-    expect(open.body.data[0]).toMatchObject({ asset_id: x.id, asset_name: 'Laptop X', person_id: person.id, quantity_returned: 0, overdue: false });
+    expect(open.body.data[0]).toMatchObject({
+      asset_id: x.id,
+      asset_name: 'Laptop X',
+      person_id: person.id,
+      quantity_returned: 0,
+      overdue: false,
+    });
     expect(open.body.data[0].asset_tag).toBe(x.body.asset_tag);
-    expect((await a().get(`/v1/people/${person.id}/assignments?state=closed`)).body.data).toHaveLength(1);
+    expect(
+      (await a().get(`/v1/people/${person.id}/assignments?state=closed`)).body.data,
+    ).toHaveLength(1);
     const all = await a().get(`/v1/people/${person.id}/assignments?state=all&limit=1`);
     expect(all.body.data).toHaveLength(1);
     expect(all.body.page.has_more).toBe(true);
-    const next = await a().get(`/v1/people/${person.id}/assignments?state=all&limit=1&cursor=${all.body.page.next_cursor}`);
+    const next = await a().get(
+      `/v1/people/${person.id}/assignments?state=all&limit=1&cursor=${all.body.page.next_cursor}`,
+    );
     expect(next.body.data[0].id).not.toBe(all.body.data[0].id);
-    expect((await a().get(`/v1/people/${person.id}/assignments?state=open&cursor=${all.body.page.next_cursor}`)).body.code).toBe('invalid-cursor');
+    expect(
+      (
+        await a().get(
+          `/v1/people/${person.id}/assignments?state=open&cursor=${all.body.page.next_cursor}`,
+        )
+      ).body.code,
+    ).toBe('invalid-cursor');
     expect((await a().get(`/v1/people/${person.id}/assignments?state=weird`)).status).toBe(400);
     const history = await a().get(`/v1/people/${person.id}/history`);
-    expect(history.body.data.map((h: { event_type: string }) => h.event_type)).toEqual(['checked_in', 'checked_out', 'checked_out']);
+    expect(history.body.data.map((h: { event_type: string }) => h.event_type)).toEqual([
+      'checked_in',
+      'checked_out',
+      'checked_out',
+    ]);
     expect(history.body.data[0]).toMatchObject({ asset_id: y.id, asset_tag: y.body.asset_tag });
     expect((await a().get(`/v1/people/${crypto.randomUUID()}/history`)).status).toBe(404);
-    expect((await a().get(`/v1/assets?assigned_person_id=${person.id}`)).body.data.map((r: { id: string }) => r.id)).toEqual([x.id]);
+    expect(
+      (await a().get(`/v1/assets?assigned_person_id=${person.id}`)).body.data.map(
+        (r: { id: string }) => r.id,
+      ),
+    ).toEqual([x.id]);
     expect((await other.admin.get(`/v1/people/${person.id}/assignments`)).status).toBe(404);
   });
 

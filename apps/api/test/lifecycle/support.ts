@@ -19,6 +19,10 @@ export {
 export type { Client, Resp };
 export { contractViolations } from '../support/contract-observer.js';
 
+/** A JSON body as the test client returns it (untyped on purpose: the contract tests check the shapes). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Json = Record<string, any>;
+
 /** A fresh Idempotency-Key header set (custody operations require one). */
 export const key = (value: string = randomUUID()) => ({ headers: { 'idempotency-key': value } });
 
@@ -58,7 +62,7 @@ export async function newAsset(
   admin: Client,
   categoryId: string,
   extra: Record<string, unknown> = {},
-): Promise<{ id: string; etag: string; body: Record<string, any> }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+): Promise<{ id: string; etag: string; body: Json }> {
   const res = await admin.post('/v1/assets', { category_id: categoryId, ...extra });
   if (res.status !== 201) throw new Error(`create asset: ${res.status} ${res.raw}`);
   return { id: res.body.id, etag: String(res.headers.etag), body: res.body };
@@ -67,7 +71,7 @@ export async function newAsset(
 export async function newPerson(
   admin: Client,
   extra: Record<string, unknown> = {},
-): Promise<{ id: string; body: Record<string, any> }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+): Promise<{ id: string; body: Json }> {
   const res = await admin.post('/v1/people', { display_name: unique('Person'), ...extra });
   if (res.status !== 201) throw new Error(`create person: ${res.status} ${res.raw}`);
   return { id: res.body.id, body: res.body };
@@ -76,7 +80,7 @@ export async function newPerson(
 export async function newLocation(
   admin: Client,
   extra: Record<string, unknown> = {},
-): Promise<{ id: string; body: Record<string, any> }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+): Promise<{ id: string; body: Json }> {
   const res = await admin.post('/v1/locations', { name: unique('Loc'), ...extra });
   if (res.status !== 201) throw new Error(`create location: ${res.status} ${res.raw}`);
   return { id: res.body.id, body: res.body };
@@ -84,7 +88,7 @@ export async function newLocation(
 
 /** History rows of an asset, oldest first. */
 export async function historyOf(admin: Client, assetId: string) {
-  const rows: Array<Record<string, any>> = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const rows: Array<Json> = [];
   let cursor: string | null = null;
   do {
     const res: Resp = await admin.get(

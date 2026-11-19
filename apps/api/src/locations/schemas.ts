@@ -6,7 +6,8 @@ import { listQuerySchema } from '../platform/index.js';
  * Bodies are strict; the update schema has no defaults (RFC 7396 merge semantics).
  */
 
-const str = () => z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
+const str = () =>
+  z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
 const trimmed = (min: number, max: number) => str().trim().min(min).max(max);
 const nullableText = (max: number) => str().trim().max(max).nullable();
 export const uuidParam = z.uuid();

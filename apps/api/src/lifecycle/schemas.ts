@@ -3,7 +3,8 @@ import { listQuerySchema } from '../platform/index.js';
 
 /** Request schemas of the custody endpoints (openapi `CheckoutRequest`, `CheckinRequest`, `TransferRequest`). */
 
-const str = () => z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
+const str = () =>
+  z.string().refine((v) => !v.includes('\u0000'), 'must not contain NUL characters');
 export const uuidParam = z.uuid();
 
 /** A calendar date PostgreSQL accepts (year 0000 passes the format check but not the database). */
@@ -29,7 +30,10 @@ const targetShape = {
 };
 
 /** Exactly one of person / location / asset (schema `AssignmentTarget`). */
-function exactlyOneTarget(value: Partial<Record<(typeof TARGETS)[number], unknown>>, ctx: z.RefinementCtx) {
+function exactlyOneTarget(
+  value: Partial<Record<(typeof TARGETS)[number], unknown>>,
+  ctx: z.RefinementCtx,
+) {
   const given = TARGETS.filter((k) => value[k] !== undefined);
   if (given.length !== 1) {
     ctx.addIssue({
@@ -77,9 +81,11 @@ export type TransferBody = z.output<typeof transferSchema>;
 export const assetAssignmentsListSchema = listQuerySchema.pick({ limit: true, cursor: true });
 export type AssetAssignmentsQuery = z.output<typeof assetAssignmentsListSchema>;
 
-export const personAssignmentsListSchema = listQuerySchema.pick({ limit: true, cursor: true }).extend({
-  state: z.enum(['open', 'closed', 'all']).default('open'),
-});
+export const personAssignmentsListSchema = listQuerySchema
+  .pick({ limit: true, cursor: true })
+  .extend({
+    state: z.enum(['open', 'closed', 'all']).default('open'),
+  });
 export type PersonAssignmentsQuery = z.output<typeof personAssignmentsListSchema>;
 
 export const personHistoryListSchema = listQuerySchema.pick({ limit: true, cursor: true });

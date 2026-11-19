@@ -127,13 +127,12 @@ export async function listHistory(
                                     (select s.id from app.assignment s where s.person_id = ${filter.personId}::uuid)))`,
     );
   }
-  if (filter.eventTypes?.length) where.push(Prisma.sql`h.event_type = any(${filter.eventTypes}::text[])`);
+  if (filter.eventTypes?.length)
+    where.push(Prisma.sql`h.event_type = any(${filter.eventTypes}::text[])`);
   if (filter.from) where.push(Prisma.sql`h.at >= ${filter.from}::timestamptz`);
   if (filter.to) where.push(Prisma.sql`h.at < ${filter.to}::timestamptz`);
   if (cur.after) {
-    where.push(
-      Prisma.sql`(h.at, h.id) < (${cur.after.ts}::timestamptz, ${cur.after.id}::uuid)`,
-    );
+    where.push(Prisma.sql`(h.at, h.id) < (${cur.after.ts}::timestamptz, ${cur.after.id}::uuid)`);
   }
   const condition = where.length ? Prisma.join(where, ' and ') : Prisma.sql`true`;
   const rows = await trx.$queryRaw<HistoryRow[]>`

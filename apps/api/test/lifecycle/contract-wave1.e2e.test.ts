@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Client, dbEnabled, type Resp } from '../auth/support.js';
 import { contractViolations } from '../support/contract-observer.js';
-import { UNIVERSAL_STATUSES, WAVE1_TAGS, loadContract, loadProblemCodes } from '../support/contract.js';
+import {
+  UNIVERSAL_STATUSES,
+  WAVE1_TAGS,
+  loadContract,
+  loadProblemCodes,
+} from '../support/contract.js';
 import { mode } from '../support/db.js';
 import { check } from '../support/schema-check.js';
 import {
@@ -60,7 +65,9 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
       body: options.body,
       headers: options.headers ?? {},
     });
-    expect(res.status, `${operationId}: ${method} ${url} -> ${res.raw.slice(0, 300)}`).toBe(expected);
+    expect(res.status, `${operationId}: ${method} ${url} -> ${res.raw.slice(0, 300)}`).toBe(
+      expected,
+    );
     expect(
       op!.statuses.includes(res.status) || UNIVERSAL_STATUSES.includes(res.status),
       `${operationId} answered ${res.status}, the contract documents ${op!.statuses.join(', ')}`,
@@ -69,14 +76,19 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
       walked.add(operationId);
       const schema = op!.responseSchemas[res.status];
       if (schema) {
-        expect(check({ $ref: `#/components/schemas/${schema}` }, res.body), `${operationId} response body`).toEqual([]);
+        expect(
+          check({ $ref: `#/components/schemas/${schema}` }, res.body),
+          `${operationId} response body`,
+        ).toEqual([]);
       } else if (res.status !== 204) {
         expect(res.raw, `${operationId}: no body documented for ${res.status}`).toBe('');
       }
     } else {
       expect(String(res.headers['content-type'])).toMatch(/^application\/problem\+json/);
       expect(check({ $ref: '#/components/schemas/Problem' }, res.body)).toEqual([]);
-      expect(problemCodes[res.body.code], `unknown problem code ${res.body.code}`).toContain(res.status);
+      expect(problemCodes[res.body.code], `unknown problem code ${res.body.code}`).toContain(
+        res.status,
+      );
     }
     return res;
   }
@@ -88,35 +100,64 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
 
     // ---- locations
     const site = await hit('createLocation', 'POST', '/v1/locations', 201, {
-      body: { name: unique('Site'), kind: 'site', address: { city: 'Oslo', country: 'NO' }, latitude: 59.91, longitude: 10.75 },
+      body: {
+        name: unique('Site'),
+        kind: 'site',
+        address: { city: 'Oslo', country: 'NO' },
+        latitude: 59.91,
+        longitude: 10.75,
+      },
     });
     const room = await hit('createLocation', 'POST', '/v1/locations', 201, {
       body: { name: unique('Room'), kind: 'room', parent_id: site.body.id },
     });
-    await hit('createLocation', 'POST', '/v1/locations', 409, { body: { name: room.body.name, parent_id: site.body.id } });
+    await hit('createLocation', 'POST', '/v1/locations', 409, {
+      body: { name: room.body.name, parent_id: site.body.id },
+    });
     await hit('createLocation', 'POST', '/v1/locations', 422, { body: { name: '' } });
-    await hit('listLocations', 'GET', `/v1/locations?parent_id=${site.body.id}&include_total=true&sort=-depth`, 200);
+    await hit(
+      'listLocations',
+      'GET',
+      `/v1/locations?parent_id=${site.body.id}&include_total=true&sort=-depth`,
+      200,
+    );
     await hit('listLocations', 'GET', '/v1/locations?kind=bogus', 400);
     await hit('getLocation', 'GET', `/v1/locations/${site.body.id}`, 200);
     await hit('getLocation', 'GET', `/v1/locations/${uuid()}`, 404);
-    const room2 = await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 200, {
+    await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 200, {
       body: { notes: 'north wing' },
       headers: { 'if-match': etag(room) },
     });
-    await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 412, { body: { notes: 'x' }, headers: { 'if-match': etag(room) } });
-    await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 428, { body: { notes: 'x' } });
+    await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 412, {
+      body: { notes: 'x' },
+      headers: { 'if-match': etag(room) },
+    });
+    await hit('updateLocation', 'PATCH', `/v1/locations/${room.body.id}`, 428, {
+      body: { notes: 'x' },
+    });
     await hit('updateLocation', 'PATCH', `/v1/locations/${site.body.id}`, 422, {
       body: { parent_id: room.body.id },
       headers: { 'if-match': '*' },
     });
-    await hit('archiveLocation', 'DELETE', `/v1/locations/${site.body.id}`, 409, { headers: { 'if-match': '*' } });
+    await hit('archiveLocation', 'DELETE', `/v1/locations/${site.body.id}`, 409, {
+      headers: { 'if-match': '*' },
+    });
 
     // ---- people
     const person = await hit('createPerson', 'POST', '/v1/people', 201, {
-      body: { display_name: unique('Pat'), email: `${unique('pat')}@w1.example`, employee_ref: unique('E'), location_id: room.body.id },
+      body: {
+        display_name: unique('Pat'),
+        email: `${unique('pat')}@w1.example`,
+        employee_ref: unique('E'),
+        location_id: room.body.id,
+      },
     });
-    await hit('createPerson', 'POST', '/v1/people', 409, { body: { display_name: 'Dup', email: person.body.email } });
-    await hit('createPerson', 'POST', '/v1/people', 422, { body: { display_name: 'x', kind: 'robot' } });
+    await hit('createPerson', 'POST', '/v1/people', 409, {
+      body: { display_name: 'Dup', email: person.body.email },
+    });
+    await hit('createPerson', 'POST', '/v1/people', 422, {
+      body: { display_name: 'x', kind: 'robot' },
+    });
     await hit('listPeople', 'GET', '/v1/people?limit=5&include_total=true&sort=display_name', 200);
     await hit('listPeople', 'GET', '/v1/people?has_login=maybe', 400);
     await hit('getPerson', 'GET', `/v1/people/${person.body.id}`, 200);
@@ -125,9 +166,17 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
       body: { department: 'Maths' },
       headers: { 'if-match': etag(person) },
     });
-    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 412, { body: { department: 'x' }, headers: { 'if-match': etag(person) } });
-    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 428, { body: { department: 'x' } });
-    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 422, { body: { status: 'sleeping' }, headers: { 'if-match': '*' } });
+    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 412, {
+      body: { department: 'x' },
+      headers: { 'if-match': etag(person) },
+    });
+    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 428, {
+      body: { department: 'x' },
+    });
+    await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 422, {
+      body: { status: 'sleeping' },
+      headers: { 'if-match': '*' },
+    });
 
     // ---- custody
     const asset = await newAsset(t.admin, categoryId);
@@ -140,46 +189,102 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
       body: { person_id: person.body.id },
       headers: keyed().headers,
     });
-    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 422, { body: {}, headers: keyed().headers });
-    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 400, { body: { person_id: person.body.id } });
-    await hit('checkoutAsset', 'POST', `/v1/assets/${uuid()}/checkout`, 404, { body: { person_id: person.body.id }, headers: keyed().headers });
-    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 412, { body: { person_id: person.body.id }, headers: keyed('W/"1"').headers });
-    await hit('listPersonAssignments', 'GET', `/v1/people/${person.body.id}/assignments?state=all&limit=5`, 200);
+    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 422, {
+      body: {},
+      headers: keyed().headers,
+    });
+    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 400, {
+      body: { person_id: person.body.id },
+    });
+    await hit('checkoutAsset', 'POST', `/v1/assets/${uuid()}/checkout`, 404, {
+      body: { person_id: person.body.id },
+      headers: keyed().headers,
+    });
+    await hit('checkoutAsset', 'POST', `/v1/assets/${asset.id}/checkout`, 412, {
+      body: { person_id: person.body.id },
+      headers: keyed('W/"1"').headers,
+    });
+    await hit(
+      'listPersonAssignments',
+      'GET',
+      `/v1/people/${person.body.id}/assignments?state=all&limit=5`,
+      200,
+    );
     await hit('listPersonAssignments', 'GET', `/v1/people/${uuid()}/assignments`, 404);
-    await hit('listPersonAssignments', 'GET', `/v1/people/${person.body.id}/assignments?state=nope`, 400);
+    await hit(
+      'listPersonAssignments',
+      'GET',
+      `/v1/people/${person.body.id}/assignments?state=nope`,
+      400,
+    );
     await hit('listPersonHistory', 'GET', `/v1/people/${person.body.id}/history?limit=5`, 200);
     await hit('listPersonHistory', 'GET', `/v1/people/${uuid()}/history`, 404);
     const other = await newPerson(t.admin);
-    const room3 = await hit('createLocation', 'POST', '/v1/locations', 201, { body: { name: unique('Dock') } });
+    const room3 = await hit('createLocation', 'POST', '/v1/locations', 201, {
+      body: { name: unique('Dock') },
+    });
     await hit('transferAsset', 'POST', `/v1/assets/${asset.id}/transfer`, 201, {
       body: { person_id: other.id, reason: 'handover', to_location_id: room3.body.id },
       headers: keyed().headers,
     });
-    await hit('transferAsset', 'POST', `/v1/assets/${asset.id}/transfer`, 422, { body: { person_id: other.id }, headers: keyed().headers });
-    await hit('transferAsset', 'POST', `/v1/assets/${uuid()}/transfer`, 404, { body: { person_id: other.id }, headers: keyed().headers });
-    await hit('transferAsset', 'POST', `/v1/assets/${asset.id}/transfer`, 400, { body: { person_id: person.body.id } });
+    await hit('transferAsset', 'POST', `/v1/assets/${asset.id}/transfer`, 422, {
+      body: { person_id: other.id },
+      headers: keyed().headers,
+    });
+    await hit('transferAsset', 'POST', `/v1/assets/${uuid()}/transfer`, 404, {
+      body: { person_id: other.id },
+      headers: keyed().headers,
+    });
+    await hit('transferAsset', 'POST', `/v1/assets/${asset.id}/transfer`, 400, {
+      body: { person_id: person.body.id },
+    });
     await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 200, {
       body: { note: 'back', attachment_ids: [uuid()] },
       headers: keyed().headers,
     });
-    await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 409, { body: {}, headers: keyed().headers });
-    await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 422, { body: { status_id: 'x' }, headers: keyed().headers });
-    await hit('checkinAsset', 'POST', `/v1/assets/${uuid()}/checkin`, 404, { body: {}, headers: keyed().headers });
+    await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 409, {
+      body: {},
+      headers: keyed().headers,
+    });
+    await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 422, {
+      body: { status_id: 'x' },
+      headers: keyed().headers,
+    });
+    await hit('checkinAsset', 'POST', `/v1/assets/${uuid()}/checkin`, 404, {
+      body: {},
+      headers: keyed().headers,
+    });
     await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 400, { body: {} });
 
     // ---- clean up what the walk made (archive rules)
-    await hit('archiveLocation', 'DELETE', `/v1/locations/${room3.body.id}`, 409, { headers: ifMatch('*').headers }); // the asset sits there
-    await hit('archiveLocation', 'DELETE', `/v1/locations/${room.body.id}`, 409, { headers: { 'if-match': '*' } }); // the person lives there
-    const free = await hit('createLocation', 'POST', '/v1/locations', 201, { body: { name: unique('Free') } });
-    await hit('archiveLocation', 'DELETE', `/v1/locations/${free.body.id}`, 204, { headers: { 'if-match': etag(free) } });
-    await hit('archiveLocation', 'DELETE', `/v1/locations/${uuid()}`, 404, { headers: { 'if-match': '*' } });
+    await hit('archiveLocation', 'DELETE', `/v1/locations/${room3.body.id}`, 409, {
+      headers: ifMatch('*').headers,
+    }); // the asset sits there
+    await hit('archiveLocation', 'DELETE', `/v1/locations/${room.body.id}`, 409, {
+      headers: { 'if-match': '*' },
+    }); // the person lives there
+    const free = await hit('createLocation', 'POST', '/v1/locations', 201, {
+      body: { name: unique('Free') },
+    });
+    await hit('archiveLocation', 'DELETE', `/v1/locations/${free.body.id}`, 204, {
+      headers: { 'if-match': etag(free) },
+    });
+    await hit('archiveLocation', 'DELETE', `/v1/locations/${uuid()}`, 404, {
+      headers: { 'if-match': '*' },
+    });
     await hit('archiveLocation', 'DELETE', `/v1/locations/${free.body.id}`, 428);
     const spare = await newPerson(t.admin);
-    await hit('archivePerson', 'DELETE', `/v1/people/${spare.id}`, 204, { headers: { 'if-match': '*' } });
-    await hit('archivePerson', 'DELETE', `/v1/people/${uuid()}`, 404, { headers: { 'if-match': '*' } });
+    await hit('archivePerson', 'DELETE', `/v1/people/${spare.id}`, 204, {
+      headers: { 'if-match': '*' },
+    });
+    await hit('archivePerson', 'DELETE', `/v1/people/${uuid()}`, 404, {
+      headers: { 'if-match': '*' },
+    });
     // the person of a login account cannot be archived
     const login = (await t.admin.get(`/v1/people?q=${t.adminEmail}&has_login=true`)).body.data[0];
-    await hit('archivePerson', 'DELETE', `/v1/people/${login.id}`, 409, { headers: { 'if-match': '*' } });
+    await hit('archivePerson', 'DELETE', `/v1/people/${login.id}`, 409, {
+      headers: { 'if-match': '*' },
+    });
     expect(etag(person2)).toBeTruthy();
   });
 

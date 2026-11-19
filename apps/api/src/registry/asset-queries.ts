@@ -251,13 +251,17 @@ export const ASSET_FIELDS = Object.keys(
 
 /** One asset (any archive state) by an arbitrary predicate. */
 export async function loadAssetRows(trx: Tx, where: Prisma.Sql, limit = 1000): Promise<AssetRow[]> {
-  const rows = await trx.$queryRaw<BareAssetRow[]>`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} limit ${limit}`;
+  const rows = await trx.$queryRaw<
+    BareAssetRow[]
+  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} limit ${limit}`;
   return withStatus(trx, rows);
 }
 
 /** Locks the asset row (`FOR UPDATE`) and reads it: the entry point of every custody write. */
 export async function lockAsset(trx: Tx, id: string): Promise<AssetRow | null> {
-  const rows = await trx.$queryRaw<BareAssetRow[]>`select ${ASSET_COLUMNS} ${ASSET_FROM} where a.id = ${id}::uuid for update of a`;
+  const rows = await trx.$queryRaw<
+    BareAssetRow[]
+  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where a.id = ${id}::uuid for update of a`;
   return rows[0] ? (await withStatus(trx, rows))[0]! : null;
 }
 

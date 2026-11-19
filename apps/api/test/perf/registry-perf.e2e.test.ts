@@ -296,7 +296,9 @@ describe.skipIf(!dbEnabled)(
       const person = (await A.admin.post('/v1/people', { display_name: 'Perf Person' })).body.id;
       const other = (await A.admin.post('/v1/people', { display_name: 'Perf Other' })).body.id;
       const post = async (path: string, body: unknown) => {
-        const res = await A.admin.post(path, body, { headers: { 'idempotency-key': randomUUID() } });
+        const res = await A.admin.post(path, body, {
+          headers: { 'idempotency-key': randomUUID() },
+        });
         if (res.status >= 300) throw new Error(`${path} -> ${res.status} ${res.raw.slice(0, 300)}`);
       };
       // the first 10 calls of a phase are warm-up and are not counted
@@ -319,7 +321,9 @@ describe.skipIf(!dbEnabled)(
         stats.push(stat);
         return stat;
       };
-      const out = await phase('custody check-out', (id) => post(`/v1/assets/${id}/checkout`, { person_id: person }));
+      const out = await phase('custody check-out', (id) =>
+        post(`/v1/assets/${id}/checkout`, { person_id: person }),
+      );
       // planner statistics for the new table, as autovacuum would have them
       await withClient(env.migratorUrl!, (c) => c.query('vacuum (analyze) app.assignment'));
       const filters = await measure('list assigned_person_id + assigned', SAMPLES, async () => {
@@ -332,7 +336,9 @@ describe.skipIf(!dbEnabled)(
       const unassigned = await measure('list assigned=false (default order)', SAMPLES, async () => {
         await get('/v1/assets?limit=50&assigned=false');
       });
-      const transfer = await phase('custody transfer', (id) => post(`/v1/assets/${id}/transfer`, { person_id: other }));
+      const transfer = await phase('custody transfer', (id) =>
+        post(`/v1/assets/${id}/transfer`, { person_id: other }),
+      );
       const back = await phase('custody check-in', (id) => post(`/v1/assets/${id}/checkin`, {}));
       const history = await measure('asset history (first page)', SAMPLES, async (i) => {
         await get(`/v1/assets/${ids[i % ids.length]}/history?limit=50`);
@@ -340,7 +346,16 @@ describe.skipIf(!dbEnabled)(
       const personAssignments = await measure('person assignments', SAMPLES, async () => {
         await get(`/v1/people/${other}/assignments?state=all&limit=50`);
       });
-      for (const s of [out, transfer, back, filters, assigned, unassigned, history, personAssignments]) {
+      for (const s of [
+        out,
+        transfer,
+        back,
+        filters,
+        assigned,
+        unassigned,
+        history,
+        personAssignments,
+      ]) {
         expect(s.p95, s.name).toBeLessThan(BUDGET.custody);
       }
     }, 300_000);

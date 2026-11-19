@@ -395,7 +395,11 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           expect(await trx.asset.count({ where: { location_id: null } })).toBe(0);
           const open = await trx.assignment.count({ where: { checked_in_at: null } });
           expect(open).toBeGreaterThan(40);
-          expect(await trx.assignment.count({ where: { checked_in_at: null, location_id: { not: null } } })).toBeGreaterThan(0);
+          expect(
+            await trx.assignment.count({
+              where: { checked_in_at: null, location_id: { not: null } },
+            }),
+          ).toBeGreaterThan(0);
           const [late] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.assignment
              where checked_in_at is null and expected_return < current_date`;

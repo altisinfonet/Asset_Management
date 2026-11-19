@@ -41,7 +41,9 @@ export class AppModule {
         PlatformModule,
         ControlPlaneModule,
         IdentityModule,
-        ...(auth ? [AuthModule, RegistryModule, LocationsModule, PeopleModule, LifecycleModule] : []),
+        ...(auth
+          ? [AuthModule, RegistryModule, LocationsModule, PeopleModule, LifecycleModule]
+          : []),
         HealthModule,
         OpenApiModule,
         ...extraImports,

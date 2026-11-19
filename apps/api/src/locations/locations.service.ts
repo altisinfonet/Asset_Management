@@ -95,7 +95,11 @@ export class LocationsService extends RegistryBase {
               }
             : {},
           query.parent_id ? { parent_id: query.parent_id } : {},
-          query.root === true ? { parent_id: null } : query.root === false ? { NOT: { parent_id: null } } : {},
+          query.root === true
+            ? { parent_id: null }
+            : query.root === false
+              ? { NOT: { parent_id: null } }
+              : {},
           query.descendants_of
             ? { ancestor_ids: { has: query.descendants_of }, NOT: { id: query.descendants_of } }
             : {},
@@ -164,7 +168,8 @@ export class LocationsService extends RegistryBase {
     const children = new Map<string, number>();
     for (const l of locations) {
       const n = own.get(l.id) ?? 0;
-      if (n > 0) for (const ancestor of l.ancestor_ids) total.set(ancestor, (total.get(ancestor) ?? 0) + n);
+      if (n > 0)
+        for (const ancestor of l.ancestor_ids) total.set(ancestor, (total.get(ancestor) ?? 0) + n);
       if (l.parent_id) children.set(l.parent_id, (children.get(l.parent_id) ?? 0) + 1);
     }
     return (id) => ({
@@ -187,8 +192,10 @@ export class LocationsService extends RegistryBase {
           ? await trx.location.findUnique({ where: { id: body.parent_id } })
           : null;
         if (body.parent_id) {
-          if (!parent || parent.archived_at) errors.push(invalidRef('/parent_id', 'No such location.'));
-          else if (parent.depth + 1 > MAX_LOCATION_DEPTH) errors.push(depthError(MAX_LOCATION_DEPTH));
+          if (!parent || parent.archived_at)
+            errors.push(invalidRef('/parent_id', 'No such location.'));
+          else if (parent.depth + 1 > MAX_LOCATION_DEPTH)
+            errors.push(depthError(MAX_LOCATION_DEPTH));
         }
         const company = body.company_id
           ? await trx.company.findUnique({ where: { id: body.company_id } })

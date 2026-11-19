@@ -339,9 +339,7 @@ export class CustodyService extends RegistryBase {
       const transfer = (await trx.transfer.findUnique({ where: { id: transferId } }))!;
 
       const detail = {
-        from: open
-          ? { type: open.target_type, id: open.target_id, name: open.target_name }
-          : null,
+        from: open ? { type: open.target_type, id: open.target_id, name: open.target_name } : null,
         to: { type: target.type, id: target.id, name: target.name },
         from_assignment_id: from?.id ?? null,
         to_assignment_id: toId,
@@ -484,7 +482,11 @@ export class CustodyService extends RegistryBase {
   /** The person / location / asset the request points at, validated (422 with a pointer). */
   private async resolveTarget(
     trx: Tx,
-    body: { person_id?: string | undefined; location_id?: string | undefined; target_asset_id?: string | undefined },
+    body: {
+      person_id?: string | undefined;
+      location_id?: string | undefined;
+      target_asset_id?: string | undefined;
+    },
     assetId: string,
   ): Promise<Target> {
     if (body.person_id) {
@@ -513,7 +515,11 @@ export class CustodyService extends RegistryBase {
     const targetId = body.target_asset_id!;
     if (targetId === assetId) {
       throw problem.validation([
-        { pointer: '/target_asset_id', message: 'an asset cannot be checked out to itself', code: 'invalid' },
+        {
+          pointer: '/target_asset_id',
+          message: 'an asset cannot be checked out to itself',
+          code: 'invalid',
+        },
       ]);
     }
     const target = await trx.asset.findUnique({
@@ -614,8 +620,7 @@ const stateOf = (row: AssetRow) => ({
   hasAssignment: row.assignment !== null && row.assignment !== undefined,
 });
 
-const dateOrNull = (v: string | undefined): Date | null =>
-  v ? new Date(`${v}T00:00:00Z`) : null;
+const dateOrNull = (v: string | undefined): Date | null => (v ? new Date(`${v}T00:00:00Z`) : null);
 
 /** Column values of the assignment's single target. */
 const targetColumns = (t: Target) =>

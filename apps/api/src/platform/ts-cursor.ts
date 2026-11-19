@@ -43,7 +43,12 @@ export function readTsIdCursor(cursor: string | undefined, filters: unknown): Ts
   if (!cursor) return { binding };
   const values = decodeCursor(cursor, TERMS, binding);
   const [ts, id] = values as [string, string];
-  if (typeof ts !== 'string' || !TS_SHAPE.test(ts) || typeof id !== 'string' || !UUID_SHAPE.test(id)) {
+  if (
+    typeof ts !== 'string' ||
+    !TS_SHAPE.test(ts) ||
+    typeof id !== 'string' ||
+    !UUID_SHAPE.test(id)
+  ) {
     throw invalid();
   }
   const year = Number(ts.slice(0, 4));

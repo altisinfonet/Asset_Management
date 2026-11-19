@@ -13,7 +13,12 @@ import {
  * (state, action) pair is listed, so a new action or state type without a row fails the test.
  */
 
-type Outcome = 'ok' | 'asset-already-checked-out' | 'asset-not-checked-out' | 'asset-not-deployable' | 'conflict';
+type Outcome =
+  | 'ok'
+  | 'asset-already-checked-out'
+  | 'asset-not-checked-out'
+  | 'asset-not-deployable'
+  | 'conflict';
 
 interface State {
   name: string;
@@ -36,37 +41,85 @@ const STATES: State[] = [
 
 const EXPECTED: Record<string, Record<AssetAction, Outcome>> = {
   'deployable, in stock': {
-    checkout: 'ok', checkin: 'asset-not-checked-out', transfer: 'ok', dispose: 'ok',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'ok',
+    checkin: 'asset-not-checked-out',
+    transfer: 'ok',
+    dispose: 'ok',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   'deployed, checked out': {
-    checkout: 'asset-already-checked-out', checkin: 'ok', transfer: 'ok', dispose: 'asset-already-checked-out',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'asset-already-checked-out',
+    checkin: 'ok',
+    transfer: 'ok',
+    dispose: 'asset-already-checked-out',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   'deployed status, nobody holds it': {
-    checkout: 'asset-not-deployable', checkin: 'asset-not-checked-out', transfer: 'asset-not-deployable', dispose: 'ok',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'asset-not-deployable',
+    checkin: 'asset-not-checked-out',
+    transfer: 'asset-not-deployable',
+    dispose: 'ok',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   pending: {
-    checkout: 'asset-not-deployable', checkin: 'asset-not-checked-out', transfer: 'asset-not-deployable', dispose: 'ok',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'asset-not-deployable',
+    checkin: 'asset-not-checked-out',
+    transfer: 'asset-not-deployable',
+    dispose: 'ok',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   'undeployable (in repair, broken)': {
-    checkout: 'asset-not-deployable', checkin: 'asset-not-checked-out', transfer: 'asset-not-deployable', dispose: 'ok',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'asset-not-deployable',
+    checkin: 'asset-not-checked-out',
+    transfer: 'asset-not-deployable',
+    dispose: 'ok',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   lost: {
-    checkout: 'asset-not-deployable', checkin: 'asset-not-checked-out', transfer: 'asset-not-deployable', dispose: 'ok',
-    mark_lost: 'conflict', mark_found: 'ok', move: 'ok', update: 'ok',
+    checkout: 'asset-not-deployable',
+    checkin: 'asset-not-checked-out',
+    transfer: 'asset-not-deployable',
+    dispose: 'ok',
+    mark_lost: 'conflict',
+    mark_found: 'ok',
+    move: 'ok',
+    update: 'ok',
   },
   'archived-type status (retired)': {
-    checkout: 'asset-not-deployable', checkin: 'asset-not-checked-out', transfer: 'asset-not-deployable', dispose: 'ok',
-    mark_lost: 'ok', mark_found: 'conflict', move: 'ok', update: 'ok',
+    checkout: 'asset-not-deployable',
+    checkin: 'asset-not-checked-out',
+    transfer: 'asset-not-deployable',
+    dispose: 'ok',
+    mark_lost: 'ok',
+    mark_found: 'conflict',
+    move: 'ok',
+    update: 'ok',
   },
   // an archived asset refuses every action (restore is the only way back)
   'archived (archived_at set)': {
-    checkout: 'conflict', checkin: 'conflict', transfer: 'conflict', dispose: 'conflict',
-    mark_lost: 'conflict', mark_found: 'conflict', move: 'conflict', update: 'conflict',
+    checkout: 'conflict',
+    checkin: 'conflict',
+    transfer: 'conflict',
+    dispose: 'conflict',
+    mark_lost: 'conflict',
+    mark_found: 'conflict',
+    move: 'conflict',
+    update: 'conflict',
   },
 };
 
@@ -89,7 +142,11 @@ describe('asset action state machine (M2-LIFE-05)', () => {
       expect(refusal?.code ?? 'ok').toBe(expected);
       if (expected === 'ok') {
         expect(() =>
-          assertAssetAction(action, { archived: false, stateType: state.stateType, hasAssignment: state.out }),
+          assertAssetAction(action, {
+            archived: false,
+            stateType: state.stateType,
+            hasAssignment: state.out,
+          }),
         ).not.toThrow();
       } else {
         try {

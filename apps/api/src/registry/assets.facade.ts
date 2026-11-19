@@ -261,9 +261,7 @@ export class AssetsFacade extends RegistryBase {
       ? byId(await trx.vendor.findMany({ where: { id: { in: ids((r) => r.vendor_id) } } }))
       : null;
     const locations = expand.includes('location')
-      ? byId(
-          await trx.location.findMany({ where: { id: { in: ids((r) => r.location_id) } } }),
-        )
+      ? byId(await trx.location.findMany({ where: { id: { in: ids((r) => r.location_id) } } }))
       : null;
     return rows.map((r) => ({
       ...(locations
@@ -738,9 +736,7 @@ export class AssetsFacade extends RegistryBase {
       data: {
         archived_at: archive ? new Date() : null,
         updated_by: auth.userId,
-        ...(wasDisposed
-          ? { disposed_on: null, disposal_reason: null, disposal_note: null }
-          : {}),
+        ...(wasDisposed ? { disposed_on: null, disposal_reason: null, disposal_note: null } : {}),
         ...(statusId ? { status_id: statusId } : {}),
       },
     });
@@ -967,13 +963,19 @@ export class AssetsFacade extends RegistryBase {
                  checkin_note = ${body.note ? `Marked lost: ${body.note}` : 'Marked lost'}
            where id = ${closed}::uuid and checked_in_at is null`;
       }
-      return this.finishStatusAction(trx, auth, current, { status_id: status.id }, {
-        verb: 'marked_lost',
-        action: 'lost',
-        summary: `Marked lost${body.note ? `: ${body.note}` : ''}`,
-        note: body.note,
-        assignmentId: closed,
-      });
+      return this.finishStatusAction(
+        trx,
+        auth,
+        current,
+        { status_id: status.id },
+        {
+          verb: 'marked_lost',
+          action: 'lost',
+          summary: `Marked lost${body.note ? `: ${body.note}` : ''}`,
+          note: body.note,
+          assignmentId: closed,
+        },
+      );
     });
   }
 

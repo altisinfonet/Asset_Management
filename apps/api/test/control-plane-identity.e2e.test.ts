@@ -34,6 +34,12 @@ const TENANT_TABLES = [
   'app.asset_tag_counter',
   'app.asset',
   'app.attachment',
+  // M2 wave 1
+  'app.location',
+  'app.person',
+  'app.assignment',
+  'app.transfer',
+  'app.asset_history',
   'app.idempotency_key',
   'app.outbox_event',
   'app.audit_log',
@@ -375,6 +381,37 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           'app.custom_field_def': 12,
         });
         expect(s.roles).toEqual(['asset_manager', 'technician', 'tenant_admin', 'viewer']);
+      }
+      // M2 wave 1 demo data: a location tree, people, assets with a place, assets checked out
+      for (const tenant of first.tenants) {
+        await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
+          expect(await countOf(trx, 'app.location')).toBe(18); // 2 sites, 4 buildings, 2 floors, rooms
+          expect(await trx.location.count({ where: { parent_id: null } })).toBe(2);
+          expect(await trx.location.count({ where: { kind: 'building' } })).toBe(4);
+          expect(await trx.location.count({ where: { depth: 3 } })).toBe(5); // rooms under floors
+          // 12 people without a login + one person per login account (created by the database)
+          expect(await countOf(trx, 'app.person')).toBe(16);
+          expect(await trx.person.count({ where: { user_id: null } })).toBe(12);
+          expect(await trx.asset.count({ where: { location_id: null } })).toBe(0);
+          const open = await trx.assignment.count({ where: { checked_in_at: null } });
+          expect(open).toBeGreaterThan(40);
+          expect(
+            await trx.assignment.count({
+              where: { checked_in_at: null, location_id: { not: null } },
+            }),
+          ).toBeGreaterThan(0);
+          const [late] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.assignment
+             where checked_in_at is null and expected_return < current_date`;
+          expect(late!.n).toBe(3);
+          // every asset has a "created" entry; every demo custody period a "checked_out" one
+          const [created] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.asset_history where event_type = 'created'`;
+          expect(created!.n).toBe(ASSETS_PER_TENANT);
+          const [out] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.asset_history where event_type = 'checked_out'`;
+          expect(out!.n).toBe(open);
+        });
       }
       expect(acme.tags).toEqual(globex.tags); // deliberately overlapping
       expect(acme.serials).toEqual(globex.serials);

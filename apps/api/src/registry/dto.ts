@@ -141,6 +141,44 @@ export const customFieldDto = (
   show_in_list: r.show_in_list,
 });
 
+export interface LocationCounts {
+  asset_count: number;
+  direct_asset_count: number;
+  child_count: number;
+}
+
+/** Schema `Location`; the counts are present on the location endpoints, absent when embedded in an asset. */
+export const locationDto = (
+  r: Stamped & {
+    parent_id: string | null;
+    company_id: string;
+    name: string;
+    kind: string;
+    code: string | null;
+    address: unknown;
+    latitude: { toString(): string } | null;
+    longitude: { toString(): string } | null;
+    notes: string | null;
+    depth: number;
+    ancestor_ids: string[];
+  },
+  counts?: LocationCounts,
+) => ({
+  ...stamps(r),
+  parent_id: r.parent_id,
+  company_id: r.company_id,
+  name: r.name,
+  kind: r.kind,
+  code: r.code,
+  address: (r.address as Record<string, unknown> | null) ?? null,
+  latitude: r.latitude === null ? null : Number(r.latitude.toString()),
+  longitude: r.longitude === null ? null : Number(r.longitude.toString()),
+  notes: r.notes,
+  depth: r.depth,
+  ancestor_ids: r.ancestor_ids,
+  ...(counts ?? {}),
+});
+
 /**
  * Options are stored as `[{value, label?}]`. Rows written by earlier seeds hold plain strings;
  * they read back in the canonical shape.

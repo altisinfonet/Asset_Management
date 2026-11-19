@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { listQuerySchema } from '../platform/index.js';
+import { HISTORY_EVENT_TYPES } from './asset-history.js';
 
 /**
  * Request schemas of the registry endpoints (openapi `components.schemas`). Bodies are strict:
@@ -286,6 +287,51 @@ export const bulkUpdateSchema = z.strictObject({
 export const bulkIdsSchema = z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) });
 export type BulkUpdateBody = z.output<typeof bulkUpdateSchema>;
 
+// -------------------------------------------- moves, disposal, lost and found (M2-LOC-02, M2-LIFE-05)
+
+export const moveSchema = z.strictObject({
+  location_id: z.uuid().nullable(),
+  note: str().trim().max(2000).optional(),
+});
+export type MoveBody = z.output<typeof moveSchema>;
+export const bulkMoveSchema = moveSchema.extend({ ids: z.array(z.uuid()).min(1).max(100) });
+export type BulkMoveBody = z.output<typeof bulkMoveSchema>;
+
+export const DISPOSAL_REASONS = [
+  'sold',
+  'donated',
+  'recycled',
+  'scrapped',
+  'stolen',
+  'returned_to_vendor',
+  'other',
+] as const;
+export const disposeSchema = z.strictObject({
+  reason: z.enum(DISPOSAL_REASONS),
+  note: str().trim().max(2000).optional(),
+  disposed_on: isoDate.optional(),
+  status_id: z.uuid().optional(),
+});
+export type DisposeBody = z.output<typeof disposeSchema>;
+export const markLostSchema = z.strictObject({
+  note: str().trim().max(2000).optional(),
+  status_id: z.uuid().optional(),
+});
+export type MarkLostBody = z.output<typeof markLostSchema>;
+export const markFoundSchema = z.strictObject({
+  status_id: z.uuid().optional(),
+  location_id: z.uuid().nullable().optional(),
+  note: str().trim().max(2000).optional(),
+});
+export type MarkFoundBody = z.output<typeof markFoundSchema>;
+
+export const historyListSchema = listQuerySchema.pick({ limit: true, cursor: true }).extend({
+  event_type: csv(z.enum(HISTORY_EVENT_TYPES)).optional(),
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+});
+export type HistoryListQuery = z.output<typeof historyListSchema>;
+
 export const ASSET_SORTS = [
   'created_at',
   'updated_at',
@@ -297,13 +343,15 @@ export const ASSET_SORTS = [
 
 export const ASSET_EXPANDS = ['model', 'category', 'location', 'vendor'] as const;
 
-/** Filters that exist in the contract but need M2 tables: refused (400) until they exist. */
-export const M2_ONLY_ASSET_FILTERS = [
-  'include_sublocations',
-  'assigned_person_id',
-  'assigned',
-  'loaner_pool_id',
-] as const;
+/**
+ * Filters that exist in the contract but need tables another M2 wave builds: refused (400) until
+ * they exist. (`include_sublocations`, `assigned`, `assigned_person_id` and `overdue` arrived with
+ * locations and custody; `loaner_pool_id` comes with the loaner pools.)
+ */
+export const M2_ONLY_ASSET_FILTERS = ['loaner_pool_id'] as const;
+
+/** `true` / `false` in a query string. */
+const boolParam = z.enum(['true', 'false']).transform((v) => v === 'true');
 
 export const assetListSchema = listQuerySchema.extend({
   q: str().min(1).max(200).optional(),
@@ -316,6 +364,10 @@ export const assetListSchema = listQuerySchema.extend({
   model_id: csv(z.uuid()).optional(),
   manufacturer_id: z.uuid().optional(),
   location_id: z.uuid().optional(),
+  include_sublocations: boolParam.optional(),
+  assigned: boolParam.optional(),
+  assigned_person_id: z.uuid().optional(),
+  overdue: boolParam.optional(),
   company_id: z.uuid().optional(),
   vendor_id: z.uuid().optional(),
   parent_asset_id: z.uuid().optional(),

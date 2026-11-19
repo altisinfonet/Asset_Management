@@ -13,23 +13,23 @@ describe('shipped migrations', async () => {
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
   });
 
-  it('M1 ships tenancy, catalogue, assets, audit, identity and provisioning only (no M2 tables)', () => {
+  it('ships the M1 tables and M2 wave 1 (locations, people, custody), and no later M2 table yet', () => {
     const tables = [...sql.matchAll(/create table (app|identity)\.([a-z_]+)/gi)].map(
       (m) => `${m[1]}.${m[2]}`,
     );
-    for (const m2 of [
-      'location',
-      'person',
+    // M2 wave 1 (migrations 0040-0049)
+    for (const wave1 of ['location', 'person', 'assignment', 'transfer', 'asset_history']) {
+      expect(tables).toContain(`app.${wave1}`);
+    }
+    // built by the other M2 agents (accessories, loaners, repairs, labels, imports): not in this range
+    for (const later of [
       'accessory',
       'consumable',
-      'assignment',
-      'transfer',
-      'asset_history',
       'maintenance_record',
       'label_template',
       'import_job',
     ]) {
-      expect(tables).not.toContain(`app.${m2}`);
+      expect(tables).not.toContain(`app.${later}`);
     }
     for (const m1 of [
       'tenant',

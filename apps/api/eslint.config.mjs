@@ -28,6 +28,9 @@ export const FACADE_MODULES = [
   'mail',
   'observability',
   'registry',
+  'locations',
+  'people',
+  'lifecycle',
   'openapi',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
@@ -52,6 +55,8 @@ export const KERNEL_DIRS = [
 /** Domain modules (architecture 4); they depend on the kernel, never the other way round. */
 export const DOMAIN_DIRS = [
   'registry',
+  'locations',
+  'people',
   'lifecycle',
   'tagging',
   'licenses',

@@ -12,7 +12,13 @@ import {
 } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { CurrentAuth, RequirePermission, type AuthContext } from '../auth/index.js';
-import { type IfMatch, RequiredIfMatch, ZodValidationPipe, setEtag } from '../platform/index.js';
+import {
+  type IfMatch,
+  OptionalIfMatch,
+  RequiredIfMatch,
+  ZodValidationPipe,
+  setEtag,
+} from '../platform/index.js';
 import { AssetsFacade } from './assets.facade.js';
 import { SearchService } from './search.service.js';
 import {
@@ -20,15 +26,27 @@ import {
   assetGetSchema,
   assetUpdateSchema,
   bulkIdsSchema,
+  bulkMoveSchema,
   bulkUpdateSchema,
   cloneSchema,
+  disposeSchema,
+  historyListSchema,
+  markFoundSchema,
+  markLostSchema,
+  moveSchema,
   scanResolveSchema,
   searchSchema,
   uuidParam,
   type AssetCreate,
   type AssetUpdate,
+  type BulkMoveBody,
   type BulkUpdateBody,
   type CloneBody,
+  type DisposeBody,
+  type HistoryListQuery,
+  type MarkFoundBody,
+  type MarkLostBody,
+  type MoveBody,
 } from './schemas.js';
 
 const idParam = () => new ZodValidationPipe(uuidParam, 'params');
@@ -88,6 +106,88 @@ export class AssetsController {
     @Body(new ZodValidationPipe(bulkIdsSchema)) body: { ids: string[] },
   ) {
     return this.assets.bulk(auth, 'restore', body.ids);
+  }
+
+  // ---- M2 wave 1: moves (M2-LOC-02), disposal and lost/found (M2-LIFE-05), history (M2-LIFE-06)
+
+  @Post('assets/bulk-move')
+  @RequirePermission('asset:update')
+  @HttpCode(200)
+  bulkMove(
+    @CurrentAuth() auth: AuthContext,
+    @Body(new ZodValidationPipe(bulkMoveSchema)) body: BulkMoveBody,
+  ) {
+    return this.assets.bulkMove(auth, body);
+  }
+
+  @Post('assets/:id/move')
+  @RequirePermission('asset:update')
+  @HttpCode(200)
+  async move(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @OptionalIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(moveSchema)) body: MoveBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { asset, version } = await this.assets.move(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return asset;
+  }
+
+  @Post('assets/:id/dispose')
+  @RequirePermission('asset:delete')
+  @HttpCode(200)
+  async dispose(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @OptionalIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(disposeSchema)) body: DisposeBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { asset, version } = await this.assets.dispose(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return asset;
+  }
+
+  @Post('assets/:id/mark-lost')
+  @RequirePermission('asset:update')
+  @HttpCode(200)
+  async markLost(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @OptionalIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(markLostSchema.default({}))) body: MarkLostBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { asset, version } = await this.assets.markLost(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return asset;
+  }
+
+  @Post('assets/:id/mark-found')
+  @RequirePermission('asset:update')
+  @HttpCode(200)
+  async markFound(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @OptionalIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(markFoundSchema.default({}))) body: MarkFoundBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { asset, version } = await this.assets.markFound(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return asset;
+  }
+
+  @Get('assets/:id/history')
+  @RequirePermission('asset:read')
+  history(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @Query(new ZodValidationPipe(historyListSchema, 'query')) query: HistoryListQuery,
+  ) {
+    return this.assets.history(auth, id, query);
   }
 
   @Get('assets/:id')

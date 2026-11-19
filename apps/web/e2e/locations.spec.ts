@@ -78,7 +78,7 @@ test.describe('locations tree', () => {
     );
     await again.getByLabel(/^Name/).fill('science lab');
     await again.getByRole('button', { name: 'Add location' }).click();
-    await expect(again.getByText('A location with this name already exists here')).toBeVisible();
+    await expect(again.getByText('This value is already in use.')).toBeVisible();
   });
 
   test('edits a site with its address, then moves a room with the picker', async ({ page }) => {

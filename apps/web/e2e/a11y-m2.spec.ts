@@ -108,7 +108,7 @@ const SCENARIOS: Scenario[] = [
       await dialog.getByLabel(/^Name/).fill('Dana');
       await dialog.getByLabel(/^E-mail/).fill('alice@example.org');
       await dialog.getByRole('button', { name: 'Add person' }).click();
-      await expect(dialog.getByText('This e-mail address is already in use')).toBeVisible();
+      await expect(dialog.getByText('This value is already in use.')).toBeVisible();
     },
   },
   {
@@ -206,7 +206,7 @@ const SCENARIOS: Scenario[] = [
         mimeType: 'application/x-msdownload',
         buffer: Buffer.from('MZ'),
       });
-      await expect(p.getByRole('alert').filter({ hasText: 'not allowed' })).toBeVisible();
+      await expect(p.getByRole('alert').filter({ hasText: 'are not accepted' })).toBeVisible();
     },
   },
   {

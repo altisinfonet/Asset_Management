@@ -77,7 +77,7 @@ test.describe('attachments tab', () => {
       mimeType: 'application/x-msdownload',
       buffer: Buffer.from('MZ'),
     });
-    const refusal = page.getByRole('alert').filter({ hasText: 'This type of file is not allowed' });
+    const refusal = page.getByRole('alert').filter({ hasText: 'are not accepted' });
     await expect(refusal).toBeVisible();
     await page.getByRole('button', { name: 'Dismiss' }).click();
     await expect(refusal).toHaveCount(0);

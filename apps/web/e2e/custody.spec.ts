@@ -103,7 +103,8 @@ test.describe('check-out, check-in and transfer from the asset page', () => {
     await expect(page.getByTestId('asset-holder')).toHaveCount(0);
     await page.getByRole('tab', { name: /History/ }).click();
     const history = page.getByRole('list', { name: 'History' });
-    await expect(history.getByText(/Condition: Fair\. Cracked bezel/).first()).toBeVisible();
+    await expect(history.getByText('Condition: Fair').first()).toBeVisible();
+    await expect(history.getByText('“Cracked bezel”').first()).toBeVisible();
   });
 
   test('transfers to another person in one step', async ({ page }) => {

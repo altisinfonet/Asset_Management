@@ -41,14 +41,12 @@ test.describe('people list', () => {
     await dialog.getByLabel(/^Name/).fill('Dana Reyes');
     await dialog.getByLabel(/^E-mail/).fill('alice@example.org');
     await dialog.getByRole('button', { name: 'Add person' }).click();
-    await expect(dialog.getByText('This e-mail address is already in use')).toBeVisible();
+    await expect(dialog.getByText('This value is already in use.')).toBeVisible();
 
     await dialog.getByLabel(/^E-mail/).fill('dana.reyes@school.example');
     await dialog.getByLabel(/^Employee or student number/).fill('S-2001');
     await dialog.getByRole('button', { name: 'Add person' }).click();
-    await expect(
-      dialog.getByText('This employee or student number is already in use'),
-    ).toBeVisible();
+    await expect(dialog.getByText('This value is already in use.')).toBeVisible();
 
     await dialog.getByLabel(/^Employee or student number/).fill('E-5000');
     await pick(
@@ -94,8 +92,8 @@ test.describe('a person', () => {
 
     await page.getByRole('tab', { name: 'History' }).click();
     const history = page.getByRole('list', { name: 'History' });
-    await expect(history.getByRole('link', { name: asset.asset_tag })).toBeVisible();
-    await expect(history.getByText(/returned/).first()).toBeVisible();
+    await expect(history.getByRole('link', { name: asset.asset_tag }).first()).toBeVisible();
+    await expect(history.getByText(/^Checked in/).first()).toBeVisible();
     expect(name).not.toBe('');
   });
 
@@ -125,9 +123,14 @@ test.describe('a person', () => {
 
     await page.getByRole('button', { name: 'Archive', exact: true }).click();
     const confirm = page.getByRole('dialog', { name: /^Archive / });
-    await expect(confirm.getByRole('status')).toContainText('still hold');
     await confirm.getByRole('button', { name: 'Archive' }).click();
-    await expect(confirm.getByRole('alert')).toContainText(/still checked out|open_assignments/);
+    // refused (409 with the number of open assignments): the way out is deactivating with a reason
+    await expect(confirm.getByText(/still holds assets/)).toBeVisible();
+    await confirm.getByRole('button', { name: 'Deactivate anyway' }).click();
+    await expect(confirm.getByText('This field is required.')).toBeVisible();
+    await confirm.getByRole('textbox', { name: /^Reason/ }).fill('Left the school');
+    await confirm.getByRole('button', { name: 'Deactivate anyway' }).click();
+    await expect(page.getByText(/ deactivated\./).first()).toBeVisible();
   });
 
   test('an unknown person shows the not-found screen', async ({ page }) => {

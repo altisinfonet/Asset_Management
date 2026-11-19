@@ -47,7 +47,8 @@ export default target === 'real'
       webServer: {
         command: `node scripts/serve-static.mjs out --port=${port} --fallback=${fallback} --proxy=${apiUrl}`,
         port,
-        reuseExistingServer: !process.env.CI,
+        // Never reuse: a leftover server on this port may proxy /v1 to a different (or dead) API stack.
+        reuseExistingServer: false,
       },
     })
   : defineConfig({

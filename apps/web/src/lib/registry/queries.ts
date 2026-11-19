@@ -10,6 +10,7 @@ import {
   locationsApi,
   manufacturersApi,
   modelsApi,
+  orEmptyWhenNotServed,
   rolesApi,
   statusApi,
   vendorsApi,
@@ -131,7 +132,9 @@ export function useLocations() {
     queryKey: LOOKUP_KEYS.locations,
     queryFn: () =>
       fetchAll<Location>((cursor) =>
-        locationsApi.list({ limit: 200, cursor, sort: ['depth', 'name'] }),
+        orEmptyWhenNotServed(() =>
+          locationsApi.list({ limit: 200, cursor, sort: ['depth', 'name'] }),
+        ),
       ),
     enabled,
     staleTime: STALE,

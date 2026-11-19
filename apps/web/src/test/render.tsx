@@ -1,6 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
+import { WorkflowProviders } from '@/components/app-shell/workflow-providers';
 import { ToastProvider } from '@/components/ui/toast';
 import { I18nProvider } from '@/i18n';
 import { AuthProvider } from '@/lib/auth/auth-context';
@@ -30,14 +31,19 @@ export function seedSession(
   setCsrfToken('csrf-test');
 }
 
-/** Render with the providers the real app has (i18n, toasts, auth bootstrap against the mock API). */
-export function renderApp(ui: ReactElement) {
+/**
+ * Render with the providers the real app has (i18n, toasts, auth bootstrap against the mock API).
+ * `workflows` adds the shell-level custody dialog and scan hosts (needs `next/navigation` mocked).
+ */
+export function renderApp(ui: ReactElement, options: { workflows?: boolean } = {}) {
   const queryClient = createQueryClient({ retry: false });
   return render(
     <I18nProvider locale="en">
       <ToastProvider>
         <QueryClientProvider client={queryClient}>
-          <AuthProvider>{ui}</AuthProvider>
+          <AuthProvider>
+            {options.workflows ? <WorkflowProviders>{ui}</WorkflowProviders> : ui}
+          </AuthProvider>
         </QueryClientProvider>
       </ToastProvider>
     </I18nProvider>,

@@ -10,6 +10,7 @@ import {
   type Rec,
   type RegistryData,
 } from './registry-fixtures';
+import { subtreeIds } from '@/lib/registry/locations';
 import { mutateRegistry, registry } from './registry-state';
 
 /**
@@ -22,16 +23,16 @@ import { mutateRegistry, registry } from './registry-state';
  * 412), problem+json with `errors[]` pointers, and server-side permission checks.
  */
 type S = components['schemas'];
-type FieldError = { pointer: string; message: string; code?: string };
-type Body = Record<string, unknown>;
+export type FieldError = { pointer: string; message: string; code?: string };
+export type Body = Record<string, unknown>;
 
-const strip = <T extends { _v: number }>(record: T): Omit<T, '_v'> => {
+export const strip = <T extends { _v: number }>(record: T): Omit<T, '_v'> => {
   const { _v: _ignored, ...rest } = record;
   return rest;
 };
-const nowIso = () => new Date().toISOString();
+export const nowIso = () => new Date().toISOString();
 
-function one<T extends { _v: number }>(
+export function one<T extends { _v: number }>(
   record: T,
   status = 200,
   extra: Record<string, string> = {},
@@ -42,21 +43,21 @@ function one<T extends { _v: number }>(
   });
 }
 
-async function readBody(request: Request): Promise<Body | null> {
+export async function readBody(request: Request): Promise<Body | null> {
   const body = (await request.json().catch(() => null)) as unknown;
   return typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Body) : null;
 }
 
-function validation(errors: FieldError[]) {
+export function validation(errors: FieldError[]) {
   return problem(422, 'validation', 'Validation failed', { errors });
 }
 
-const text = (value: unknown): string | undefined =>
+export const text = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 // ---- listing: filters, sort, cursor ------------------------------------------------------------
 
-interface ListConfig<T> {
+export interface ListConfig<T> {
   sorts: Record<string, (item: T) => string | number | null | undefined>;
   defaultSort: string;
   /** Free-text match for `q`. */
@@ -64,10 +65,10 @@ interface ListConfig<T> {
   filter?: (item: T, params: URLSearchParams) => boolean;
 }
 
-const csv = (params: URLSearchParams, name: string): string[] =>
+export const csv = (params: URLSearchParams, name: string): string[] =>
   (params.get(name) ?? '').split(',').filter(Boolean);
 
-function paginate<T extends { id: string; archived_at?: string | null; _v: number }>(
+export function paginate<T extends { id: string; archived_at?: string | null; _v: number }>(
   request: Request,
   items: T[],
   config: ListConfig<T>,
@@ -763,27 +764,6 @@ const fieldHandlers = resource<S['CustomFieldDef']>({
   },
 });
 
-const locationHandlers: HttpHandler[] = [
-  http.get('/v1/locations', ({ request }) => {
-    const guard = requireSession(request, { permission: 'location:read' });
-    if (!guard.ok) return guard.response;
-    return paginate(request, registry().locations, {
-      sorts: { name: (l) => l.name, depth: (l) => l.depth, created_at: (l) => l.created_at },
-      defaultSort: 'depth,name',
-      haystack: (l) => [l.name, l.code],
-      filter: (l, p) =>
-        (!p.get('parent_id') || l.parent_id === p.get('parent_id')) &&
-        (p.get('root') !== 'true' || !l.parent_id),
-    });
-  }),
-  http.get('/v1/locations/:id', ({ request, params }) => {
-    const guard = requireSession(request, { permission: 'location:read' });
-    if (!guard.ok) return guard.response;
-    const found = registry().locations.find((l) => l.id === params.id);
-    return found ? one(found) : problem(404, 'not-found', 'Not found');
-  }),
-];
-
 // ---- assets ----------------------------------------------------------------------------------------
 
 function isValidDate(value: unknown): boolean {
@@ -976,7 +956,7 @@ function validateAssetBody(
   return [];
 }
 
-function pushHistory(
+export function pushHistory(
   data: RegistryData,
   asset: MockAsset,
   event_type: S['HistoryEvent']['event_type'],
@@ -1108,7 +1088,7 @@ function bulkResponse(ids: string[], run: (id: string) => ItemOutcome) {
   });
 }
 
-function expandAsset(asset: MockAsset, expand: string[]): Record<string, unknown> {
+export function expandAsset(asset: MockAsset, expand: string[]): Record<string, unknown> {
   const data = registry();
   const { _v: _ignored, ...pub } = asset;
   const status = data.statusLabels.find((s) => s.id === asset.status_id);
@@ -1138,7 +1118,7 @@ function expandAsset(asset: MockAsset, expand: string[]): Record<string, unknown
   };
 }
 
-function oneAsset(
+export function oneAsset(
   asset: MockAsset,
   expand: string[] = [],
   status = 200,
@@ -1181,7 +1161,22 @@ function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
     const model = data.models.find((m) => m.id === a.model_id);
     if (model?.manufacturer_id !== manufacturer) return false;
   }
-  if (p.get('location_id') && a.location_id !== p.get('location_id')) return false;
+  const locationId = p.get('location_id');
+  if (locationId) {
+    const include = p.get('include_sublocations') !== 'false';
+    const here = include
+      ? subtreeIds(data.locations, locationId).has(a.location_id ?? '')
+      : a.location_id === locationId;
+    if (!here) return false;
+  }
+  const assigned = p.get('assigned');
+  if (assigned === 'true' && !a.current_assignment) return false;
+  if (assigned === 'false' && a.current_assignment) return false;
+  const holder = p.get('assigned_person_id');
+  if (holder) {
+    const current = a.current_assignment;
+    if (!(current?.target_type === 'person' && current.target_id === holder)) return false;
+  }
   if (p.get('vendor_id') && a.vendor_id !== p.get('vendor_id')) return false;
   const before = p.get('warranty_end_before');
   if (before && !(a.warranty_end && a.warranty_end <= before)) return false;
@@ -1192,10 +1187,6 @@ function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
     if (match && String(a.custom_data[match[1]!]) !== value) return false;
   }
   return true;
-}
-
-function allowedActions(asset: MockAsset): string[] {
-  return asset.archived_at ? [] : ['update'];
 }
 
 // ---- GET/PUT /v1/settings/asset-tag-template (ETag = tenant settings version) --------------------
@@ -1481,45 +1472,6 @@ const assetHandlers: HttpHandler[] = [
       if (!existing) return itemProblem(404, 'not-found', 'Not found');
       if (!existing.archived_at) return itemProblem(409, 'conflict', 'The asset is not archived');
       return mutateRegistry((data) => setAssetArchived(data, id, false, guard.user.id));
-    });
-  }),
-
-  http.get('/v1/assets/:id/history', ({ request, params }) => {
-    const guard = requireSession(request, { permission: 'asset:read' });
-    if (!guard.ok) return guard.response;
-    const asset = registry().assets.find((a) => a.id === params.id);
-    if (!asset) return problem(404, 'not-found', 'Not found');
-    const events = registry()
-      .history.filter((e) => e.asset_id === asset.id)
-      .map((e) => ({ ...e, _v: 0 }));
-    return paginate(
-      request,
-      events,
-      {
-        sorts: { at: (e) => e.at },
-        defaultSort: '-at',
-        filter: (e, p) =>
-          csv(p, 'event_type').length === 0 || csv(p, 'event_type').includes(e.event_type),
-      },
-      (e) => {
-        const { _v: _ignored, ...pub } = e;
-        return pub;
-      },
-    );
-  }),
-
-  http.get('/v1/scan/resolve', ({ request }) => {
-    const guard = requireSession(request, { permission: 'asset:read' });
-    if (!guard.ok) return guard.response;
-    const code = new URL(request.url).searchParams.get('code')?.trim().toLowerCase();
-    const assets = registry().assets;
-    const byLabel = assets.find((a) => a.label_code?.toLowerCase() === code);
-    const found = byLabel ?? assets.find((a) => a.asset_tag.toLowerCase() === code);
-    if (!found || !code) return problem(404, 'not-found', 'Nothing matches this code');
-    return HttpResponse.json({
-      match_type: byLabel ? 'label_code' : 'asset_tag',
-      asset: expandAsset(found, []),
-      allowed_actions: allowedActions(found),
     });
   }),
 ];
@@ -1878,7 +1830,6 @@ export const registryHandlers: HttpHandler[] = [
   ...manufacturerHandlers,
   ...modelHandlers,
   ...vendorHandlers,
-  ...locationHandlers,
   ...tagTemplateHandlers,
   ...assetHandlers,
   searchHandler,

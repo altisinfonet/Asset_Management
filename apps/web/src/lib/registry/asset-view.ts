@@ -5,6 +5,7 @@ import type { AssetListQuery } from './api';
  * "saved view" stores (in this browser only for now: `localStorage`, never state that matters).
  */
 export type ArchivedFilter = 'exclude' | 'include' | 'only';
+export type AssignedFilter = '' | 'yes' | 'no';
 
 export type AssetSortKey =
   'asset_tag' | 'name' | 'purchase_date' | 'warranty_end' | 'created_at' | 'updated_at';
@@ -14,6 +15,13 @@ export interface AssetViewState {
   status_id: string;
   category_id: string;
   location_id: string;
+  /** With a location: include its sublocations (the API default). */
+  include_sublocations: boolean;
+  /** Checked out (`yes`), in stock (`no`) or either (``). */
+  assigned: AssignedFilter;
+  /** Currently checked out to this person. */
+  person_id: string;
+  person_name: string;
   archived: ArchivedFilter;
   /** One custom field filter (`cf[key]=value`, exact match). */
   cf: { key: string; value: string } | null;
@@ -29,6 +37,8 @@ export const STANDARD_COLUMNS = [
   'model',
   'category',
   'status',
+  'assignee',
+  'due',
   'location',
   'serial',
   'vendor',
@@ -37,7 +47,15 @@ export const STANDARD_COLUMNS = [
   'created_at',
 ] as const;
 
-export const DEFAULT_COLUMNS = ['tag', 'name', 'model', 'status', 'location', 'warranty_end'];
+export const DEFAULT_COLUMNS = [
+  'tag',
+  'name',
+  'model',
+  'status',
+  'assignee',
+  'location',
+  'warranty_end',
+];
 
 /** Which columns the server can sort by, and the API sort key behind each. */
 export const SORT_KEY_BY_COLUMN: Record<string, AssetSortKey> = {
@@ -60,6 +78,10 @@ export function defaultViewState(): AssetViewState {
     status_id: '',
     category_id: '',
     location_id: '',
+    include_sublocations: true,
+    assigned: '',
+    person_id: '',
+    person_name: '',
     archived: 'exclude',
     cf: null,
     sort: '',
@@ -73,6 +95,8 @@ export function hasActiveFilters(state: AssetViewState): boolean {
     state.status_id ||
     state.category_id ||
     state.location_id ||
+    state.assigned ||
+    state.person_id ||
     state.archived !== 'exclude' ||
     state.cf
   );
@@ -92,8 +116,10 @@ export function toAssetQuery(state: AssetViewState, cursor?: string): AssetListQ
   if (state.category_id) query.category_id = [state.category_id];
   if (state.location_id) {
     query.location_id = state.location_id;
-    query.include_sublocations = true;
+    query.include_sublocations = state.include_sublocations;
   }
+  if (state.assigned) query.assigned = state.assigned === 'yes';
+  if (state.person_id) query.assigned_person_id = state.person_id;
   if (state.cf?.key && state.cf.value !== '') query.cf = { [state.cf.key]: state.cf.value };
   if (state.sort) query.sort = [state.sort as NonNullable<AssetListQuery['sort']>[number]];
   return query;
@@ -130,6 +156,10 @@ export function sanitiseState(value: unknown): AssetViewState {
     status_id: str(raw.status_id),
     category_id: str(raw.category_id),
     location_id: str(raw.location_id),
+    include_sublocations: raw.include_sublocations !== false,
+    assigned: raw.assigned === 'yes' || raw.assigned === 'no' ? raw.assigned : '',
+    person_id: str(raw.person_id),
+    person_name: str(raw.person_name).slice(0, 200),
     archived: archived === 'include' || archived === 'only' ? archived : 'exclude',
     cf:
       cf && typeof cf.key === 'string' && typeof cf.value === 'string'

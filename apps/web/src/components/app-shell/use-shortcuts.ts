@@ -7,6 +7,13 @@ export const GO_TO_KEYS = { d: 'dashboard', a: 'assets', s: 'settings' } as cons
 export type GoToTarget = (typeof GO_TO_KEYS)[keyof typeof GO_TO_KEYS];
 
 const SEQUENCE_WINDOW_MS = 1000;
+/**
+ * `c` and "go to" wait this long and are dropped when another key follows at once: a keyboard-wedge
+ * scanner types a code (which may start with `c`, or `g` and `a`) as a burst of keys, and must not
+ * start a new asset or change the page. A deliberate key press is not followed by another within
+ * this time, so the shortcut only feels a beat later.
+ */
+export const SCANNER_GUARD_MS = 70;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -34,11 +41,29 @@ export function useShortcuts({
 }): void {
   useEffect(() => {
     let pendingG: number | undefined;
+    let guarded: number | undefined;
 
     const clear = () => {
       if (pendingG !== undefined) window.clearTimeout(pendingG);
       pendingG = undefined;
     };
+    const dropGuarded = () => {
+      if (guarded !== undefined) window.clearTimeout(guarded);
+      guarded = undefined;
+    };
+    /** Run `action` after the scanner guard, unless another key arrives first. */
+    const guard = (action: () => void) => {
+      dropGuarded();
+      guarded = window.setTimeout(() => {
+        guarded = undefined;
+        action();
+      }, SCANNER_GUARD_MS);
+    };
+
+    /** Runs in the capture phase, before the scan listener can swallow the key. */
+    function onAnyKey() {
+      dropGuarded();
+    }
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -55,13 +80,13 @@ export function useShortcuts({
         clear();
         if (target) {
           event.preventDefault();
-          onGoTo(target);
+          guard(() => onGoTo(target));
         }
         return;
       }
       if (event.key === 'c' && onNewAsset) {
         event.preventDefault();
-        onNewAsset();
+        guard(onNewAsset);
         return;
       }
       if (event.key.toLowerCase() === 'g' && !event.shiftKey) {
@@ -69,9 +94,12 @@ export function useShortcuts({
       }
     }
 
+    window.addEventListener('keydown', onAnyKey, true);
     window.addEventListener('keydown', onKeyDown);
     return () => {
+      window.removeEventListener('keydown', onAnyKey, true);
       window.removeEventListener('keydown', onKeyDown);
+      dropGuarded();
       clear();
     };
   }, [onHelp, onGoTo, onNewAsset]);

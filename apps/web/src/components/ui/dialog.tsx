@@ -43,6 +43,7 @@ export function DialogContent({
   children,
   size = 'md',
   hideClose = false,
+  onEscapeKeyDown,
   ...props
 }: DialogContentProps) {
   const t = useT();
@@ -56,6 +57,11 @@ export function DialogContent({
           'data-[state=open]:animate-[at-pop-in_160ms_ease-out]',
           className,
         )}
+        onEscapeKeyDown={(event) => {
+          // The first Esc closes an open combobox list, not the dialog around it.
+          if (document.querySelector('[data-combobox-open="true"]')) event.preventDefault();
+          onEscapeKeyDown?.(event);
+        }}
         {...props}
       >
         {children}

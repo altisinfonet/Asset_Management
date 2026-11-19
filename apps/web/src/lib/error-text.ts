@@ -7,6 +7,10 @@ const USAGE_LABELS = {
   models: 'usage.models',
   custom_fields: 'usage.customFields',
   assets_with_values: 'usage.assetsWithValues',
+  children: 'usage.children',
+  locations: 'usage.locations',
+  open_assignments: 'usage.openAssignments',
+  assignments: 'usage.openAssignments',
 } as const;
 
 /** "12 assets, 3 models" for the `usage` of a 409; empty when the problem carried none. */

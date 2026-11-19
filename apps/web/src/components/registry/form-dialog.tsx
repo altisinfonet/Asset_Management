@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Field } from '@/components/ui/field';
+import { Field, type FieldControlProps } from '@/components/ui/field';
 import { Input, Textarea } from '@/components/ui/input';
 import { Select, type SelectOption } from '@/components/ui/select';
 import { useT } from '@/i18n';
@@ -22,7 +22,8 @@ import { uiErrorText } from '@/lib/error-text';
 export interface FormFieldSpec {
   name: string;
   label: string;
-  kind: 'text' | 'textarea' | 'number' | 'select' | 'date' | 'checkbox' | 'email' | 'url';
+  kind:
+    'text' | 'textarea' | 'number' | 'select' | 'date' | 'checkbox' | 'email' | 'url' | 'custom';
   required?: boolean;
   hint?: string;
   placeholder?: string;
@@ -33,6 +34,17 @@ export interface FormFieldSpec {
   mono?: boolean;
   min?: number;
   max?: number;
+  /** `custom`: render your own control (a picker), wired with the field's label, hint and error. */
+  render?: (context: CustomFieldContext) => ReactNode;
+  /** Shown only while this returns true (fields that depend on another field). */
+  visible?: (values: FormValues) => boolean;
+}
+
+export interface CustomFieldContext {
+  control: FieldControlProps;
+  value: string | boolean;
+  set: (value: string | boolean) => void;
+  invalid: boolean;
 }
 
 export type FormValues = Record<string, string | boolean>;
@@ -112,6 +124,7 @@ export function FormDialog({
     event.preventDefault();
     const missing: Record<string, string> = {};
     for (const field of fields) {
+      if (field.visible && !field.visible(values)) continue;
       const value = values[field.name];
       if (field.required && field.kind !== 'checkbox' && (!value || String(value).trim() === '')) {
         missing[field.name] = t('form.required');
@@ -166,7 +179,7 @@ export function FormDialog({
             <FormError message={uiErrorText(t, formError)} requestId={formError.requestId} />
           ) : null}
           {fields.map((field) =>
-            field.kind === 'checkbox' ? (
+            field.visible && !field.visible(values) ? null : field.kind === 'checkbox' ? (
               <Checkbox
                 key={field.name}
                 label={field.label}
@@ -183,7 +196,14 @@ export function FormDialog({
                 error={errors[field.name] || undefined}
               >
                 {(control) =>
-                  field.kind === 'select' ? (
+                  field.kind === 'custom' ? (
+                    (field.render?.({
+                      control,
+                      value: values[field.name] ?? '',
+                      set: (value) => set(field.name, value),
+                      invalid: !!errors[field.name],
+                    }) ?? null)
+                  ) : field.kind === 'select' ? (
                     <Select
                       {...control}
                       invalid={!!errors[field.name]}

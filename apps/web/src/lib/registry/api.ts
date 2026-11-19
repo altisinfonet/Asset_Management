@@ -14,15 +14,27 @@ import type {
   CustomFieldDef,
   CustomFieldDefCreate,
   CustomFieldDefUpdate,
+  Assignment,
+  CheckinRequest,
+  CheckoutRequest,
+  CustodyResult,
   HistoryEvent,
   Location,
+  LocationCreate,
+  LocationUpdate,
   Manufacturer,
   Page,
+  Person,
+  PersonCreate,
+  PersonUpdate,
   RegistryUser,
   Role,
+  ScanResolveResult,
   SearchResult,
   SessionInfo,
   StatusLabel,
+  TransferRequest,
+  TransferResult,
   Vendor,
   Versioned,
 } from './types';
@@ -45,11 +57,11 @@ type Query<K extends keyof operations> = operations[K]['parameters'] extends {
 const emptyPage = <T>(): Page<T> => ({ data: [], page: { next_cursor: null, has_more: false } });
 
 /**
- * M2 endpoints (locations, asset history) are in the contract but not served by the M1 API: they
- * answer `404`. The screens that read them treat that as "nothing yet" instead of a failure, so the
- * same build works against the M1 API and against the later one.
+ * The location list behind every picker is in the contract, but an M1 API answers `404`. The shared
+ * lookups treat that as "nothing yet", so the same build still works against an old API in mocks-off
+ * dev. The admin screens call the strict functions instead.
  */
-async function orEmptyWhenNotServed<T>(read: () => Promise<Page<T>>): Promise<Page<T>> {
+export async function orEmptyWhenNotServed<T>(read: () => Promise<Page<T>>): Promise<Page<T>> {
   try {
     return await read();
   } catch (err) {
@@ -80,10 +92,10 @@ export const assetsApi = {
     });
     return versioned(data as Asset, `/v1/assets/${id}`);
   },
-  /** Resolve a scanned QR code or tag to an asset (`GET /v1/scan/resolve`). */
-  async resolve(code: string): Promise<Asset> {
+  /** Resolve a scanned QR code or tag to an asset and its allowed actions (`GET /v1/scan/resolve`). */
+  async resolve(code: string): Promise<ScanResolveResult> {
     const { data } = await http().GET('/v1/scan/resolve', { params: { query: { code } } });
-    return (data as { asset: Asset }).asset;
+    return data as ScanResolveResult;
   },
   async create(body: AssetCreate): Promise<Versioned<Asset>> {
     const { data } = await http().POST('/v1/assets', { body });
@@ -126,16 +138,92 @@ export const assetsApi = {
     const { data } = await http().POST('/v1/assets/bulk-restore', { body: { ids } });
     return data as BulkAssetResult;
   },
-  async history(
-    id: string,
-    query: { cursor?: string; limit?: number },
-  ): Promise<Page<HistoryEvent>> {
-    return orEmptyWhenNotServed(async () => {
-      const { data } = await http().GET('/v1/assets/{id}/history', {
-        params: { path: { id }, query },
-      });
-      return data as Page<HistoryEvent>;
+  /** `GET /v1/assets/{id}/history`: the chain of custody and lifecycle events, newest first. */
+  async history(id: string, query: Query<'listAssetHistory'> = {}): Promise<Page<HistoryEvent>> {
+    const { data } = await http().GET('/v1/assets/{id}/history', {
+      params: { path: { id }, query },
     });
+    return data as Page<HistoryEvent>;
+  },
+};
+
+// ---- custody: check-out, check-in, transfer (M2-LIFE-07) ---------------------------------------------
+
+/** What every custody call needs besides its body: the retry key and the version the user saw. */
+export interface CustodyCallOptions {
+  /** `Idempotency-Key`: the same key with the same body replays the first answer. */
+  idempotencyKey: string;
+  /** ETag of the asset the user acted on (`If-Match`); a changed asset answers `412`. */
+  etag?: string;
+}
+
+export interface CustodyOutcome<T> {
+  result: T;
+  /** The asset's new ETag. */
+  etag: string | undefined;
+  /** True when the server answered from its idempotency store (`Idempotent-Replayed`). */
+  replayed: boolean;
+}
+
+/**
+ * The typed client remembers the ETag of every response under the request's own path and replays
+ * it as `If-Match`. For an action path (`/v1/assets/{id}/checkout`) that ETag is the asset's version
+ * after the *previous* action, never the one the user saw: forget it, so only the ETag the caller
+ * passes (or none) is sent.
+ */
+function forgetActionEtag(id: string, action: 'checkout' | 'checkin' | 'transfer') {
+  getApi().etags.forget(`/v1/assets/${id}/${action}`);
+}
+
+const custodyHeaders = (options: CustodyCallOptions) => ({
+  'Idempotency-Key': options.idempotencyKey,
+  ...(options.etag ? { 'If-Match': options.etag } : {}),
+});
+
+function outcome<T>(result: T, response: Response): CustodyOutcome<T> {
+  return {
+    result,
+    etag: response.headers.get('etag') ?? undefined,
+    replayed: response.headers.get('idempotent-replayed') === 'true',
+  };
+}
+
+export const custodyApi = {
+  async checkout(
+    id: string,
+    body: CheckoutRequest,
+    options: CustodyCallOptions,
+  ): Promise<CustodyOutcome<CustodyResult>> {
+    forgetActionEtag(id, 'checkout');
+    const { data, response } = await http().POST('/v1/assets/{id}/checkout', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return outcome(data as CustodyResult, response);
+  },
+  async checkin(
+    id: string,
+    body: CheckinRequest,
+    options: CustodyCallOptions,
+  ): Promise<CustodyOutcome<CustodyResult>> {
+    forgetActionEtag(id, 'checkin');
+    const { data, response } = await http().POST('/v1/assets/{id}/checkin', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return outcome(data as CustodyResult, response);
+  },
+  async transfer(
+    id: string,
+    body: TransferRequest,
+    options: CustodyCallOptions,
+  ): Promise<CustodyOutcome<TransferResult>> {
+    forgetActionEtag(id, 'transfer');
+    const { data, response } = await http().POST('/v1/assets/{id}/transfer', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return outcome(data as TransferResult, response);
   },
 };
 
@@ -368,12 +456,79 @@ export const vendorsApi = {
   },
 };
 
+// ---- locations (M2-LOC-04) ---------------------------------------------------------------------------
+
 export const locationsApi = {
   async list(query: Query<'listLocations'> = {}): Promise<Page<Location>> {
-    return orEmptyWhenNotServed(async () => {
-      const { data } = await http().GET('/v1/locations', { params: { query } });
-      return data as Page<Location>;
+    const { data } = await http().GET('/v1/locations', { params: { query } });
+    return data as Page<Location>;
+  },
+  async get(id: string): Promise<Versioned<Location>> {
+    const { data } = await http().GET('/v1/locations/{id}', { params: { path: { id } } });
+    return versioned(data as Location, `/v1/locations/${id}`);
+  },
+  async create(body: LocationCreate): Promise<Versioned<Location>> {
+    const { data } = await http().POST('/v1/locations', { body });
+    const created = data as Location;
+    return versioned(created, `/v1/locations/${created.id}`);
+  },
+  async update(id: string, body: LocationUpdate, etag?: string): Promise<Versioned<Location>> {
+    const ifMatch = await freshEtag(etag, () => locationsApi.get(id));
+    const { data } = await http().PATCH('/v1/locations/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+      body,
     });
+    return versioned(data as Location, `/v1/locations/${id}`);
+  },
+  async archive(id: string, etag?: string): Promise<void> {
+    const ifMatch = await freshEtag(etag, () => locationsApi.get(id));
+    await http().DELETE('/v1/locations/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+    });
+  },
+};
+
+// ---- people (M2-USR-02) -----------------------------------------------------------------------------
+
+export type PeopleQuery = Query<'listPeople'>;
+
+export const peopleApi = {
+  async list(query: PeopleQuery = {}, signal?: AbortSignal): Promise<Page<Person>> {
+    const { data } = await http().GET('/v1/people', { params: { query }, signal });
+    return data as Page<Person>;
+  },
+  async get(id: string): Promise<Versioned<Person>> {
+    const { data } = await http().GET('/v1/people/{id}', { params: { path: { id } } });
+    return versioned(data as Person, `/v1/people/${id}`);
+  },
+  async create(body: PersonCreate): Promise<Versioned<Person>> {
+    const { data } = await http().POST('/v1/people', { body });
+    const created = data as Person;
+    return versioned(created, `/v1/people/${created.id}`);
+  },
+  async update(id: string, body: PersonUpdate, etag?: string): Promise<Versioned<Person>> {
+    const ifMatch = await freshEtag(etag, () => peopleApi.get(id));
+    const { data } = await http().PATCH('/v1/people/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+      body,
+    });
+    return versioned(data as Person, `/v1/people/${id}`);
+  },
+  async archive(id: string, etag?: string): Promise<void> {
+    const ifMatch = await freshEtag(etag, () => peopleApi.get(id));
+    await http().DELETE('/v1/people/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+    });
+  },
+  /** `GET /v1/people/{id}/assignments`: custody periods of the person (open ones by default). */
+  async assignments(
+    id: string,
+    query: Query<'listPersonAssignments'> = {},
+  ): Promise<Page<Assignment>> {
+    const { data } = await http().GET('/v1/people/{id}/assignments', {
+      params: { path: { id }, query },
+    });
+    return data as Page<Assignment>;
   },
 };
 

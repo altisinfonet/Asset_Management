@@ -74,8 +74,10 @@ describe('command palette', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Command palette' });
     expect(within(dialog).getByRole('option', { name: 'Assets' })).toBeVisible();
     expect(within(dialog).getByRole('option', { name: 'Settings' })).toBeVisible();
+    expect(within(dialog).getByRole('option', { name: 'Locations' })).toBeVisible();
+    expect(within(dialog).getByRole('option', { name: 'People' })).toBeVisible();
     // modules that are not built yet are not offered
-    expect(within(dialog).queryByRole('option', { name: 'Locations' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('option', { name: 'Loaner pool' })).not.toBeInTheDocument();
 
     await user.type(within(dialog).getByRole('combobox'), 'settings');
     await user.keyboard('{Enter}');
@@ -163,15 +165,18 @@ describe('keyboard shortcuts', () => {
     await renderShell();
     const user = userEvent.setup();
     await user.keyboard('ga');
-    expect(router.push).toHaveBeenCalledWith('/assets');
+    // the shortcut waits a beat (the scanner guard) so a scanned code cannot trigger it
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/assets'));
 
     router.push.mockReset();
     await user.keyboard('gx');
     await user.keyboard('a');
+    await new Promise((resolve) => setTimeout(resolve, 120));
     expect(router.push).not.toHaveBeenCalled();
 
     await user.click(screen.getByPlaceholderText('Scan or type tag'));
     await user.keyboard('ga');
+    await new Promise((resolve) => setTimeout(resolve, 120));
     expect(router.push).not.toHaveBeenCalled();
   });
 

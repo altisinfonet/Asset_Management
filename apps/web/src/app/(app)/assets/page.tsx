@@ -2,9 +2,11 @@
 
 import { Plus } from 'lucide-react';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useT } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import { routes } from '@/lib/routes';
@@ -33,7 +35,10 @@ export default function AssetsPage() {
           </>
         }
       />
-      <AssetsTable />
+      {/* `useSearchParams` (deep-linked filters) needs a Suspense boundary in a static export. */}
+      <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+        <AssetsTable />
+      </Suspense>
     </>
   );
 }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CustomFieldInput } from '@/components/registry/custom-field-input';
+import { LocationPicker } from '@/components/registry/location-picker';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -469,18 +470,13 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
           </Field>
           <Field label={t('assetForm.location')} error={errors.location_id || undefined}>
             {(c) => (
-              <Select
+              <LocationPicker
                 {...c}
                 invalid={!!errors.location_id}
-                value={state.location_id || NONE}
-                onValueChange={(v) => set('location_id', v === NONE ? '' : v)}
-                options={[
-                  { value: NONE, label: t('common.none') },
-                  ...lookups.locations.map((l) => ({
-                    value: l.id,
-                    label: lookups.locationLabel(l.id),
-                  })),
-                ]}
+                clearable
+                value={state.location_id}
+                placeholder={t('common.none')}
+                onChange={(id) => set('location_id', id)}
               />
             )}
           </Field>

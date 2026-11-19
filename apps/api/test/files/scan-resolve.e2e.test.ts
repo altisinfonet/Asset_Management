@@ -23,7 +23,7 @@ describe.skipIf(!dbEnabled)('scan codes and resolve (M2-TAG-01)', () => {
   let app: App;
   let A: TenantFixture;
   let B: TenantFixture;
-  let assets: Array<{ id: string; asset_tag: string; label_code: string }> = [];
+  const assets: Array<{ id: string; asset_tag: string; label_code: string }> = [];
 
   beforeAll(async () => {
     ({ app } = await startRegistryApp({ SCAN_RESOLVE_MAX_MISSES: '10' }));

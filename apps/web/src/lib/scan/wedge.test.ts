@@ -24,11 +24,11 @@ describe('WedgeDetector', () => {
     expect(results.at(-1)).toEqual({ type: 'scan', code: 'AT-00124' });
   });
 
-  it('swallows every key of a burst from the second on, never the first', () => {
+  it('swallows every key of a burst from the third on, never the first two (a quick "g a" chord)', () => {
     const results = typeCode(new WedgeDetector(), 'LBL42');
     expect(results.slice(0, 5).map((r) => r.type)).toEqual([
-      'ignore', // the first key cannot be told from typing yet
-      'capture',
+      'ignore', // the first keys cannot be told from typing yet
+      'ignore',
       'capture',
       'capture',
       'capture',

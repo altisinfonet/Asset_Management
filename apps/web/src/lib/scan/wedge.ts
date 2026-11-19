@@ -16,7 +16,7 @@ export interface WedgeOptions {
 export type WedgeResult =
   /** Not part of a scan (or a burst that cannot be one): do nothing. */
   | { type: 'ignore' }
-  /** A key of a burst in progress (the second one onwards): swallow it so no shortcut fires. */
+  /** A key of a burst in progress (the third one onwards): swallow it so no shortcut fires. */
   | { type: 'capture' }
   /** Enter ended a burst: this is the scanned code. */
   | { type: 'scan'; code: string };
@@ -64,7 +64,9 @@ export class WedgeDetector {
       this.reset();
       return { type: 'ignore' };
     }
-    // The first key of a burst cannot be told from typing yet; from the second on it is a scan.
-    return this.buffer.length >= 2 ? { type: 'capture' } : { type: 'ignore' };
+    // The first two keys cannot be told from typing (a quick "g a" chord) yet; from the third on it is a
+    // scan. The shortcuts that the first keys may have started wait a moment and drop out (see
+    // `SCANNER_GUARD_MS` in use-shortcuts).
+    return this.buffer.length >= 3 ? { type: 'capture' } : { type: 'ignore' };
   }
 }

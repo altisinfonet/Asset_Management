@@ -101,3 +101,22 @@ export const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
+
+/**
+ * A keyboard-wedge scan: the code arrives as one burst of key presses with no pause, then Enter, with
+ * nothing editable focused. Dispatched in one go inside the page so the burst does not depend on how
+ * busy the test machine is (a real scanner is just as fast and steady).
+ */
+export async function wedge(page: Page, code: string): Promise<void> {
+  await expect(page.getByRole('button', { name: 'Scan assets' })).toBeVisible();
+  // two frames: the freshly loaded shell has attached its key listener
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await page.evaluate((text) => {
+    const target = (document.activeElement as HTMLElement | null) ?? document.body;
+    for (const key of [...text, 'Enter']) {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    }
+  }, code);
+}

@@ -116,6 +116,8 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const counter = useRef(0);
 
   const log = useCallback((entry: Omit<ScanLogEntry, 'id'>) => {
+    // a scan that failed may be tried again at once (after fixing what was missing)
+    if (!entry.ok) last.current = null;
     counter.current += 1;
     setBatch((current) => ({
       ...current,
@@ -152,6 +154,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
               : t('scan.notFound', { code: outcome.code });
           if (batching) log({ code: text, ok: false, message });
           else {
+            last.current = null;
             toast({ variant: 'danger', title: message });
             if (batchRef.current.sound) beep('error');
           }
@@ -211,7 +214,10 @@ export function ScanProvider({ children }: { children: ReactNode }) {
         const ui = getApi().toUiError(err);
         const message = uiErrorText(t, ui);
         if (batching) log({ code: text, ok: false, message });
-        else toast({ variant: 'danger', title: message, requestId: ui.requestId });
+        else {
+          last.current = null;
+          toast({ variant: 'danger', title: message, requestId: ui.requestId });
+        }
       }
     },
     [log, refresh, router, t, toast],

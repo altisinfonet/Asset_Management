@@ -97,9 +97,13 @@ test.describe('attachments tab', () => {
       .getByRole('button', { name: 'Delete' })
       .click();
     await expect(page.getByText('purchase-order.pdf deleted.').first()).toBeVisible();
-    await expect(page.getByRole('listitem').filter({ hasText: 'purchase-order.pdf' })).toHaveCount(
-      0,
-    );
+    // (the toast is a list item too, so look in the list of files)
+    await expect(
+      page
+        .getByRole('list', { name: 'Attached files' })
+        .getByRole('listitem')
+        .filter({ hasText: 'purchase-order.pdf' }),
+    ).toHaveCount(0);
   });
 
   test('the drop zone takes dropped files', async ({ page }) => {

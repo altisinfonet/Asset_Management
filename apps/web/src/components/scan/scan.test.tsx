@@ -81,6 +81,15 @@ describe('keyboard-wedge scanner (global)', () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
+  it('a scanned code that starts with the go-to sequence does not change the page', async () => {
+    await shell();
+    const user = userEvent.setup();
+    await user.keyboard('gas-nothing{Enter}');
+    expect(await screen.findByText('No asset matches "gas-nothing".')).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
   it('a lone "c" still starts a new asset (after the scanner guard)', async () => {
     await shell();
     const user = userEvent.setup();

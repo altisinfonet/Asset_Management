@@ -1,19 +1,12 @@
 import { MOCK_ACCOUNTS } from '../src/mocks/fixtures';
 import { expect, gotoApp, test } from './fixtures';
-import { heldAsset, pick, readyAsset } from './m2-helpers';
+import { heldAsset, pick, readyAsset, wedge } from './m2-helpers';
 
 /**
  * Keyboard-wedge scanner and manual tag entry (M2-LIFE-08). A wedge scanner "types" the code in a
- * burst of keys a few milliseconds apart and ends with Enter; here Playwright does the same with a
- * 5 ms delay (a person types at 100 ms or more).
+ * burst of keys a few milliseconds apart and ends with Enter (`wedge()` dispatches exactly that; one test
+ * also uses the real keyboard with no pause). A person types at 100 ms or more between keys.
  */
-async function wedge(page: import('@playwright/test').Page, code: string) {
-  // let the freshly loaded page attach its key listener (a real scan never comes this early)
-  await page.waitForTimeout(250);
-  await page.keyboard.type(code, { delay: 5 });
-  await page.keyboard.press('Enter');
-}
-
 test.describe('wedge scanner on any page', () => {
   test('a scan with nothing focused opens the asset, with its primary action focused', async ({
     page,
@@ -40,6 +33,17 @@ test.describe('wedge scanner on any page', () => {
     }
   });
 
+  test('a real keyboard burst (no pause between keys) is recognised too', async ({ page }) => {
+    await gotoApp(page, '/');
+    await expect(page.getByRole('button', { name: 'Scan assets' })).toBeVisible();
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await page.keyboard.type('AT-00124');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('asset-tag')).toHaveText('AT-00124');
+  });
+
   test('a label code and a label URL resolve like a tag', async ({ page }) => {
     await gotoApp(page, '/');
     await wedge(page, 'LBL00124');
@@ -54,6 +58,15 @@ test.describe('wedge scanner on any page', () => {
     // "c" starts a new asset, "g" then "a" goes to Assets: neither may fire for a scanned burst
     await wedge(page, 'cga-no-such-code');
     await expect(page.getByText('No asset matches "cga-no-such-code".').first()).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test('codes that start like the go-to sequence or the new-asset key are scans, not shortcuts', async ({
+    page,
+  }) => {
+    await gotoApp(page, '/');
+    await wedge(page, 'gas-no-such-code');
+    await expect(page.getByText('No asset matches "gas-no-such-code".').first()).toBeVisible();
     await expect(page).toHaveURL(/\/$/);
   });
 

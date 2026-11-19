@@ -38,6 +38,8 @@ x-api-env: &api-env
 services:
   postgres:
     image: postgres:18
+    # max_connections: the e2e suite in DIRECT mode keeps up to six test files with their pools open at once.
+    command: ['postgres', '-c', 'max_connections=300']
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: dev
@@ -61,7 +63,7 @@ services:
     # Config is a mounted file (not env-generated) because it defines the `app_one` pool_size=1 alias
     # used only by the isolation suite's negative control. Settings: transaction pooling,
     # max_prepared_statements=100 (at 0, named prepared statements break), empty server_reset_query,
-    # default_pool_size=4 (small on purpose: forces multiplexing). Migrations bypass the pooler.
+    # default_pool_size=16 (small on purpose: forces multiplexing, but big enough that one stalled client cannot starve the suite). Migrations bypass the pooler.
     entrypoint: ['pgbouncer', '/etc/pgbouncer/pgbouncer.ini']
     volumes:
       - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
@@ -93,7 +95,7 @@ services:
         echo "pool_mode=$$(cfg pool_mode) max_prepared_statements=$$(cfg max_prepared_statements) default_pool_size=$$(cfg default_pool_size) server_reset_query='$$(cfg server_reset_query)'"
         test "$$(cfg pool_mode)" = transaction
         test "$$(cfg max_prepared_statements)" = 100
-        test "$$(cfg default_pool_size)" = 4
+        test "$$(cfg default_pool_size)" = 16
         test -z "$$(cfg server_reset_query)"
         echo '--- SHOW DATABASES'; $$Q -c 'show databases'
         $$Q -c 'show databases' | grep -q '^app_one|.*|1|' && echo 'app_one alias has pool_size=1'

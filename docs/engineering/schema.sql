@@ -1020,8 +1020,145 @@ CREATE TABLE app.maintenance_record (
 -- Only ONE open record per asset may move its status (what makes "restore the previous status" unambiguous).
 CREATE UNIQUE INDEX maintenance_one_status_move_uq ON app.maintenance_record (tenant_id, asset_id)
   WHERE set_status_id IS NOT NULL AND status IN ('open','in_progress') AND archived_at IS NULL;
--- M2 wave 2 also adds notification, notification_preference, notification_rule, notification_delivery,
--- saved_view and export_job: the shapes are in apps/api/migrations/0091-0093 (ADR 0009).
+-- M2 wave 2 (migrations 0091-0093, ADR 0009): notifications, saved views and CSV exports. Every table
+-- also carries the standard tenant columns (created_by / updated_by / archived_at / version) added by
+-- app.create_tenant_table; they are shown here once.
+CREATE TABLE app.notification (                       -- a user's inbox; no FK to the subject (it may be gone)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id      uuid NOT NULL,
+  type         text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  title        text NOT NULL CHECK (length(title) BETWEEN 1 AND 300),
+  body         text CHECK (body IS NULL OR length(body) <= 2000),
+  link         text CHECK (link IS NULL OR length(link) <= 500),      -- a path inside the web app
+  entity_type  text CHECK (entity_type IS NULL OR length(entity_type) <= 64),
+  entity_id    uuid,
+  dedupe_key   text NOT NULL CHECK (length(dedupe_key) BETWEEN 1 AND 200),
+  in_app       boolean NOT NULL DEFAULT true,
+  email_state  text NOT NULL DEFAULT 'none' CHECK (email_state IN ('none','queued','pending_digest','digested')),
+  read_at      timestamptz,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_dedupe_uq ON app.notification (tenant_id, user_id, dedupe_key);
+CREATE INDEX notification_inbox_idx  ON app.notification (tenant_id, user_id, created_at DESC, id DESC) WHERE in_app;
+CREATE INDEX notification_unread_idx ON app.notification (tenant_id, user_id) WHERE in_app AND read_at IS NULL;
+CREATE INDEX notification_digest_idx ON app.notification (tenant_id, user_id, created_at, id) WHERE email_state = 'pending_digest';
+
+CREATE TABLE app.notification_preference (            -- what one user wants per type (types are code, not rows)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id  uuid NOT NULL,
+  type     text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  in_app   boolean NOT NULL,
+  email    text NOT NULL CHECK (email IN ('immediate','digest','off')),
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_preference_uq ON app.notification_preference (tenant_id, user_id, type);
+
+CREATE TABLE app.notification_rule (                  -- what the organisation decided per type; no row = enabled, default recipients
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  type             text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  enabled          boolean NOT NULL DEFAULT true,
+  recipient_roles  text[] CHECK (recipient_roles IS NULL OR cardinality(recipient_roles) <= 20),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_rule_uq ON app.notification_rule (tenant_id, type);
+
+CREATE TABLE app.notification_delivery (              -- append-only delivery log (administrators)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  notification_id  uuid,
+  user_id          uuid NOT NULL,
+  type             text NOT NULL CHECK (length(type) BETWEEN 3 AND 64),
+  channel          text NOT NULL CHECK (channel IN ('in_app','email')),
+  status           text NOT NULL CHECK (status IN ('delivered','queued','deferred','skipped','failed')),
+  reason           text CHECK (reason IS NULL OR length(reason) <= 100),
+  FOREIGN KEY (tenant_id, user_id)         REFERENCES app.user_account (tenant_id, id),
+  FOREIGN KEY (tenant_id, notification_id) REFERENCES app.notification (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE INDEX notification_delivery_user_idx ON app.notification_delivery (tenant_id, user_id, created_at DESC, id DESC);
+CREATE INDEX notification_delivery_throttle_idx ON app.notification_delivery (tenant_id, user_id, created_at DESC)
+  WHERE channel = 'email' AND status = 'queued';
+
+CREATE TABLE app.saved_view (                         -- a saved asset-list view; personal, or shared with the organisation (view:share)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id   uuid NOT NULL,
+  resource  text NOT NULL CHECK (resource IN ('assets')),
+  name      text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+  name_key  text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
+  filters   jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filters) = 'object' AND pg_column_size(filters) <= 16384),
+  columns   text[] NOT NULL DEFAULT '{}' CHECK (cardinality(columns) <= 40),
+  sort      text CHECK (sort IS NULL OR length(sort) <= 64),
+  is_shared boolean NOT NULL DEFAULT false,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX saved_view_owner_name_uq  ON app.saved_view (tenant_id, user_id, resource, name_key);
+CREATE UNIQUE INDEX saved_view_shared_name_uq ON app.saved_view (tenant_id, resource, name_key) WHERE is_shared;
+
+CREATE TABLE app.export_job (                         -- a CSV export; the worker writes the file, it is removed 24 h after completion
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  requested_by  uuid NOT NULL,
+  resource      text NOT NULL CHECK (resource IN ('assets','people','locations')),
+  format        text NOT NULL DEFAULT 'csv' CHECK (format IN ('csv')),
+  filters       jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filters) = 'object' AND pg_column_size(filters) <= 16384),
+  status        text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','succeeded','failed','expired')),
+  row_count     integer CHECK (row_count IS NULL OR row_count >= 0),
+  size_bytes    bigint CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  filename      text CHECK (filename IS NULL OR length(filename) <= 200),
+  storage_key   text CHECK (storage_key IS NULL OR storage_key LIKE 'tenants/' || tenant_id::text || '/%'),
+  error         text CHECK (error IS NULL OR length(error) <= 500),
+  started_at    timestamptz,
+  completed_at  timestamptz,
+  expires_at    timestamptz,
+  FOREIGN KEY (tenant_id, requested_by) REFERENCES app.user_account (tenant_id, id),
+  CONSTRAINT export_job_file_state CHECK ((status = 'succeeded') = (storage_key IS NOT NULL) OR status = 'expired'),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE INDEX export_job_user_idx   ON app.export_job (tenant_id, requested_by, created_at DESC, id DESC);
+CREATE INDEX export_job_expiry_idx ON app.export_job (tenant_id, expires_at) WHERE status = 'succeeded';
 CREATE INDEX maintenance_asset_idx  ON app.maintenance_record (tenant_id, asset_id, reported_at DESC, id DESC);
 CREATE INDEX maintenance_open_idx   ON app.maintenance_record (tenant_id, status, reported_at DESC)
   WHERE status IN ('open','in_progress') AND archived_at IS NULL;

@@ -108,6 +108,11 @@ pnpm format                                        # auto-fix formatting
 | Website against the real backend   | `PW_CHANNEL=chrome pnpm --filter @assettracker/web test:e2e:real`    | `docker compose up` running            |
 | Backend end-to-end (direct/pooled) | see [developer guide §5](engineering/developer-guide.md) for the env | `docker compose up` running            |
 
+The backend end-to-end suite runs at most six test files at a time (`apps/api/vitest.e2e.config.ts`, override with
+`E2E_MAX_WORKERS`): every file is a database client, and the dev stack (PgBouncer pool of 16, Postgres
+`max_connections=300`) is sized for that. After pulling a change of `docker/pgbouncer/pgbouncer.ini` or the Postgres
+settings, recreate the containers: `docker compose up -d` and `docker compose restart pgbouncer`.
+
 ## 8. Ports
 
 | Port | Service                                                                            |
@@ -134,6 +139,22 @@ The browser uploads straight to MinIO with a presigned URL, so the S3 endpoint t
 `MINIO_PORT` in `.env`, the compose file follows it. The **first ClamAV start downloads the signature
 database and can take several minutes** (it needs internet and 1-2 GB of RAM); uploads wait as `pending`
 until it is `healthy`. The signatures live in the `clamdata` volume, so later starts are fast.
+
+### What is new in the website (M2 wave 2)
+
+| Page (signed in as the demo `admin@acme.example`)   | What to try                                                                                          |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Assets** > select rows > **Print labels**            | Pick a sheet template, start the batch: it renders in the background (worker); the dialog polls and offers the PDF when it is ready. A notification arrives too. |
+| **Stock** (`/stock`)                                    | Accessories (check out several units, return some) and consumables (receive, issue, adjust with a note). Issue below the minimum: the stock managers get a "Low stock" notification. |
+| **Repairs** (`/repairs`)                                | Open a repair on an asset (its status changes, "restore" on completion), complete it with a cost.    |
+| **Bell** in the header, **Account > Notifications**    | The in-app list, mark read, and per type choose in-app and email (immediate, daily digest, off). **Settings > Notifications** (administrators) turns types off or re-addresses them to other roles. |
+| **Assets** > **Views**, **Export**                     | Save the current filters as a personal view and share it with the organisation (needs `view:share`); export the list as CSV (needs `export:run`), the file is ready after a few seconds and removed after 24 hours. |
+| **Account > Security**                                 | Shows whether the organisation policy requires two-step verification for you.                        |
+
+**Notification emails** are caught by Mailpit like every other mail: open http://localhost:8025 (port
+`MAILPIT_UI_PORT`). Immediate notifications arrive as soon as the worker has processed the event (a second or two);
+digest mails are sent once a day by the scheduler. If nothing arrives, check `docker compose logs worker`: the
+outbox relay (events to notifications) and the `label.render` / `export.run` jobs run in the worker role.
 
 ## 9. Troubleshooting
 

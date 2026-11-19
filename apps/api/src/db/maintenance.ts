@@ -32,18 +32,34 @@ export async function withOwnerClient<T>(
  * `months` months starting at `from`'s month, plus the default partitions. Idempotent; returns how
  * many partitions were created. The rotation job calls this monthly (M1-TEN-06); `migrate` calls it
  * after every deploy, so the window rolls forward with no manual step.
+ *
+ * Creating a partition is DDL: it needs locks on the partitioned parent and its default partition, so
+ * it can deadlock with (or time out behind) transactions that are writing to the same tables right
+ * now. The call is one statement = one transaction, so a deadlock victim rolled back completely and
+ * simply running it again is safe (idempotent): it is retried a few times with a growing pause for
+ * `deadlock_detected` (40P01) and `lock_not_available` (55P03) before the error is surfaced.
  */
 export async function ensurePartitions(
   client: Queryable,
   from: Date = new Date(),
   months = 12,
 ): Promise<number> {
-  const { rows } = await client.query(
-    'select app.ensure_partitions($1::date, $2::int) as created',
-    [from.toISOString().slice(0, 10), months],
-  );
-  return Number(rows[0]?.created ?? 0);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { rows } = await client.query(
+        'select app.ensure_partitions($1::date, $2::int) as created',
+        [from.toISOString().slice(0, 10), months],
+      );
+      return Number(rows[0]?.created ?? 0);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if ((code !== '40P01' && code !== '55P03') || attempt >= PARTITION_ATTEMPTS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
+  }
 }
+
+const PARTITION_ATTEMPTS = 6;
 
 /** Violations reported by `app.schema_lint()` (empty = clean). */
 export async function schemaLint(client: Queryable): Promise<string[]> {

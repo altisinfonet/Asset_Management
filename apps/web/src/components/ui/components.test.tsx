@@ -261,7 +261,9 @@ describe('Toast', () => {
     );
     await user.click(screen.getByText('fail'));
     expect(await screen.findByText('Request ID req-42')).toBeInTheDocument();
-    expect(screen.getByText(/went wrong on our side/)).toBeInTheDocument();
+    // the message is in the toast and, a moment later (timing depends on the machine), also in the polite
+    // live region that announces it: one or both are there, never none
+    expect((await screen.findAllByText(/went wrong on our side/)).length).toBeGreaterThanOrEqual(1);
 
     for (let i = 0; i < 4; i++) await user.click(screen.getByText('ok'));
     expect(screen.getAllByText('Saved')).toHaveLength(3);

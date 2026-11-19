@@ -279,7 +279,11 @@ describe('mock people: deactivation and history (owner)', () => {
     const asset = await heldAsset();
     const from = asset.current_assignment!.target_id;
     const to = (await peopleApi.list({ q: 'Maria' })).data[0]!;
-    await custodyApi.transfer(asset.id, { person_id: to.id }, { idempotencyKey: 'key-hist-xfer1' });
+    await custodyApi.transfer(
+      asset.id,
+      { person_id: to.id },
+      { idempotencyKey: crypto.randomUUID() },
+    );
     const events = await fetchAll((cursor) => peopleApi.history(from, { cursor }));
     expect(events.some((e) => e.event_type === 'transferred' && e.asset_id === asset.id)).toBe(
       true,

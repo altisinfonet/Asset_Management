@@ -785,18 +785,21 @@ Status: done (M2 wave 1) - reusable attachments panel and upload slot (progress,
 
 #### M2-ACC-01 - Accessories
 Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-REG-01
+Status: done, backend (M2 wave 2, ADR 0008) - migration 0080, `/v1/accessories` with check-out and partial returns on `app.assignment`, derived availability, label codes for scan resolve; the screens are M2-ACC-04.
 - [ ] `accessory` table (category kind=accessory, total quantity, minimum quantity, location, purchase info); checkout/checkin of N units to a person, location or asset using `assignment.quantity`; remaining quantity derived transactionally.
 - [ ] Over-checkout is refused (409); concurrent checkouts never exceed stock (test).
 - [ ] Audit and events; list API shows total, checked out, available.
 
 #### M2-ACC-02 - Consumables
 Size: L - Owner: Claude - Deps: M1-REG-01, M2-LOC-01
+Status: done, backend (M2 wave 2, ADR 0008) - `/v1/consumables`, append-only ledger with a trigger-maintained balance, `GET /v1/people/{id}/stock-movements`; per-location stock is not built (one home location per consumable).
 - [ ] `consumable` and append-only `stock_movement` ledger (receive, consume, adjust) with actor, note, optional assignee; on-hand quantity derived from the ledger and protected by a non-negative CHECK.
 - [ ] Minimum-stock threshold per consumable; consume log queryable per consumable and per person.
 - [ ] Concurrent consumes cannot drive stock negative (test).
 
 #### M2-ACC-03 - Minimum-stock alerts
 Size: S - Owner: Claude - Deps: M2-ACC-02, M2-NOT-01
+Status: backend half done (M2 wave 2, ADR 0008) - the outbox events `consumable.low_stock` and `accessory.low_stock` (ids only, once per crossing, re-armed on restock) are emitted; the subscriber that notifies roles in-app and by email and feeds the digest is wired by the integrator (M2-NOT).
 - [ ] Crossing below minimum emits `stock.low` once per crossing (not per movement); the notification goes to subscribed roles in-app and by email, and is folded into the daily digest.
 
 #### M2-ACC-04 - Accessories and consumables UI

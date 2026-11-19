@@ -65,7 +65,7 @@ export const registryMessages = {
       save: 'Save view',
       delete: 'Delete view',
       saveTitle: 'Save this view',
-      saveDescription: 'Saves the search, filters, sort and columns in this browser.',
+      saveDescription: 'Saves the search, filters, sort and columns to your account.',
       name: 'View name',
     },
     copyTag: 'Copy tag {tag}',

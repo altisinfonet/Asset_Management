@@ -2098,7 +2098,7 @@ export interface paths {
         head?: never;
         /**
          * Rename, re-share or replace a view
-         * @description Only the owner (or, for a shared view, a holder of `view:share`) may change it.
+         * @description Only the owner (or, for a shared view, a holder of `view:share`) may change it. Last write wins: a view is personal data, so there is no `If-Match`.
          */
         patch: operations["updateSavedView"];
         trace?: never;
@@ -11508,7 +11508,6 @@ export interface operations {
                     "RateLimit-Limit": components["headers"]["RateLimitLimit"];
                     "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    ETag: components["headers"]["ETag"];
                     Location: components["headers"]["Location"];
                     "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
@@ -11528,13 +11527,11 @@ export interface operations {
     deleteSavedView: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
                 /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
-                "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -11556,21 +11553,17 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-            412: components["responses"]["PreconditionFailed"];
-            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
     updateSavedView: {
         parameters: {
             query?: never;
-            header: {
+            header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
                 /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
-                "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -11591,7 +11584,6 @@ export interface operations {
                     "RateLimit-Limit": components["headers"]["RateLimitLimit"];
                     "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    ETag: components["headers"]["ETag"];
                     "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
@@ -11604,9 +11596,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-            412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
-            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

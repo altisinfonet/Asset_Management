@@ -9,6 +9,7 @@ import {
   LogOut,
   PackageSearch,
   Pencil,
+  Printer,
   RotateCcw,
   type LucideIcon,
 } from 'lucide-react';
@@ -17,6 +18,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AttachmentsPanel } from '@/components/files/attachments-panel';
+import { useLabels } from '@/components/labels/labels-provider';
+import { AssetRepairs } from '@/components/repairs/asset-repairs';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
 import {
   HISTORY_FILTERS,
@@ -157,6 +160,7 @@ function AssetById({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const lookups = useLookups();
   const custody = useCustody();
+  const labels = useLabels();
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const primaryAction = useRef<HTMLButtonElement>(null);
@@ -308,6 +312,12 @@ function AssetById({ id }: { id: string }) {
               <Copy aria-hidden className="size-4" />
               {t('assetView.copyTag')}
             </Button>
+            {can('asset:label') && !archived ? (
+              <Button onClick={() => labels.open({ kind: 'assets', assets: [value] })}>
+                <Printer aria-hidden className="size-4" />
+                {t('labels.print')}
+              </Button>
+            ) : null}
             {can('asset:update') && !archived ? (
               <Button asChild>
                 <Link href={routes.assetEdit(id)}>
@@ -383,7 +393,11 @@ function AssetById({ id }: { id: string }) {
           />
         </TabsContent>
         <TabsContent value="repairs">
-          <p className="text-base text-muted">{t('assetView.tabPlaceholder')}</p>
+          {can('repair:read') ? (
+            <AssetRepairs asset={{ id, asset_tag: value.asset_tag }} archived={archived} />
+          ) : (
+            <p className="text-base text-muted">{t('repairs.assetTab.none')}</p>
+          )}
         </TabsContent>
         <TabsContent value="attachments">
           {can('attachment:read') ? (

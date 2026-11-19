@@ -246,6 +246,16 @@ export function buildSeed(): RegistryData {
       archived_at: null,
     }),
   );
+  categories.push(
+    base({
+      id: uid('category', 10),
+      name: 'Paper and supplies',
+      kind: 'consumable' as const,
+      tag_prefix: null,
+      description: null,
+      archived_at: null,
+    }),
+  );
   const [chromebook, laptop, tablet, projector] = categories as [
     MockCategory,
     MockCategory,

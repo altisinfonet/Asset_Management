@@ -7767,8 +7767,6 @@ paths:
               $ref: "#/components/headers/RateLimitRemaining"
             RateLimit-Reset:
               $ref: "#/components/headers/RateLimitReset"
-            ETag:
-              $ref: "#/components/headers/ETag"
             Location:
               $ref: "#/components/headers/Location"
             Idempotent-Replayed:
@@ -7795,13 +7793,12 @@ paths:
         - Saved views
       operationId: updateSavedView
       summary: Rename, re-share or replace a view
-      description: Only the owner (or, for a shared view, a holder of `view:share`) may change it.
+      description: "Only the owner (or, for a shared view, a holder of `view:share`) may change it. Last write wins: a view is personal data, so there is no `If-Match`."
       x-self-service: true
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
@@ -7820,8 +7817,6 @@ paths:
               $ref: "#/components/headers/RateLimitRemaining"
             RateLimit-Reset:
               $ref: "#/components/headers/RateLimitReset"
-            ETag:
-              $ref: "#/components/headers/ETag"
             Idempotent-Replayed:
               $ref: "#/components/headers/IdempotentReplayed"
           content:
@@ -7838,12 +7833,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
         "422":
           $ref: "#/components/responses/Unprocessable"
-        "428":
-          $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
     delete:
@@ -7857,7 +7848,6 @@ paths:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/IfMatch"
       responses:
         "204":
           description: Deleted.
@@ -7872,10 +7862,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
-        "428":
-          $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/scan/resolve:

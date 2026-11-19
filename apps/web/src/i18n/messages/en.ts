@@ -1,4 +1,9 @@
+import { labelsMessages } from './labels';
 import { m2Messages } from './m2';
+import { notificationsMessages } from './notifications';
+import { repairsMessages } from './repairs';
+import { stockMessages } from './stock';
+import { viewsMessages } from './views';
 import { registryMessages } from './registry';
 
 /**
@@ -60,6 +65,7 @@ export const en = {
     assets: 'Assets',
     locations: 'Locations',
     people: 'People',
+    stock: 'Accessories and consumables',
     loanerPool: 'Loaner pool',
     repairs: 'Repairs',
     stocktake: 'Stocktake',
@@ -89,6 +95,7 @@ export const en = {
     profile: 'Profile',
     signedInAs: 'Signed in as {name}',
     security: 'Security',
+    notificationSettings: 'Notification settings',
     shortcuts: 'Keyboard shortcuts',
   },
   palette: {
@@ -107,6 +114,7 @@ export const en = {
     openAsset: 'Open asset {code}',
     batchScan: 'Scan assets (check out or in many)',
     security: 'Account security',
+    notificationSettings: 'Notification settings',
     shortcuts: 'Keyboard shortcuts',
     signOut: 'Sign out',
     hintNavigate: 'to navigate',
@@ -434,6 +442,11 @@ export const en = {
   },
   ...registryMessages,
   ...m2Messages,
+  ...labelsMessages,
+  ...stockMessages,
+  ...repairsMessages,
+  ...notificationsMessages,
+  ...viewsMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

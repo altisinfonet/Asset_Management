@@ -1965,16 +1965,16 @@ addOp('/v1/saved-views', 'post', {
   tag: 'Saved views', id: 'createSavedView', summary: 'Save a view', selfService: true, hasId: false,
   description: '`shared: true` needs the permission `view:share` (403 otherwise). A name is unique per owner and entity (409 `conflict`).',
   body: jsonBody(S('SavedViewCreate')),
-  success: { 201: okResp(201, 'The view.', S('SavedView'), { etag: true, location: true }) },
+  success: { 201: okResp(201, 'The view.', S('SavedView'), { location: true }) },
 });
 addOp('/v1/saved-views/{id}', 'patch', {
-  tag: 'Saved views', id: 'updateSavedView', summary: 'Rename, re-share or replace a view', selfService: true, params: [ID], ifMatch: true,
-  description: 'Only the owner (or, for a shared view, a holder of `view:share`) may change it.',
+  tag: 'Saved views', id: 'updateSavedView', summary: 'Rename, re-share or replace a view', selfService: true, params: [ID],
+  description: 'Only the owner (or, for a shared view, a holder of `view:share`) may change it. Last write wins: a view is personal data, so there is no `If-Match`.',
   body: jsonBody(S('SavedViewUpdate')),
-  success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+  success: { 200: okResp(200, 'The view.', S('SavedView')) },
 });
 addOp('/v1/saved-views/{id}', 'delete', {
-  tag: 'Saved views', id: 'deleteSavedView', summary: 'Delete a view', selfService: true, params: [ID], ifMatch: true,
+  tag: 'Saved views', id: 'deleteSavedView', summary: 'Delete a view', selfService: true, params: [ID],
   success: { 204: { description: 'Deleted.', headers: { 'X-Request-Id': H('RequestId') } } },
 });
 

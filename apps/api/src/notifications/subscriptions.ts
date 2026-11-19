@@ -50,15 +50,15 @@ export interface Subscription {
 const assetLabel = (a: { asset_tag: string; name: string | null }): string =>
   a.name ? `${a.asset_tag} ${a.name}` : a.asset_tag;
 
-/** Is the table of another M2 story installed yet? (tolerant entries read it only when it is) */
-async function installed(tx: Tx, table: string): Promise<boolean> {
-  const [row] = await tx.$queryRaw<Array<{ ok: boolean }>>`
-    select to_regclass(${table}::text) is not null as ok`;
-  return Boolean(row?.ok);
-}
+/** The subject id of an event: the payload key, else the aggregate. */
+const idFrom = (event: OutboxDelivery, key: string): string => {
+  const value = event.payload[key];
+  return typeof value === 'string' ? value : event.aggregateId;
+};
 
-const number = (value: unknown): number | null =>
-  typeof value === 'number' && Number.isFinite(value) ? value : null;
+/** Where a stock item opens in the web app. */
+const stockLink = (kind: 'accessory' | 'consumable', id: string): string =>
+  `/stock/view?kind=${kind}&id=${encodeURIComponent(id)}`;
 
 /** The web path that shows a record of an attachment owner type, when there is one. */
 function ownerLink(type: string, id: string): string | undefined {
@@ -147,46 +147,98 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
     },
   },
 
-  // M2-ACC / consumables: the stock fell to or below its reorder level. Emitted by the consumables
-  // story as `consumable.low_stock` (aggregate: the consumable). The payload keys are read tolerantly.
+  // Consumables (ADR 0008): the stock fell to or below the minimum. The outbox event carries ids only
+  // ({ consumableId, movementId? }); the name and the counts are read here, under RLS. Recipients are the
+  // stock managers (holders of consumable:manage) unless an administrator re-addressed the type.
   {
     event: 'consumable.low_stock',
     type: 'consumable.low_stock',
     recipients: holdersOf('consumable:manage'),
     async describe(event, tx) {
-      let name = 'A consumable';
-      if (await installed(tx, 'app.consumable')) {
-        const [row] = await tx.$queryRaw<Array<{ name: string }>>`
-          select name from app.consumable where id = ${event.aggregateId}::uuid`;
-        if (row) name = row.name;
-      }
-      const p = event.payload;
-      const onHand = number(p.on_hand ?? p.onHand ?? p.quantity);
-      const level = number(p.reorder_level ?? p.reorderLevel ?? p.threshold);
+      const id = idFrom(event, 'consumableId');
+      const item = await tx.consumable.findUnique({
+        where: { id },
+        select: { id: true, name: true, qty_on_hand: true, min_qty: true },
+      });
+      if (!item) return null;
       return {
         vars: {
-          name,
-          detail:
-            onHand !== null
-              ? `${onHand} left${level !== null ? ` (reorder level ${level})` : ''}.`
-              : '',
+          name: item.name,
+          detail: `${item.qty_on_hand} left (minimum ${item.min_qty}).`,
         },
-        entity: { type: 'consumable', id: event.aggregateId },
-        link: '/consumables',
+        entity: { type: 'consumable', id: item.id },
+        link: stockLink('consumable', item.id),
+      };
+    },
+    // one notification per crossing: the movement that caused it (or the item when there is none)
+    dedupe: (event) => `consumable.low_stock:${String(event.payload.movementId ?? event.id)}`,
+  },
+
+  // Accessories (ADR 0008): the units on the shelf (total minus units out) fell to or below the minimum.
+  // Payload: { accessoryId, assignmentId? }.
+  {
+    event: 'accessory.low_stock',
+    type: 'accessory.low_stock',
+    recipients: holdersOf('accessory:manage'),
+    async describe(event, tx) {
+      const id = idFrom(event, 'accessoryId');
+      const [row] = await tx.$queryRaw<
+        Array<{ id: string; name: string; min_qty: number; available: number }>
+      >`
+        select a.id, a.name, a.min_qty,
+               (a.qty_total - coalesce((
+                  select sum(s.quantity - s.quantity_returned)
+                    from app.assignment s
+                   where s.tenant_id = a.tenant_id and s.accessory_id = a.id and s.checked_in_at is null
+                ), 0))::int as available
+          from app.accessory a
+         where a.id = ${id}::uuid`;
+      if (!row) return null;
+      return {
+        vars: {
+          name: row.name,
+          detail: `${row.available} available (minimum ${row.min_qty}).`,
+        },
+        entity: { type: 'accessory', id: row.id },
+        link: stockLink('accessory', row.id),
+      };
+    },
+    dedupe: (event) => `accessory.low_stock:${String(event.payload.assignmentId ?? event.id)}`,
+  },
+
+  // Labels (ADR 0007): a batch finished rendering. Payload { batch_id, requested_by, version }; the
+  // requester is the only recipient, the link opens the print dialog on the batch.
+  {
+    event: 'label.batch.ready',
+    type: 'label.batch.ready',
+    recipients: payloadUser('requested_by'),
+    async describe(event, tx) {
+      const id = idFrom(event, 'batch_id');
+      const batch = await tx.label_batch.findUnique({
+        where: { id },
+        select: { id: true, label_count: true },
+      });
+      if (!batch) return null;
+      return {
+        vars: { count: batch.label_count },
+        entity: { type: 'label_batch', id: batch.id },
+        link: `/assets?label_batch=${encodeURIComponent(batch.id)}`,
       };
     },
   },
 
-  // M2-TAG labels: a batch of labels finished rendering. Emitted as `label.batch.ready`
-  // (aggregate: the batch); the requester is read from `requestedBy` / `createdBy` in the payload.
+  // Labels: the render failed for good (the batch is `failed`). Payload { batch_id, requested_by, code }.
   {
-    event: 'label.batch.ready',
-    type: 'label.batch.ready',
-    recipients: payloadUser('requestedBy', 'requested_by', 'createdBy', 'created_by'),
+    event: 'label.batch.failed',
+    type: 'label.batch.failed',
+    recipients: payloadUser('requested_by'),
     describe(event) {
+      const id = idFrom(event, 'batch_id');
+      const code = typeof event.payload.code === 'string' ? event.payload.code : 'render-failed';
       return Promise.resolve({
-        vars: {},
-        entity: { type: 'label_batch', id: event.aggregateId },
+        vars: { reason: code },
+        entity: { type: 'label_batch', id },
+        link: `/assets?label_batch=${encodeURIComponent(id)}`,
       });
     },
   },

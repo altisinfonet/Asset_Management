@@ -33,6 +33,7 @@ import {
   testPorts,
   unique,
 } from '../lifecycle/support.js';
+import { newAccessory, newConsumable } from '../stock/support.js';
 
 /**
  * M2-NOT-01: notifications. The real outbox relay runs the real subscriptions against the real
@@ -380,56 +381,116 @@ describe.skipIf(!dbEnabled)(`notifications (${mode})`, () => {
       expect(mail[0]!.data.title).toBe('A file you uploaded was blocked');
     });
 
-    it('low stock goes to the users who manage consumables, or to the roles the administrator picks', async () => {
+    it('low stock (a real issue below the minimum) goes to the users who manage consumables, or to the roles the administrator picks', async () => {
       const manager = await member('asset_manager');
       const viewer = await member('viewer');
       const tech = await member('technician');
-      const publish = () =>
-        runtime.withTenantTx({ tenantId: t.tenantId }, (tx) =>
-          outbox.publish(tx, {
-            type: 'consumable.low_stock',
-            aggregateType: 'consumable',
-            aggregateId: randomUUID(),
-            payload: { on_hand: 2, reorder_level: 5 },
-          }),
-        );
-      await publish();
-      await relay();
-      const lowFor = async (c: typeof manager.client) =>
+      const lowFor = async (c: typeof manager.client, name: string) =>
         (
-          (await c.get('/v1/notifications')).body.data as Array<{ type: string; body: string }>
-        ).filter((n) => n.type === 'consumable.low_stock');
-      expect(await lowFor(manager.client)).toHaveLength(1);
-      expect((await lowFor(manager.client))[0]!.body).toContain('2 left (reorder level 5)');
-      expect(await lowFor(a())).toHaveLength(1); // the administrator holds *
-      expect(await lowFor(viewer.client)).toHaveLength(0);
-      expect(await lowFor(tech.client)).toHaveLength(0);
+          (await c.get('/v1/notifications')).body.data as Array<{
+            type: string;
+            title: string;
+            body: string;
+            link: string | null;
+            entity_type: string | null;
+          }>
+        ).filter((n) => n.type === 'consumable.low_stock' && n.title.includes(name));
+      const crossing = async () => {
+        const item = await newConsumable(a(), { min_qty: 5, initial_qty: 8 });
+        const issue = await a().post(
+          `/v1/consumables/${item.id}/movements`,
+          { qty_delta: -3, reason: 'issue' },
+          keyed(),
+        );
+        expect(issue.status, issue.raw).toBe(201);
+        await relay();
+        return { id: item.id as string, name: item.body.name as string };
+      };
+
+      const first = await crossing();
+      const mine = await lowFor(manager.client, first.name);
+      expect(mine).toHaveLength(1);
+      expect(mine[0]!.body).toContain('5 left (minimum 5)');
+      expect(mine[0]).toMatchObject({
+        entity_type: 'consumable',
+        link: `/stock/view?kind=consumable&id=${first.id}`,
+      });
+      expect(await lowFor(a(), first.name)).toHaveLength(1); // the administrator holds *
+      expect(await lowFor(viewer.client, first.name)).toHaveLength(0);
+      expect(await lowFor(tech.client, first.name)).toHaveLength(0);
 
       await a().put('/v1/notification-rules/consumable.low_stock', { recipient_roles: ['viewer'] });
-      await publish();
-      await relay();
-      expect(await lowFor(viewer.client)).toHaveLength(1);
-      expect(await lowFor(manager.client)).toHaveLength(1); // no new one
+      const second = await crossing();
+      expect(await lowFor(viewer.client, second.name)).toHaveLength(1);
+      expect(await lowFor(manager.client, second.name)).toHaveLength(0); // re-addressed
       await a().put('/v1/notification-rules/consumable.low_stock', { recipient_roles: null });
     });
 
-    it('a label batch notifies whoever asked for it', async () => {
-      const u = await member();
-      await runtime.withTenantTx({ tenantId: t.tenantId }, (tx) =>
-        outbox.publish(tx, {
-          type: 'label.batch.ready',
-          aggregateType: 'label_batch',
-          aggregateId: randomUUID(),
-          payload: { requestedBy: u.id, count: 12 },
-        }),
+    it('accessories falling to the minimum notify the accessory managers once per crossing', async () => {
+      const manager = await member('asset_manager');
+      const tech = await member('technician');
+      const acc = await newAccessory(a(), { qty_total: 5, min_qty: 2 });
+      const person = await a().get('/v1/people?limit=1');
+      const out = await a().post(
+        `/v1/accessories/${acc.id}/checkout`,
+        { person_id: person.body.data[0].id, quantity: 3 },
+        keyed(),
       );
+      expect(out.status, out.raw).toBe(201);
+      await relay();
+      await relay(); // a second relay pass delivers nothing new
+      const lowFor = async (c: typeof manager.client) =>
+        (
+          (await c.get('/v1/notifications')).body.data as Array<{
+            type: string;
+            body: string;
+            link: string | null;
+          }>
+        ).filter((n) => n.type === 'accessory.low_stock' && n.link?.includes(acc.id));
+      const got = await lowFor(manager.client);
+      expect(got).toHaveLength(1);
+      expect(got[0]!.body).toContain('2 available (minimum 2)');
+      expect(got[0]!.link).toBe(`/stock/view?kind=accessory&id=${acc.id}`);
+      expect(await lowFor(tech.client)).toHaveLength(0); // technicians check out, they do not manage
+    });
+
+    it('a label batch tells whoever asked for it when it is ready, and when it failed', async () => {
+      const u = await member('asset_manager');
+      const asset = await newAsset(a(), b.categoryId);
+      const asked = await u.client.post(
+        '/v1/labels/batches',
+        { template_key: 'letter-30up-qr', asset_ids: [asset.id] },
+        keyed(),
+      );
+      expect(asked.status, asked.raw).toBe(202);
+      const batchId = asked.body.id as string;
+      const publish = (type: string, payload: Record<string, unknown>) =>
+        runtime.withTenantTx({ tenantId: t.tenantId }, (tx) =>
+          outbox.publish(tx, { type, aggregateType: 'label_batch', aggregateId: batchId, payload }),
+        );
+      await publish('label.batch.ready', { batch_id: batchId, requested_by: u.id, version: 2 });
+      await publish('label.batch.failed', { batch_id: batchId, requested_by: u.id, code: 'logo-invalid' });
       await relay();
       const list = (await u.client.get('/v1/notifications')).body.data as Array<{
         type: string;
         title: string;
+        body: string;
+        link: string | null;
+        entity_id: string | null;
       }>;
-      expect(list.map((n) => n.type)).toContain('label.batch.ready');
-      expect(list.find((n) => n.type === 'label.batch.ready')!.title).toBe('Your labels are ready');
+      const ready = list.find((n) => n.type === 'label.batch.ready');
+      expect(ready).toMatchObject({
+        title: 'Your labels are ready',
+        entity_id: batchId,
+        link: `/assets?label_batch=${batchId}`,
+      });
+      expect(ready!.body).toContain('1 label(s)');
+      const failed = list.find((n) => n.type === 'label.batch.failed');
+      expect(failed!.body).toContain('logo-invalid');
+      // nobody else is told
+      const other = await member('asset_manager');
+      const theirs = (await other.client.get('/v1/notifications')).body.data as Array<{ type: string }>;
+      expect(theirs.map((n) => n.type)).not.toContain('label.batch.ready');
     });
   });
 

@@ -39,7 +39,9 @@ describe('notification types and texts (M2-NOT-01)', () => {
   it('has a template for the types other M2 stories emit (low stock, label batch, loans, import)', () => {
     for (const type of [
       'consumable.low_stock',
+      'accessory.low_stock',
       'label.batch.ready',
+      'label.batch.failed',
       'loan.overdue',
       'loan.due_soon',
       'import.completed',
@@ -101,7 +103,9 @@ describe('the subscriber mapping table', () => {
       'asset.checked_out',
       'export.completed',
       'consumable.low_stock',
+      'accessory.low_stock',
       'label.batch.ready',
+      'label.batch.failed',
     ]) {
       expect(seen.has(event), event).toBe(true);
     }

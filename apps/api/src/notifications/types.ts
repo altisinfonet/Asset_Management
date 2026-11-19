@@ -57,6 +57,20 @@ export const NOTIFICATION_TYPES = {
     roleConfigurable: true,
     defaults: { inApp: true, email: 'digest' },
   },
+  'accessory.low_stock': {
+    label: 'Low accessory stock',
+    description: 'The accessories on the shelf fell to or below the minimum.',
+    recipients: 'Users who manage accessories.',
+    roleConfigurable: true,
+    defaults: { inApp: true, email: 'digest' },
+  },
+  'label.batch.failed': {
+    label: 'Labels could not be rendered',
+    description: 'A batch of labels you asked for could not be produced.',
+    recipients: 'The user who requested the batch.',
+    roleConfigurable: false,
+    defaults: { inApp: true, email: 'off' },
+  },
   'label.batch.ready': {
     label: 'Labels ready',
     description: 'A batch of labels you asked for is ready to print.',

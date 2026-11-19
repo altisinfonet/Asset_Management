@@ -26,8 +26,15 @@ export const en: Catalogue = {
   'notification.consumable.low_stock.title': 'Low stock: {name}',
   'notification.consumable.low_stock.body': '{name} is at or below its reorder level. {detail}',
 
+  'notification.accessory.low_stock.title': 'Low stock: {name}',
+  'notification.accessory.low_stock.body': '{name} is at or below its minimum. {detail}',
+
+  'notification.label.batch.failed.title': 'Your labels could not be rendered',
+  'notification.label.batch.failed.body':
+    'The batch of labels failed ({reason}). Nothing was printed; start the batch again.',
+
   'notification.label.batch.ready.title': 'Your labels are ready',
-  'notification.label.batch.ready.body': 'Your batch of labels is ready to print.',
+  'notification.label.batch.ready.body': 'Your batch of {count} label(s) is ready to print. The file is removed after it expires.',
 
   'notification.loan.overdue.title': 'Overdue: {asset}',
   'notification.loan.overdue.body':

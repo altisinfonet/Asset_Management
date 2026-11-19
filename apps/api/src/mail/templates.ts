@@ -38,6 +38,16 @@ export const TEMPLATE_SCHEMAS = {
     occurredAt: shortText(60).optional(),
     securityUrl: httpUrl.optional(),
   }),
+  // M2-NOT-01: one generic template for every notification (and the daily digest); the texts come from
+  // src/notifications/templates.ts, so the mail module knows nothing of the notification types.
+  'notification.message': z.object({
+    title: shortText(300),
+    body: z.string().trim().max(2000).optional(),
+    items: z.array(shortText(300)).max(50).optional(),
+    moreText: shortText(300).optional(),
+    url: httpUrl.optional(),
+    ctaLabel: shortText(60).optional(),
+  }),
   'auth.new-login': z.object({
     userName: shortText(120).optional(),
     occurredAt: shortText(60),
@@ -180,6 +190,28 @@ function layoutFor(template: TemplateId, data: Record<string, unknown>, t: Trans
                   type: 'button',
                   label: t('auth.mfa-enabled.cta'),
                   url: String(d.securityUrl),
+                } as Block,
+              ]
+            : []),
+        ],
+      };
+    }
+    case 'notification.message': {
+      const items = (d.items as unknown as string[] | undefined) ?? [];
+      return {
+        subject: String(d.title),
+        preheader: String(d.body ?? d.title).slice(0, 120),
+        blocks: [
+          { type: 'p', text: String(d.title) },
+          ...(d.body ? [{ type: 'p', text: String(d.body) } as Block] : []),
+          ...(items.length ? [{ type: 'list', items } as Block] : []),
+          ...(d.moreText ? [{ type: 'note', text: String(d.moreText) } as Block] : []),
+          ...(d.url
+            ? [
+                {
+                  type: 'button',
+                  label: String(d.ctaLabel ?? t('notification.message.cta', { product })),
+                  url: String(d.url),
                 } as Block,
               ]
             : []),

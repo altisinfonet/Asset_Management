@@ -16,6 +16,7 @@ numbered `ED-nn` in [`../engineering/decisions.md`](../engineering/decisions.md)
 | [0006](0006-files-scanning-and-thumbnails.md)                | Files: storage adapter, upload pipeline, virus scanning, thumbnails, file serving, scan codes | PROPOSED, needs founder sign-off | 2026-11-19 | M2-FILE-01..03, M2-SEC-02, M2-TAG-01 |
 | [0007](0007-label-rendering.md)                              | Label rendering: pure-JS PDF and barcode libraries, fixed templates, asynchronous batches | PROPOSED, needs founder sign-off | 2026-11-19 | M2-TAG-02 |
 | [0008](0008-accessories-consumables-stock.md)                | Accessories and consumables: derived availability, the stock ledger, minimum-stock events | PROPOSED, needs founder sign-off | 2026-11-19 | M2-ACC-01..03 |
+| [0009](0009-repairs-notifications-views-exports.md)          | Repairs, notifications (NOTIFIER port, subscriber table, digest), saved views, CSV export | PROPOSED, needs founder sign-off | 2026-11-19 | M2-MNT-01, M2-NOT-01, M2-REG-01/02, M2-AUTH-01 |
 
 Status values: `PROPOSED` (written by Claude, waiting for the founder), `ACCEPTED`, `SUPERSEDED by
 ADR nnnn`, `REJECTED`. An accepted ADR is not edited except to fix mistakes or to mark it superseded;

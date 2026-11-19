@@ -392,11 +392,12 @@ export class AuthService {
   // ------------------------------------------------------------------------------------------- me
 
   async me(auth: AuthContext) {
-    const { tenant, company } = await this.tenancy.withTenantTx(
+    const { tenant, company, mfaPolicy } = await this.tenancy.withTenantTx(
       { tenantId: auth.tenantId, actorId: auth.principalId },
       async (trx) => ({
         tenant: await trx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } }),
         company: await trx.company.findFirst({ where: { is_default: true }, select: { id: true } }),
+        mfaPolicy: await loadMfaPolicy(trx, auth.tenantId),
       }),
     );
     return {
@@ -440,6 +441,11 @@ export class AuthService {
         scopes: auth.apiKeyScopes ? [...auth.apiKeyScopes] : [],
       },
       mfa_enrolment_required: auth.mfaEnrolmentRequired,
+      // M2-AUTH-01: whether the organisation enforces MFA, and whether that applies to this caller (never to an API key).
+      mfa_policy: {
+        required: auth.method === 'session' && mfaRequired(mfaPolicy, auth.permissions),
+        scope: mfaPolicy,
+      },
       session: auth.session
         ? {
             idle_expires_at: auth.session.idleExpiresAt.toISOString(),

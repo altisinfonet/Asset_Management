@@ -2,3 +2,4 @@
 export { PeopleModule } from './people.module.js';
 export { PeopleService, personDto } from './people.service.js';
 export { PERSON_KINDS, PERSON_STATUSES } from './schemas.js';
+export { personListSchema, type PersonListQuery } from './schemas.js';

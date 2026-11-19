@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   'consumable:adjust',
   'consumable:manage',
   'consumable:read',
+  'export:run',
   'import:read',
   'import:run',
   'loaner:checkout',
@@ -36,6 +37,7 @@ export const PERMISSIONS = [
   'loaner:read',
   'location:manage',
   'location:read',
+  'notification:manage',
   'person:manage',
   'person:read',
   'repair:manage',
@@ -44,6 +46,7 @@ export const PERMISSIONS = [
   'search:read',
   'user:manage',
   'user:read',
+  'view:share',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -102,6 +105,8 @@ export const BUILTIN_ROLES: readonly BuiltinRole[] = [
       'audit:read',
       'user:read',
       'role:read',
+      'view:share',
+      'export:run',
     ],
   },
   {

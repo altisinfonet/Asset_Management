@@ -837,6 +837,7 @@ Size: S - Owner: Both - Deps: M2-LOAN-02
 
 #### M2-MNT-01 - Repair and maintenance records
 Size: L - Owner: Claude - Deps: M1-REG-05, M2-FILE-01
+Status: API done (2026-11-19, ADR 0009, contract tag Repairs); the repair log screens are M2-MNT-02. Forcing a checked-out asset into repair needs `force_checkin`, a note, an in-repair status and `asset:checkin`.
 - [ ] `maintenance_record` tenant table: asset, opened/closed dates, type (repair, maintenance, inspection note), description, cost (minor units + currency), vendor, status open/closed, attachments.
 - [ ] Opening a repair optionally moves the asset to an in-repair status (and blocks check-out); closing restores a chosen status; both write history, audit and events.
 - [ ] CRUD API and filters (open, by asset, by vendor, date range); total repair cost per asset exposed.
@@ -936,6 +937,7 @@ Size: M - Owner: Both - Deps: M2-IMP-05, F-09
 
 #### M2-NOT-01 - Notification module
 Size: L - Owner: Claude - Deps: M1-PLAT-05, M1-PLAT-09
+Status: done (2026-11-19, ADR 0009): `NOTIFIER` port, outbox subscriber table (`notifications/subscriptions.ts`), preferences, rules, delivery log, daily digest. The integrator checks the payloads of `consumable.low_stock` and `label.batch.ready` and adds `loan.overdue` / `import.completed` when their producers exist. In-app texts are English only.
 - [ ] `notification_rule` and `notification` tenant tables; outbox subscribers create in-app notifications and send email via `MailAdapter` through worker jobs; per-user preferences (immediate, daily digest, off) per event type.
 - [ ] Throttling and de-duplication (one digest of 50 items, not 50 emails); a delivery log is visible to admins through the API.
 - [ ] Event types registered by modules (`stock.low`, `loan.overdue`, `import.completed`, `attachment.infected`), localised templates (English).
@@ -946,11 +948,13 @@ Size: M - Owner: Both - Deps: M2-NOT-01, M1-WEB-04
 
 #### M2-REG-01 - Saved views
 Size: M - Owner: Both - Deps: M1-WEB-07
+Status: API done (2026-11-19, ADR 0009, tag Views); the web still keeps views in `localStorage` until it switches to `/v1/saved-views`.
 - [ ] `saved_view` per user (filters, columns, sort), optionally shared tenant-wide with a `view:share` permission; API and UI to save, rename, delete and apply views on the asset list.
 - [ ] Views referencing deleted fields/statuses degrade gracefully with a warning.
 
 #### M2-REG-02 - List export to CSV
 Size: M - Owner: Claude - Deps: M1-REG-07, M1-PLAT-06
+Status: API done (2026-11-19, ADR 0009, tag Exports); the importer must call `stripFormulaGuard` on text cells for the round trip (the importer story owns that test).
 - [ ] Any asset/people/location list (with current filters) can be exported to CSV through a worker job and a short-lived download; permission-gated and audited as a sensitive read.
 - [ ] Exported files re-import cleanly through the importer (round-trip test).
 
@@ -979,6 +983,7 @@ Size: S - Owner: Claude - Deps: M2-IMP-08, M2-TAG-03, M2-LOAN-02
 
 #### M2-AUTH-01 - Expose the MFA policy to the client
 Size: S - Owner: Claude - Deps: M1-AUTH-04
+Status: API done (2026-11-19, contract, generator, API, generated client); the Security page change is the web agent's.
 Founder request (2026-11-18): the Security page cannot know up front whether the organisation enforces two-step verification, so "Turn off" is always shown and only explains the policy after a 403 `mfa-required-by-policy`.
 - [ ] `GET /v1/auth/me` returns `mfa_policy: { required: boolean, scope: 'off' | 'admins' | 'all' }` for the current user (contract, generator, API, generated client).
 - [ ] Security page shows "Turn off" disabled with the explanation when `required` is true; the 403 path stays as a fallback.

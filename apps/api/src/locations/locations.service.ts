@@ -19,6 +19,7 @@ import {
 import {
   type LocationCounts,
   RegistryBase,
+  type TxScope,
   duplicate,
   inUse,
   invalidRef,
@@ -76,7 +77,7 @@ export class LocationsService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------ reads
 
-  async list(auth: AuthContext, query: LocationListQuery): Promise<Page<Record<string, unknown>>> {
+  async list(auth: TxScope, query: LocationListQuery): Promise<Page<Record<string, unknown>>> {
     return this.tx(auth, async (trx) => {
       const archived =
         query.archived === 'only'

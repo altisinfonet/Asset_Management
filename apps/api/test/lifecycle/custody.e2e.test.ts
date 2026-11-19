@@ -1191,12 +1191,13 @@ describe.skipIf(!dbEnabled)(`custody (${mode})`, () => {
       const actions = async (c: typeof tech.client) =>
         (await c.get(`/v1/scan/resolve?code=${asset.body.label_code}`)).body
           .allowed_actions as string[];
-      expect(await actions(tech.client)).toEqual(['checkout', 'transfer', 'update']);
+      expect(await actions(tech.client)).toEqual(['checkout', 'transfer', 'update', 'open_repair']);
       await a().post(`/v1/assets/${asset.id}/checkout`, { person_id: person.id }, keyed());
       expect(await actions(tech.client)).toEqual(['checkin', 'transfer', 'update']);
       expect(await actions(viewer.client)).toEqual([]);
       await a().post(`/v1/assets/${asset.id}/checkin`, { status_id: b.status['Broken'] }, keyed());
-      expect(await actions(tech.client)).toEqual(['update']);
+      // in stock but undeployable: it can be updated and repaired, not handed out
+      expect(await actions(tech.client)).toEqual(['update', 'open_repair']);
       expect(unique('x')).toBeTruthy();
     });
   });

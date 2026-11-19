@@ -137,6 +137,8 @@ export class Client {
     this.request('POST', url, { ...o, body });
   patch = (url: string, body: unknown, o?: Parameters<Client['request']>[2]) =>
     this.request('PATCH', url, { ...o, body });
+  put = (url: string, body: unknown, o?: Parameters<Client['request']>[2]) =>
+    this.request('PUT', url, { ...o, body });
   del = (url: string, body?: unknown, o?: Parameters<Client['request']>[2]) =>
     this.request('DELETE', url, { ...o, body });
 

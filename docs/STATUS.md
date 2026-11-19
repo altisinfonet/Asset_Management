@@ -1,0 +1,104 @@
+# Project status
+
+_Last updated: 2026-11-19. Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+one-screen summary._
+
+Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
+
+## 1. Overall
+
+| Phase                                   | Status | Notes                                                                                     |
+| --------------------------------------- | ------ | ----------------------------------------------------------------------------------------- |
+| Research, plan, architecture            | ✅     | `01`–`03` docs; all 28 plan decisions adopted                                             |
+| Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
+| Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
+| **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
+| **M2** Custody, labels, import          | 🟡     | Wave 1 merged and pushed; wave 2 integrated, final verification running; wave 3 not started |
+| **M3** Expo mobile app                  | ⏳     |                                                                                           |
+| **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
+| **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
+| **M6** Cloud SaaS launch                | ⏳     |                                                                                           |
+
+## 2. M1 — done ✅
+
+Sign-in (passwords, two-step verification incl. turn off / new recovery codes, invitations, password reset,
+sessions, roles and permissions), tenant isolation proven by tests (route replay, direct and through PgBouncer),
+asset registry (categories with custom fields, manufacturers, models, status labels, vendors, assets with
+automatic tags, search, bulk edit, archive/restore, clone), web admin, platform services (audit log, outbox,
+jobs, encrypted secrets, email), CI and security scanning.
+
+## 3. M2 — custody, labels and import 🟡
+
+### Wave 1 — merged ✅
+
+| Area                                                                  | Status | Stories |
+| --------------------------------------------------------------------- | ------ | ------- |
+| Locations tree (site › building › room), moves                        | ✅     | LOC-01, LOC-04 · LOC-02 🟡 (default location on model/category not built) |
+| People (with or without login)                                        | ✅     | USR-01 · USR-02 🟡 (no link-to-login action yet → USR-03) |
+| Check-out / check-in (condition, photos) / transfer, dispose, lost & found | ✅ | LIFE-01…05, LIFE-07 |
+| Chain-of-custody history                                              | 🟡     | LIFE-06 (works; minor gaps noted in backlog) |
+| USB barcode scanner + scan panel                                      | 🟡     | LIFE-08 (needs a real-scanner test 👤) |
+| Files: storage, virus scanning (ClamAV), thumbnails, upload security  | ✅     | FILE-01…04, SEC-02 |
+| QR / scan-code lookup                                                 | ✅     | TAG-01 |
+
+### Wave 2 — integrated, final verification in progress 🟡
+
+| Area                                                       | Status | Stories |
+| ---------------------------------------------------------- | ------ | ------- |
+| Label sheets (PDF, QR + Code128, 6 templates, start position) | ✅  | TAG-02, TAG-03 |
+| Accessories and consumables, low-stock alerts              | ✅     | ACC-01…04 |
+| Repair log                                                 | ✅     | MNT-01, MNT-02 |
+| Notifications (in-app + email, preferences)                | ✅     | NOT-01, NOT-02 |
+| Saved views (server-side, shareable), CSV export           | ✅     | REG-01, REG-02 |
+| MFA policy shown up front on the Security page             | ✅     | AUTH-01 |
+| Test-suite stability fix (connection pool, parallelism)    | ✅     | — |
+
+Wave 2 is not yet merged into `main` or pushed: the last verification run is in progress.
+
+### Wave 3 — not started ⏳
+
+| Area                                                            | Stories |
+| --------------------------------------------------------------- | ------- |
+| CSV import wizard with dry run, Google Admin ChromeOS template   | IMP-01…09 |
+| Loaner pool, quick loaner flows, overdue alerts, loaner dashboard | LOAN-01…04 |
+| Location scoping for roles                                       | LOC-03 |
+| Isolation-harness extension, performance harness, user guides    | SEC-01, OPS-01, DOC-01 |
+| Deferred small items: default return date, sort by location/assignee/due, link person ↔ login, undo toast | LIFE-09, REG-03, USR-03, UX-02 |
+| M2 founder acceptance walk-through 👤                            | UX-01 |
+
+## 4. Waiting on the founder 👤
+
+**Decisions / sign-offs**
+
+- [ ] ADRs still marked PROPOSED: 0003 (module boundaries & API conventions), 0004 (platform services),
+      0005 (asset registry), 0006 (files & scanning), 0007 (labels), 0008 (accessories & consumables),
+      0009 (repairs, notifications, views, export). ADR 0001 and 0002 are accepted.
+- [ ] Product name and primary colour (placeholders "Asset Tracker", blue) — before M3 store testing (F-30).
+
+**Hardware / data for M2 acceptance**
+
+- [ ] Real label stock + printer and a USB barcode scanner for print/scan calibration (F-02, M2-TAG-04).
+- [ ] An anonymised real asset spreadsheet and a Google Admin ChromeOS export for the import trial (F-09).
+
+**GitHub**
+
+- [ ] Verify `milan@altisinfonet.in` on the GitHub account so commits are credited.
+- [ ] Replace `@OWNER` in `.github/CODEOWNERS`; set branch protection + required checks (see `docs/engineering/ci.md`).
+- [ ] Check the first GitHub Actions runs; disable CodeQL if the repo has no GitHub Advanced Security.
+- [ ] Review the two open Dependabot PRs (GitHub Actions: likely fine; OpenTelemetry exporter: check, it was pinned on purpose).
+
+**Long lead-time accounts (start early)**
+
+- [ ] D-U-N-S number (F-05) → Apple Developer (F-06) and Google Play organisation account (F-07), needed for M3.
+- [ ] Legal entity details, legal documents (F-04, F-11) before M4 real users.
+- [ ] Design-partner recruitment, 5–10 partners before the M4 self-hosted beta (F-10).
+
+The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-01 … F-30).
+
+## 5. Known gaps carried forward
+
+- Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
+- Notification types for loans and imports exist but are wired only when those features land (wave 3).
+- Some API-only options have no UI yet: label copies/outlines/logo, force check-in when opening a repair,
+  notification delivery log.
+- Timeline: will be re-estimated now that M1 and most of M2 show the real pace (decision 22).

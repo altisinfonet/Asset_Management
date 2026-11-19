@@ -2703,6 +2703,8 @@ export interface components {
             readonly depth?: number;
             /** @description Root..self. */
             readonly ancestor_ids?: string[];
+            /** @description Active assets at this location and in its whole subtree (M2-LOC-01 "asset_count per node, including descendants"). */
+            readonly asset_count?: number;
         };
         LocationCreate: {
             /**

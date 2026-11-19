@@ -402,7 +402,12 @@ defineResource('Location', {
     notes: nstr(),
   },
   required: ['name'],
-  readOnly: { depth: ro(int()), ancestor_ids: ro(arr(uuid(), { description: 'Root..self.' })) },
+  readOnly: {
+    depth: ro(int()),
+    ancestor_ids: ro(arr(uuid(), { description: 'Root..self.' })),
+    // ---- M2 WEB (web proposal, M2-LOC-04): per-node asset count for the locations tree. ----
+    asset_count: ro(int({ minimum: 0, description: 'Active assets at this location and in its whole subtree (M2-LOC-01 "asset_count per node, including descendants").' })),
+  },
 });
 defineResource('Person', {
   props: {

@@ -9524,6 +9524,11 @@ components:
             format: uuid
           description: Root..self.
           readOnly: true
+        asset_count:
+          type: integer
+          minimum: 0
+          description: Active assets at this location and in its whole subtree (M2-LOC-01 "asset_count per node, including descendants").
+          readOnly: true
       required:
         - id
         - name

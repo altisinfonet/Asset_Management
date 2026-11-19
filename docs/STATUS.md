@@ -13,7 +13,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Wave 1 merged and pushed; wave 2 integrated, final verification running; wave 3 not started |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; wave 3 not started |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -41,7 +41,7 @@ jobs, encrypted secrets, email), CI and security scanning.
 | Files: storage, virus scanning (ClamAV), thumbnails, upload security  | ✅     | FILE-01…04, SEC-02 |
 | QR / scan-code lookup                                                 | ✅     | TAG-01 |
 
-### Wave 2 — integrated, final verification in progress 🟡
+### Wave 2 — merged ✅
 
 | Area                                                       | Status | Stories |
 | ---------------------------------------------------------- | ------ | ------- |
@@ -53,7 +53,7 @@ jobs, encrypted secrets, email), CI and security scanning.
 | MFA policy shown up front on the Security page             | ✅     | AUTH-01 |
 | Test-suite stability fix (connection pool, parallelism)    | ✅     | — |
 
-Wave 2 is not yet merged into `main` or pushed: the last verification run is in progress.
+Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBouncer), real-stack browser tests 30/30. One unidentified intermittent API test failure was seen in 1 of 5 runs under extra load; watch the first CI runs.
 
 ### Wave 3 — not started ⏳
 

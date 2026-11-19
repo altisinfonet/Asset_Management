@@ -34,7 +34,7 @@ type OpenDialog = 'off' | 'codes' | null;
  *
  * `GET /v1/auth/me` says whether the organisation enforces MFA for this user (`mfa_policy.required`,
  * M2-AUTH-01): then "Turn off" is disabled up front with the explanation. The API's
- * `403 mfa-required-by-policy` stays as a fallback (an older API, or a policy that changed since
+ * `403 mfa-required-by-policy` stays as a fallback (a policy that changed since
  * the page loaded); once seen, the button is disabled for the rest of the visit.
  */
 export function SecurityScreen() {
@@ -81,7 +81,7 @@ export function SecurityScreen() {
   );
 
   const mfaEnabled = auth.me?.user.mfa_enabled === true;
-  const policyRequired = auth.me?.mfa_policy?.required === true;
+  const policyRequired = auth.me?.mfa_policy.required === true;
   const turnOffLocked = policyLocked || policyRequired;
 
   const turnOff = async (reauth: ReauthRequest) => {

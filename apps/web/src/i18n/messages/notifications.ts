@@ -44,7 +44,6 @@ export const notificationsMessages = {
       none: 'There are no notification types to set yet.',
       unsaved: 'You have unsaved changes.',
       hint: '"Right away" sends one e-mail per notification, "Daily summary" collects them into one e-mail a day.',
-      partial: 'Some changes could not be saved. Try again.',
     },
     rules: {
       title: 'Notification rules',

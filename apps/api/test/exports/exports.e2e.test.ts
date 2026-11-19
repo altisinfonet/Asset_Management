@@ -30,7 +30,7 @@ import {
 
 /** The tiny CSV reader the importer will have: BOM, quotes, CRLF. */
 function parseCsv(text: string): string[][] {
-  const src = text.replace(/^﻿/, '');
+  const src = text.startsWith('﻿') ? text.slice(1) : text;
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

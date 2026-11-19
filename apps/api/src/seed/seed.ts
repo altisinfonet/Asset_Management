@@ -461,6 +461,9 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     where: { is_default: true },
     select: { id: true },
   });
+  // M2 wave 1: a location tree (2 sites, buildings, floors, rooms) and a set of people.
+  const places = await seedLocations(trx, tenantId, company.id);
+  const staff = await seedPeople(trx, tenantId, company.id, spec.domain, places);
   const rand = lcg(20251118);
   const weighted = <T>(items: Array<[T, number]>): T => {
     const total = items.reduce((n, [, w]) => n + w, 0);
@@ -532,9 +535,255 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
       notes: i % 11 === 0 ? 'Imaged with the standard build; asset sticker on the lid.' : null,
       custom_data: custom as Prisma.InputJsonObject,
       archived_at: retired && i % 2 === 0 ? new Date(Date.UTC(2025, 9, 1)) : null,
+      // every asset has a place: the leaf locations in turn (deterministic, identical in both tenants)
+      location_id: places.leaves[i % places.leaves.length]!,
     });
   }
   await trx.asset.createMany({ data: assets });
+  await seedCustody(trx, tenantId, assets, staff, places, statusByName.get('Deployed')!);
 
   return true;
+}
+
+// ------------------------------------------------------------------------------ M2 wave 1 data
+
+interface PlaceSeed {
+  name: string;
+  kind: string;
+  code?: string;
+  children?: PlaceSeed[];
+}
+
+/** Two sites, their buildings, floors and rooms (the same tree in every demo tenant). */
+export const DEMO_LOCATIONS: PlaceSeed[] = [
+  {
+    name: 'Oslo HQ',
+    kind: 'site',
+    code: 'OSL',
+    children: [
+      {
+        name: 'Main building',
+        kind: 'building',
+        children: [
+          {
+            name: 'Floor 1',
+            kind: 'floor',
+            children: [
+              { name: 'Reception', kind: 'room' },
+              { name: 'Room 101', kind: 'room' },
+              { name: 'Room 102', kind: 'room' },
+            ],
+          },
+          {
+            name: 'Floor 2',
+            kind: 'floor',
+            children: [
+              { name: 'Open office', kind: 'room' },
+              { name: 'Server room', kind: 'room', code: 'SRV' },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'Warehouse',
+        kind: 'building',
+        children: [
+          { name: 'Storage A', kind: 'storage' },
+          { name: 'Storage B', kind: 'storage' },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'Bergen campus',
+    kind: 'site',
+    code: 'BGO',
+    children: [
+      {
+        name: 'Science block',
+        kind: 'building',
+        children: [
+          { name: 'Lab 1', kind: 'room' },
+          { name: 'Lab 2', kind: 'room' },
+        ],
+      },
+      { name: 'Library', kind: 'building', children: [{ name: 'Reading room', kind: 'room' }] },
+    ],
+  },
+];
+
+interface Places {
+  /** ids of the locations without children, in tree order */
+  leaves: string[];
+  /** every location id by name */
+  byName: Map<string, string>;
+}
+
+async function seedLocations(trx: Tx, tenantId: string, companyId: string): Promise<Places> {
+  const places: Places = { leaves: [], byName: new Map() };
+  // One at a time: the path trigger reads the parent row, which must already be written.
+  const insert = async (seed: PlaceSeed, parentId: string | null): Promise<void> => {
+    const id = uuidv7();
+    await trx.location.create({
+      data: {
+        id,
+        tenant_id: tenantId,
+        company_id: companyId,
+        parent_id: parentId,
+        name: seed.name,
+        kind: seed.kind,
+        code: seed.code ?? null,
+      },
+    });
+    places.byName.set(seed.name, id);
+    if (!seed.children?.length) places.leaves.push(id);
+    for (const child of seed.children ?? []) await insert(child, id);
+  };
+  for (const root of DEMO_LOCATIONS) await insert(root, null);
+  return places;
+}
+
+interface PersonSeed {
+  first: string;
+  last: string;
+  kind: 'employee' | 'student' | 'contractor';
+  department: string;
+  title: string | null;
+  home: string;
+}
+
+export const DEMO_PEOPLE: PersonSeed[] = [
+  { first: 'Alice', last: 'Johansen', kind: 'employee', department: 'IT', title: 'IT manager', home: 'Server room' },
+  { first: 'Bjorn', last: 'Haugen', kind: 'employee', department: 'IT', title: 'Support engineer', home: 'Room 101' },
+  { first: 'Camilla', last: 'Berg', kind: 'employee', department: 'Finance', title: 'Controller', home: 'Room 102' },
+  { first: 'David', last: 'Nilsen', kind: 'employee', department: 'Facilities', title: 'Site lead', home: 'Storage A' },
+  { first: 'Eva', last: 'Larsen', kind: 'employee', department: 'Sales', title: 'Account executive', home: 'Open office' },
+  { first: 'Fatima', last: 'Khan', kind: 'contractor', department: 'IT', title: 'Network contractor', home: 'Server room' },
+  { first: 'Gustav', last: 'Eriksen', kind: 'student', department: 'Year 10', title: null, home: 'Lab 1' },
+  { first: 'Hanna', last: 'Solberg', kind: 'student', department: 'Year 10', title: null, home: 'Lab 1' },
+  { first: 'Ivar', last: 'Moen', kind: 'student', department: 'Year 11', title: null, home: 'Lab 2' },
+  { first: 'Julie', last: 'Dahl', kind: 'student', department: 'Year 11', title: null, home: 'Lab 2' },
+  { first: 'Karl', last: 'Strand', kind: 'student', department: 'Year 12', title: null, home: 'Reading room' },
+  { first: 'Lise', last: 'Bakke', kind: 'student', department: 'Year 12', title: null, home: 'Reading room' },
+];
+
+/** People without a login (the persons of the demo logins are created by the database). */
+async function seedPeople(
+  trx: Tx,
+  tenantId: string,
+  companyId: string,
+  domain: string,
+  places: Places,
+): Promise<Array<{ id: string; name: string }>> {
+  const rows = DEMO_PEOPLE.map((p, i) => ({
+    id: uuidv7(),
+    tenant_id: tenantId,
+    company_id: companyId,
+    kind: p.kind,
+    display_name: `${p.first} ${p.last}`,
+    first_name: p.first,
+    last_name: p.last,
+    email: `${p.first}.${p.last}@${domain}`.toLowerCase(),
+    employee_ref: `${p.kind === 'student' ? 'S' : 'E'}-${(p.kind === 'student' ? 2000 : 1000) + i}`,
+    department: p.department,
+    job_title: p.title,
+    location_id: places.byName.get(p.home) ?? null,
+  }));
+  await trx.person.createMany({ data: rows });
+  return rows.map((r) => ({ id: r.id, name: r.display_name }));
+}
+
+/**
+ * Chain-of-custody demo data: every asset gets a `created` history entry; the active assets with
+ * the "Deployed" status are checked out to the people (a few to a room), some with a return date
+ * and three of them overdue. Done in SQL-shaped batches (no API call: the seed runs before the app).
+ */
+async function seedCustody(
+  trx: Tx,
+  tenantId: string,
+  assets: Array<{
+    id: string;
+    asset_tag: string;
+    status_id: string;
+    archived_at: Date | null;
+    created_at?: Date;
+  }>,
+  people: Array<{ id: string; name: string }>,
+  places: Places,
+  deployedStatusId: string,
+): Promise<void> {
+  const owner = await trx.user_account.findFirst({
+    where: { role_assignment: { some: { role: { key: 'tenant_admin' } } } },
+    select: { id: true },
+  });
+  const rooms = [...places.leaves];
+  const now = Date.now();
+  const day = 86_400_000;
+  const assignments: Array<{
+    id: string;
+    assetId: string;
+    tag: string;
+    target: string;
+    targetName: string;
+    isPerson: boolean;
+    at: Date;
+  }> = [];
+  let overdue = 0;
+  const custody = assets.filter((a) => a.status_id === deployedStatusId && !a.archived_at);
+  for (const [i, asset] of custody.entries()) {
+    const toRoom = i % 17 === 16;
+    const person = people[i % people.length]!;
+    const place = rooms[i % rooms.length]!;
+    const placeName = [...places.byName].find(([, id]) => id === place)?.[0] ?? 'a room';
+    const id = uuidv7();
+    const at = new Date(now - ((i % 90) + 1) * day);
+    // due dates: every 5th asset is due in a month, every 11th is overdue (the first three become 10 days late)
+    let due: Date | null = null;
+    if (i % 11 === 0 && overdue < 3) {
+      due = new Date(now - 10 * day);
+      overdue++;
+    } else if (i % 5 === 0) due = new Date(now + 30 * day);
+    await trx.assignment.create({
+      data: {
+        id,
+        tenant_id: tenantId,
+        asset_id: asset.id,
+        person_id: toRoom ? null : person.id,
+        location_id: toRoom ? place : null,
+        checked_out_at: at,
+        checked_out_by: owner?.id ?? null,
+        expected_return: due ? new Date(due.toISOString().slice(0, 10) + 'T00:00:00Z') : null,
+        note: due ? 'Demo loan' : null,
+      },
+    });
+    assignments.push({
+      id,
+      assetId: asset.id,
+      tag: asset.asset_tag,
+      target: toRoom ? place : person.id,
+      targetName: toRoom ? placeName : person.name,
+      isPerson: !toRoom,
+      at,
+    });
+  }
+  // History: `created` for every asset (system), `checked_out` for the demo assignments.
+  await trx.$executeRaw`
+    insert into app.asset_history (id, tenant_id, asset_id, at, event_type, actor_type, summary, payload)
+    select gen_random_uuid(), a.tenant_id, a.id, a.created_at, 'created', 'system',
+           'Asset ' || a.asset_tag || ' created', '{}'::jsonb
+      from app.asset a`;
+  for (const s of assignments) {
+    await trx.$executeRaw`
+      insert into app.asset_history
+        (id, tenant_id, asset_id, at, event_type, actor_type, actor_id, assignment_id, summary, payload)
+      values (${uuidv7()}::uuid, ${tenantId}::uuid, ${s.assetId}::uuid, ${s.at}::timestamptz,
+              'checked_out', 'system', ${owner?.id ?? null}::uuid, ${s.id}::uuid,
+              ${`Checked out to ${s.targetName}`}::text,
+              ${JSON.stringify({
+                assignment_id: s.id,
+                target_type: s.isPerson ? 'person' : 'location',
+                target_id: s.target,
+                target_name: s.targetName,
+              })}::jsonb)`;
+  }
 }

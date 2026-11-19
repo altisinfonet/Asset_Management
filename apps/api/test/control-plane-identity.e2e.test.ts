@@ -40,6 +40,10 @@ const TENANT_TABLES = [
   'app.assignment',
   'app.transfer',
   'app.asset_history',
+  // [M2-W2 ACC]
+  'app.accessory',
+  'app.consumable',
+  'app.stock_movement',
   'app.idempotency_key',
   'app.outbox_event',
   'app.audit_log',
@@ -393,7 +397,9 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           expect(await countOf(trx, 'app.person')).toBe(16);
           expect(await trx.person.count({ where: { user_id: null } })).toBe(12);
           expect(await trx.asset.count({ where: { location_id: null } })).toBe(0);
-          const open = await trx.assignment.count({ where: { checked_in_at: null } });
+          const open = await trx.assignment.count({
+            where: { checked_in_at: null, asset_id: { not: null } },
+          });
           expect(open).toBeGreaterThan(40);
           expect(
             await trx.assignment.count({
@@ -411,6 +417,35 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           const [out] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.asset_history where event_type = 'checked_out'`;
           expect(out!.n).toBe(open);
+        });
+        // [M2-W2 ACC] demo accessories (some out, one with a partial return, some low) and consumables with a ledger
+        await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
+          expect(await trx.accessory.count()).toBe(6);
+          expect(await trx.consumable.count()).toBe(5);
+          expect(await trx.category.count({ where: { kind: 'accessory' } })).toBe(4);
+          expect(await trx.category.count({ where: { kind: 'consumable' } })).toBe(3);
+          const lowAccessories = await trx.$queryRaw<Array<{ name: string }>>`
+            select name from app.v_low_stock where item_type = 'accessory' order by name`;
+          expect(lowAccessories.map((r) => r.name)).toEqual(['HDMI cable 2 m']);
+          const lowConsumables = await trx.$queryRaw<Array<{ name: string }>>`
+            select name from app.v_low_stock where item_type = 'consumable' order by name`;
+          expect(lowConsumables.map((r) => r.name)).toEqual(['Toner cyan (HP 410X)']);
+          // the latch matches the state: nothing alerts again on the next movement of a low item
+          expect(await trx.consumable.count({ where: { low_stock_alerted: true } })).toBe(1);
+          expect(await trx.accessory.count({ where: { low_stock_alerted: true } })).toBe(1);
+          // the balance is the ledger
+          const [drift] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.consumable c
+             where c.qty_on_hand <> coalesce((select sum(qty_delta) from app.stock_movement m where m.consumable_id = c.id), 0)`;
+          expect(drift!.n).toBe(0);
+          const partial = await trx.assignment.count({
+            where: {
+              accessory_id: { not: null },
+              checked_in_at: null,
+              quantity_returned: { gt: 0 },
+            },
+          });
+          expect(partial).toBe(1);
         });
       }
       expect(acme.tags).toEqual(globex.tags); // deliberately overlapping

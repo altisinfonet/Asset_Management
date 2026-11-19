@@ -433,6 +433,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assets/{id}/repair-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repair totals of an asset
+         * @description Counts and the total recorded cost per currency of the asset's repair and maintenance records (cancelled and archived records excluded).
+         *
+         *     Requires permission `repair:read`.
+         */
+        get: operations["getAssetRepairSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/{id}/restore": {
         parameters: {
             query?: never;
@@ -1199,6 +1221,60 @@ export interface paths {
         patch: operations["updateCustomFieldDef"];
         trace?: never;
     };
+    "/v1/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My exports
+         * @description The caller's exports, newest first. `download_url` is never set in a list; fetch one export for a link.
+         *
+         *     Requires permission `export:run`.
+         */
+        get: operations["listExports"];
+        put?: never;
+        /**
+         * Export a list to CSV
+         * @description Queues a background job that writes every row matching `filters` to a UTF-8 CSV file (with a byte order mark, CRLF line ends, a header row) and stores it for 24 hours. Poll `GET /v1/exports/{id}` until `status=succeeded`, then use `download_url`.
+         *
+         *     The caller also needs the read permission of the list (`asset:read`, `person:read` or `location:read`, `403` otherwise). Cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading apostrophe so spreadsheets never run them as formulas. Asset exports include one `cf:<key>` column per custom field. At most 100,000 rows. Requested and downloaded exports are audited (sensitive read).
+         *
+         *     The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`.
+         *
+         *     Requires permission `export:run`.
+         */
+        post: operations["createExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an export
+         * @description Status of one export. For a succeeded one it issues a fresh short-lived `download_url` (audited as a sensitive read). Another user's export is `404`.
+         *
+         *     Requires permission `export:run`.
+         */
+        get: operations["getExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/{token}": {
         parameters: {
             query?: never;
@@ -1737,6 +1813,184 @@ export interface paths {
         patch: operations["updateAssetModel"];
         trace?: never;
     };
+    "/v1/notification-deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Delivery log
+         * @description What was delivered, queued, deferred (digest) or skipped, newest first.
+         *
+         *     Requires permission `notification:manage`.
+         */
+        get: operations["listNotificationDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My notification preferences
+         * @description One entry per notification type, with the caller's choice (or the default).
+         */
+        get: operations["listNotificationPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-preferences/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set my preference for a type
+         * @description Chooses in-app and email delivery (`immediate`, `digest`, `off`) for one notification type. Omitted fields keep their current value (or the default).
+         */
+        put: operations["updateNotificationPreference"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Notification rules of the organisation
+         * @description Every notification type with whether it is enabled and who receives it.
+         *
+         *     Requires permission `notification:manage`.
+         */
+        get: operations["listNotificationRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-rules/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Enable, disable or re-address a type
+         * @description Requires permission `notification:manage`.
+         */
+        put: operations["updateNotificationRule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My notifications
+         * @description The caller's in-app notifications, newest first.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a notification read
+         * @description Idempotent: an already-read notification keeps its first `read_at`. Another user's notification is `404`.
+         */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark every notification read */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Number of unread notifications */
+        get: operations["getNotificationUnreadCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/people": {
         parameters: {
             query?: never;
@@ -1852,7 +2106,13 @@ export interface paths {
         put?: never;
         /**
          * Create repair record
-         * @description Requires permission `repair:manage`.
+         * @description Opens a repair or maintenance record for an asset.
+         *
+         *     `set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant's default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset's status (`409 conflict` otherwise).
+         *
+         *     A checked-out asset goes to repair through check-in first; with `force_checkin` and `force_note` (and the `asset:checkin` permission) the custody period is closed in the same transaction. A lost or retired asset, or an archived one, cannot be repaired (`409`).
+         *
+         *     Writes a `repair_opened` history event, an audit row and the outbox event `repair.opened`. Requires permission `repair:manage`.
          */
         post: operations["createRepair"];
         delete?: never;
@@ -1877,7 +2137,7 @@ export interface paths {
         post?: never;
         /**
          * Archive repair record
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
+         * @description Soft delete. `409` while the record is open or in progress (cancel or complete it first).
          *
          *     Requires permission `repair:manage`.
          */
@@ -1886,7 +2146,7 @@ export interface paths {
         head?: never;
         /**
          * Update repair record
-         * @description Requires permission `repair:manage`.
+         * @description Edit a record (RFC 7396 merge). `status` may move to `in_progress` or `cancelled`; cancelling restores the asset status. The asset cannot change. Closed records stay editable except for their status. Requires permission `repair:manage`.
          */
         patch: operations["updateRepair"];
         trace?: never;
@@ -1902,7 +2162,7 @@ export interface paths {
         put?: never;
         /**
          * Complete a repair
-         * @description Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status (`restore_status_id`).
+         * @description Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status: the explicit `restore_status_id` of the request, else the one remembered when the repair opened, but only when the asset still has the status the repair moved it to (a status someone chose meanwhile is left alone). Writes a `repair_completed` history event, an audit row and the outbox event `repair.completed`. `409` when the record is already closed.
          *
          *     Requires permission `repair:manage`.
          */
@@ -1928,6 +2188,80 @@ export interface paths {
          */
         get: operations["listRoles"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved views I can use
+         * @description The caller's own views plus the views shared in the organisation, own first, then by name.
+         */
+        get: operations["listSavedViews"];
+        put?: never;
+        /**
+         * Save a view
+         * @description Creates a private view. The name is unique among the caller's views of the list (`409`); at most 50 per user and list. Share it afterwards with `PUT /v1/saved-views/{id}/sharing`.
+         */
+        post: operations["createSavedView"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a saved view
+         * @description An own view or a shared one; anybody else's private view is `404`.
+         */
+        get: operations["getSavedView"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a view
+         * @description Deletes the view for good. Only the owner (`404` for anybody else).
+         */
+        delete: operations["deleteSavedView"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename or change a view
+         * @description Only the owner (`404` for anybody else, also for a shared view). A shared view stays shared.
+         */
+        patch: operations["updateSavedView"];
+        trace?: never;
+    };
+    "/v1/saved-views/{id}/sharing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a view with the organisation, or stop sharing
+         * @description Owner only. A shared view is visible to every user of the organisation (read only, they can copy it). The name must be unique among the shared views of the list (`409`).
+         *
+         *     Requires permission `view:share`.
+         */
+        put: operations["shareSavedView"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3365,6 +3699,15 @@ export interface components {
             /** Format: date-time */
             readonly completed_at?: string | null;
             readonly resolution_notes?: string | null;
+            /**
+             * Format: uuid
+             * @description The status label the asset was moved to when the repair opened (null when the repair did not move it).
+             */
+            readonly set_status_id?: string | null;
+            /** @description Tag of the asset, so lists can label their rows. */
+            readonly asset_tag?: string | null;
+            readonly asset_name?: string | null;
+            readonly vendor_name?: string | null;
         };
         RepairCreate: {
             /** Format: uuid */
@@ -3392,7 +3735,7 @@ export interface components {
              */
             restore_status_id?: string | null;
             /**
-             * @description Completion happens through `POST /v1/repairs/{id}/complete`.
+             * @description Initial status (`open` by default; `in_progress` also sets `started_at`).
              * @default open
              * @enum {string}
              */
@@ -3402,11 +3745,18 @@ export interface components {
              * @description Status label to put the asset in while the repair is open (typically an undeployable label such as "In repair").
              */
             set_status_id?: string;
+            /** @description Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record. */
+            attachment_ids?: string[];
+            /**
+             * @description The asset is checked out: close its custody period (a check-in) and open the repair in one step. Needs `asset:checkin` as well as `repair:manage`, and `force_note`. Without it a checked-out asset is refused with `409 asset-already-checked-out` (check it in first).
+             * @default false
+             */
+            force_checkin?: boolean;
+            /** @description Why the custody period is closed (recorded on the check-in, the history and the audit log). Required with `force_checkin`. */
+            force_note?: string;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         RepairUpdate: {
-            /** Format: uuid */
-            asset_id?: string;
             /**
              * @default repair
              * @enum {string}
@@ -3430,8 +3780,7 @@ export interface components {
              */
             restore_status_id?: string | null;
             /**
-             * @description Completion happens through `POST /v1/repairs/{id}/complete`.
-             * @default open
+             * @description Move to `in_progress`, or `cancelled` (restores the asset status like a completion). A closed record (`completed`, `cancelled`) keeps its status.
              * @enum {string}
              */
             status?: "open" | "in_progress" | "cancelled";
@@ -3952,6 +4301,8 @@ export interface components {
              * @description Overrides the repair's `restore_status_id`.
              */
             restore_status_id?: string | null;
+            /** @description Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record. */
+            attachment_ids?: string[];
         };
         LabelTemplate: {
             /** Format: uuid */
@@ -4287,6 +4638,16 @@ export interface components {
             session: components["schemas"]["SessionExpiry"] | null;
             /** @description Only for cookie sessions. */
             csrf_token?: string;
+            /** @description The organisation's MFA policy and whether it applies to the caller (M2-AUTH-01). */
+            mfa_policy: {
+                /** @description True when the policy requires THIS user to have two-step verification (always false for API keys). While true, "Turn off" is refused with `403 mfa-required-by-policy`. */
+                required: boolean;
+                /**
+                 * @description Who the organisation requires to use two-step verification: nobody, administrators (roles holding `*` or `user:manage`), or everybody.
+                 * @enum {string}
+                 */
+                scope: "off" | "admins" | "all";
+            };
         };
         SessionExpiry: {
             /**
@@ -4599,6 +4960,242 @@ export interface components {
              */
             location_id?: string | null;
             note?: string;
+        };
+        RepairSummary: {
+            /** Format: uuid */
+            asset_id: string;
+            /** @description Records in status `open` or `in_progress`. */
+            open_count: number;
+            /** @description Records that are not cancelled or archived. */
+            total_count: number;
+            /** @description Total recorded cost of the non-cancelled records, one entry per currency (amounts in different currencies are never added together). */
+            total_cost: components["schemas"]["Money"][];
+        };
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @description Notification type (the domain event it comes from), e.g. `attachment.infected`. */
+            type: string;
+            title: string;
+            body: string | null;
+            /** @description Path inside the web app that shows the subject, e.g. `/assets/view?id=...`. */
+            link: string | null;
+            entity_type: string | null;
+            /** Format: uuid */
+            entity_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            read_at: string | null;
+        };
+        NotificationList: {
+            data: components["schemas"]["Notification"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        NotificationUnreadCount: {
+            count: number;
+        };
+        NotificationReadAllResult: {
+            /** @description Notifications that were unread and are now read. */
+            updated: number;
+        };
+        NotificationPreference: {
+            type: string;
+            label: string;
+            description: string;
+            /** @description Show in the notification bell. */
+            in_app: boolean;
+            /**
+             * @description `immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.
+             * @enum {string}
+             */
+            email: "immediate" | "digest" | "off";
+            /** @description True while the user has not chosen: the values are the type's defaults. */
+            is_default: boolean;
+        };
+        NotificationPreferenceList: {
+            data: components["schemas"]["NotificationPreference"][];
+        };
+        /** @description At least one field. */
+        NotificationPreferenceUpdate: {
+            in_app?: boolean;
+            /**
+             * @description `immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.
+             * @enum {string}
+             */
+            email?: "immediate" | "digest" | "off";
+        };
+        NotificationRule: {
+            type: string;
+            label: string;
+            description: string;
+            /** @description When false the type produces no notification for anybody in this organisation. */
+            enabled: boolean;
+            /** @description Who gets it by default, in words. */
+            recipients: string;
+            /** @description True when `recipient_roles` can replace the default recipients (types addressed to users that hold a permission). */
+            role_configurable: boolean;
+            /** @description Role keys that receive it instead of the default recipients; null = the default. */
+            recipient_roles: string[] | null;
+            /** Format: date-time */
+            updated_at: string | null;
+        };
+        NotificationRuleList: {
+            data: components["schemas"]["NotificationRule"][];
+        };
+        /** @description At least one field. */
+        NotificationRuleUpdate: {
+            enabled?: boolean;
+            /** @description Role keys, or null to go back to the default recipients. Only for `role_configurable` types. */
+            recipient_roles?: string[] | null;
+        };
+        /** @description `queued` = handed to the mail queue (the mail job has its own retries and dead-letter list). */
+        NotificationDelivery: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            notification_id: string | null;
+            /** Format: uuid */
+            user_id: string;
+            type: string;
+            /** @enum {string} */
+            channel: "in_app" | "email";
+            /** @enum {string} */
+            status: "delivered" | "queued" | "deferred" | "skipped" | "failed";
+            /** @description Why a delivery was skipped or deferred, e.g. `preference-off`, `no-email`, `throttled`, `digest`. */
+            reason: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        NotificationDeliveryList: {
+            data: components["schemas"]["NotificationDelivery"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SavedView: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description The list the view belongs to.
+             * @enum {string}
+             */
+            resource: "assets";
+            name: string;
+            /** @description The list filters as the client keeps them (opaque to the server apart from the id references checked for `warnings`). */
+            filters: {
+                [key: string]: unknown;
+            };
+            /** @description Visible column ids in display order. */
+            columns: string[];
+            /** @description Sort key with `-` for descending, or null for the default. */
+            sort: string | null;
+            /** @description Visible to everybody in the organisation. */
+            is_shared: boolean;
+            /** @description The caller created it (only the owner edits it). */
+            is_owner: boolean;
+            owner: {
+                /** Format: uuid */
+                id: string;
+                display_name: string;
+            };
+            /** @description Id references in `filters` (status, category, location, model, vendor, person) that no longer resolve: the client applies the rest of the view and shows a warning. */
+            warnings: {
+                field: string;
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                reason: "not-found" | "archived";
+            }[];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedViewList: {
+            data: components["schemas"]["SavedView"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SavedViewCreate: {
+            /**
+             * @default assets
+             * @enum {string}
+             */
+            resource?: "assets";
+            name: string;
+            /** @description At most 16 KiB of JSON. */
+            filters?: {
+                [key: string]: unknown;
+            };
+            columns?: string[];
+            sort?: string | null;
+        };
+        /** @description Partial update (RFC 7396 merge semantics). */
+        SavedViewUpdate: {
+            name?: string;
+            /** @description At most 16 KiB of JSON. */
+            filters?: {
+                [key: string]: unknown;
+            };
+            columns?: string[];
+            sort?: string | null;
+        };
+        SavedViewShare: {
+            shared: boolean;
+        };
+        ExportCreate: {
+            /** @enum {string} */
+            resource: "assets" | "people" | "locations";
+            /**
+             * @default csv
+             * @enum {string}
+             */
+            format?: "csv";
+            /** @description The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`. */
+            filters?: {
+                [key: string]: string | number | boolean | string[];
+            };
+        };
+        Export: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            resource: "assets" | "people" | "locations";
+            /** @enum {string} */
+            format: "csv";
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed" | "expired";
+            /** @description The filters the export was requested with (normalised to query-string form). */
+            filters: {
+                [key: string]: unknown;
+            };
+            row_count: number | null;
+            size_bytes: number | null;
+            filename: string | null;
+            /** @description Why a failed export failed (a sentence without internals). */
+            error: string | null;
+            /** Format: uuid */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /**
+             * Format: date-time
+             * @description The file is deleted at this time (24 hours after completion).
+             */
+            expires_at: string | null;
+            /**
+             * Format: uri
+             * @description Short-lived link to the CSV file; only while `status=succeeded`. A new link is issued by every `GET /v1/exports/{id}` and each issue is audited as a sensitive read.
+             */
+            download_url: string | null;
+            /** Format: date-time */
+            download_expires_at: string | null;
+        };
+        ExportList: {
+            data: components["schemas"]["Export"][];
+            page: components["schemas"]["PageInfo"];
         };
     };
     responses: {
@@ -6033,6 +6630,37 @@ export interface operations {
             };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getAssetRepairSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The totals. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -8670,6 +9298,129 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listExports: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Filter by status. */
+                status?: ("queued" | "running" | "succeeded" | "failed" | "expired")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of exports. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createExport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportCreate"];
+            };
+        };
+        responses: {
+            /** @description Export queued. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    Location: components["headers"]["Location"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Export"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Missing `export:run` or the read permission of the list. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Export"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     downloadLocalFile: {
         parameters: {
             query?: never;
@@ -10335,6 +11086,431 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listNotificationDeliveries: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Recipient. */
+                user_id?: string;
+                /** @description Notification type. */
+                type?: string;
+                /** @description Channel. */
+                channel?: "in_app" | "email";
+                /** @description Status. */
+                status?: ("delivered" | "queued" | "deferred" | "skipped" | "failed")[];
+                /** @description At or after. */
+                from?: string;
+                /** @description Before. */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of deliveries. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDeliveryList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preferences. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferenceList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateNotificationPreference: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`). */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferenceUpdate"];
+            };
+        };
+        responses: {
+            /** @description The preference. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreference"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotificationRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rules. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRuleList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateNotificationRule: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`). */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationRuleUpdate"];
+            };
+        };
+        responses: {
+            /** @description The rule. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRule"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description true = only unread ones. */
+                unread?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of notifications. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many were updated. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationReadAllResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getNotificationUnreadCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The count (for the bell badge). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationUnreadCount"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listPeople: {
         parameters: {
             query?: {
@@ -10715,7 +11891,25 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset is checked out (check it in or use `force_checkin`), is lost, retired or archived, or another open repair already moved its status. Codes: `asset-already-checked-out`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-already-checked-out",
+                     *       "title": "asset already checked out",
+                     *       "status": 409,
+                     *       "code": "asset-already-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -10914,6 +12108,344 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listSavedViews: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description The list (default `assets`). */
+                resource?: "assets";
+                /** @description `mine` = created by the caller, `shared` = shared by anybody, `all` (default) = both. */
+                scope?: "all" | "mine" | "shared";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of views. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedViewList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createSavedView: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewCreate"];
+            };
+        };
+        responses: {
+            /** @description View saved. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getSavedView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewUpdate"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    shareSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewShare"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

@@ -1855,6 +1855,294 @@ addOp('/v1/audit-log', 'get', {
   success: { 200: { description: 'A page of audit entries.', headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('AuditEntryList') }, 'text/csv': { schema: str() } } } },
 });
 
+// ================================================================ [M2-W2 NOT] BEGIN
+// M2 wave 2, repairs / notifications / saved views / export / MFA policy (stories M2-MNT-01, M2-NOT-01,
+// M2-REG-01, M2-REG-02, M2-AUTH-01). Everything of this wave lives in this block so parallel branches merge cleanly.
+doc.tags.push(
+  { name: 'Notifications', description: 'In-app notifications, per-user delivery preferences, tenant notification rules and the delivery log.' },
+  { name: 'Views', description: 'Saved list views (filters, columns, sort), private or shared tenant-wide.' },
+  { name: 'Exports', description: 'CSV exports of lists, produced by a background job and downloaded through a short-lived link.' },
+);
+
+// ---- M2-AUTH-01: the MFA policy of the organisation, as it applies to the caller
+S_.Me.properties.mfa_policy = obj({
+  required: bool({ description: 'True when the policy requires THIS user to have two-step verification (always false for API keys). While true, "Turn off" is refused with `403 mfa-required-by-policy`.' }),
+  scope: en(['off', 'admins', 'all'], { description: 'Who the organisation requires to use two-step verification: nobody, administrators (roles holding `*` or `user:manage`), or everybody.' }),
+}, ['required', 'scope'], { description: 'The organisation\'s MFA policy and whether it applies to the caller (M2-AUTH-01).' });
+S_.Me.required.push('mfa_policy');
+
+// ---- M2-MNT-01: repairs and maintenance
+{
+  const attachmentIds = arr(uuid(), { maxItems: 10, uniqueItems: true, description: 'Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record.' });
+  S_.RepairCreate.properties.attachment_ids = attachmentIds;
+  S_.RepairCreate.properties.force_checkin = bool({ default: false, description: 'The asset is checked out: close its custody period (a check-in) and open the repair in one step. Needs `asset:checkin` as well as `repair:manage`, and `force_note`. Without it a checked-out asset is refused with `409 asset-already-checked-out` (check it in first).' });
+  S_.RepairCreate.properties.force_note = str({ minLength: 1, maxLength: 500, description: 'Why the custody period is closed (recorded on the check-in, the history and the audit log). Required with `force_checkin`.' });
+  S_.RepairCreate.properties.status.description = 'Initial status (`open` by default; `in_progress` also sets `started_at`).';
+  // The asset of a record never changes: open a new record for another asset.
+  delete S_.RepairUpdate.properties.asset_id;
+  S_.RepairUpdate.properties.status = en(['open', 'in_progress', 'cancelled'], { description: 'Move to `in_progress`, or `cancelled` (restores the asset status like a completion). A closed record (`completed`, `cancelled`) keeps its status.' });
+  Object.assign(S_.Repair.properties, {
+    set_status_id: ro(nuuid('The status label the asset was moved to when the repair opened (null when the repair did not move it).')),
+    asset_tag: ro(nstr({ description: 'Tag of the asset, so lists can label their rows.' })),
+    asset_name: ro(nstr()),
+    vendor_name: ro(nstr()),
+  });
+  S_.RepairCompleteRequest.properties.attachment_ids = attachmentIds;
+  S_.RepairSummary = obj({
+    asset_id: uuid(),
+    open_count: int({ description: 'Records in status `open` or `in_progress`.' }),
+    total_count: int({ description: 'Records that are not cancelled or archived.' }),
+    total_cost: arr(S('Money'), { description: 'Total recorded cost of the non-cancelled records, one entry per currency (amounts in different currencies are never added together).' }),
+  }, ['asset_id', 'open_count', 'total_count', 'total_cost']);
+
+  doc.paths['/v1/repairs'].post.description = [
+    'Opens a repair or maintenance record for an asset.',
+    '`set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant\'s default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset\'s status (`409 conflict` otherwise).',
+    'A checked-out asset goes to repair through check-in first; with `force_checkin` and `force_note` (and the `asset:checkin` permission) the custody period is closed in the same transaction. A lost or retired asset, or an archived one, cannot be repaired (`409`).',
+    'Writes a `repair_opened` history event, an audit row and the outbox event `repair.opened`. Requires permission `repair:manage`.',
+  ].join('\n\n');
+  doc.paths['/v1/repairs'].post.responses['409'] = specificProblem('409', ['asset-already-checked-out', 'conflict', 'idempotency-key-in-flight'], 'The asset is checked out (check it in or use `force_checkin`), is lost, retired or archived, or another open repair already moved its status.');
+  doc.paths['/v1/repairs/{id}'].patch.description = 'Edit a record (RFC 7396 merge). `status` may move to `in_progress` or `cancelled`; cancelling restores the asset status. The asset cannot change. Closed records stay editable except for their status. Requires permission `repair:manage`.';
+  doc.paths['/v1/repairs/{id}'].delete.description = 'Soft delete. `409` while the record is open or in progress (cancel or complete it first).\n\nRequires permission `repair:manage`.';
+  doc.paths['/v1/repairs/{id}/complete'].post.description = 'Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status: the explicit `restore_status_id` of the request, else the one remembered when the repair opened, but only when the asset still has the status the repair moved it to (a status someone chose meanwhile is left alone). Writes a `repair_completed` history event, an audit row and the outbox event `repair.completed`. `409` when the record is already closed.\n\nRequires permission `repair:manage`.';
+  addOp('/v1/assets/{id}/repair-summary', 'get', {
+    tag: 'Repairs', id: 'getAssetRepairSummary', summary: 'Repair totals of an asset', perm: 'repair:read', params: [ID],
+    description: 'Counts and the total recorded cost per currency of the asset\'s repair and maintenance records (cancelled and archived records excluded).',
+    success: { 200: okResp(200, 'The totals.', S('RepairSummary'), { replay: false }) },
+  });
+}
+
+// ---- M2-NOT-01: notifications
+{
+  const TYPE_PARAM = { name: 'type', in: 'path', required: true, description: 'Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`).', schema: str({ pattern: '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$', maxLength: 64 }) };
+  const EMAIL_MODE = en(['immediate', 'digest', 'off'], { description: '`immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.' });
+  S_.Notification = obj({
+    id: uuid(),
+    type: str({ description: 'Notification type (the domain event it comes from), e.g. `attachment.infected`.' }),
+    title: str(),
+    body: nstr(),
+    link: nstr({ description: 'Path inside the web app that shows the subject, e.g. `/assets/view?id=...`.' }),
+    entity_type: nstr(),
+    entity_id: nuuid(),
+    created_at: dt(),
+    read_at: ndt(),
+  }, ['id', 'type', 'title', 'body', 'link', 'entity_type', 'entity_id', 'created_at', 'read_at']);
+  S_.NotificationList = obj({ data: arr(S('Notification')), page: S('PageInfo') }, ['data', 'page']);
+  S_.NotificationUnreadCount = obj({ count: int({ minimum: 0 }) }, ['count']);
+  S_.NotificationReadAllResult = obj({ updated: int({ minimum: 0, description: 'Notifications that were unread and are now read.' }) }, ['updated']);
+  S_.NotificationPreference = obj({
+    type: str(),
+    label: str(),
+    description: str(),
+    in_app: bool({ description: 'Show in the notification bell.' }),
+    email: EMAIL_MODE,
+    is_default: bool({ description: 'True while the user has not chosen: the values are the type\'s defaults.' }),
+  }, ['type', 'label', 'description', 'in_app', 'email', 'is_default']);
+  S_.NotificationPreferenceList = obj({ data: arr(S('NotificationPreference')) }, ['data']);
+  S_.NotificationPreferenceUpdate = obj({ in_app: bool(), email: EMAIL_MODE }, [], { additionalProperties: false, description: 'At least one field.' });
+  S_.NotificationRule = obj({
+    type: str(),
+    label: str(),
+    description: str(),
+    enabled: bool({ description: 'When false the type produces no notification for anybody in this organisation.' }),
+    recipients: str({ description: 'Who gets it by default, in words.' }),
+    role_configurable: bool({ description: 'True when `recipient_roles` can replace the default recipients (types addressed to users that hold a permission).' }),
+    recipient_roles: { type: ['array', 'null'], items: str(), description: 'Role keys that receive it instead of the default recipients; null = the default.' },
+    updated_at: ndt(),
+  }, ['type', 'label', 'description', 'enabled', 'recipients', 'role_configurable', 'recipient_roles', 'updated_at']);
+  S_.NotificationRuleList = obj({ data: arr(S('NotificationRule')) }, ['data']);
+  S_.NotificationRuleUpdate = obj({
+    enabled: bool(),
+    recipient_roles: { type: ['array', 'null'], items: str({ pattern: '^[a-z][a-z0-9_]{1,62}$' }), maxItems: 20, description: 'Role keys, or null to go back to the default recipients. Only for `role_configurable` types.' },
+  }, [], { additionalProperties: false, description: 'At least one field.' });
+  S_.NotificationDelivery = obj({
+    id: uuid(),
+    notification_id: nuuid(),
+    user_id: uuid(),
+    type: str(),
+    channel: en(['in_app', 'email']),
+    status: en(['delivered', 'queued', 'deferred', 'skipped', 'failed']),
+    reason: nstr({ description: 'Why a delivery was skipped or deferred, e.g. `preference-off`, `no-email`, `throttled`, `digest`.' }),
+    created_at: dt(),
+  }, ['id', 'notification_id', 'user_id', 'type', 'channel', 'status', 'reason', 'created_at'], { description: '`queued` = handed to the mail queue (the mail job has its own retries and dead-letter list).' });
+  S_.NotificationDeliveryList = obj({ data: arr(S('NotificationDelivery')), page: S('PageInfo') }, ['data', 'page']);
+
+  const SELF = { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } };
+  const SELF_MUTATE = { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session with a valid `X-CSRF-Token`.' } };
+  addOp('/v1/notifications', 'get', {
+    tag: 'Notifications', id: 'listNotifications', summary: 'My notifications', selfService: true, hasId: false,
+    description: 'The caller\'s in-app notifications, newest first.',
+    params: [P('Cursor'), P('Limit'), qp('unread', bool(), 'true = only unread ones.')],
+    problems: SELF,
+    success: { 200: okResp(200, 'A page of notifications.', S('NotificationList'), { replay: false }) },
+  });
+  addOp('/v1/notifications/unread-count', 'get', {
+    tag: 'Notifications', id: 'getNotificationUnreadCount', summary: 'Number of unread notifications', selfService: true, hasId: false,
+    problems: SELF,
+    success: { 200: okResp(200, 'The count (for the bell badge).', S('NotificationUnreadCount'), { replay: false }) },
+  });
+  addOp('/v1/notifications/read-all', 'post', {
+    tag: 'Notifications', id: 'markAllNotificationsRead', summary: 'Mark every notification read', selfService: true, hasId: false, conflict: false,
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'How many were updated.', S('NotificationReadAllResult')) },
+  });
+  addOp('/v1/notifications/{id}/read', 'post', {
+    tag: 'Notifications', id: 'markNotificationRead', summary: 'Mark a notification read', selfService: true, params: [ID], conflict: false,
+    description: 'Idempotent: an already-read notification keeps its first `read_at`. Another user\'s notification is `404`.',
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'The notification.', S('Notification')) },
+  });
+  addOp('/v1/notification-preferences', 'get', {
+    tag: 'Notifications', id: 'listNotificationPreferences', summary: 'My notification preferences', selfService: true, hasId: false,
+    description: 'One entry per notification type, with the caller\'s choice (or the default).',
+    problems: SELF,
+    success: { 200: okResp(200, 'Preferences.', S('NotificationPreferenceList'), { replay: false }) },
+  });
+  addOp('/v1/notification-preferences/{type}', 'put', {
+    tag: 'Notifications', id: 'updateNotificationPreference', summary: 'Set my preference for a type', selfService: true, params: [TYPE_PARAM], conflict: false, hasId: true,
+    description: 'Chooses in-app and email delivery (`immediate`, `digest`, `off`) for one notification type. Omitted fields keep their current value (or the default).',
+    body: jsonBody(S('NotificationPreferenceUpdate')),
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'The preference.', S('NotificationPreference')) },
+  });
+  addOp('/v1/notification-rules', 'get', {
+    tag: 'Notifications', id: 'listNotificationRules', summary: 'Notification rules of the organisation', perm: 'notification:manage', hasId: false,
+    description: 'Every notification type with whether it is enabled and who receives it.',
+    success: { 200: okResp(200, 'Rules.', S('NotificationRuleList'), { replay: false }) },
+  });
+  addOp('/v1/notification-rules/{type}', 'put', {
+    tag: 'Notifications', id: 'updateNotificationRule', summary: 'Enable, disable or re-address a type', perm: 'notification:manage', params: [TYPE_PARAM], conflict: false, hasId: true,
+    body: jsonBody(S('NotificationRuleUpdate')),
+    success: { 200: okResp(200, 'The rule.', S('NotificationRule')) },
+  });
+  addOp('/v1/notification-deliveries', 'get', {
+    tag: 'Notifications', id: 'listNotificationDeliveries', summary: 'Delivery log', perm: 'notification:manage', hasId: false,
+    description: 'What was delivered, queued, deferred (digest) or skipped, newest first.',
+    params: [P('Cursor'), P('Limit'), qp('user_id', uuid(), 'Recipient.'), qp('type', str(), 'Notification type.'), qp('channel', en(['in_app', 'email']), 'Channel.'), arrQ('status', en(['delivered', 'queued', 'deferred', 'skipped', 'failed']), 'Status.'), qp('from', dt(), 'At or after.'), qp('to', dt(), 'Before.')],
+    success: { 200: okResp(200, 'A page of deliveries.', S('NotificationDeliveryList'), { replay: false }) },
+  });
+}
+
+// ---- M2-REG-01: saved views
+{
+  S_.SavedView = obj({
+    id: uuid(),
+    resource: en(['assets'], { description: 'The list the view belongs to.' }),
+    name: str({ minLength: 1, maxLength: 100 }),
+    filters: { type: 'object', additionalProperties: true, description: 'The list filters as the client keeps them (opaque to the server apart from the id references checked for `warnings`).' },
+    columns: arr(str({ maxLength: 64 }), { maxItems: 40, description: 'Visible column ids in display order.' }),
+    sort: nstr({ maxLength: 64, description: 'Sort key with `-` for descending, or null for the default.' }),
+    is_shared: bool({ description: 'Visible to everybody in the organisation.' }),
+    is_owner: bool({ description: 'The caller created it (only the owner edits it).' }),
+    owner: obj({ id: uuid(), display_name: str() }, ['id', 'display_name']),
+    warnings: arr(obj({ field: str(), id: uuid(), reason: en(['not-found', 'archived']) }, ['field', 'id', 'reason']), { description: 'Id references in `filters` (status, category, location, model, vendor, person) that no longer resolve: the client applies the rest of the view and shows a warning.' }),
+    created_at: dt(),
+    updated_at: dt(),
+  }, ['id', 'resource', 'name', 'filters', 'columns', 'sort', 'is_shared', 'is_owner', 'owner', 'warnings', 'created_at', 'updated_at']);
+  S_.SavedViewList = obj({ data: arr(S('SavedView')), page: S('PageInfo') }, ['data', 'page']);
+  const viewProps = {
+    name: str({ minLength: 1, maxLength: 100 }),
+    filters: { type: 'object', additionalProperties: true, description: 'At most 16 KiB of JSON.' },
+    columns: arr(str({ maxLength: 64 }), { maxItems: 40 }),
+    sort: nstr({ maxLength: 64 }),
+  };
+  S_.SavedViewCreate = obj({ resource: en(['assets'], { default: 'assets' }), ...viewProps }, ['name'], { additionalProperties: false });
+  S_.SavedViewUpdate = obj({ ...viewProps }, [], { additionalProperties: false, description: 'Partial update (RFC 7396 merge semantics).' });
+  S_.SavedViewShare = obj({ shared: bool() }, ['shared'], { additionalProperties: false });
+  const VIEW_403 = { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session with a valid `X-CSRF-Token`.' } };
+  addOp('/v1/saved-views', 'get', {
+    tag: 'Views', id: 'listSavedViews', summary: 'Saved views I can use', selfService: true, hasId: false,
+    description: 'The caller\'s own views plus the views shared in the organisation, own first, then by name.',
+    params: [P('Cursor'), P('Limit'), qp('resource', en(['assets']), 'The list (default `assets`).'), qp('scope', en(['all', 'mine', 'shared']), '`mine` = created by the caller, `shared` = shared by anybody, `all` (default) = both.')],
+    problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
+    success: { 200: okResp(200, 'A page of views.', S('SavedViewList'), { replay: false }) },
+  });
+  addOp('/v1/saved-views', 'post', {
+    tag: 'Views', id: 'createSavedView', summary: 'Save a view', selfService: true, hasId: false,
+    description: 'Creates a private view. The name is unique among the caller\'s views of the list (`409`); at most 50 per user and list. Share it afterwards with `PUT /v1/saved-views/{id}/sharing`.',
+    body: jsonBody(S('SavedViewCreate')),
+    problems: VIEW_403,
+    success: { 201: okResp(201, 'View saved.', S('SavedView'), { etag: true, location: true }) },
+  });
+  addOp('/v1/saved-views/{id}', 'get', {
+    tag: 'Views', id: 'getSavedView', summary: 'Get a saved view', selfService: true, params: [ID],
+    description: 'An own view or a shared one; anybody else\'s private view is `404`.',
+    problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true, replay: false }) },
+  });
+  addOp('/v1/saved-views/{id}', 'patch', {
+    tag: 'Views', id: 'updateSavedView', summary: 'Rename or change a view', selfService: true, params: [ID], ifMatch: true,
+    description: 'Only the owner (`404` for anybody else, also for a shared view). A shared view stays shared.',
+    body: jsonBody(S('SavedViewUpdate')),
+    problems: VIEW_403,
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+  });
+  addOp('/v1/saved-views/{id}', 'delete', {
+    tag: 'Views', id: 'deleteSavedView', summary: 'Delete a view', selfService: true, params: [ID], ifMatch: true, conflict: false,
+    description: 'Deletes the view for good. Only the owner (`404` for anybody else).',
+    problems: VIEW_403,
+    success: { 204: okResp(204, 'Deleted.') },
+  });
+  addOp('/v1/saved-views/{id}/sharing', 'put', {
+    tag: 'Views', id: 'shareSavedView', summary: 'Share a view with the organisation, or stop sharing', perm: 'view:share', params: [ID], ifMatch: true,
+    description: 'Owner only. A shared view is visible to every user of the organisation (read only, they can copy it). The name must be unique among the shared views of the list (`409`).',
+    body: jsonBody(S('SavedViewShare')),
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+  });
+}
+
+// ---- M2-REG-02: CSV export of lists
+{
+  const FILTER_NOTE = 'The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`.';
+  S_.ExportCreate = obj({
+    resource: en(['assets', 'people', 'locations']),
+    format: en(['csv'], { default: 'csv' }),
+    filters: { type: 'object', additionalProperties: { oneOf: [str(), { type: 'number' }, bool(), arr(str())] }, description: FILTER_NOTE },
+  }, ['resource'], { additionalProperties: false });
+  S_.Export = obj({
+    id: uuid(),
+    resource: en(['assets', 'people', 'locations']),
+    format: en(['csv']),
+    status: en(['queued', 'running', 'succeeded', 'failed', 'expired']),
+    filters: { type: 'object', additionalProperties: true, description: 'The filters the export was requested with (normalised to query-string form).' },
+    row_count: { type: ['integer', 'null'], minimum: 0 },
+    size_bytes: { type: ['integer', 'null'], minimum: 0 },
+    filename: nstr(),
+    error: nstr({ description: 'Why a failed export failed (a sentence without internals).' }),
+    requested_by: uuid(),
+    created_at: dt(),
+    started_at: ndt(),
+    completed_at: ndt(),
+    expires_at: ndt({ description: 'The file is deleted at this time (24 hours after completion).' }),
+    download_url: nstr({ format: 'uri', description: 'Short-lived link to the CSV file; only while `status=succeeded`. A new link is issued by every `GET /v1/exports/{id}` and each issue is audited as a sensitive read.' }),
+    download_expires_at: ndt(),
+  }, ['id', 'resource', 'format', 'status', 'filters', 'row_count', 'size_bytes', 'filename', 'error', 'requested_by', 'created_at', 'started_at', 'completed_at', 'expires_at', 'download_url', 'download_expires_at']);
+  S_.ExportList = obj({ data: arr(S('Export')), page: S('PageInfo') }, ['data', 'page']);
+  addOp('/v1/exports', 'post', {
+    tag: 'Exports', id: 'createExport', summary: 'Export a list to CSV', perm: 'export:run', hasId: false,
+    description: [
+      'Queues a background job that writes every row matching `filters` to a UTF-8 CSV file (with a byte order mark, CRLF line ends, a header row) and stores it for 24 hours. Poll `GET /v1/exports/{id}` until `status=succeeded`, then use `download_url`.',
+      'The caller also needs the read permission of the list (`asset:read`, `person:read` or `location:read`, `403` otherwise). Cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading apostrophe so spreadsheets never run them as formulas. Asset exports include one `cf:<key>` column per custom field. At most 100,000 rows. Requested and downloaded exports are audited (sensitive read).',
+      FILTER_NOTE,
+    ].join('\n\n'),
+    body: jsonBody(S('ExportCreate')),
+    problems: { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Missing `export:run` or the read permission of the list.' } },
+    success: { 202: { description: 'Export queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter'), 'Idempotent-Replayed': H('IdempotentReplayed') }, content: { 'application/json': { schema: S('Export') } } } },
+  });
+  addOp('/v1/exports', 'get', {
+    tag: 'Exports', id: 'listExports', summary: 'My exports', perm: 'export:run', hasId: false,
+    description: 'The caller\'s exports, newest first. `download_url` is never set in a list; fetch one export for a link.',
+    params: [P('Cursor'), P('Limit'), arrQ('status', en(['queued', 'running', 'succeeded', 'failed', 'expired']), 'Filter by status.')],
+    success: { 200: okResp(200, 'A page of exports.', S('ExportList'), { replay: false }) },
+  });
+  addOp('/v1/exports/{id}', 'get', {
+    tag: 'Exports', id: 'getExport', summary: 'Get an export', perm: 'export:run', params: [ID],
+    description: 'Status of one export. For a succeeded one it issues a fresh short-lived `download_url` (audited as a sensitive read). Another user\'s export is `404`.',
+    success: { 200: okResp(200, 'The export.', S('Export'), { replay: false }) },
+  });
+}
+// ================================================================ [M2-W2 NOT] END
+
 // ---------------------------------------------------------------- prune unused components, order, emit
 const text = () => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {

@@ -323,6 +323,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assets/{id}/dispose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispose of an asset
+         * @description Retires the asset for good: sets an `archived`-type status, records the reason, the date and the note (`Asset.disposal`), and archives the asset so it leaves default lists and active counts. Not allowed while the asset is checked out (`409 asset-already-checked-out`: check it in first) or already archived. Writes an `archived` history event, an audit record and an outbox event. `POST /v1/assets/{id}/restore` takes a disposed asset back (the disposal record is cleared and the status returns to the tenant default).
+         *
+         *     Requires permission `asset:delete`.
+         */
+        post: operations["disposeAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assets/{id}/history": {
         parameters: {
             query?: never;
@@ -339,6 +361,72 @@ export interface paths {
         get: operations["listAssetHistory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/mark-found": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a lost asset found
+         * @description Returns a lost asset to a `deployable` status (and optionally a location). `409 conflict` when the asset is not lost. Writes a `status_changed` history event.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["markAssetFound"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/mark-lost": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark an asset lost or stolen
+         * @description Moves the asset to a `lost`-type status. An open custody period is closed (its `checkin_note` says the asset was lost). A lost asset cannot be checked out. Not allowed when the asset is already lost or archived. Writes a `status_changed` history event.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["markAssetLost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move an asset to a location
+         * @description Changes `location_id` and writes a `location_changed` history event with the note, an audit record and an outbox event. Allowed while the asset is checked out (the location is where it physically is). Archived assets cannot be moved. `If-Match` is optional; with it a stale version is `412`.
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["moveAsset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -376,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Transfer an asset to a new holder
-         * @description Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`.
+         * @description Atomically closes the current assignment (if any) and opens a new one, and records a `Transfer`. User to user, user to location and location to user all work; an asset in stock (no open assignment) is handed out like a check-out and needs a `deployable` state. If either half fails the whole transfer rolls back: the asset is never left unassigned. One audit record and one `transferred` history event. The new holder must differ from the current one (422).
          *
          *     Requires permission `asset:transfer`.
          */
@@ -407,6 +495,32 @@ export interface paths {
          *     Requires permission `asset:delete`.
          */
         post: operations["bulkArchiveAssets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/bulk-move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move many assets to a location
+         * @description Moves every listed asset to `location_id` (same rules as `POST /v1/assets/{id}/move`).
+         *
+         *     At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
+         *
+         *     Added by M1-REG-09 (not part of the first contract draft).
+         *
+         *     Requires permission `asset:update`.
+         */
+        post: operations["bulkMoveAssets"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1446,7 +1560,7 @@ export interface paths {
         put?: never;
         /**
          * Create location
-         * @description Requires permission `location:manage`.
+         * @description Creates a location under `parent_id` (a root when null). The name must be unique among the live children of the same parent (409 `conflict`, pointer `/name`); the hierarchy is at most ten levels deep (422, pointer `/parent_id`). Requires permission `location:manage`.
          */
         post: operations["createLocation"];
         delete?: never;
@@ -1471,16 +1585,14 @@ export interface paths {
         post?: never;
         /**
          * Archive location
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `location:manage`.
+         * @description Soft delete. Refused with `409 conflict` and `usage` (`children`, `assets`, `people`, `open_assignments`: how many live records still reference the location) while anything is located here or below it. Requires permission `location:manage`.
          */
         delete: operations["archiveLocation"];
         options?: never;
         head?: never;
         /**
          * Update location
-         * @description Requires permission `location:manage`.
+         * @description Merge semantics. Changing `parent_id` **moves the whole subtree** (every descendant's `ancestor_ids` and `depth` are rewritten in the same transaction). Moving a location under itself or one of its descendants is 422 (pointer `/parent_id`, code `cycle`), as is exceeding the depth limit or an archived parent. Requires permission `location:manage`.
          */
         patch: operations["updateLocation"];
         trace?: never;
@@ -1614,7 +1726,7 @@ export interface paths {
         put?: never;
         /**
          * Create person
-         * @description Requires permission `person:manage`.
+         * @description Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.
          */
         post: operations["createPerson"];
         delete?: never;
@@ -1639,16 +1751,14 @@ export interface paths {
         post?: never;
         /**
          * Archive person
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `person:manage`.
+         * @description Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.
          */
         delete: operations["archivePerson"];
         options?: never;
         head?: never;
         /**
          * Update person
-         * @description Requires permission `person:manage`.
+         * @description Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.
          */
         patch: operations["updatePerson"];
         trace?: never;
@@ -1667,6 +1777,28 @@ export interface paths {
          *     Requires permission `person:read`.
          */
         get: operations["listPersonAssignments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/people/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chain of custody of a person
+         * @description Newest first: every custody event (check-out, check-in, transfer) that involved this person, across assets.
+         *
+         *     Requires permission `person:read`.
+         */
+        get: operations["listPersonHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1808,7 +1940,7 @@ export interface paths {
          * Search across the registry
          * @description One box, several entity types. Results are filtered by the caller's permissions *per type* (and by location scope): a type the caller may not read is silently left out, never a `403`. `search:read` is granted to every built-in role; the per-type permissions are in `x-permission-by-type`.
          *
-         *     **Availability:** M1 returns `asset`, `model` and `category` results only. `person` and `location` are accepted values for `types` (so clients can send them today) but yield no results until M2 search lands. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
+         *     **Availability:** `asset`, `model`, `category`, `person` (name, email, employee number) and `location` (name, code) results. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
          *
          *     Requires permission `search:read`.
          */
@@ -2700,9 +2832,16 @@ export interface components {
             latitude?: number | null;
             longitude?: number | null;
             notes?: string | null;
+            /** @description Distance from the root (a root has depth 0). The hierarchy is limited to depth 9, i.e. ten levels. */
             readonly depth?: number;
             /** @description Root..self. */
             readonly ancestor_ids?: string[];
+            /** @description Live (not archived) assets located here **or in any descendant** location. */
+            readonly asset_count?: number;
+            /** @description Live assets located exactly here. */
+            readonly direct_asset_count?: number;
+            /** @description Live direct child locations. */
+            readonly child_count?: number;
         };
         LocationCreate: {
             /**
@@ -2797,6 +2936,8 @@ export interface components {
              * @description Linked login account, if this person can sign in.
              */
             readonly user_id?: string | null;
+            /** @description Number of assets currently checked out to this person. */
+            readonly assets_held?: number;
         };
         PersonCreate: {
             /**
@@ -2858,6 +2999,13 @@ export interface components {
              */
             status?: "active" | "inactive";
             notes?: string | null;
+            /**
+             * @description With `status: "inactive"`: deactivate even though the person still holds assets. Needs `reason`. Not stored on the person.
+             * @default false
+             */
+            force?: boolean;
+            /** @description Why a forced deactivation is justified (audit trail). Ignored without `force`. */
+            reason?: string;
         };
         PersonList: {
             data: components["schemas"]["Person"][];
@@ -3238,8 +3386,18 @@ export interface components {
             checked_out_at: string;
             /** Format: date */
             expected_return?: string | null;
+            /** @description [M2-W1] Computed: the assignment is open and `expected_return` is before today (UTC). */
+            overdue?: boolean;
             /** Format: uuid */
             loaner_pool_id?: string | null;
+        };
+        /** @description [M2-W1] Why and when the asset left the inventory. */
+        AssetDisposal: {
+            /** Format: date */
+            disposed_on: string;
+            /** @enum {string} */
+            reason: "sold" | "donated" | "recycled" | "scrapped" | "stolen" | "returned_to_vendor" | "other";
+            note?: string | null;
         };
         Asset: {
             /** Format: uuid */
@@ -3295,6 +3453,8 @@ export interface components {
             readonly label_code?: string;
             /** @description Open custody period, or null when in stock. */
             readonly current_assignment?: components["schemas"]["AssignmentSummary"] | null;
+            /** @description Set once the asset was disposed of (`POST /v1/assets/{id}/dispose`); null otherwise. */
+            readonly disposal?: components["schemas"]["AssetDisposal"] | null;
             readonly status?: {
                 /** Format: uuid */
                 id: string;
@@ -3439,6 +3599,16 @@ export interface components {
             acceptance_state: "not_required" | "pending" | "accepted" | "declined";
             note?: string | null;
             checkin_note?: string | null;
+            /** @description Photos / signatures linked at check-out (ids only; the attachments service owns the files). */
+            attachment_ids?: string[];
+            /** @description Photos linked at check-in. */
+            checkin_attachment_ids?: string[];
+            /** @description Computed: the assignment is open and `expected_return` is before today (UTC). */
+            overdue?: boolean;
+            /** @description Tag of the asset; present in the assignment lists of a person and of an asset. */
+            asset_tag?: string | null;
+            /** @description Name of the asset; present together with `asset_tag`. */
+            asset_name?: string | null;
         };
         AssignmentList: {
             data: components["schemas"]["Assignment"][];
@@ -3531,12 +3701,14 @@ export interface components {
             actor_type: "user" | "api_key" | "integration" | "system";
             /** Format: uuid */
             actor_id?: string | null;
-            /** @description Who did it, resolved for display; null for system events or when the user no longer exists. */
+            /** @description Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists. */
             actor?: {
                 /** Format: uuid */
                 id: string;
                 display_name: string;
             } | null;
+            /** @description [M2-W1] Tag of the asset, so a per-person timeline can label its entries. */
+            asset_tag?: string | null;
             /** Format: uuid */
             assignment_id?: string | null;
             /** Format: uuid */
@@ -4234,6 +4406,61 @@ export interface components {
             data: components["schemas"]["ApiKey"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description Moves an asset to a location. */
+        MoveRequest: {
+            /**
+             * Format: uuid
+             * @description Destination location; `null` clears the location (whereabouts unknown).
+             */
+            location_id: string | null;
+            note?: string;
+        };
+        BulkAssetMove: {
+            ids: string[];
+            /**
+             * Format: uuid
+             * @description Destination location for every asset; `null` clears it.
+             */
+            location_id: string | null;
+            note?: string;
+        };
+        DisposeRequest: {
+            /** @enum {string} */
+            reason: "sold" | "donated" | "recycled" | "scrapped" | "stolen" | "returned_to_vendor" | "other";
+            /** @description Free text (buyer, recipient, certificate number...). */
+            note?: string;
+            /**
+             * Format: date
+             * @description Defaults to today (UTC).
+             */
+            disposed_on?: string;
+            /**
+             * Format: uuid
+             * @description An `archived`-type status label; default: the first one of the tenant.
+             */
+            status_id?: string;
+        };
+        MarkLostRequest: {
+            note?: string;
+            /**
+             * Format: uuid
+             * @description A `lost`-type status label; default: the first one of the tenant.
+             */
+            status_id?: string;
+        };
+        MarkFoundRequest: {
+            /**
+             * Format: uuid
+             * @description A `deployable`-type status label to return the asset to; default: the tenant default (or first deployable) label.
+             */
+            status_id?: string;
+            /**
+             * Format: uuid
+             * @description Where the asset was found / is now.
+             */
+            location_id?: string | null;
+            note?: string;
+        };
     };
     responses: {
         /** @description Malformed request (bad JSON, bad query parameter, invalid cursor). Codes: `bad-request`, `idempotency-key-required`, `idempotency-key-invalid`. */
@@ -4901,6 +5128,8 @@ export interface operations {
                 assigned_person_id?: string;
                 /** @description true = checked out, false = in stock. */
                 assigned?: boolean;
+                /** @description [M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset. */
+                overdue?: boolean;
                 /** @description Members of this loaner pool. */
                 loaner_pool_id?: string;
                 /** @description Warranty ends on or before. */
@@ -5207,7 +5436,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset has no open check-out, or a request with the same Idempotency-Key is still running. Codes: `asset-not-checked-out`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-not-checked-out",
+                     *       "title": "asset not checked out",
+                     *       "status": 409,
+                     *       "code": "asset-not-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5263,7 +5510,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description Already checked out, not in a deployable state (lost, archived, in repair, pending), or a request with the same Idempotency-Key is still running. Codes: `asset-already-checked-out`, `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-already-checked-out",
+                     *       "title": "asset already checked out",
+                     *       "status": 409,
+                     *       "code": "asset-already-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5313,6 +5578,78 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    disposeAsset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "reason": "recycled",
+                 *       "note": "Certificate R-2210"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DisposeRequest"];
+            };
+        };
+        responses: {
+            /** @description The disposed asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listAssetHistory: {
         parameters: {
             query?: {
@@ -5353,6 +5690,210 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAssetFound: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkFoundRequest"];
+            };
+        };
+        responses: {
+            /** @description The recovered asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is not in a lost state. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAssetLost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MarkLostRequest"];
+            };
+        };
+        responses: {
+            /** @description The asset in its lost state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived, or its state does not allow this action (see the description). Codes: `conflict`, `asset-already-checked-out`, `asset-not-deployable`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    moveAsset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "location_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92",
+                 *       "note": "Moved to the exam room"
+                 *     }
+                 */
+                "application/json": components["schemas"]["MoveRequest"];
+            };
+        };
+        responses: {
+            /** @description The moved asset; `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The asset is archived. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -5442,7 +5983,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running. Codes: `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-not-deployable",
+                     *       "title": "asset not deployable",
+                     *       "status": 409,
+                     *       "code": "asset-not-deployable",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
@@ -5463,6 +6022,45 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BulkAssetIds"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkAssetResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    bulkMoveAssets: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkAssetMove"];
             };
         };
         responses: {
@@ -9520,6 +10118,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssignmentList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listPersonHistory: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryEventList"];
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -49,6 +49,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     sessionId: string;
     apiKeyId: string;
     roleId: string;
+    // M2 wave 1
+    locationId: string;
+    locationName: string;
+    personId: string;
+    personEmail: string;
+    /** an asset of tenant B (so B can try to hand it to A's person / A's location) */
+    ownAssetId: string;
     /** strings that must never show up in a response to tenant B */
     markers: string[];
   }
@@ -59,6 +66,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     body?: unknown;
     /** statuses that are acceptable (the isolation outcome), never 2xx with A's data */
     expect: number[];
+    /** extra request headers (custody operations need an Idempotency-Key) */
+    headers?: Record<string, string>;
   }
 
   /** A path id of tenant A, replayed with the headers a real client would send. */
@@ -74,6 +83,15 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     url,
     body,
     expect: [404, 422],
+  });
+  /** A custody operation: needs an Idempotency-Key, answers 404 for a foreign asset. */
+  let keyN = 0;
+  const custody = (url: string, body: unknown, expect: number[] = [404]): Replay => ({
+    method: 'POST',
+    url,
+    body,
+    expect,
+    headers: { 'idempotency-key': `replay-key-${Date.now()}-${keyN++}` },
   });
 
   /** Replay cases by route (`method path` with `:param` templates, as the controllers declare them). */
@@ -168,6 +186,10 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         list(`/v1/assets?vendor_id=${c.vendorId}&include_total=true`),
         list(`/v1/assets?status_id=${c.statusLabelId}`),
         list('/v1/assets?limit=200&archived=include'),
+        list(`/v1/assets?location_id=${c.locationId}`),
+        list(`/v1/assets?location_id=${c.locationId}&include_sublocations=false`),
+        list(`/v1/assets?assigned_person_id=${c.personId}`),
+        list('/v1/assets?assigned=true&overdue=false&limit=200'),
         // B has no custom field "tier": A's definitions are invisible to it
         { method: 'GET', url: '/v1/assets?cf[tier]=gold', expect: [400] },
       ],
@@ -222,6 +244,74 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         list(`/v1/search?q=${c.assetTag}`),
         list(`/v1/search?q=${c.serial}`),
         list(`/v1/search?q=${c.markers[0]}`),
+        list(`/v1/search?q=${c.markers[0]}&types=person,location`),
+      ],
+      // ---- M2 wave 1: locations
+      ...crud('locations', c.locationId, { notes: 'b was here' }),
+      'get /v1/locations': [
+        list(`/v1/locations?q=${c.locationName}`),
+        list(`/v1/locations?parent_id=${c.locationId}`),
+        list(`/v1/locations?descendants_of=${c.locationId}`),
+        list('/v1/locations?limit=200&archived=include'),
+      ],
+      'post /v1/locations': [
+        // under A's location, or into A's company: refused, nothing created in A
+        refused('POST', '/v1/locations', { name: unique('X'), parent_id: c.locationId }),
+        { method: 'POST', url: '/v1/locations', body: { name: unique('B-own') }, expect: [201] },
+      ],
+      // ---- M2 wave 1: people
+      ...crud('people', c.personId, { notes: 'b was here' }),
+      'get /v1/people': [
+        list(`/v1/people?q=${c.personEmail}`),
+        list(`/v1/people?location_id=${c.locationId}`),
+        list('/v1/people?limit=200&archived=include'),
+      ],
+      'post /v1/people': [
+        refused('POST', '/v1/people', { display_name: unique('X'), location_id: c.locationId }),
+        {
+          method: 'POST',
+          url: '/v1/people',
+          body: { display_name: unique('B-own'), email: `${unique('b-own')}@replay.example` },
+          expect: [201],
+        },
+      ],
+      'get /v1/people/:id/assignments': [
+        notFound('GET', `/v1/people/${c.personId}/assignments?state=all`),
+      ],
+      'get /v1/people/:id/history': [notFound('GET', `/v1/people/${c.personId}/history`)],
+      // ---- M2 wave 1: custody, history, moves, lifecycle actions
+      'post /v1/assets/:id/checkout': [
+        custody(`/v1/assets/${c.assetId}/checkout`, { person_id: c.personId }),
+        // B's own asset to A's person / into A's location / onto A's asset: refused
+        custody(`/v1/assets/${c.ownAssetId}/checkout`, { person_id: c.personId }, [422]),
+        custody(`/v1/assets/${c.ownAssetId}/checkout`, { location_id: c.locationId }, [422]),
+        custody(`/v1/assets/${c.ownAssetId}/checkout`, { target_asset_id: c.assetId }, [422]),
+      ],
+      'post /v1/assets/:id/checkin': [custody(`/v1/assets/${c.assetId}/checkin`, {})],
+      'post /v1/assets/:id/transfer': [
+        custody(`/v1/assets/${c.assetId}/transfer`, { person_id: c.personId }),
+        custody(`/v1/assets/${c.ownAssetId}/transfer`, { person_id: c.personId }, [422]),
+      ],
+      'get /v1/assets/:id/assignments': [notFound('GET', `/v1/assets/${c.assetId}/assignments`)],
+      'get /v1/assets/:id/history': [notFound('GET', `/v1/assets/${c.assetId}/history`)],
+      'post /v1/assets/:id/move': [
+        notFound('POST', `/v1/assets/${c.assetId}/move`, { location_id: null }),
+        refused('POST', `/v1/assets/${c.ownAssetId}/move`, { location_id: c.locationId }),
+      ],
+      'post /v1/assets/bulk-move': [
+        {
+          method: 'POST',
+          url: '/v1/assets/bulk-move',
+          body: { ids: [c.assetId], location_id: null },
+          expect: [200],
+        },
+      ],
+      'post /v1/assets/:id/dispose': [
+        notFound('POST', `/v1/assets/${c.assetId}/dispose`, { reason: 'scrapped' }),
+      ],
+      'post /v1/assets/:id/mark-lost': [notFound('POST', `/v1/assets/${c.assetId}/mark-lost`, {})],
+      'post /v1/assets/:id/mark-found': [
+        notFound('POST', `/v1/assets/${c.assetId}/mark-found`, {}),
       ],
       // ---- access
       'get /v1/users': [list('/v1/users?limit=200')],
@@ -330,6 +420,25 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         custom_data: { tier: 'gold' },
       })
     ).body;
+    // M2 wave 1: a location, a person, and a checked-out asset in A; an asset in B
+    const locationName = `${marker} hall`;
+    const location = (await a.post('/v1/locations', { name: locationName, kind: 'site' })).body;
+    const personEmail = `${marker}-person@replay.example`;
+    const person = (
+      await a.post('/v1/people', {
+        display_name: `${marker} person`,
+        email: personEmail,
+        employee_ref: `E-${marker}`,
+        location_id: location.id,
+      })
+    ).body;
+    const bCategory = (await b().post('/v1/categories', { name: unique('B-cat') })).body;
+    const bAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
+    await a.post(
+      `/v1/assets/${asset.id}/checkout`,
+      { person_id: person.id, note: `${marker} note` },
+      { headers: { 'idempotency-key': `seed-checkout-${marker}` } },
+    );
     const viewer = await createUser(app, A, 'viewer');
     const invited = (
       await a.post('/v1/users', {
@@ -359,8 +468,15 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       sessionId: sessions[0]!.id,
       apiKeyId: key.id,
       roleId: A.roles.viewer!,
+      locationId: location.id,
+      locationName,
+      personId: person.id,
+      personEmail,
+      ownAssetId: bAsset.id,
       markers: [
         marker,
+        location.id,
+        person.id,
         category.id,
         manufacturer.id,
         model.id,
@@ -396,6 +512,19 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       field: await etag(`/v1/custom-fields/${fx.customFieldId}`),
       asset: await etag(`/v1/assets/${fx.assetId}`),
       user: await etag(`/v1/users/${fx.userId}`),
+      location: await etag(`/v1/locations/${fx.locationId}`),
+      person: await etag(`/v1/people/${fx.personId}`),
+      // custody of A's asset is untouched: the same open assignment and the same history
+      assignments: JSON.stringify(
+        (await A.admin.get(`/v1/assets/${fx.assetId}/assignments`)).body.data.map(
+          (s: { id: string; checked_in_at: unknown }) => [s.id, s.checked_in_at],
+        ),
+      ),
+      history: String(
+        (await A.admin.get(`/v1/assets/${fx.assetId}/history?limit=200`)).body.data.length,
+      ),
+      locations: String((await A.admin.get('/v1/locations?limit=200')).body.data.length),
+      people: String((await A.admin.get('/v1/people?limit=200')).body.data.length),
       template: await etag('/v1/settings/asset-tag-template'),
       keys: JSON.stringify(
         (await A.admin.get('/v1/api-keys')).body.data.map(
@@ -423,7 +552,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     expect(stale, 'replay cases for routes that no longer exist').toEqual([]);
     // the registry is what this harness exists for: it must be covered, not exempted
     for (const r of routes.filter((r) =>
-      /^\/v1\/(assets|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users)/.test(
+      /^\/v1\/(assets|categories|manufacturers|models|status-labels|vendors|custom-fields|scan|search|settings|users|locations|people)/.test(
         r.path,
       ),
     )) {
@@ -438,7 +567,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     const results: string[] = [];
     for (const [route, replays] of Object.entries(cases())) {
       for (const r of replays) {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = { ...(r.headers ?? {}) };
         if (
           r.method === 'PATCH' ||
           r.method === 'DELETE' ||

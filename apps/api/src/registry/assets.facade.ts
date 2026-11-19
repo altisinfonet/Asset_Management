@@ -24,10 +24,13 @@ import {
 } from '../ports/index.js';
 import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
 import { AssetRefs } from './asset-refs.js';
+import { type AssetAction, assertAssetAction, refuseAssetAction } from './asset-actions.js';
+import { listHistory, writeAssetHistory, type HistoryEventDto } from './asset-history.js';
 import {
   ASSET_FIELDS,
   type AssetDto,
   type AssetRow,
+  type BareAssetRow,
   assertCursorValues,
   assetCountSql,
   assetDto,
@@ -35,23 +38,30 @@ import {
   assetSortTerms,
   loadAsset,
   loadAssetRows,
+  lockAsset,
   pickFields,
   withStatus,
   splitCustomFieldParams,
 } from './asset-queries.js';
 import { AssetTagService, tagExists } from './asset-tags.js';
 import { mergeCustomData, missingRequired, validateProvided } from './custom-fields.js';
-import { categoryDto, modelDto, vendorDto } from './dto.js';
+import { categoryDto, locationDto, modelDto, vendorDto } from './dto.js';
 import { RegistryBase, duplicate, invalidRef, stalePrecondition } from './registry-base.js';
 import { inSavepoint } from './savepoint.js';
 import {
   type AssetCreate,
   type AssetListQuery,
   type AssetUpdate,
+  type BulkMoveBody,
   type BulkUpdateBody,
   CLONE_FIELDS,
   type CloneBody,
+  type DisposeBody,
+  type HistoryListQuery,
   M2_ONLY_ASSET_FILTERS,
+  type MarkFoundBody,
+  type MarkLostBody,
+  type MoveBody,
   assetListSchema,
 } from './schemas.js';
 
@@ -120,7 +130,7 @@ export class AssetsFacade extends RegistryBase {
     for (const name of M2_ONLY_ASSET_FILTERS) {
       if (rest[name] !== undefined) {
         throw problem.badRequest(
-          `Query parameter "${name}" needs M2 (custody) and is not available yet.`,
+          `Query parameter "${name}" needs the loaner pools (a later M2 story) and is not available yet.`,
           [{ pointer: `query:${name}`, message: 'not available yet', code: 'not-supported' }],
         );
       }
@@ -166,9 +176,7 @@ export class AssetsFacade extends RegistryBase {
 
     return this.tx(auth, async (trx) => {
       const cf = await this.customFieldFilters(trx, cfRaw);
-      const rows = await trx.$queryRaw<Array<Omit<AssetRow, 'status_name' | 'status_state_type'>>>(
-        assetListSql(q, cf, terms, values),
-      );
+      const rows = await trx.$queryRaw<BareAssetRow[]>(assetListSql(q, cf, terms, values));
 
       const hasMore = rows.length > q.limit;
       const data = await withStatus(trx, hasMore ? rows.slice(0, q.limit) : rows);
@@ -252,8 +260,20 @@ export class AssetsFacade extends RegistryBase {
     const vendors = expand.includes('vendor')
       ? byId(await trx.vendor.findMany({ where: { id: { in: ids((r) => r.vendor_id) } } }))
       : null;
-    // `location` has no table before M2: nothing to embed.
+    const locations = expand.includes('location')
+      ? byId(
+          await trx.location.findMany({ where: { id: { in: ids((r) => r.location_id) } } }),
+        )
+      : null;
     return rows.map((r) => ({
+      ...(locations
+        ? {
+            location:
+              r.location_id && locations.get(r.location_id)
+                ? locationDto(locations.get(r.location_id)!)
+                : null,
+          }
+        : {}),
       ...(models
         ? { model: r.model_id && models.get(r.model_id) ? modelDto(models.get(r.model_id)!) : null }
         : {}),
@@ -295,8 +315,19 @@ export class AssetsFacade extends RegistryBase {
         if (row) break;
       }
       if (!row) throw problem.notFound('No asset matches this code.');
+      // Actions valid in the asset's current state AND for the caller (contract order).
       const allowed: string[] = [];
-      if (!row.archived_at && permits(auth.permissions, 'asset:update')) allowed.push('update');
+      const state = {
+        archived: row.archived_at !== null,
+        stateType: row.status_state_type,
+        hasAssignment: row.assignment !== null && row.assignment !== undefined,
+      };
+      const may = (action: AssetAction, permission: string) =>
+        permits(auth.permissions, permission) && refuseAssetAction(action, state) === null;
+      if (may('checkout', 'asset:checkout')) allowed.push('checkout');
+      if (may('checkin', 'asset:checkin')) allowed.push('checkin');
+      if (may('transfer', 'asset:transfer')) allowed.push('transfer');
+      if (may('update', 'asset:update')) allowed.push('update');
       return {
         data: { match_type: matchType, asset: assetDto(row), allowed_actions: allowed },
         version: row.version,
@@ -375,7 +406,7 @@ export class AssetsFacade extends RegistryBase {
           category_id: body.category_id,
           model_id: body.model_id ?? null,
           status_id: status!.id,
-          location_id: null,
+          location_id: body.location_id ?? null,
           vendor_id: body.vendor_id ?? null,
           parent_asset_id: body.parent_asset_id ?? null,
           purchase_date: toDate(body.purchase_date) ?? null,
@@ -409,6 +440,16 @@ export class AssetsFacade extends RegistryBase {
       after: auditView(dto),
       ...(meta ? { meta } : {}),
       refs: { categoryId: row.category_id, statusId: row.status_id },
+    });
+    await writeAssetHistory(trx, auth, {
+      assetId: id,
+      eventType: 'created',
+      summary: `Asset ${row.asset_tag} created`,
+      payload: {
+        status_id: row.status_id,
+        location_id: row.location_id,
+        ...(meta?.cloned_from ? { cloned_from: meta.cloned_from } : {}),
+      },
     });
     return { asset: dto, version: row.version };
   }
@@ -480,7 +521,7 @@ export class AssetsFacade extends RegistryBase {
         vendor_id: body.vendor_id !== current.vendor_id ? body.vendor_id : undefined,
         parent_asset_id:
           body.parent_asset_id !== current.parent_asset_id ? body.parent_asset_id : undefined,
-        location_id: body.location_id,
+        location_id: body.location_id !== current.location_id ? body.location_id : undefined,
         external_source: body.external_source,
         external_id: body.external_id,
       },
@@ -524,6 +565,7 @@ export class AssetsFacade extends RegistryBase {
     if (categoryChanged) set('category_id', categoryId);
     if (body.model_id !== undefined) set('model_id', body.model_id);
     if (body.status_id !== undefined) set('status_id', body.status_id);
+    if (body.location_id !== undefined) set('location_id', body.location_id);
     if (body.vendor_id !== undefined) set('vendor_id', body.vendor_id);
     if (body.parent_asset_id !== undefined) set('parent_asset_id', body.parent_asset_id);
     if (body.company_id !== undefined) set('company_id', body.company_id);
@@ -578,7 +620,73 @@ export class AssetsFacade extends RegistryBase {
       ...(meta ? { meta } : {}),
       refs: { statusId: row.status_id, categoryId: row.category_id },
     });
+    await this.historyForUpdate(trx, auth, current, row, Object.keys(data));
     return { asset: assetDto(row), version: row.version };
+  }
+
+  /** The timeline entries of a PATCH: status change, location change, and "updated" for the rest. */
+  private async historyForUpdate(
+    trx: Tx,
+    auth: AuthContext,
+    before: AssetRow,
+    after: AssetRow,
+    changed: string[],
+  ): Promise<void> {
+    if (changed.includes('status_id')) {
+      await writeAssetHistory(trx, auth, {
+        assetId: after.id,
+        eventType: 'status_changed',
+        summary: `Status changed from ${before.status_name} to ${after.status_name}`,
+        payload: {
+          from: before.status_id,
+          to: after.status_id,
+          from_name: before.status_name,
+          to_name: after.status_name,
+        },
+      });
+    }
+    if (changed.includes('location_id')) await this.writeLocationChange(trx, auth, before, after);
+    const other = changed.filter((c) => c !== 'status_id' && c !== 'location_id');
+    if (other.length > 0) {
+      await writeAssetHistory(trx, auth, {
+        assetId: after.id,
+        eventType: 'updated',
+        summary: `Updated ${other.join(', ')}`,
+        payload: { fields: other },
+      });
+    }
+  }
+
+  /** `location_changed` history entry with the names of both places (for a readable timeline). */
+  private async writeLocationChange(
+    trx: Tx,
+    auth: AuthContext,
+    before: Pick<AssetRow, 'id' | 'location_id'>,
+    after: Pick<AssetRow, 'id' | 'location_id'>,
+    note?: string,
+  ): Promise<void> {
+    const ids = [before.location_id, after.location_id].filter((v): v is string => v !== null);
+    const names = new Map(
+      (
+        await trx.location.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, name: true },
+        })
+      ).map((l) => [l.id, l.name]),
+    );
+    const name = (id: string | null) => (id ? (names.get(id) ?? 'unknown') : 'no location');
+    await writeAssetHistory(trx, auth, {
+      assetId: after.id,
+      eventType: 'location_changed',
+      summary: `Moved from ${name(before.location_id)} to ${name(after.location_id)}`,
+      payload: {
+        from: before.location_id,
+        to: after.location_id,
+        from_name: before.location_id ? name(before.location_id) : null,
+        to_name: after.location_id ? name(after.location_id) : null,
+        ...(note ? { note } : {}),
+      },
+    });
   }
 
   async archive(auth: AuthContext, id: string, ifMatch: IfMatch): Promise<void> {
@@ -609,9 +717,32 @@ export class AssetsFacade extends RegistryBase {
   ): Promise<AssetWithVersion> {
     if (archive && current.archived_at) throw problem.conflict('The asset is already archived.');
     if (!archive && !current.archived_at) throw problem.conflict('The asset is not archived.');
+    if (archive) {
+      // M2-LIFE-02: an asset in somebody's custody cannot be archived (check it in first).
+      const [open] = await trx.$queryRaw<Array<{ n: bigint }>>`
+        select count(*) as n from app.assignment
+         where asset_id = ${current.id}::uuid and checked_in_at is null`;
+      if (open && open.n > 0n) {
+        throw problem.conflict('The asset is checked out. Check it in before archiving it.');
+      }
+    }
+    // Restoring a DISPOSED asset takes it back for real: the disposal record is cleared and an
+    // archived-type status moves to the tenant default (so it is not "retired" yet active).
+    const wasDisposed = !archive && current.disposed_on !== null;
+    let statusId: string | undefined;
+    if (wasDisposed && current.status_state_type === 'archived') {
+      statusId = (await AssetRefs.for(trx).defaultStatus())?.id;
+    }
     const result = await trx.asset.updateMany({
       where: { id: current.id, version: current.version },
-      data: { archived_at: archive ? new Date() : null, updated_by: auth.userId },
+      data: {
+        archived_at: archive ? new Date() : null,
+        updated_by: auth.userId,
+        ...(wasDisposed
+          ? { disposed_on: null, disposal_reason: null, disposal_note: null }
+          : {}),
+        ...(statusId ? { status_id: statusId } : {}),
+      },
     });
     if (result.count === 0) {
       return stalePrecondition(() => trx.asset.findUnique({ where: { id: current.id } }), 'Asset');
@@ -627,7 +758,378 @@ export class AssetsFacade extends RegistryBase {
       ...(meta ? { meta } : {}),
       refs: { statusId: row.status_id, categoryId: row.category_id },
     });
+    await writeAssetHistory(trx, auth, {
+      assetId: row.id,
+      eventType: archive ? 'archived' : 'restored',
+      summary: archive ? 'Asset archived' : 'Asset restored',
+      payload: wasDisposed ? { was_disposed: true } : {},
+    });
     return { asset: assetDto(row), version: row.version };
+  }
+
+  // =========================================================================================
+  // Moves, disposal, lost and found, history (M2-LOC-02, M2-LIFE-05, M2-LIFE-06)
+
+  /** `POST /v1/assets/{id}/move`: the asset row is locked, so concurrent moves apply one after the other. */
+  async move(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: MoveBody,
+  ): Promise<AssetWithVersion> {
+    return this.tx(auth, async (trx) => {
+      const current = await lockAsset(trx, id);
+      if (!current) throw problem.notFound('Asset not found.');
+      assertIfMatch(ifMatch, current.version);
+      return this.moveInTx(trx, auth, current, body);
+    });
+  }
+
+  private async moveInTx(
+    trx: Tx,
+    auth: AuthContext,
+    current: AssetRow,
+    body: MoveBody,
+    meta?: Record<string, unknown>,
+  ): Promise<AssetWithVersion> {
+    assertAssetAction('move', this.stateOf(current));
+    if (body.location_id) {
+      const location = await AssetRefs.for(trx).location(body.location_id);
+      if (!location || location.archived_at) {
+        throw problem.validation([invalidRef('/location_id', 'No such location.')]);
+      }
+    }
+    if (body.location_id === current.location_id) {
+      return { asset: assetDto(current), version: current.version };
+    }
+    const result = await trx.asset.updateMany({
+      where: { id: current.id, version: current.version },
+      data: { location_id: body.location_id, updated_by: auth.userId },
+    });
+    if (result.count === 0) {
+      return stalePrecondition(() => trx.asset.findUnique({ where: { id: current.id } }), 'Asset');
+    }
+    const row = (await loadAsset(trx, current.id))!;
+    await this.record(trx, {
+      entity: 'asset',
+      verb: 'moved',
+      id: current.id,
+      version: row.version,
+      before: { location_id: current.location_id },
+      after: { location_id: row.location_id },
+      meta: { ...(meta ?? {}), ...(body.note ? { note: body.note } : {}) },
+      refs: { fromLocationId: current.location_id, toLocationId: row.location_id },
+    });
+    await this.writeLocationChange(trx, auth, current, row, body.note);
+    return { asset: assetDto(row), version: row.version };
+  }
+
+  /** `POST /v1/assets/bulk-move`: one result per id; a failing item does not touch the others. */
+  async bulkMove(auth: AuthContext, body: BulkMoveBody): Promise<BulkResponse<AssetDto>> {
+    const unique = [...new Set(body.ids)];
+    return this.tx(auth, async (trx) => {
+      const bulkId = uuidv7();
+      const response = await runBulk(
+        unique,
+        (id) =>
+          inSavepoint(trx, async () => {
+            const current = await lockAsset(trx, id);
+            if (!current) throw problem.notFound('Asset not found.');
+            return (
+              await this.moveInTx(
+                trx,
+                auth,
+                current,
+                { location_id: body.location_id, note: body.note },
+                { bulk_operation_id: bulkId },
+              )
+            ).asset;
+          }),
+        { max: BULK_MAX, pointer: '/ids' },
+      );
+      await this.audit.write(trx, {
+        action: 'asset.bulk_move',
+        entityType: 'bulk_operation',
+        entityId: bulkId,
+        meta: {
+          operation: 'move',
+          requested: unique.length,
+          succeeded: response.summary.succeeded,
+          failed: response.summary.failed,
+          location_id: body.location_id,
+          asset_ids: response.results.filter((r) => !r.error).map((r) => (r.data as AssetDto).id),
+        },
+      });
+      await this.outbox.publish(trx, {
+        type: 'bulk_operation.completed',
+        aggregateType: 'bulk_operation',
+        aggregateId: bulkId,
+        payload: { operation: 'move', total: unique.length, failed: response.summary.failed },
+      });
+      return response;
+    });
+  }
+
+  private stateOf(row: AssetRow) {
+    return {
+      archived: row.archived_at !== null,
+      stateType: row.status_state_type,
+      hasAssignment: row.assignment !== null && row.assignment !== undefined,
+    };
+  }
+
+  /** `POST /v1/assets/{id}/dispose` (M2-LIFE-05): archived-type status + archive + disposal record. */
+  async dispose(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: DisposeBody,
+  ): Promise<AssetWithVersion> {
+    return this.tx(auth, async (trx) => {
+      const current = await lockAsset(trx, id);
+      if (!current) throw problem.notFound('Asset not found.');
+      assertIfMatch(ifMatch, current.version);
+      assertAssetAction('dispose', this.stateOf(current));
+      const status = await this.statusOfType(trx, 'archived', body.status_id);
+      const disposedOn = body.disposed_on
+        ? new Date(`${body.disposed_on}T00:00:00Z`)
+        : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+      const result = await trx.asset.updateMany({
+        where: { id: current.id, version: current.version },
+        data: {
+          status_id: status.id,
+          archived_at: new Date(),
+          disposed_on: disposedOn,
+          disposal_reason: body.reason,
+          disposal_note: body.note ?? null,
+          updated_by: auth.userId,
+        },
+      });
+      if (result.count === 0) {
+        return stalePrecondition(
+          () => trx.asset.findUnique({ where: { id: current.id } }),
+          'Asset',
+        );
+      }
+      const row = (await loadAsset(trx, current.id))!;
+      await this.record(trx, {
+        entity: 'asset',
+        verb: 'disposed',
+        id: current.id,
+        version: row.version,
+        before: { status_id: current.status_id, archived_at: null },
+        after: {
+          status_id: row.status_id,
+          archived_at: row.archived_at?.toISOString() ?? null,
+          disposal: assetDto(row).disposal,
+        },
+        refs: { statusId: row.status_id, categoryId: row.category_id },
+      });
+      await writeAssetHistory(trx, auth, {
+        assetId: row.id,
+        eventType: 'archived',
+        summary: `Disposed of (${body.reason})`,
+        payload: {
+          disposal: assetDto(row).disposal,
+          from: current.status_id,
+          to: row.status_id,
+          from_name: current.status_name,
+          to_name: row.status_name,
+        },
+      });
+      return { asset: assetDto(row), version: row.version };
+    });
+  }
+
+  /**
+   * `POST /v1/assets/{id}/mark-lost` (M2-LIFE-05): lost status; an open custody period is closed
+   * (the holder is no longer holding it) in the same transaction.
+   */
+  async markLost(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: MarkLostBody,
+  ): Promise<AssetWithVersion> {
+    return this.tx(auth, async (trx) => {
+      const current = await lockAsset(trx, id);
+      if (!current) throw problem.notFound('Asset not found.');
+      assertIfMatch(ifMatch, current.version);
+      assertAssetAction('mark_lost', this.stateOf(current));
+      const status = await this.statusOfType(trx, 'lost', body.status_id);
+      let closed: string | null = null;
+      if (current.assignment) {
+        closed = current.assignment.assignment_id;
+        await trx.$executeRaw`
+          update app.assignment
+             set checked_in_at = now(), quantity_returned = quantity,
+                 checked_in_by = ${auth.userId}::uuid,
+                 checkin_note = ${body.note ? `Marked lost: ${body.note}` : 'Marked lost'}
+           where id = ${closed}::uuid and checked_in_at is null`;
+      }
+      return this.finishStatusAction(trx, auth, current, { status_id: status.id }, {
+        verb: 'marked_lost',
+        action: 'lost',
+        summary: `Marked lost${body.note ? `: ${body.note}` : ''}`,
+        note: body.note,
+        assignmentId: closed,
+      });
+    });
+  }
+
+  /** `POST /v1/assets/{id}/mark-found` (M2-LIFE-05): back to a deployable status (and place). */
+  async markFound(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: MarkFoundBody,
+  ): Promise<AssetWithVersion> {
+    return this.tx(auth, async (trx) => {
+      const current = await lockAsset(trx, id);
+      if (!current) throw problem.notFound('Asset not found.');
+      assertIfMatch(ifMatch, current.version);
+      assertAssetAction('mark_found', this.stateOf(current));
+      const status = await this.statusOfType(trx, 'deployable', body.status_id, true);
+      if (body.location_id) {
+        const location = await AssetRefs.for(trx).location(body.location_id);
+        if (!location || location.archived_at) {
+          throw problem.validation([invalidRef('/location_id', 'No such location.')]);
+        }
+      }
+      return this.finishStatusAction(
+        trx,
+        auth,
+        current,
+        {
+          status_id: status.id,
+          ...(body.location_id !== undefined ? { location_id: body.location_id } : {}),
+        },
+        {
+          verb: 'marked_found',
+          action: 'found',
+          summary: `Marked found${body.note ? `: ${body.note}` : ''}`,
+          note: body.note,
+          assignmentId: null,
+        },
+      );
+    });
+  }
+
+  /** Writes a status (and maybe location) change with its audit, outbox and history rows. */
+  private async finishStatusAction(
+    trx: Tx,
+    auth: AuthContext,
+    current: AssetRow,
+    data: { status_id: string; location_id?: string | null },
+    what: {
+      verb: string;
+      action: 'lost' | 'found';
+      summary: string;
+      note?: string | undefined;
+      assignmentId: string | null;
+    },
+  ): Promise<AssetWithVersion> {
+    const result = await trx.asset.updateMany({
+      where: { id: current.id, version: current.version },
+      data: { ...data, updated_by: auth.userId },
+    });
+    if (result.count === 0) {
+      return stalePrecondition(() => trx.asset.findUnique({ where: { id: current.id } }), 'Asset');
+    }
+    const row = (await loadAsset(trx, current.id))!;
+    await this.record(trx, {
+      entity: 'asset',
+      verb: what.verb,
+      id: current.id,
+      version: row.version,
+      before: { status_id: current.status_id, location_id: current.location_id },
+      after: { status_id: row.status_id, location_id: row.location_id },
+      ...(what.note ? { meta: { note: what.note } } : {}),
+      refs: { statusId: row.status_id, categoryId: row.category_id },
+    });
+    await writeAssetHistory(trx, auth, {
+      assetId: row.id,
+      eventType: 'status_changed',
+      summary: what.summary,
+      assignmentId: what.assignmentId,
+      payload: {
+        action: what.action,
+        from: current.status_id,
+        to: row.status_id,
+        from_name: current.status_name,
+        to_name: row.status_name,
+        ...(what.note ? { note: what.note } : {}),
+      },
+    });
+    if (row.location_id !== current.location_id) {
+      await this.writeLocationChange(trx, auth, current, row, what.note);
+    }
+    return { asset: assetDto(row), version: row.version };
+  }
+
+  /**
+   * A status label of the given state type: the explicit `statusId` (which must be of that type),
+   * else the tenant default when it has the type, else the first label of the type by position.
+   */
+  private async statusOfType(
+    trx: Tx,
+    stateType: string,
+    statusId: string | undefined,
+    preferDefault = false,
+  ): Promise<{ id: string }> {
+    if (statusId) {
+      const status = await AssetRefs.for(trx).status(statusId);
+      if (!status || status.archived_at || status.state_type !== stateType) {
+        throw problem.validation([
+          {
+            pointer: '/status_id',
+            message: `must be an active status label of type "${stateType}"`,
+            code: 'invalid',
+          },
+        ]);
+      }
+      return status;
+    }
+    if (preferDefault) {
+      const def = await AssetRefs.for(trx).defaultStatus();
+      if (def && def.state_type === stateType) return def;
+    }
+    const first = await trx.status_label.findFirst({
+      where: { state_type: stateType, archived_at: null },
+      orderBy: [{ position: 'asc' }, { name: 'asc' }],
+    });
+    if (!first) {
+      throw problem.validation([
+        {
+          pointer: '/status_id',
+          message: `the tenant has no active status label of type "${stateType}"; create one first`,
+          code: 'not-found',
+        },
+      ]);
+    }
+    return first;
+  }
+
+  /** `GET /v1/assets/{id}/history`: the unified timeline (M2-LIFE-06). */
+  async history(
+    auth: AuthContext,
+    id: string,
+    query: HistoryListQuery,
+  ): Promise<{ data: HistoryEventDto[]; page: Page<HistoryEventDto>['page'] }> {
+    return this.tx(auth, async (trx) => {
+      const exists = await trx.asset.findUnique({ where: { id }, select: { id: true } });
+      if (!exists) throw problem.notFound('Asset not found.');
+      return listHistory(
+        trx,
+        {
+          assetId: id,
+          ...(query.event_type ? { eventTypes: query.event_type } : {}),
+          ...(query.from ? { from: query.from } : {}),
+          ...(query.to ? { to: query.to } : {}),
+        },
+        { ...(query.cursor ? { cursor: query.cursor } : {}), limit: query.limit },
+      );
+    });
   }
 
   // =========================================================================================
@@ -841,11 +1343,10 @@ export class AssetsFacade extends RegistryBase {
       }
     }
     if (v.location_id) {
-      errors.push({
-        pointer: at('/location_id'),
-        message: 'Locations become available with M2; location_id must be null for now.',
-        code: 'not-supported',
-      });
+      const location = await refs.location(v.location_id);
+      if (!location || location.archived_at) {
+        errors.push(invalidRef(at('/location_id'), 'No such location.'));
+      }
     }
     const source = v.external_source !== undefined ? v.external_source : current?.external_source;
     const extId = v.external_id !== undefined ? v.external_id : current?.external_id;

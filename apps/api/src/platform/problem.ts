@@ -55,6 +55,10 @@ export const PROBLEM_CATALOG = {
   conflict: { status: 409, title: 'Conflict' },
   'cannot-revoke-current': { status: 409, title: 'Cannot revoke the current session' },
   'mfa-already-enrolled': { status: 409, title: 'MFA already enrolled' },
+  // Custody (M2 wave 1; openapi x-problem-codes)
+  'asset-already-checked-out': { status: 409, title: 'Asset already checked out' },
+  'asset-not-checked-out': { status: 409, title: 'Asset is not checked out' },
+  'asset-not-deployable': { status: 409, title: 'Asset cannot be checked out in its state' },
   'idempotency-key-in-flight': {
     status: 409,
     title: 'Request with this Idempotency-Key in flight',

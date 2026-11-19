@@ -14,10 +14,12 @@ export interface SearchResult {
 }
 
 /** Entity types M1 can search, with the permission each needs (`x-permission-by-type`). */
-const M1_TYPES: Array<{ type: SearchType; permission: string }> = [
+const SEARCH_TYPES_AVAILABLE: Array<{ type: SearchType; permission: string }> = [
   { type: 'asset', permission: 'asset:read' },
   { type: 'model', permission: 'catalog:read' },
   { type: 'category', permission: 'catalog:read' },
+  { type: 'person', permission: 'person:read' },
+  { type: 'location', permission: 'location:read' },
 ];
 
 /**
@@ -39,8 +41,8 @@ export class SearchService {
     auth: AuthContext,
     query: { q: string; types?: string[]; limit: number },
   ): Promise<{ data: SearchResult[] }> {
-    const wanted = new Set(query.types ?? M1_TYPES.map((t) => t.type));
-    const types = M1_TYPES.filter(
+    const wanted = new Set(query.types ?? SEARCH_TYPES_AVAILABLE.map((t) => t.type));
+    const types = SEARCH_TYPES_AVAILABLE.filter(
       (t) => wanted.has(t.type) && permits(auth.permissions, t.permission),
     ).map((t) => t.type);
     if (types.length === 0) return { data: [] };
@@ -60,6 +62,9 @@ export class SearchService {
           out.push(...(await this.models(trx, q, contains, prefix, query.limit)));
         if (types.includes('category'))
           out.push(...(await this.categories(trx, q, contains, prefix, query.limit)));
+        if (types.includes('person')) out.push(...(await this.people(trx, q, query.limit)));
+        if (types.includes('location'))
+          out.push(...(await this.locations(trx, q, contains, prefix, query.limit)));
         return { data: out };
       },
     );
@@ -116,6 +121,55 @@ export class SearchService {
       label: r.name,
       sublabel: [r.manufacturer, r.model_number].filter(Boolean).join(' ') || null,
       href_hint: `/models/view?id=${r.id}`,
+    }));
+  }
+
+  /**
+   * People (M2-USR-01): an exact email (stored lower-case key, btree through RLS) ranks first, then
+   * a substring match over the stored lower-case `search_text` (name, email, employee number).
+   */
+  private async people(trx: Tx, q: string, limit: number) {
+    type Row = {
+      id: string;
+      display_name: string;
+      email: string | null;
+      employee_ref: string | null;
+      department: string | null;
+    };
+    const rows = await trx.$queryRaw<Row[]>`
+      select p.id, p.display_name, p.email, p.employee_ref, p.department
+        from app.person p
+       where p.archived_at is null and strpos(p.search_text, lower(${q})) > 0
+       order by case when p.email_key = lower(${q}) or lower(p.employee_ref) = lower(${q}) then 0
+                     when starts_with(p.search_text, lower(${q})) then 1 else 2 end,
+                lower(p.display_name)
+       limit ${limit}`;
+    return rows.map((r): SearchResult => ({
+      type: 'person',
+      id: r.id,
+      label: r.display_name,
+      sublabel: r.email ?? r.employee_ref ?? r.department,
+      href_hint: `/people/view?id=${r.id}`,
+    }));
+  }
+
+  private async locations(trx: Tx, q: string, contains: string, prefix: string, limit: number) {
+    const rows = await trx.$queryRaw<
+      Array<{ id: string; name: string; code: string | null; kind: string }>
+    >`
+      select l.id, l.name, l.code, l.kind
+        from app.location l
+       where l.archived_at is null and (l.name ilike ${contains} or l.code ilike ${contains})
+       order by case when lower(l.name) = lower(${q}) or lower(l.code) = lower(${q}) then 0
+                     when l.name ilike ${prefix} then 1 else 2 end,
+                lower(l.name)
+       limit ${limit}`;
+    return rows.map((r): SearchResult => ({
+      type: 'location',
+      id: r.id,
+      label: r.name,
+      sublabel: [r.kind, r.code].filter(Boolean).join(' '),
+      href_hint: `/locations/view?id=${r.id}`,
     }));
   }
 

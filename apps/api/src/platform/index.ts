@@ -48,6 +48,7 @@ export {
   type PageInfo,
   type SortTerm,
 } from './pagination.js';
+export { nextTsIdCursor, readTsIdCursor, tsText, type TsIdCursor } from './ts-cursor.js';
 export { PlatformModule } from './platform.module.js';
 export { MAIL_TRANSPORT, PortsModule } from './ports.module.js';
 export { RequestIdentityInterceptor } from './request-identity.interceptor.js';

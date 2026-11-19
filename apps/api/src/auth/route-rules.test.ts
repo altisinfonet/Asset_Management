@@ -8,6 +8,7 @@ import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
   M2_OPERATIONS,
   REGISTRY_TAGS,
+  WAVE1_TAGS,
   loadContract,
   loadProblemCodes,
   ruleOf,
@@ -85,7 +86,17 @@ describe('route access rules', async () => {
     expect(missing).toEqual([]);
   });
 
-  it('implements every registry operation of the contract (M1-REG; custody, history and assignments are M2)', () => {
+  it('implements every operation of the M2 wave-1 tags (locations, people, custody)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const wave1 = operations.filter((o) => WAVE1_TAGS.has(o.tag));
+    expect(wave1.length).toBeGreaterThanOrEqual(15);
+    const missing = wave1
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every registry operation of the contract (M1-REG and the wave-1 additions)', () => {
     const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
     const registry = operations.filter(
       (o) => REGISTRY_TAGS.has(o.tag) && !M2_OPERATIONS.has(o.operationId),

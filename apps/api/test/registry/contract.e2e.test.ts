@@ -330,6 +330,57 @@ describe.skipIf(!dbEnabled)('registry contract (live)', () => {
     });
     await hit('restoreAsset', 'POST', `/v1/assets/${asset.body.id}/restore`, 409, { ifMatch: '*' });
 
+    // ---- M2 wave 1 additions to the Assets tag: moves, history, assignments, lost/found, disposal
+    const place = await hit('createLocation', 'POST', '/v1/locations', 201, {
+      body: { name: unique('Room'), kind: 'room' },
+    });
+    await hit('moveAsset', 'POST', `/v1/assets/${ids[0]}/move`, 200, {
+      body: { location_id: place.body.id, note: 'to the room' },
+    });
+    await hit('moveAsset', 'POST', `/v1/assets/${ids[0]}/move`, 422, {
+      body: { location_id: uuid() },
+    });
+    await hit('moveAsset', 'POST', `/v1/assets/${uuid()}/move`, 404, {
+      body: { location_id: null },
+    });
+    await hit('moveAsset', 'POST', `/v1/assets/${ids[0]}/move`, 412, {
+      body: { location_id: null },
+      ifMatch: 'W/"1"',
+    });
+    await hit('bulkMoveAssets', 'POST', '/v1/assets/bulk-move', 200, {
+      body: { ids: [...ids, uuid()], location_id: place.body.id },
+    });
+    await hit('bulkMoveAssets', 'POST', '/v1/assets/bulk-move', 422, {
+      body: { ids: [], location_id: null },
+    });
+    await hit(
+      'listAssetHistory',
+      'GET',
+      `/v1/assets/${ids[0]}/history?limit=2&event_type=location_changed,created`,
+      200,
+    );
+    await hit('listAssetHistory', 'GET', `/v1/assets/${uuid()}/history`, 404);
+    await hit('listAssetHistory', 'GET', `/v1/assets/${ids[0]}/history?cursor=nope`, 400);
+    await hit('listAssetAssignments', 'GET', `/v1/assets/${ids[0]}/assignments?limit=5`, 200);
+    await hit('listAssetAssignments', 'GET', `/v1/assets/${uuid()}/assignments`, 404);
+    await hit('markAssetLost', 'POST', `/v1/assets/${ids[0]}/mark-lost`, 200, {
+      body: { note: 'left on a train' },
+    });
+    await hit('markAssetLost', 'POST', `/v1/assets/${ids[0]}/mark-lost`, 409);
+    await hit('markAssetFound', 'POST', `/v1/assets/${ids[0]}/mark-found`, 200, {
+      body: { location_id: place.body.id },
+    });
+    await hit('markAssetFound', 'POST', `/v1/assets/${ids[0]}/mark-found`, 409);
+    await hit('disposeAsset', 'POST', `/v1/assets/${ids[0]}/dispose`, 200, {
+      body: { reason: 'recycled', note: 'certificate R-1' },
+    });
+    await hit('disposeAsset', 'POST', `/v1/assets/${ids[0]}/dispose`, 409, {
+      body: { reason: 'recycled' },
+    });
+    await hit('disposeAsset', 'POST', `/v1/assets/${ids[1]}/dispose`, 422, {
+      body: { reason: 'sold', status_id: uuid() },
+    });
+
     // ---- deletes of the catalogue (the asset keeps category, model, vendor and label in use)
     await hit('archiveCategory', 'DELETE', `/v1/categories/${cat.body.id}`, 409, { ifMatch: '*' });
     await hit('archiveAssetModel', 'DELETE', `/v1/models/${model.body.id}`, 409, {

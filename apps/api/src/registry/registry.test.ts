@@ -163,9 +163,14 @@ describe('query helpers', () => {
       updated_at: new Date(0),
       archived_at: null,
       version: 3,
+      disposed_on: null,
+      disposal_reason: null,
+      disposal_note: null,
       status_name: 'Ready',
       status_state_type: 'deployable',
     });
+    expect(dto.current_assignment).toBeNull();
+    expect(dto.disposal).toBeNull();
     expect(dto.purchase_cost).toEqual({ amount_minor: 12345, currency: 'EUR' });
     expect(dto.purchase_date).toBe('2025-03-04');
     expect(dto.status).toEqual({ id: 's', name: 'Ready', state_type: 'deployable' });

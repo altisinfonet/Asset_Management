@@ -424,7 +424,9 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
         { location_id: crypto.randomUUID() },
         im(created),
       );
-      expect(loc.body.errors[0]).toMatchObject({ pointer: '/location_id', code: 'not-supported' });
+      // M2 wave 1: location_id is writable now; an unknown location is a 422 on the pointer
+      expect(loc.status).toBe(422);
+      expect(loc.body.errors[0]).toMatchObject({ pointer: '/location_id', code: 'not-found' });
       const archived = await a().del(`/v1/assets/${created.body.id}`, undefined, im(created));
       expect(archived.status).toBe(204);
       const g = await a().get(`/v1/assets/${created.body.id}`);
@@ -1133,12 +1135,15 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect((await a().get('/v1/assets?limit=3')).body.page.total).toBeUndefined();
     });
 
-    it('rejects bad queries (400), M2-only filters, and a cursor from another sort or filter', async () => {
+    it('rejects bad queries (400), not-yet filters, and a cursor from another sort or filter', async () => {
       expect((await a().get('/v1/assets?limit=0')).status).toBe(400);
       expect((await a().get('/v1/assets?limit=201')).status).toBe(400);
       expect((await a().get('/v1/assets?sort=serial')).status).toBe(400);
       expect((await a().get('/v1/assets?category_id=nope')).status).toBe(400);
-      expect((await a().get('/v1/assets?assigned=true')).status).toBe(400);
+      // the custody filters are live since M2 wave 1; the loaner-pool filter waits for the loaner story
+      expect((await a().get('/v1/assets?assigned=true')).status).toBe(200);
+      expect((await a().get('/v1/assets?assigned=maybe')).status).toBe(400);
+      expect((await a().get(`/v1/assets?loaner_pool_id=${crypto.randomUUID()}`)).status).toBe(400);
       expect((await a().get('/v1/assets?cursor=garbage')).body.code).toBe('invalid-cursor');
       const page = await a().get(`/v1/assets?category_id=${cat.id}&limit=2`);
       const cursor = page.body.page.next_cursor;
@@ -1302,7 +1307,8 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect(byLabel.body).toMatchObject({
         match_type: 'label_code',
         asset: { id: asset.id },
-        allowed_actions: ['update'],
+        // M2 wave 1: a deployable, unassigned asset can also be checked out and handed over
+        allowed_actions: ['checkout', 'transfer', 'update'],
       });
       const byTag = await a().get(`/v1/scan/resolve?code=${asset.asset_tag.toLowerCase()}`);
       expect(byTag.body).toMatchObject({ match_type: 'asset_tag', asset: { id: asset.id } });

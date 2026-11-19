@@ -42,7 +42,9 @@ export function shelfShare(item: Accessory | Consumable, kind: StockKind): numbe
 }
 
 /** Units of an assignment that are still out. */
-export function outstanding(assignment: Pick<Assignment, 'quantity' | 'quantity_returned'>): number {
+export function outstanding(
+  assignment: Pick<Assignment, 'quantity' | 'quantity_returned'>,
+): number {
   return Math.max(0, assignment.quantity - assignment.quantity_returned);
 }
 

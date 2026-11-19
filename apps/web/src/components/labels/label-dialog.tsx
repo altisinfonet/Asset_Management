@@ -156,13 +156,13 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
   const fromRemembered = !!template && remembered?.template_key === template.key;
 
   // What the template prints unless the user changed it (or the remembered choice for this template).
-  const baseType: LabelCodeType = (fromRemembered && remembered?.code_type) || template?.code_type || 'qr';
+  const baseType: LabelCodeType =
+    (fromRemembered && remembered?.code_type) || template?.code_type || 'qr';
   const qr = override.qr ?? showsQr(baseType);
   const barcode = override.barcode ?? showsBarcode(baseType);
   const codeType = codeTypeFrom(qr, barcode);
   const fields: LabelField[] =
-    override.fields ??
-    ((fromRemembered && remembered?.fields) || knownFields(template?.fields));
+    override.fields ?? ((fromRemembered && remembered?.fields) || knownFields(template?.fields));
   const perSheet = template ? slotsPerSheet(template) : 1;
   const single = template ? isSingleLabel(template) : false;
   const start = single ? 1 : Math.min(override.start ?? 1, perSheet);
@@ -445,7 +445,9 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
 
           {busy ? (
             <div role="status" className="flex flex-col gap-2" data-testid="labels-working">
-              <p className="text-base">{t('labels.generating', { labels: labelsText, sheets: sheetsText })}</p>
+              <p className="text-base">
+                {t('labels.generating', { labels: labelsText, sheets: sheetsText })}
+              </p>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-sunken">
                 <div className="h-full w-1/3 animate-[at-pulse_1.2s_ease-in-out_infinite] rounded-full bg-primary" />
               </div>
@@ -461,12 +463,7 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
             >
               {t('common.cancel')}
             </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={busy}
-              disabled={!canGenerate && !busy}
-            >
+            <Button type="submit" variant="primary" loading={busy} disabled={!canGenerate && !busy}>
               <Printer aria-hidden className="size-4" />
               {phase.kind === 'failed' ? t('labels.retry') : t('labels.generate')}
             </Button>

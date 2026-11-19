@@ -118,7 +118,11 @@ export async function migrateLocalViews(
   local: LocalSavedView[],
   existing: Pick<SavedView, 'name' | 'shared' | 'owner_user_id'>[],
   userId: string,
-  create: (view: { name: string; shared: boolean; definition: SavedViewDefinition }) => Promise<unknown>,
+  create: (view: {
+    name: string;
+    shared: boolean;
+    definition: SavedViewDefinition;
+  }) => Promise<unknown>,
 ): Promise<MigrationResult> {
   const taken = new Set(
     existing.filter((v) => v.owner_user_id === userId).map((v) => v.name.toLowerCase()),

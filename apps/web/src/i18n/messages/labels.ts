@@ -58,7 +58,8 @@ export const labelsMessages = {
       empty: 'Left empty',
     },
     preview: 'One label',
-    previewNote: 'Actual size. The QR code holds a web address with an opaque code, never the asset id.',
+    previewNote:
+      'Actual size. The QR code holds a web address with an opaque code, never the asset id.',
     previewOf: 'Preview for {tag}',
     generate: 'Generate PDF',
     generating: 'Making {labels} on {sheets}...',

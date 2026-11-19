@@ -48,7 +48,8 @@ export const repairsMessages = {
     noCost: 'No costs recorded yet.',
     empty: {
       title: 'No repairs logged',
-      description: 'Log a repair when an asset breaks or goes in for service. It keeps its cost, notes and receipts.',
+      description:
+        'Log a repair when an asset breaks or goes in for service. It keeps its cost, notes and receipts.',
       noMatchTitle: 'No repairs match',
       noMatchDescription: 'Try another filter.',
     },
@@ -112,7 +113,8 @@ export const repairsMessages = {
     reported: 'Reported on',
     statusWhile: 'Asset status while it is being repaired',
     keepStatus: 'Keep its current status',
-    statusHint: 'The asset cannot be checked out while it is in repair. A checked-out asset must be checked in first.',
+    statusHint:
+      'The asset cannot be checked out while it is in repair. A checked-out asset must be checked in first.',
     submit: 'Log repair',
     logged: 'Repair logged for {tag}.',
     savedTitle: 'Repair logged',
@@ -127,7 +129,8 @@ export const repairsMessages = {
   },
   repairClose: {
     title: 'Close repair "{title}"',
-    description: 'Record what was done and what it cost. The asset goes back to the status you choose.',
+    description:
+      'Record what was done and what it cost. The asset goes back to the status you choose.',
     completed: 'Finished on',
     resolution: 'What was done',
     cost: 'Final cost',

@@ -62,11 +62,12 @@ export const repairsApi = {
     etag?: string,
   ): Promise<Versioned<Repair>> {
     const ifMatch = await ifMatchOf(etag, () => repairsApi.get(id));
-    const { data } = await http().POST('/v1/repairs/{id}/complete', {
+    const { data, response } = await http().POST('/v1/repairs/{id}/complete', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
       body,
     });
-    return versioned(data as Repair, `/v1/repairs/${id}`);
+    // an action's answer carries the repair's new ETag, which the client does not record for a POST path
+    return { value: data as Repair, etag: response.headers.get('etag') ?? undefined };
   },
 };
 

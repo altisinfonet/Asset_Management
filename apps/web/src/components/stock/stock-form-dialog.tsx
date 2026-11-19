@@ -58,7 +58,10 @@ export function StockFormDialog({
         label: t('stockForm.category'),
         kind: 'select',
         required: true,
-        hint: categories.data && categories.data.length === 0 ? t('stockForm.noCategories') : t('stockForm.categoryHint'),
+        hint:
+          categories.data && categories.data.length === 0
+            ? t('stockForm.noCategories')
+            : t('stockForm.categoryHint'),
         options: (categories.data ?? []).map((c) => ({ value: c.id, label: c.name })),
       },
     ];
@@ -138,7 +141,8 @@ export function StockFormDialog({
     () => ({
       name: current?.name ?? '',
       category_id: current?.category_id ?? '',
-      qty_total: kind === 'accessory' ? String((current as Accessory | undefined)?.qty_total ?? 0) : '',
+      qty_total:
+        kind === 'accessory' ? String((current as Accessory | undefined)?.qty_total ?? 0) : '',
       initial_qty: '0',
       unit: kind === 'consumable' ? ((current as Consumable | undefined)?.unit ?? 'each') : '',
       min_qty: String(current?.min_qty ?? 0),
@@ -146,7 +150,8 @@ export function StockFormDialog({
       manufacturer_id: current?.manufacturer_id ?? '',
       vendor_id: current?.vendor_id ?? '',
       model_number: current?.model_number ?? '',
-      purchase_date: kind === 'accessory' ? ((current as Accessory | undefined)?.purchase_date ?? '') : '',
+      purchase_date:
+        kind === 'accessory' ? ((current as Accessory | undefined)?.purchase_date ?? '') : '',
       notes: current?.notes ?? '',
     }),
     [current, kind],

@@ -90,12 +90,19 @@ function validateBody(body: Body, creating: boolean): FieldError[] {
     ...checkMoney(body, 'cost'),
   ];
   if (creating && body.asset_id === undefined) {
-    errors.push({ pointer: '/asset_id', message: 'Invalid input: expected string', code: 'invalid_type' });
+    errors.push({
+      pointer: '/asset_id',
+      message: 'Invalid input: expected string',
+      code: 'invalid_type',
+    });
   }
   if (body.kind !== undefined && !KINDS.includes(String(body.kind))) {
     errors.push({ pointer: '/kind', message: 'Invalid option', code: 'invalid_value' });
   }
-  if (body.status !== undefined && !['open', 'in_progress', 'cancelled'].includes(String(body.status))) {
+  if (
+    body.status !== undefined &&
+    !['open', 'in_progress', 'cancelled'].includes(String(body.status))
+  ) {
     errors.push({ pointer: '/status', message: 'Invalid option', code: 'invalid_value' });
   }
   const data = registry();
@@ -180,7 +187,9 @@ export const repairHandlers: HttpHandler[] = [
     if (asset.current_assignment) {
       return fail('conflict', {
         detail: `${asset.asset_tag} is checked out. Check it in before opening a repair.`,
-        errors: [{ pointer: '/asset_id', message: 'The asset is checked out.', code: 'checked-out' }],
+        errors: [
+          { pointer: '/asset_id', message: 'The asset is checked out.', code: 'checked-out' },
+        ],
       });
     }
     const setStatus = body.set_status_id as string | undefined;
@@ -240,22 +249,28 @@ export const repairHandlers: HttpHandler[] = [
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors = validateBody(body, false);
     if (errors.length > 0) return validation(errors);
-    if ((found.status === 'completed' || found.status === 'cancelled') && body.status !== undefined) {
+    if (
+      (found.status === 'completed' || found.status === 'cancelled') &&
+      body.status !== undefined
+    ) {
       return fail('conflict', { detail: 'A closed repair cannot be reopened.' });
     }
     const cancelling = body.status === 'cancelled' && found.status !== 'cancelled';
     mutateW2(() => {
       for (const key of UPDATE_KEYS) {
         if (body[key] === undefined) continue;
-        const value = typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
-        (found as Record<string, unknown>)[key] = key === 'title' ? String(body[key]).trim() : value;
+        const value =
+          typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
+        (found as Record<string, unknown>)[key] =
+          key === 'title' ? String(body[key]).trim() : value;
       }
       if (body.status === 'in_progress' && !found.started_at) found.started_at = nowIso();
       if (cancelling) found.completed_at = nowIso();
       found.updated_at = nowIso();
       found._v += 1;
     });
-    if (cancelling && found.restore_status_id) setAssetStatus(found.asset_id, found.restore_status_id);
+    if (cancelling && found.restore_status_id)
+      setAssetStatus(found.asset_id, found.restore_status_id);
     return HttpResponse.json(repairView(found), { headers: { ETag: etagOf(found._v) } });
   }),
 
@@ -271,7 +286,8 @@ export const repairHandlers: HttpHandler[] = [
     if (raw.trim()) {
       try {
         const parsed = JSON.parse(raw) as unknown;
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+          throw new Error();
         body = parsed as Body;
       } catch {
         return fail('bad-request', { detail: 'Malformed JSON body' });
@@ -284,27 +300,38 @@ export const repairHandlers: HttpHandler[] = [
       ...checkMoney(body, 'cost'),
       ...checkUuids(body, ['restore_status_id'], ['restore_status_id']),
     ];
-    if (isUuid(body.restore_status_id) && !registry().statusLabels.some((s) => s.id === body.restore_status_id)) {
+    if (
+      isUuid(body.restore_status_id) &&
+      !registry().statusLabels.some((s) => s.id === body.restore_status_id)
+    ) {
       errors.push(missing('/restore_status_id', 'No such status.'));
     }
     if (errors.length > 0) return validation(errors);
     if (found.status === 'completed' || found.status === 'cancelled') {
       return fail('conflict', { detail: 'This repair is already closed.' });
     }
-    const restore = (body.restore_status_id as string | null | undefined) ?? found.restore_status_id;
+    const restore =
+      (body.restore_status_id as string | null | undefined) ?? found.restore_status_id;
     mutateW2(() => {
       found.status = 'completed';
       found.completed_at = (body.completed_at as string | undefined) ?? nowIso();
-      if (body.resolution_notes !== undefined) found.resolution_notes = trimmed(body.resolution_notes);
+      if (body.resolution_notes !== undefined)
+        found.resolution_notes = trimmed(body.resolution_notes);
       if (body.cost !== undefined) found.cost = body.cost as MockRepair['cost'];
       if (restore) found.restore_status_id = restore;
       found.updated_at = nowIso();
       found._v += 1;
     });
     if (restore) setAssetStatus(found.asset_id, restore);
-    repairHistory(found.asset_id, 'repair_completed', `Repair completed: ${found.title}`, guard.user.id, {
-      repair_id: found.id,
-    });
+    repairHistory(
+      found.asset_id,
+      'repair_completed',
+      `Repair completed: ${found.title}`,
+      guard.user.id,
+      {
+        repair_id: found.id,
+      },
+    );
     return HttpResponse.json(repairView(found), { headers: { ETag: etagOf(found._v) } });
   }),
 

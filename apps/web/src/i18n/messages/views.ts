@@ -18,11 +18,13 @@ export const viewsMessages = {
     renamed: 'View "{name}" saved.',
     deleted: 'View deleted.',
     deleteTitle: 'Delete view "{name}"?',
-    deleteDescription: 'The view is removed for everyone it was shared with. Assets are not affected.',
+    deleteDescription:
+      'The view is removed for everyone it was shared with. Assets are not affected.',
     loadFailed: 'We could not load the saved views.',
     migrated_one: 'Moved {count} saved view from this browser to your account.',
     migrated_other: 'Moved {count} saved views from this browser to your account.',
-    migrateFailed: 'Some saved views could not be moved yet. They stay in this browser and we will try again.',
+    migrateFailed:
+      'Some saved views could not be moved yet. They stay in this browser and we will try again.',
     droppedTitle: 'Some parts of "{name}" no longer exist',
     droppedBody: 'They were left out of the filters: {parts}.',
     dropped: {

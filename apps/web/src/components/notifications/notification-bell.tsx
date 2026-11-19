@@ -56,7 +56,9 @@ export function NotificationBell() {
       <span className="relative inline-flex">
         <IconButton
           icon={Bell}
-          label={unread > 0 ? t('notifications.bellUnread', { count: unread }) : t('notifications.bell')}
+          label={
+            unread > 0 ? t('notifications.bellUnread', { count: unread }) : t('notifications.bell')
+          }
           onClick={() => setOpen(true)}
           data-testid="notification-bell"
         />
@@ -91,9 +93,14 @@ function NotificationsPanel({
   const list = useInfiniteQuery({
     queryKey: ['notifications', 'list', onlyUnread],
     queryFn: ({ pageParam }) =>
-      notificationsApi.list({ cursor: pageParam, limit: 20, ...(onlyUnread ? { unread: true } : {}) }),
+      notificationsApi.list({
+        cursor: pageParam,
+        limit: 20,
+        ...(onlyUnread ? { unread: true } : {}),
+      }),
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => (last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined),
+    getNextPageParam: (last) =>
+      last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
     enabled: open,
     retry: false,
   });
@@ -145,7 +152,9 @@ function NotificationsPanel({
                   onClick={() => setOnlyUnread(value)}
                   className={cn(
                     'min-h-(--size-control-dense) px-3 text-sm font-medium first:rounded-l-md last:rounded-r-md',
-                    onlyUnread === value ? 'bg-primary-subtle text-primary-text' : 'text-text hover:bg-sunken',
+                    onlyUnread === value
+                      ? 'bg-primary-subtle text-primary-text'
+                      : 'text-text hover:bg-sunken',
                   )}
                 >
                   {value ? t('notifications.filterUnread') : t('notifications.filterAll')}
@@ -234,9 +243,14 @@ function NotificationRow({
   const href = notificationHref(notification);
   const eventKey = eventLabelKey(notification.event_type);
   return (
-    <li className={cn('flex gap-3 p-4', unread && 'bg-primary-subtle/40')} data-unread={unread || undefined}>
+    <li
+      className={cn('flex gap-3 p-4', unread && 'bg-primary-subtle/40')}
+      data-unread={unread || undefined}
+    >
       <span className="mt-1 shrink-0" aria-hidden>
-        <Circle className={cn('size-3', unread ? 'fill-primary text-primary' : 'text-border-strong')} />
+        <Circle
+          className={cn('size-3', unread ? 'fill-primary text-primary' : 'text-border-strong')}
+        />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <p className="text-base">

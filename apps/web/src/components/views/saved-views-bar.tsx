@@ -110,7 +110,8 @@ export function SavedViewsBar({
   const isOwner = (view: SavedView) => view.owner_user_id === userId;
   const mayChange = (view: SavedView) => isOwner(view) || (view.shared && canShare);
 
-  const label = (view: SavedView) => (view.shared ? t('savedViews.sharedOption', { name: view.name }) : view.name);
+  const label = (view: SavedView) =>
+    view.shared ? t('savedViews.sharedOption', { name: view.name }) : view.name;
 
   const nameField: FormFieldSpec = {
     name: 'name',
@@ -153,7 +154,10 @@ export function SavedViewsBar({
               void savedViewsApi
                 .update(active.id, { definition: toDefinition(current) })
                 .then(() => {
-                  toast({ variant: 'success', title: t('savedViews.updateDone', { name: active.name }) });
+                  toast({
+                    variant: 'success',
+                    title: t('savedViews.updateDone', { name: active.name }),
+                  });
                   return refresh();
                 })
                 .catch(() => toast({ variant: 'danger', title: t('error.unknown') }));

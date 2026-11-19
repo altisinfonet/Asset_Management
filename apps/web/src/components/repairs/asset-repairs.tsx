@@ -38,7 +38,8 @@ export function AssetRepairs({
     queryFn: ({ pageParam }) =>
       repairsApi.list({ asset_id: asset.id, limit: 50, cursor: pageParam, sort: ['-reported_at'] }),
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => (last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined),
+    getNextPageParam: (last) =>
+      last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
   });
   const rows = list.data?.pages.flatMap((page) => page.data) ?? [];
   const totals = totalCost(rows.filter((repair) => repair.status !== 'cancelled'));

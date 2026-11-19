@@ -82,11 +82,11 @@ const ACCESSORY_SORTS: ListConfig<MockAccessory>['sorts'] = {
 
 function validateRefs(body: Body, kind: 'accessory' | 'consumable'): FieldError[] {
   const data = registry();
-  const errors = checkUuids(body, ['category_id', 'manufacturer_id', 'vendor_id', 'location_id'], [
-    'manufacturer_id',
-    'vendor_id',
-    'location_id',
-  ]);
+  const errors = checkUuids(
+    body,
+    ['category_id', 'manufacturer_id', 'vendor_id', 'location_id'],
+    ['manufacturer_id', 'vendor_id', 'location_id'],
+  );
   if (errors.length > 0) return errors;
   if (body.category_id !== undefined) {
     const category = data.categories.find((c) => c.id === body.category_id);
@@ -122,7 +122,11 @@ function validateAccessory(body: Body, creating: boolean): FieldError[] {
     ...checkDate(body, 'purchase_date'),
   ];
   if (creating && body.category_id === undefined) {
-    errors.push({ pointer: '/category_id', message: 'Invalid input: expected string', code: 'invalid_type' });
+    errors.push({
+      pointer: '/category_id',
+      message: 'Invalid input: expected string',
+      code: 'invalid_type',
+    });
   }
   return [...errors, ...validateRefs(body, 'accessory')];
 }
@@ -217,7 +221,8 @@ const accessoryHandlers: HttpHandler[] = [
     mutateW2(() => {
       for (const key of ACCESSORY_KEYS) {
         if (body[key] === undefined) continue;
-        const value = typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
+        const value =
+          typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
         (found as Record<string, unknown>)[key] = key === 'name' ? String(body[key]).trim() : value;
       }
       found.updated_at = nowIso();
@@ -256,13 +261,22 @@ const accessoryHandlers: HttpHandler[] = [
     const body = await readBody(request);
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors = [
-      ...rejectUnknown(body, ['person_id', 'location_id', 'target_asset_id', 'quantity', 'expected_return', 'note']),
+      ...rejectUnknown(body, [
+        'person_id',
+        'location_id',
+        'target_asset_id',
+        'quantity',
+        'expected_return',
+        'note',
+      ]),
       ...checkUuids(body, ['person_id', 'location_id', 'target_asset_id']),
       ...checkInt(body, 'quantity', { min: 1 }),
       ...checkDate(body, 'expected_return', false),
       ...checkText(body, 'note', { max: 2000 }),
     ];
-    const targets = ['person_id', 'location_id', 'target_asset_id'].filter((k) => body[k] !== undefined);
+    const targets = ['person_id', 'location_id', 'target_asset_id'].filter(
+      (k) => body[k] !== undefined,
+    );
     if (targets.length !== 1) {
       errors.push({
         pointer: '/',
@@ -271,7 +285,10 @@ const accessoryHandlers: HttpHandler[] = [
       });
     }
     const data = registry();
-    if (isUuid(body.person_id) && !data.people.some((p) => p.id === body.person_id && p.status !== 'inactive')) {
+    if (
+      isUuid(body.person_id) &&
+      !data.people.some((p) => p.id === body.person_id && p.status !== 'inactive')
+    ) {
       errors.push(missing('/person_id', 'No such active person.'));
     }
     if (isUuid(body.location_id) && !data.locations.some((l) => l.id === body.location_id)) {
@@ -342,7 +359,11 @@ const accessoryHandlers: HttpHandler[] = [
       ...checkText(body, 'note', { max: 2000 }),
     ];
     if (body.assignment_id === undefined) {
-      errors.push({ pointer: '/assignment_id', message: 'Invalid input: expected string', code: 'invalid_type' });
+      errors.push({
+        pointer: '/assignment_id',
+        message: 'Invalid input: expected string',
+        code: 'invalid_type',
+      });
     }
     if (errors.length > 0) return validation(errors);
     const handout = w2().handouts.find(
@@ -438,7 +459,11 @@ function validateConsumable(body: Body, creating: boolean): FieldError[] {
     ...(creating ? checkInt(body, 'initial_qty', { min: 0 }) : []),
   ];
   if (creating && body.category_id === undefined) {
-    errors.push({ pointer: '/category_id', message: 'Invalid input: expected string', code: 'invalid_type' });
+    errors.push({
+      pointer: '/category_id',
+      message: 'Invalid input: expected string',
+      code: 'invalid_type',
+    });
   }
   return [...errors, ...validateRefs(body, 'consumable')];
 }
@@ -581,7 +606,8 @@ const consumableHandlers: HttpHandler[] = [
     mutateW2(() => {
       for (const key of CONSUMABLE_KEYS) {
         if (body[key] === undefined) continue;
-        const value = typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
+        const value =
+          typeof body[key] === 'string' ? (body[key] as string).trim() || null : body[key];
         (found as Record<string, unknown>)[key] = key === 'name' ? String(body[key]).trim() : value;
       }
       found.updated_at = nowIso();
@@ -609,7 +635,9 @@ const consumableHandlers: HttpHandler[] = [
     if (!guard.ok) return guard.response;
     const found = w2().consumables.find((c) => c.id === params.id);
     if (!found) return notFound('Consumable');
-    const reasons = (new URL(request.url).searchParams.get('reason') ?? '').split(',').filter(Boolean);
+    const reasons = (new URL(request.url).searchParams.get('reason') ?? '')
+      .split(',')
+      .filter(Boolean);
     if (reasons.some((r) => !REASONS.includes(r))) {
       return fail('bad-request', { detail: 'Unsupported reason filter' });
     }
@@ -636,7 +664,11 @@ const consumableHandlers: HttpHandler[] = [
       ...checkUuids(body, ['person_id'], ['person_id']),
       ...checkText(body, 'note', { max: 2000 }),
     ];
-    if (typeof body.qty_delta !== 'number' || !Number.isInteger(body.qty_delta) || body.qty_delta === 0) {
+    if (
+      typeof body.qty_delta !== 'number' ||
+      !Number.isInteger(body.qty_delta) ||
+      body.qty_delta === 0
+    ) {
       errors.push({
         pointer: '/qty_delta',
         message: 'Must be a whole number other than 0.',

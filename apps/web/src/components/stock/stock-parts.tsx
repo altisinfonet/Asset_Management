@@ -64,7 +64,10 @@ export function StockBar({
       aria-valuemin={0}
       aria-valuemax={max}
       aria-valuenow={Math.min(value, max)}
-      className={cn('relative h-2 w-full min-w-16 overflow-hidden rounded-full bg-sunken', className)}
+      className={cn(
+        'relative h-2 w-full min-w-16 overflow-hidden rounded-full bg-sunken',
+        className,
+      )}
     >
       <div
         className={cn('h-full rounded-full', BAR_TONE[level])}

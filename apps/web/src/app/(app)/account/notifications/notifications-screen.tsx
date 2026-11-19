@@ -37,7 +37,8 @@ export function NotificationSettingsScreen() {
     retry: false,
   });
   const rows = useMemo(() => prefs.data ?? [], [prefs.data]);
-  const current = (pref: NotificationPreference): Delivery => edits[pref.event_type] ?? pref.delivery;
+  const current = (pref: NotificationPreference): Delivery =>
+    edits[pref.event_type] ?? pref.delivery;
   const changed = rows.filter((pref) => current(pref) !== pref.delivery);
 
   const save = async () => {
@@ -122,7 +123,10 @@ export function NotificationSettingsScreen() {
                             aria-label={t('notifications.settings.deliveryNamed', { event: name })}
                             value={current(pref)}
                             onValueChange={(value) =>
-                              setEdits((existing) => ({ ...existing, [pref.event_type]: value as Delivery }))
+                              setEdits((existing) => ({
+                                ...existing,
+                                [pref.event_type]: value as Delivery,
+                              }))
                             }
                             options={DELIVERIES.map((delivery) => ({
                               value: delivery,
@@ -137,7 +141,12 @@ export function NotificationSettingsScreen() {
               </table>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" disabled={changed.length === 0} loading={saving} onClick={() => void save()}>
+              <Button
+                variant="primary"
+                disabled={changed.length === 0}
+                loading={saving}
+                onClick={() => void save()}
+              >
                 {t('notifications.settings.save')}
               </Button>
               {changed.length > 0 ? (

@@ -53,7 +53,8 @@ export function checkUuids(
   for (const key of keys) {
     const value = body[key];
     if (value === undefined || (value === null && nullable.includes(key))) continue;
-    if (!isUuid(value)) errors.push({ pointer: `/${key}`, message: 'Invalid UUID', code: 'format' });
+    if (!isUuid(value))
+      errors.push({ pointer: `/${key}`, message: 'Invalid UUID', code: 'format' });
   }
   return errors;
 }
@@ -94,7 +95,12 @@ export function checkInt(
 export function checkText(
   body: Body,
   key: string,
-  { min = 0, max, nullable = false, required = false }: {
+  {
+    min = 0,
+    max,
+    nullable = false,
+    required = false,
+  }: {
     min?: number;
     max: number;
     nullable?: boolean;
@@ -109,7 +115,9 @@ export function checkText(
   }
   if (value === null && nullable) return [];
   if (typeof value !== 'string') {
-    return [{ pointer: `/${key}`, message: 'Invalid input: expected string', code: 'invalid_type' }];
+    return [
+      { pointer: `/${key}`, message: 'Invalid input: expected string', code: 'invalid_type' },
+    ];
   }
   const length = value.trim().length;
   if (length < min) {

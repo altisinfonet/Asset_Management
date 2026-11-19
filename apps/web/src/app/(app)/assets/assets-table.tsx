@@ -709,7 +709,10 @@ export function AssetsTable() {
               </Button>
             ) : null}
             {can('asset:label') ? (
-              <Button size="sm" onClick={() => labels.open({ kind: 'assets', assets: selectedRows })}>
+              <Button
+                size="sm"
+                onClick={() => labels.open({ kind: 'assets', assets: selectedRows })}
+              >
                 <Printer aria-hidden className="size-4" />
                 {t('labels.printSelected', { count: selectedRows.length })}
               </Button>

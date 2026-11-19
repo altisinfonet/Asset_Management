@@ -182,7 +182,8 @@ export const stockMessages = {
   stockActions: {
     checkout: {
       title: 'Check out {name}',
-      description: '{available} available. The units are handed to the person, place or asset you choose.',
+      description:
+        '{available} available. The units are handed to the person, place or asset you choose.',
       to: 'Hand to',
       quantity: 'Quantity',
       quantityHint: 'Up to {max}.',
@@ -247,7 +248,8 @@ export const stockMessages = {
     },
     minimum: {
       title: 'Minimum stock for {name}',
-      description: 'You are alerted when the stock falls to this number or below. 0 turns the alert off.',
+      description:
+        'You are alerted when the stock falls to this number or below. 0 turns the alert off.',
       label: 'Minimum stock',
       submit: 'Save',
       saved: 'Minimum stock is now {count}.',

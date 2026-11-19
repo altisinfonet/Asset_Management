@@ -11,7 +11,10 @@ import { useLookups } from '@/lib/registry/queries';
 import type { Repair, RepairStatus } from '@/lib/repairs/api';
 import { routes } from '@/lib/routes';
 
-const STATUS_STYLE: Record<RepairStatus, { tone: NonNullable<BadgeProps['tone']>; icon: LucideIcon }> = {
+const STATUS_STYLE: Record<
+  RepairStatus,
+  { tone: NonNullable<BadgeProps['tone']>; icon: LucideIcon }
+> = {
   open: { tone: 'warning', icon: Hourglass },
   in_progress: { tone: 'info', icon: Wrench },
   completed: { tone: 'success', icon: CircleCheck },
@@ -116,7 +119,12 @@ export function RepairTable({
         header: t('repairs.columns.vendor'),
         cell: (row) => lookups.vendorById.get(row.vendor_id ?? '')?.name ?? '',
       },
-      { id: 'cost', header: t('repairs.columns.cost'), align: 'end', cell: (row) => money(row.cost) },
+      {
+        id: 'cost',
+        header: t('repairs.columns.cost'),
+        align: 'end',
+        cell: (row) => money(row.cost),
+      },
       {
         id: 'status',
         header: t('repairs.columns.status'),

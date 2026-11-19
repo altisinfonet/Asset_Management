@@ -142,7 +142,9 @@ export function LogRepairDialog({
           await refresh();
           toast({
             variant: 'success',
-            title: t('repairForm.logged', { tag: created.value.asset_tag ?? asset?.asset_tag ?? picked?.label ?? '' }),
+            title: t('repairForm.logged', {
+              tag: created.value.asset_tag ?? asset?.asset_tag ?? picked?.label ?? '',
+            }),
           });
           setLogged(created.value);
           onLogged?.(created.value);
@@ -153,7 +155,12 @@ export function LogRepairDialog({
             {asset ? null : (
               <Field label={t('repairForm.asset')} required error={errors.asset_id}>
                 {(control) => (
-                  <AssetPicker {...control} invalid={!!errors.asset_id} value={picked} onChange={setPicked} />
+                  <AssetPicker
+                    {...control}
+                    invalid={!!errors.asset_id}
+                    value={picked}
+                    onChange={setPicked}
+                  />
                 )}
               </Field>
             )}
@@ -164,7 +171,10 @@ export function LogRepairDialog({
                     {...control}
                     value={kind}
                     onValueChange={(v) => setKind(v as RepairKind)}
-                    options={REPAIR_KINDS.map((k) => ({ value: k, label: t(`repairs.kinds.${k}`) }))}
+                    options={REPAIR_KINDS.map((k) => ({
+                      value: k,
+                      label: t(`repairs.kinds.${k}`),
+                    }))}
                   />
                 )}
               </Field>
@@ -181,7 +191,12 @@ export function LogRepairDialog({
                 )}
               </Field>
             </div>
-            <Field label={t('repairForm.what')} required hint={t('repairForm.whatHint')} error={errors.title}>
+            <Field
+              label={t('repairForm.what')}
+              required
+              hint={t('repairForm.whatHint')}
+              error={errors.title}
+            >
               {(control) => (
                 <Input
                   {...control}
@@ -313,7 +328,9 @@ export function CompleteRepairDialog({
   const [cost, setCost] = useState('');
   const [statusId, setStatusId] = useState(NONE);
 
-  const afterStatuses = lookups.statuses.filter((s) => !s.archived_at && s.state_type === 'deployable');
+  const afterStatuses = lookups.statuses.filter(
+    (s) => !s.archived_at && s.state_type === 'deployable',
+  );
 
   return (
     <ActionDialog

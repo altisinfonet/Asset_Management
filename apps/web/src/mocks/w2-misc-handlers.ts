@@ -142,7 +142,13 @@ const labelHandlers: HttpHandler[] = [
     const body = await readBody(request);
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors: FieldError[] = [
-      ...rejectUnknown(body, ['template_key', 'asset_ids', 'start_position', 'code_type', 'fields']),
+      ...rejectUnknown(body, [
+        'template_key',
+        'asset_ids',
+        'start_position',
+        'code_type',
+        'fields',
+      ]),
     ];
     const template = TEMPLATES.find((t) => t.key === body.template_key);
     if (!template) {
@@ -160,7 +166,10 @@ const labelHandlers: HttpHandler[] = [
     }
     const slots = template ? template.cols * template.rows : 1;
     const start = body.start_position;
-    if (start !== undefined && (typeof start !== 'number' || !Number.isInteger(start) || start < 1)) {
+    if (
+      start !== undefined &&
+      (typeof start !== 'number' || !Number.isInteger(start) || start < 1)
+    ) {
       errors.push({ pointer: '/start_position', message: 'Must be 1 or more.', code: 'too_small' });
     } else if (typeof start === 'number' && start > slots) {
       errors.push({
@@ -180,15 +189,24 @@ const labelHandlers: HttpHandler[] = [
     }
     if (errors.length > 0) return validation(errors);
 
-    const assets = registry().assets.filter((a) => (ids as string[]).includes(a.id) && !a.archived_at);
+    const assets = registry().assets.filter(
+      (a) => (ids as string[]).includes(a.id) && !a.archived_at,
+    );
     if (assets.length !== (ids as string[]).length) return notFound('Asset');
     mutateRegistry((data) => {
       for (const asset of assets) {
         const target = data.assets.find((a) => a.id === asset.id);
         if (target) {
-          pushHistory(data, target, 'label_printed', `Label printed (${template!.name})`, guard.user.id, {
-            template_key: template!.key,
-          });
+          pushHistory(
+            data,
+            target,
+            'label_printed',
+            `Label printed (${template!.name})`,
+            guard.user.id,
+            {
+              template_key: template!.key,
+            },
+          );
         }
       }
     });
@@ -217,7 +235,10 @@ type Delivery = S['NotificationPreference']['delivery'];
 /** Gives a user the starting inbox the first time they look. */
 function inboxOf(userId: string) {
   const data = w2();
-  if (!data.notifications.some((n) => n.user_id === userId) && !data.preferences[`seeded:${userId}`]) {
+  if (
+    !data.notifications.some((n) => n.user_id === userId) &&
+    !data.preferences[`seeded:${userId}`]
+  ) {
     mutateW2((state) => {
       state.notifications.push(...seedNotifications(userId));
       state.preferences[`seeded:${userId}`] = {};
@@ -226,7 +247,8 @@ function inboxOf(userId: string) {
   return w2().notifications.filter((n) => n.user_id === userId);
 }
 
-const publicNotification = ({ user_id: _user, ...rest }: ReturnType<typeof inboxOf>[number]) => rest;
+const publicNotification = ({ user_id: _user, ...rest }: ReturnType<typeof inboxOf>[number]) =>
+  rest;
 
 const notificationHandlers: HttpHandler[] = [
   http.get('/v1/notifications', ({ request }) => {
@@ -237,14 +259,21 @@ const notificationHandlers: HttpHandler[] = [
     const rows = mine
       .filter((n) => !unread || !n.read_at)
       .map((n) => ({ ...n, archived_at: null, _v: 1 }));
-    const response = paginate(request, rows, { sorts: { created_at: (n) => n.created_at }, defaultSort: '-created_at' }, (n) => {
-      const { archived_at: _archived, _v: _version, ...rest } = n;
-      return publicNotification(rest);
-    });
-    // add `unread_count` to the page
-    return response.json().then((page: Record<string, unknown>) =>
-      HttpResponse.json({ ...page, unread_count: mine.filter((n) => !n.read_at).length }),
+    const response = paginate(
+      request,
+      rows,
+      { sorts: { created_at: (n) => n.created_at }, defaultSort: '-created_at' },
+      (n) => {
+        const { archived_at: _archived, _v: _version, ...rest } = n;
+        return publicNotification(rest);
+      },
     );
+    // add `unread_count` to the page
+    return response
+      .json()
+      .then((page: Record<string, unknown>) =>
+        HttpResponse.json({ ...page, unread_count: mine.filter((n) => !n.read_at).length }),
+      );
   }),
 
   http.post('/v1/notifications/read-all', ({ request }) => {
@@ -294,14 +323,26 @@ const notificationHandlers: HttpHandler[] = [
     const errors = rejectUnknown(body, ['data']);
     const list = body.data;
     if (!Array.isArray(list) || list.length < 1) {
-      errors.push({ pointer: '/data', message: 'At least one entry is required.', code: 'too_small' });
+      errors.push({
+        pointer: '/data',
+        message: 'At least one entry is required.',
+        code: 'too_small',
+      });
     } else {
       list.forEach((entry: Body, index) => {
         if (!NOTIFICATION_EVENTS.some(([type]) => type === entry?.event_type)) {
-          errors.push({ pointer: `/data/${index}/event_type`, message: 'Unknown event type.', code: 'invalid_value' });
+          errors.push({
+            pointer: `/data/${index}/event_type`,
+            message: 'Unknown event type.',
+            code: 'invalid_value',
+          });
         }
         if (!['immediate', 'daily_digest', 'off'].includes(String(entry?.delivery))) {
-          errors.push({ pointer: `/data/${index}/delivery`, message: 'Invalid option', code: 'invalid_value' });
+          errors.push({
+            pointer: `/data/${index}/delivery`,
+            message: 'Invalid option',
+            code: 'invalid_value',
+          });
         }
       });
     }
@@ -330,16 +371,30 @@ function validateDefinition(value: unknown): FieldError[] {
   const def = value as { filters?: unknown; columns?: unknown; sort?: unknown } | null;
   const errors: FieldError[] = [];
   if (typeof def !== 'object' || def === null) {
-    return [{ pointer: '/definition', message: 'Invalid input: expected object', code: 'invalid_type' }];
+    return [
+      { pointer: '/definition', message: 'Invalid input: expected object', code: 'invalid_type' },
+    ];
   }
   if (typeof def.filters !== 'object' || def.filters === null || Array.isArray(def.filters)) {
-    errors.push({ pointer: '/definition/filters', message: 'Invalid input: expected object', code: 'invalid_type' });
+    errors.push({
+      pointer: '/definition/filters',
+      message: 'Invalid input: expected object',
+      code: 'invalid_type',
+    });
   }
   if (!Array.isArray(def.columns) || !def.columns.every((c) => typeof c === 'string')) {
-    errors.push({ pointer: '/definition/columns', message: 'Invalid input: expected array of strings', code: 'invalid_type' });
+    errors.push({
+      pointer: '/definition/columns',
+      message: 'Invalid input: expected array of strings',
+      code: 'invalid_type',
+    });
   }
   if (def.sort !== null && typeof def.sort !== 'string') {
-    errors.push({ pointer: '/definition/sort', message: 'Invalid input: expected string or null', code: 'invalid_type' });
+    errors.push({
+      pointer: '/definition/sort',
+      message: 'Invalid input: expected string or null',
+      code: 'invalid_type',
+    });
   }
   return errors;
 }
@@ -385,7 +440,11 @@ const viewHandlers: HttpHandler[] = [
       errors.push({ pointer: '/entity', message: 'Invalid option', code: 'invalid_value' });
     }
     if (body.shared !== undefined && typeof body.shared !== 'boolean') {
-      errors.push({ pointer: '/shared', message: 'Invalid input: expected boolean', code: 'invalid_type' });
+      errors.push({
+        pointer: '/shared',
+        message: 'Invalid input: expected boolean',
+        code: 'invalid_type',
+      });
     }
     if (errors.length > 0) return validation(errors);
     if (body.shared === true && !canShare(guard.user.permissions)) {
@@ -419,7 +478,10 @@ const viewHandlers: HttpHandler[] = [
       data.savedViews.push(view);
       return view;
     });
-    return HttpResponse.json(created, { status: 201, headers: { Location: `/v1/saved-views/${created.id}` } });
+    return HttpResponse.json(created, {
+      status: 201,
+      headers: { Location: `/v1/saved-views/${created.id}` },
+    });
   }),
 
   http.patch('/v1/saved-views/:id', async ({ request, params }) => {
@@ -438,7 +500,11 @@ const viewHandlers: HttpHandler[] = [
       ...(body.definition !== undefined ? validateDefinition(body.definition) : []),
     ];
     if (body.shared !== undefined && typeof body.shared !== 'boolean') {
-      errors.push({ pointer: '/shared', message: 'Invalid input: expected boolean', code: 'invalid_type' });
+      errors.push({
+        pointer: '/shared',
+        message: 'Invalid input: expected boolean',
+        code: 'invalid_type',
+      });
     }
     if (errors.length > 0) return validation(errors);
     if (body.shared === true && !found.shared && !canShare(guard.user.permissions)) {
@@ -464,7 +530,8 @@ const viewHandlers: HttpHandler[] = [
     mutateW2(() => {
       if (typeof body.name === 'string') found.name = body.name.trim();
       if (typeof body.shared === 'boolean') found.shared = body.shared;
-      if (body.definition !== undefined) found.definition = body.definition as MockSavedView['definition'];
+      if (body.definition !== undefined)
+        found.definition = body.definition as MockSavedView['definition'];
       found.updated_at = nowIso();
     });
     return HttpResponse.json(found);
@@ -512,11 +579,22 @@ function assetsCsv(query: Record<string, unknown>): { csv: string; rows: number 
   const archived = params.get('archived') ?? 'exclude';
   const q = (params.get('q') ?? '').trim().toLowerCase();
   const rows = data.assets
-    .filter((a) => (archived === 'exclude' ? !a.archived_at : archived === 'only' ? !!a.archived_at : true))
+    .filter((a) =>
+      archived === 'exclude' ? !a.archived_at : archived === 'only' ? !!a.archived_at : true,
+    )
     .filter((a) => !q || [a.asset_tag, a.name, a.serial].some((v) => v?.toLowerCase().includes(q)))
     .filter((a) => assetFilter(a, params))
     .sort((a, b) => a.asset_tag.localeCompare(b.asset_tag));
-  const header = ['asset_tag', 'name', 'serial', 'category', 'status', 'location', 'purchase_date', 'warranty_end'];
+  const header = [
+    'asset_tag',
+    'name',
+    'serial',
+    'category',
+    'status',
+    'location',
+    'purchase_date',
+    'warranty_end',
+  ];
   const lines = rows.map((a) =>
     [
       a.asset_tag,
@@ -535,8 +613,12 @@ function assetsCsv(query: Record<string, unknown>): { csv: string; rows: number 
 }
 
 /** The job as the API shows it, moving it along when its time has come. */
-function exportView(job: MockExport, userId: string): S['ExportJob'] {
-  if ((job.status === 'queued' || job.status === 'running') && Date.now() >= job.ready_at) {
+function exportView(job: MockExport, userId: string, advance = true): S['ExportJob'] {
+  if (
+    advance &&
+    (job.status === 'queued' || job.status === 'running') &&
+    Date.now() >= job.ready_at
+  ) {
     mutateW2(() => {
       if (job.fail) {
         job.status = 'failed';
@@ -563,7 +645,7 @@ function exportView(job: MockExport, userId: string): S['ExportJob'] {
         });
       });
     }
-  } else if (job.status === 'queued' && Date.now() >= job.ready_at - exportDelayMs / 2) {
+  } else if (advance && job.status === 'queued' && Date.now() >= job.ready_at - exportDelayMs / 2) {
     mutateW2(() => {
       job.status = 'running';
     });
@@ -586,7 +668,11 @@ const exportHandlers: HttpHandler[] = [
       body.query !== undefined &&
       (typeof body.query !== 'object' || body.query === null || Array.isArray(body.query))
     ) {
-      errors.push({ pointer: '/query', message: 'Invalid input: expected object', code: 'invalid_type' });
+      errors.push({
+        pointer: '/query',
+        message: 'Invalid input: expected object',
+        code: 'invalid_type',
+      });
     }
     if (errors.length > 0) return validation(errors);
     const made = assetsCsv((body.query as Record<string, unknown> | undefined) ?? {});
@@ -608,7 +694,7 @@ const exportHandlers: HttpHandler[] = [
       data.exports.push(row);
       return row;
     });
-    return HttpResponse.json(exportView(job, guard.user.id), {
+    return HttpResponse.json(exportView(job, guard.user.id, false), {
       status: 202,
       headers: { Location: `/v1/exports/${job.id}`, 'Retry-After': '1' },
     });

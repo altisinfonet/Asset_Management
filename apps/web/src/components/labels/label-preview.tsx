@@ -54,7 +54,10 @@ export function LabelPreview({
   const barcodeHeight = barcode ? height * 0.28 : 0;
   const bodyHeight = height - barcodeHeight - 2;
   const qrSize = Math.min(bodyHeight, width * 0.42);
-  const fontMm = Math.max(1.6, Math.min(height * 0.16, (bodyHeight / Math.max(lines.length, 1)) * 0.75));
+  const fontMm = Math.max(
+    1.6,
+    Math.min(height * 0.16, (bodyHeight / Math.max(lines.length, 1)) * 0.75),
+  );
   const url = `${typeof window === 'undefined' ? '' : window.location.origin}/s/${sample.code}`;
 
   return (

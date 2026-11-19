@@ -94,7 +94,9 @@ function StockItemView({ kind, id }: { kind: StockKind; id: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [movement, setMovement] = useState<MovementMode | null>(null);
-  const [returning, setReturning] = useState<{ assignment: Assignment; holder: string } | null>(null);
+  const [returning, setReturning] = useState<{ assignment: Assignment; holder: string } | null>(
+    null,
+  );
 
   const item = useQuery<Versioned<Accessory | Consumable>>({
     queryKey: ['stock', kind, id],
@@ -109,7 +111,8 @@ function StockItemView({ kind, id }: { kind: StockKind; id: string }) {
       ? ['holders', 'history', 'details', 'files']
       : ['movements', 'details', 'files'];
   const tab = tabs.includes(tabParam ?? '') ? (tabParam as string) : defaultTab;
-  const setTab = (next: string) => router.replace(routes.stockView(kind, id, next === defaultTab ? undefined : next));
+  const setTab = (next: string) =>
+    router.replace(routes.stockView(kind, id, next === defaultTab ? undefined : next));
 
   if (item.isLoading) {
     return (
@@ -170,9 +173,16 @@ function StockItemView({ kind, id }: { kind: StockKind; id: string }) {
     [t('stockView.details.vendor'), lookups.vendorById.get(value.vendor_id ?? '')?.name ?? ''],
     [t('stockView.details.modelNumber'), value.model_number ?? ''],
     ...(accessory?.purchase_date
-      ? ([[t('stockView.details.purchaseDate'), formatDate(`${accessory.purchase_date}T00:00:00Z`, { timeZone: 'UTC' })]] as Array<[string, ReactNode]>)
+      ? ([
+          [
+            t('stockView.details.purchaseDate'),
+            formatDate(`${accessory.purchase_date}T00:00:00Z`, { timeZone: 'UTC' }),
+          ],
+        ] as Array<[string, ReactNode]>)
       : []),
-    ...(consumable ? ([[t('stockView.details.unit'), consumable.unit ?? 'each']] as Array<[string, ReactNode]>) : []),
+    ...(consumable
+      ? ([[t('stockView.details.unit'), consumable.unit ?? 'each']] as Array<[string, ReactNode]>)
+      : []),
     [t('stockView.details.notes'), value.notes ?? ''],
   ];
 
@@ -206,7 +216,10 @@ function StockItemView({ kind, id }: { kind: StockKind; id: string }) {
                   <PackagePlus aria-hidden className="size-4" />
                   {t('stock.rowActions.receive')}
                 </Button>
-                <Button disabled={(consumable.qty_on_hand ?? 0) < 1} onClick={() => setMovement('consume')}>
+                <Button
+                  disabled={(consumable.qty_on_hand ?? 0) < 1}
+                  onClick={() => setMovement('consume')}
+                >
                   {t('stock.rowActions.consume')}
                 </Button>
                 <Button onClick={() => setMovement('adjust')}>
@@ -403,7 +416,8 @@ function useCursorList<T>(
     queryKey: key,
     queryFn: ({ pageParam }) => load(pageParam),
     initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => (last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined),
+    getNextPageParam: (last) =>
+      last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
   });
   return { query, rows: query.data?.pages.flatMap((page) => page.data) ?? [] };
 }
@@ -422,8 +436,9 @@ function AssignmentsList({
   onReturn?: (assignment: Assignment, holder: string) => void;
 }) {
   const { t, formatDate, formatDateTime } = useI18n();
-  const { query, rows } = useCursorList(['stock', 'accessory', accessoryId, 'assignments', state], (cursor) =>
-    accessoriesApi.assignments(accessoryId, { state, cursor, limit: 50 }),
+  const { query, rows } = useCursorList(
+    ['stock', 'accessory', accessoryId, 'assignments', state],
+    (cursor) => accessoriesApi.assignments(accessoryId, { state, cursor, limit: 50 }),
   );
   if (query.isLoading) return <Skeleton className="h-24 w-full max-w-3xl" />;
   if (query.error) return <Banner tone="danger">{t('stockView.holders.loadFailed')}</Banner>;
@@ -443,11 +458,21 @@ function AssignmentsList({
           <caption className="sr-only">{t('stockView.holders.label')}</caption>
           <thead>
             <tr className="border-b border-border text-sm text-muted">
-              <th scope="col" className="py-2 pr-4 font-medium">{t('stockView.holders.who')}</th>
-              <th scope="col" className="py-2 pr-4 text-right font-medium">{t('stockView.holders.quantity')}</th>
-              <th scope="col" className="py-2 pr-4 text-right font-medium">{t('stockView.holders.returned')}</th>
-              <th scope="col" className="py-2 pr-4 font-medium">{t('stockView.holders.since')}</th>
-              <th scope="col" className="py-2 pr-4 font-medium">{t('stockView.holders.due')}</th>
+              <th scope="col" className="py-2 pr-4 font-medium">
+                {t('stockView.holders.who')}
+              </th>
+              <th scope="col" className="py-2 pr-4 text-right font-medium">
+                {t('stockView.holders.quantity')}
+              </th>
+              <th scope="col" className="py-2 pr-4 text-right font-medium">
+                {t('stockView.holders.returned')}
+              </th>
+              <th scope="col" className="py-2 pr-4 font-medium">
+                {t('stockView.holders.since')}
+              </th>
+              <th scope="col" className="py-2 pr-4 font-medium">
+                {t('stockView.holders.due')}
+              </th>
               <th scope="col" className="py-2 font-medium">
                 <span className="sr-only">{t('common.actions')}</span>
               </th>
@@ -461,12 +486,16 @@ function AssignmentsList({
                 </th>
                 <td className="py-2 pr-4 text-right">{assignment.quantity}</td>
                 <td className="py-2 pr-4 text-right">{assignment.quantity_returned}</td>
-                <td className="py-2 pr-4 whitespace-nowrap">{formatDateTime(assignment.checked_out_at)}</td>
+                <td className="py-2 pr-4 whitespace-nowrap">
+                  {formatDateTime(assignment.checked_out_at)}
+                </td>
                 <td className="py-2 pr-4 whitespace-nowrap">
                   {assignment.expected_return ? (
                     <span className="inline-flex items-center gap-2">
                       {formatDate(`${assignment.expected_return}T00:00:00Z`, { timeZone: 'UTC' })}
-                      {assignment.overdue ? <Badge tone="danger">{t('stockView.holders.overdue')}</Badge> : null}
+                      {assignment.overdue ? (
+                        <Badge tone="danger">{t('stockView.holders.overdue')}</Badge>
+                      ) : null}
                     </span>
                   ) : (
                     ''
@@ -488,7 +517,9 @@ function AssignmentsList({
                       )}
                     />
                   ) : state === 'open' ? null : (
-                    <span className="text-sm text-muted">{t('stockView.holders.fullyReturned')}</span>
+                    <span className="text-sm text-muted">
+                      {t('stockView.holders.fullyReturned')}
+                    </span>
                   )}
                 </td>
               </tr>
@@ -498,7 +529,11 @@ function AssignmentsList({
       </div>
       {query.hasNextPage ? (
         <div>
-          <Button size="sm" loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+          <Button
+            size="sm"
+            loading={query.isFetchingNextPage}
+            onClick={() => void query.fetchNextPage()}
+          >
             {t('stockView.movements.loadMore')}
           </Button>
         </div>
@@ -540,14 +575,20 @@ function HolderName({
   const content = render(name);
   if (personId && typeof content === 'string') {
     return (
-      <Link href={routes.personView(personId)} className="rounded-sm text-primary-text underline underline-offset-2">
+      <Link
+        href={routes.personView(personId)}
+        className="rounded-sm text-primary-text underline underline-offset-2"
+      >
         {content}
       </Link>
     );
   }
   if (assetId && typeof content === 'string') {
     return (
-      <Link href={routes.assetView(assetId)} className="rounded-sm text-primary-text underline underline-offset-2">
+      <Link
+        href={routes.assetView(assetId)}
+        className="rounded-sm text-primary-text underline underline-offset-2"
+      >
         {content}
       </Link>
     );
@@ -595,18 +636,30 @@ function MovementsList({ consumableId }: { consumableId: string }) {
             <caption className="sr-only">{t('stockView.movements.label')}</caption>
             <thead>
               <tr className="border-b border-border text-sm text-muted">
-                <th scope="col" className="py-2 pr-4 font-medium">{t('stockView.movements.date')}</th>
-                <th scope="col" className="py-2 pr-4 font-medium">{t('stockView.movements.reason')}</th>
-                <th scope="col" className="py-2 pr-4 text-right font-medium">{t('stockView.movements.change')}</th>
-                <th scope="col" className="py-2 pr-4 text-right font-medium">{t('stockView.movements.balance')}</th>
-                <th scope="col" className="py-2 font-medium">{t('stockView.movements.note')}</th>
+                <th scope="col" className="py-2 pr-4 font-medium">
+                  {t('stockView.movements.date')}
+                </th>
+                <th scope="col" className="py-2 pr-4 font-medium">
+                  {t('stockView.movements.reason')}
+                </th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium">
+                  {t('stockView.movements.change')}
+                </th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium">
+                  {t('stockView.movements.balance')}
+                </th>
+                <th scope="col" className="py-2 font-medium">
+                  {t('stockView.movements.note')}
+                </th>
               </tr>
             </thead>
             <tbody>
               {rows.map((movement: StockMovement) => (
                 <tr key={movement.id} className="border-b border-border last:border-b-0">
                   <td className="py-2 pr-4 whitespace-nowrap">{formatDateTime(movement.at)}</td>
-                  <td className="py-2 pr-4">{t(`stockView.movements.reasons.${movement.reason}`)}</td>
+                  <td className="py-2 pr-4">
+                    {t(`stockView.movements.reasons.${movement.reason}`)}
+                  </td>
                   <td className="py-2 pr-4 text-right font-tag">
                     {movement.qty_delta > 0 ? `+${movement.qty_delta}` : movement.qty_delta}
                   </td>
@@ -620,7 +673,11 @@ function MovementsList({ consumableId }: { consumableId: string }) {
       ) : null}
       {query.hasNextPage ? (
         <div>
-          <Button size="sm" loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+          <Button
+            size="sm"
+            loading={query.isFetchingNextPage}
+            onClick={() => void query.fetchNextPage()}
+          >
             {t('stockView.movements.loadMore')}
           </Button>
         </div>

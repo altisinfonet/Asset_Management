@@ -216,7 +216,14 @@ function buildSeed(): W2Data {
     handout(1, 1, 8, 0, { person_id: person(0) ?? undefined }),
     handout(2, 1, 4, 1, { person_id: person(1) ?? undefined }),
     handout(3, 2, 12, 0, { location_id: room101 }),
-    handout(4, 2, 5, 0, { person_id: person(2) ?? undefined }, { expected_return: dateOnly(NOW - 5 * DAY), overdue: true }),
+    handout(
+      4,
+      2,
+      5,
+      0,
+      { person_id: person(2) ?? undefined },
+      { expected_return: dateOnly(NOW - 5 * DAY), overdue: true },
+    ),
     handout(5, 4, 6, 0, { person_id: person(3) ?? undefined }),
     handout(6, 3, 2, 2, { person_id: person(0) ?? undefined }),
   ];
@@ -338,7 +345,9 @@ function seedRepairs(data: W2Data): void {
     .sort((a, b) => a.asset_tag.localeCompare(b.asset_tag))
     .slice(0, 3);
   const finished = assets
-    .filter((a) => a.asset_tag.startsWith('LAP-') && a.status_id === ready?.id && !a.current_assignment)
+    .filter(
+      (a) => a.asset_tag.startsWith('LAP-') && a.status_id === ready?.id && !a.current_assignment,
+    )
     .sort((a, b) => a.asset_tag.localeCompare(b.asset_tag))
     .slice(0, 2);
   const vendors = registry().vendors;

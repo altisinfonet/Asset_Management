@@ -75,7 +75,8 @@ export function ExportDialog({
     queryKey: ['export', jobId],
     queryFn: () => exportsApi.get(jobId!),
     enabled: open && !!jobId && !isFinished(job!),
-    refetchInterval: (state) => (state.state.data && isFinished(state.state.data) ? false : POLL_MS),
+    refetchInterval: (state) =>
+      state.state.data && isFinished(state.state.data) ? false : POLL_MS,
     retry: false,
   });
   const current = polled.data ?? job;
@@ -92,7 +93,12 @@ export function ExportDialog({
           <DialogTitle>{t('exports.title')}</DialogTitle>
           <DialogDescription>{t('exports.description')}</DialogDescription>
         </DialogHeader>
-        <div role="status" aria-live="polite" className="flex flex-col gap-3" data-testid="export-status">
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-col gap-3"
+          data-testid="export-status"
+        >
           {shownError ? (
             <FormError message={uiErrorText(t, shownError)} requestId={shownError.requestId} />
           ) : failed ? (

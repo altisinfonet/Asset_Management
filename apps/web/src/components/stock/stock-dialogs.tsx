@@ -171,7 +171,11 @@ export function CheckoutAccessoryDialog({
           ...(expected ? { expected_return: expected } : {}),
           ...(note.trim() ? { note: note.trim() } : {}),
         };
-        const assignment = await accessoriesApi.checkout(accessory.id, body, keys.current.keyFor(body));
+        const assignment = await accessoriesApi.checkout(
+          accessory.id,
+          body,
+          keys.current.keyFor(body),
+        );
         const who =
           target.type === 'person'
             ? (target.person?.display_name ?? '')
@@ -189,7 +193,9 @@ export function CheckoutAccessoryDialog({
             legend={t('stockActions.checkout.to')}
             value={target}
             onChange={setTarget}
-            error={errors.target ?? errors.person_id ?? errors.location_id ?? errors.target_asset_id}
+            error={
+              errors.target ?? errors.person_id ?? errors.location_id ?? errors.target_asset_id
+            }
             autoFocus
           />
           <QuantityField
@@ -369,7 +375,8 @@ export function MovementDialog({
       }
       return {};
     }
-    if (count === null || count < 1) return { quantity: t('stockActions.movement.errors.quantity') };
+    if (count === null || count < 1)
+      return { quantity: t('stockActions.movement.errors.quantity') };
     if (mode === 'consume' && count > onHand) {
       return { quantity: t('stockActions.movement.errors.tooMany', { max: onHand }) };
     }

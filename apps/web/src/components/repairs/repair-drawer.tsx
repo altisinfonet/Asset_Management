@@ -153,7 +153,11 @@ export function RepairDrawer({
                 onClick={() =>
                   void change('in_progress', t('repairs.started')).catch((err: unknown) => {
                     const ui = getApi().toUiError(err);
-                    toast({ variant: 'danger', title: uiErrorText(t, ui), requestId: ui.requestId });
+                    toast({
+                      variant: 'danger',
+                      title: uiErrorText(t, ui),
+                      requestId: ui.requestId,
+                    });
                   })
                 }
               >

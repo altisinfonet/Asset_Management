@@ -152,8 +152,7 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
   };
   const list = useQuery<Page<Accessory | Consumable>>({
     queryKey: ['stock', kind, 'list', query],
-    queryFn: () =>
-      kind === 'accessory' ? accessoriesApi.list(query) : consumablesApi.list(query),
+    queryFn: () => (kind === 'accessory' ? accessoriesApi.list(query) : consumablesApi.list(query)),
     placeholderData: keepPreviousData,
   });
   const rows = useMemo<Array<Accessory | Consumable>>(() => list.data?.data ?? [], [list.data]);
@@ -285,7 +284,8 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
         id: 'onHand',
         header: t('stock.columns.onHand'),
         align: 'end',
-        cell: (row) => `${(row as Consumable).qty_on_hand} ${(row as Consumable).unit ?? ''}`.trim(),
+        cell: (row) =>
+          `${(row as Consumable).qty_on_hand} ${(row as Consumable).unit ?? ''}`.trim(),
       },
       level,
       minimum,
@@ -362,7 +362,9 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
       ) : null}
       {!filters.low && lowCount > 0 ? (
         <Banner tone="warning">
-          <span data-testid="stock-low-banner">{t('stock.lowStockBanner', { count: lowCount })}</span>
+          <span data-testid="stock-low-banner">
+            {t('stock.lowStockBanner', { count: lowCount })}
+          </span>
         </Banner>
       ) : null}
 
@@ -386,7 +388,11 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
           ) : (
             <EmptyState
               icon={Boxes}
-              title={kind === 'accessory' ? t('stock.empty.accessory.title') : t('stock.empty.consumable.title')}
+              title={
+                kind === 'accessory'
+                  ? t('stock.empty.accessory.title')
+                  : t('stock.empty.consumable.title')
+              }
               description={
                 kind === 'accessory'
                   ? t('stock.empty.accessory.description')
@@ -408,7 +414,12 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p role="status" aria-live="polite" className="text-sm text-muted" data-testid="stock-range">
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-sm text-muted"
+          data-testid="stock-range"
+        >
           {rows.length === 0
             ? ''
             : total !== undefined && total !== null

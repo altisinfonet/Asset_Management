@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { bootstrapTenant } from '../src/bootstrap/bootstrap-tenant.js';
 import {
@@ -342,11 +343,21 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
     });
 
     it('creates Acme and Globex with 4 users and 200 assets each, overlapping tags and serials, and is idempotent', async () => {
-      const first = await seedDemoData(tenancy, { nodeEnv: 'test' });
-      const second = await seedDemoData(tenancy, { nodeEnv: 'test' });
+      // Own tenants with unique slugs and domains: the shared demo tenants (Acme, Globex) are used and
+      // changed by other suites and by the real-stack e2e, so exact seed counts can only be asserted on
+      // tenants nobody else touches.
+      const tag = randomUUID().slice(0, 8);
+      const specs = DEMO_TENANTS.map((t) => ({
+        name: `${t.name} ${tag}`,
+        slug: `${t.slug}-${tag}`,
+        domain: `${tag}.${t.domain}`,
+      }));
+      const first = await seedDemoData(tenancy, { nodeEnv: 'test', tenants: specs });
+      const second = await seedDemoData(tenancy, { nodeEnv: 'test', tenants: specs });
       expect(second.tenants.map((t) => t.seeded)).toEqual([false, false]);
       expect(second.tenants.map((t) => t.tenantId)).toEqual(first.tenants.map((t) => t.tenantId));
-      expect(first.tenants.map((t) => t.slug)).toEqual(DEMO_TENANTS.map((t) => t.slug));
+      expect(first.tenants.map((t) => t.slug)).toEqual(specs.map((t) => t.slug));
+      expect(first.tenants.map((t) => t.seeded)).toEqual([true, true]);
 
       const snapshot = async (tenantId: string) =>
         tenancy.withTenantTx({ tenantId }, async (trx) => ({

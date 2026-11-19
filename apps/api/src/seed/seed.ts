@@ -343,13 +343,19 @@ function lcg(seed: number): () => number {
  */
 export async function seedDemoData(
   tenancy: TenancyService,
-  options: { nodeEnv?: string; logger?: SeedLogger; secretBox?: SecretBox } = {},
+  options: {
+    nodeEnv?: string;
+    logger?: SeedLogger;
+    secretBox?: SecretBox;
+    /** Which tenants to seed (default: the demo tenants Acme and Globex). Tests pass their own, so they never depend on, or change, the shared demo data. */
+    tenants?: SeedTenantSpec[];
+  } = {},
 ): Promise<{ tenants: Array<{ slug: string; tenantId: string; seeded: boolean }> }> {
   if ((options.nodeEnv ?? process.env.NODE_ENV) === 'production') throw new SeedRefusedError();
   const log = options.logger ?? { info: () => undefined };
 
   const tenants: Array<{ slug: string; tenantId: string; seeded: boolean }> = [];
-  for (const spec of DEMO_TENANTS) {
+  for (const spec of options.tenants ?? DEMO_TENANTS) {
     const boot = await bootstrapTenant(tenancy, {
       name: spec.name,
       slug: spec.slug,

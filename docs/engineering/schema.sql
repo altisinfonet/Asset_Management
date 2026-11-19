@@ -976,7 +976,8 @@ CREATE TABLE app.maintenance_record (
   ticket_ref              text,
   cost_minor              bigint CHECK (cost_minor IS NULL OR cost_minor >= 0),
   currency                text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
-  restore_status_id       uuid,                                  -- asset status to put back on completion
+  set_status_id           uuid,                                  -- status the asset was moved to when the record opened (M2 wave 2, ADR 0009)
+  restore_status_id       uuid,                                  -- asset status to put back on completion / cancellation
   created_at              timestamptz NOT NULL DEFAULT now(),
   updated_at              timestamptz NOT NULL DEFAULT now(),
   created_by              uuid,
@@ -987,11 +988,18 @@ CREATE TABLE app.maintenance_record (
   FOREIGN KEY (tenant_id, asset_id)               REFERENCES app.asset (tenant_id, id),
   FOREIGN KEY (tenant_id, vendor_id)              REFERENCES app.vendor (tenant_id, id),
   FOREIGN KEY (tenant_id, performed_by_person_id) REFERENCES app.person (tenant_id, id),
+  FOREIGN KEY (tenant_id, set_status_id)          REFERENCES app.status_label (tenant_id, id),
   FOREIGN KEY (tenant_id, restore_status_id)      REFERENCES app.status_label (tenant_id, id),
   CHECK (cost_minor IS NULL OR currency IS NOT NULL),
   CHECK (completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at),
-  CHECK ((status = 'completed') = (completed_at IS NOT NULL) OR status = 'cancelled')
+  CHECK ((status = 'completed') = (completed_at IS NOT NULL)),            -- a cancelled record has no completed_at
+  CHECK (restore_status_id IS NULL OR set_status_id IS NOT NULL)
 );
+-- Only ONE open record per asset may move its status (what makes "restore the previous status" unambiguous).
+CREATE UNIQUE INDEX maintenance_one_status_move_uq ON app.maintenance_record (tenant_id, asset_id)
+  WHERE set_status_id IS NOT NULL AND status IN ('open','in_progress') AND archived_at IS NULL;
+-- M2 wave 2 also adds notification, notification_preference, notification_rule, notification_delivery,
+-- saved_view and export_job: the shapes are in apps/api/migrations/0091-0093 (ADR 0009).
 CREATE INDEX maintenance_asset_idx  ON app.maintenance_record (tenant_id, asset_id, reported_at DESC, id DESC);
 CREATE INDEX maintenance_open_idx   ON app.maintenance_record (tenant_id, status, reported_at DESC)
   WHERE status IN ('open','in_progress') AND archived_at IS NULL;

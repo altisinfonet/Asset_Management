@@ -60,7 +60,7 @@ describe('CsvWriter', () => {
 });
 
 describe('decimalOf', () => {
-  it('uses the currency\'s own number of decimals', () => {
+  it("uses the currency's own number of decimals", () => {
     expect(decimalOf(12345, 'EUR')).toBe('123.45');
     expect(decimalOf(5, 'USD')).toBe('0.05');
     expect(decimalOf(1200, 'JPY')).toBe('1200');

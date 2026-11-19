@@ -31,7 +31,12 @@ export const PRODUCERS: readonly Producer[] = [
   // M2-FILE-02: orphan sweep (abandoned uploads, lost scan jobs), every 5 minutes per tenant.
   { name: 'attachment-sweep', queue: 'attachment.sweep', everySeconds: 300, perTenant: true },
   // M2-NOT-01: the daily notification digest (one email per user), M2-REG-02: expired export files.
-  { name: 'notification-digest', queue: 'notification.digest', everySeconds: 86_400, perTenant: true },
+  {
+    name: 'notification-digest',
+    queue: 'notification.digest',
+    everySeconds: 86_400,
+    perTenant: true,
+  },
   { name: 'export-sweep', queue: 'export.sweep', everySeconds: 3600, perTenant: true },
 ];
 

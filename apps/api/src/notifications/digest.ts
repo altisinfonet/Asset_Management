@@ -2,12 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import type { TenantJobContext } from '../jobs/index.js';
 import { MAIL_SENDER, type MailSender } from '../ports/index.js';
-import {
-  DIGEST_MAX_ITEMS,
-  NotificationService,
-  log,
-  tenantOf,
-} from './notification.service.js';
+import { DIGEST_MAX_ITEMS, NotificationService, log, tenantOf } from './notification.service.js';
 import { renderMore, renderNotification } from './templates.js';
 
 /** Queue name (src/jobs/catalogue.ts). */
@@ -53,7 +48,10 @@ export class NotificationDigest {
         if (items.length === 0) break;
         const ids = items.map((i) => i.id);
         if (!user || user.status !== 'active' || !emailAddress.safeParse(user.email).success) {
-          await tx.notification.updateMany({ where: { id: { in: ids } }, data: { email_state: 'digested' } });
+          await tx.notification.updateMany({
+            where: { id: { in: ids } },
+            data: { email_state: 'digested' },
+          });
           await this.notifications.writeDeliveries(tx, tenantId, [
             log(null, userId, 'notification.digest', 'email', 'skipped', 'no-email'),
           ]);
@@ -74,7 +72,10 @@ export class NotificationDigest {
             url: this.notifications.absolute('/'),
           },
         });
-        await tx.notification.updateMany({ where: { id: { in: ids } }, data: { email_state: 'digested' } });
+        await tx.notification.updateMany({
+          where: { id: { in: ids } },
+          data: { email_state: 'digested' },
+        });
         await this.notifications.writeDeliveries(tx, tenantId, [
           log(null, userId, 'notification.digest', 'email', 'queued', 'digest'),
         ]);

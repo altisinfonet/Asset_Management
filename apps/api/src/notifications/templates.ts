@@ -17,16 +17,14 @@ export const en: Catalogue = {
     '"{filename}" was removed because the virus scan found {signature}. Nothing was attached to your record.',
 
   'notification.asset.checked_out.title': '{asset} was checked out to you',
-  'notification.asset.checked_out.body':
-    '{asset} is now assigned to you. {due}',
+  'notification.asset.checked_out.body': '{asset} is now assigned to you. {due}',
 
   'notification.export.completed.title': 'Your export is ready',
   'notification.export.completed.body':
     '{filename} ({rows} rows) is ready to download. The file is removed after 24 hours.',
 
   'notification.consumable.low_stock.title': 'Low stock: {name}',
-  'notification.consumable.low_stock.body':
-    '{name} is at or below its reorder level. {detail}',
+  'notification.consumable.low_stock.body': '{name} is at or below its reorder level. {detail}',
 
   'notification.label.batch.ready.title': 'Your labels are ready',
   'notification.label.batch.ready.body': 'Your batch of labels is ready to print.',

@@ -1,11 +1,6 @@
 import type { OutboxDelivery } from '../outbox/index.js';
 import type { Tx } from '../tenancy/index.js';
-import {
-  type RecipientResolver,
-  holdersOf,
-  loginOfPerson,
-  payloadUser,
-} from './recipients.js';
+import { type RecipientResolver, holdersOf, loginOfPerson, payloadUser } from './recipients.js';
 import type { NotificationType } from './types.js';
 
 /**

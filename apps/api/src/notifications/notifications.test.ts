@@ -141,11 +141,15 @@ describe('NotificationSubscribers.handle', () => {
   it('does nothing when there is nobody to tell or nothing to say', async () => {
     const n = notifier();
     await subscribers(n).handle(sub(), delivery({ payload: {} }), txWith(null));
-    await subscribers(n).handle(sub({ describe: () => Promise.resolve(null) }), delivery(), txWith(null));
+    await subscribers(n).handle(
+      sub({ describe: () => Promise.resolve(null) }),
+      delivery(),
+      txWith(null),
+    );
     expect(n.requests).toEqual([]);
   });
 
-  it('uses the entry\'s own dedupe key, and links and entities when described', async () => {
+  it("uses the entry's own dedupe key, and links and entities when described", async () => {
     const n = notifier();
     await subscribers(n).handle(
       sub({

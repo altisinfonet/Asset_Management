@@ -8,11 +8,7 @@ export {
   NotificationService,
 } from './notification.service.js';
 export { NotificationSubscribers } from './subscribers.js';
-export {
-  NOTIFICATION_SUBSCRIPTIONS,
-  type Described,
-  type Subscription,
-} from './subscriptions.js';
+export { NOTIFICATION_SUBSCRIPTIONS, type Described, type Subscription } from './subscriptions.js';
 export { renderNotification } from './templates.js';
 export {
   NOTIFICATION_TYPES,

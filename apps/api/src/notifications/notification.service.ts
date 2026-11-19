@@ -37,7 +37,8 @@ type Delivery = {
 export async function tenantOf(tx: Tx): Promise<string> {
   const [row] = await tx.$queryRaw<Array<{ id: string | null }>>`
     select nullif(current_setting('app.tenant_id', true), '')::uuid as id`;
-  if (!row?.id) throw new Error('notifications need a tenant transaction (app.tenant_id is not set)');
+  if (!row?.id)
+    throw new Error('notifications need a tenant transaction (app.tenant_id is not set)');
   return row.id;
 }
 
@@ -117,7 +118,10 @@ export class NotificationService implements Notifier {
       );
 
       let reason: string | null = null;
-      if (email === 'immediate' && (await this.recentImmediate(tx, user.id)) >= IMMEDIATE_EMAILS_PER_HOUR) {
+      if (
+        email === 'immediate' &&
+        (await this.recentImmediate(tx, user.id)) >= IMMEDIATE_EMAILS_PER_HOUR
+      ) {
         email = 'digest';
         reason = 'throttled';
       }
@@ -130,7 +134,9 @@ export class NotificationService implements Notifier {
           where: { id: row.id },
           data: { email_state: 'pending_digest' },
         });
-        deliveries.push(log(row.id, user.id, request.type, 'email', 'deferred', reason ?? 'digest'));
+        deliveries.push(
+          log(row.id, user.id, request.type, 'email', 'deferred', reason ?? 'digest'),
+        );
       } else {
         await this.mail.send({
           to: user.email,
@@ -142,7 +148,10 @@ export class NotificationService implements Notifier {
             ...(request.link ? { url: this.absolute(request.link) } : {}),
           },
         });
-        await tx.notification.updateMany({ where: { id: row.id }, data: { email_state: 'queued' } });
+        await tx.notification.updateMany({
+          where: { id: row.id },
+          data: { email_state: 'queued' },
+        });
         deliveries.push(log(row.id, user.id, request.type, 'email', 'queued', null));
       }
     }

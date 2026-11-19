@@ -85,7 +85,11 @@ export class NotificationsApiService extends RegistryBase {
         ...(query.unread === false ? { read_at: { not: null } } : {}),
       };
       const page = await listPage({
-        query: { limit: query.limit, include_total: false, ...(query.cursor ? { cursor: query.cursor } : {}) },
+        query: {
+          limit: query.limit,
+          include_total: false,
+          ...(query.cursor ? { cursor: query.cursor } : {}),
+        },
         spec: LIST_SPEC,
         filters: { unread: query.unread },
         fetch: ({ take, orderBy, where }) =>
@@ -216,7 +220,9 @@ export class NotificationsApiService extends RegistryBase {
       // `null` and an empty list both mean "the default recipients" (a type that should reach nobody is disabled).
       const data = {
         ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
-        ...(body.recipient_roles !== undefined ? { recipient_roles: body.recipient_roles ?? [] } : {}),
+        ...(body.recipient_roles !== undefined
+          ? { recipient_roles: body.recipient_roles ?? [] }
+          : {}),
       };
       const row = existing
         ? await trx.notification_rule.update({
@@ -266,7 +272,11 @@ export class NotificationsApiService extends RegistryBase {
         ],
       };
       const page = await listPage({
-        query: { limit: query.limit, include_total: false, ...(query.cursor ? { cursor: query.cursor } : {}) },
+        query: {
+          limit: query.limit,
+          include_total: false,
+          ...(query.cursor ? { cursor: query.cursor } : {}),
+        },
         spec: LIST_SPEC,
         filters: {
           user_id: query.user_id,

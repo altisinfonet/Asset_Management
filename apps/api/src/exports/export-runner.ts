@@ -69,7 +69,10 @@ export class ExportRunner {
     @Inject(OUTBOX_PUBLISHER) private readonly outbox: OutboxPublisher,
   ) {}
 
-  async run(payload: { tenantId: string; exportId?: unknown }, ctx: TenantJobContext): Promise<void> {
+  async run(
+    payload: { tenantId: string; exportId?: unknown },
+    ctx: TenantJobContext,
+  ): Promise<void> {
     const { tx } = ctx;
     const id = String(payload.exportId ?? '');
     if (!uuid.safeParse(id).success) {
@@ -88,7 +91,12 @@ export class ExportRunner {
     let key: string | null = null;
     try {
       const built = await inSavepoint(tx, () =>
-        this.build(tx, scope, job.resource as ExportResource, job.filters as Record<string, string>),
+        this.build(
+          tx,
+          scope,
+          job.resource as ExportResource,
+          job.filters as Record<string, string>,
+        ),
       );
       key = newObjectKey(ctx.tenantId, { variant: 'csv' });
       const body = built.toBuffer();
@@ -112,7 +120,12 @@ export class ExportRunner {
         action: 'export.completed',
         entityType: 'export',
         entityId: id,
-        meta: { resource: job.resource, rows: built.rows, bytes: body.length, requested_by: job.requested_by },
+        meta: {
+          resource: job.resource,
+          rows: built.rows,
+          bytes: body.length,
+          requested_by: job.requested_by,
+        },
       });
       await this.outbox.publish(tx, {
         type: 'export.completed',
@@ -187,7 +200,11 @@ export class ExportRunner {
     csv.add(values);
   }
 
-  private async buildAssets(tx: Tx, scope: TxScope, filters: Record<string, string>): Promise<CsvWriter> {
+  private async buildAssets(
+    tx: Tx,
+    scope: TxScope,
+    filters: Record<string, string>,
+  ): Promise<CsvWriter> {
     const defs = await tx.custom_field_def.findMany({
       where: { archived_at: null },
       orderBy: [{ position: 'asc' }, { key: 'asc' }],
@@ -262,7 +279,11 @@ export class ExportRunner {
     return csv;
   }
 
-  private async buildPeople(tx: Tx, scope: TxScope, filters: Record<string, string>): Promise<CsvWriter> {
+  private async buildPeople(
+    tx: Tx,
+    scope: TxScope,
+    filters: Record<string, string>,
+  ): Promise<CsvWriter> {
     const parsed = personListSchema.safeParse({ ...filters, limit: String(PAGE) });
     if (!parsed.success) throw new ExportFailure(filterMessage(parsed.error.issues[0]));
     const places = new Map(
@@ -308,7 +329,11 @@ export class ExportRunner {
     return csv;
   }
 
-  private async buildLocations(tx: Tx, scope: TxScope, filters: Record<string, string>): Promise<CsvWriter> {
+  private async buildLocations(
+    tx: Tx,
+    scope: TxScope,
+    filters: Record<string, string>,
+  ): Promise<CsvWriter> {
     const parsed = locationListSchema.safeParse({ ...filters, limit: String(PAGE) });
     if (!parsed.success) throw new ExportFailure(filterMessage(parsed.error.issues[0]));
     const names = new Map(

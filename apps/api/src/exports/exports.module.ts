@@ -27,6 +27,8 @@ export class ExportsModule implements OnModuleInit {
 
   onModuleInit(): void {
     this.registry.registerTenant(EXPORT_JOB, (payload, ctx) => this.runner.run(payload, ctx));
-    this.registry.registerTenant(EXPORT_SWEEP_JOB, (payload, ctx) => this.runner.sweep(payload, ctx));
+    this.registry.registerTenant(EXPORT_SWEEP_JOB, (payload, ctx) =>
+      this.runner.sweep(payload, ctx),
+    );
   }
 }

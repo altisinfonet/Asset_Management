@@ -30,12 +30,7 @@ import {
   writeAssetHistory,
 } from '../registry/index.js';
 import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
-import type {
-  RepairComplete,
-  RepairCreate,
-  RepairListQuery,
-  RepairUpdate,
-} from './schemas.js';
+import type { RepairComplete, RepairCreate, RepairListQuery, RepairUpdate } from './schemas.js';
 
 type RepairRow = NonNullable<Awaited<ReturnType<Tx['maintenance_record']['findUnique']>>>;
 
@@ -335,7 +330,9 @@ export class RepairsService extends RegistryBase {
       );
 
       // Moving the asset to the in-repair status is what blocks its check-out.
-      const statusChange = moves ? await this.moveAsset(trx, auth, prior, asset, setStatus!.id) : null;
+      const statusChange = moves
+        ? await this.moveAsset(trx, auth, prior, asset, setStatus!.id)
+        : null;
       const dto = repairDto(row, await this.namesOf(trx, row));
       await this.record(trx, {
         entity: 'repair',
@@ -725,10 +722,7 @@ export class RepairsService extends RegistryBase {
   }
 
   /** Display names of the assets and vendors of a set of records (two small queries). */
-  private async namesFor(
-    trx: Tx,
-    rows: readonly RepairRow[],
-  ): Promise<(r: RepairRow) => Names> {
+  private async namesFor(trx: Tx, rows: readonly RepairRow[]): Promise<(r: RepairRow) => Names> {
     const assetIds = [...new Set(rows.map((r) => r.asset_id))];
     const vendorIds = [...new Set(rows.map((r) => r.vendor_id).filter((v): v is string => !!v))];
     const assets = assetIds.length

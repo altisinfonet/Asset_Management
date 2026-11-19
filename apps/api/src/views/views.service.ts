@@ -44,7 +44,10 @@ export interface ViewWarning {
  * only these references are checked, so a view that mentions a deleted status or location degrades
  * gracefully (M2-REG-01) instead of silently listing nothing.
  */
-const REFERENCES: Record<string, 'status_label' | 'category' | 'location' | 'asset_model' | 'vendor' | 'manufacturer' | 'person'> = {
+const REFERENCES: Record<
+  string,
+  'status_label' | 'category' | 'location' | 'asset_model' | 'vendor' | 'manufacturer' | 'person'
+> = {
   status_id: 'status_label',
   category_id: 'category',
   location_id: 'location',
@@ -57,12 +60,7 @@ const REFERENCES: Record<string, 'status_label' | 'category' | 'location' | 'ass
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Schema `SavedView`. */
-function viewDto(
-  r: ViewRow,
-  me: string,
-  owners: Map<string, string>,
-  warnings: ViewWarning[],
-) {
+function viewDto(r: ViewRow, me: string, owners: Map<string, string>, warnings: ViewWarning[]) {
   return {
     id: r.id,
     resource: r.resource,
@@ -282,7 +280,9 @@ export class ViewsService extends RegistryBase {
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
-        throw problem.conflict('A shared view with this name already exists. Rename the view first.');
+        throw problem.conflict(
+          'A shared view with this name already exists. Rename the view first.',
+        );
       }
       throw err;
     }
@@ -341,22 +341,31 @@ export class ViewsService extends RegistryBase {
     ) => {
       const ids = [...(wanted.get(table) ?? [])];
       if (ids.length === 0) return;
-      for (const r of await find(ids)) state.set(`${table}:${r.id}`, r.archived_at ? 'archived' : 'ok');
+      for (const r of await find(ids))
+        state.set(`${table}:${r.id}`, r.archived_at ? 'archived' : 'ok');
     };
     const sel = { id: true, archived_at: true } as const;
     await check('status_label', (ids) =>
       trx.status_label.findMany({ where: { id: { in: ids } }, select: sel }),
     );
-    await check('category', (ids) => trx.category.findMany({ where: { id: { in: ids } }, select: sel }));
-    await check('location', (ids) => trx.location.findMany({ where: { id: { in: ids } }, select: sel }));
+    await check('category', (ids) =>
+      trx.category.findMany({ where: { id: { in: ids } }, select: sel }),
+    );
+    await check('location', (ids) =>
+      trx.location.findMany({ where: { id: { in: ids } }, select: sel }),
+    );
     await check('asset_model', (ids) =>
       trx.asset_model.findMany({ where: { id: { in: ids } }, select: sel }),
     );
-    await check('vendor', (ids) => trx.vendor.findMany({ where: { id: { in: ids } }, select: sel }));
+    await check('vendor', (ids) =>
+      trx.vendor.findMany({ where: { id: { in: ids } }, select: sel }),
+    );
     await check('manufacturer', (ids) =>
       trx.manufacturer.findMany({ where: { id: { in: ids } }, select: sel }),
     );
-    await check('person', (ids) => trx.person.findMany({ where: { id: { in: ids } }, select: sel }));
+    await check('person', (ids) =>
+      trx.person.findMany({ where: { id: { in: ids } }, select: sel }),
+    );
 
     const out = new Map<string, ViewWarning[]>();
     for (const { id, refs: list } of refs) {
@@ -364,7 +373,11 @@ export class ViewsService extends RegistryBase {
       for (const ref of list) {
         const s = state.get(`${ref.table}:${ref.id}`);
         if (s === 'ok') continue;
-        warnings.push({ field: ref.field, id: ref.id, reason: s === 'archived' ? 'archived' : 'not-found' });
+        warnings.push({
+          field: ref.field,
+          id: ref.id,
+          reason: s === 'archived' ? 'archived' : 'not-found',
+        });
       }
       out.set(id, warnings);
     }

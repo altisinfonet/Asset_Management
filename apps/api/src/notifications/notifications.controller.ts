@@ -1,10 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common';
-import {
-  CurrentAuth,
-  RequirePermission,
-  SelfService,
-  type AuthContext,
-} from '../auth/index.js';
+import { CurrentAuth, RequirePermission, SelfService, type AuthContext } from '../auth/index.js';
 import { ZodValidationPipe } from '../platform/index.js';
 import { NotificationsApiService } from './notifications-api.service.js';
 import {

@@ -12,12 +12,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
-import {
-  CurrentAuth,
-  RequirePermission,
-  SelfService,
-  type AuthContext,
-} from '../auth/index.js';
+import { CurrentAuth, RequirePermission, SelfService, type AuthContext } from '../auth/index.js';
 import { type IfMatch, RequiredIfMatch, ZodValidationPipe, setEtag } from '../platform/index.js';
 import {
   uuidParam,

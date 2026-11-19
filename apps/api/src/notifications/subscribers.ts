@@ -39,7 +39,8 @@ export class NotificationSubscribers implements OnModuleInit {
     if (rule && !rule.enabled) return;
 
     // An administrator may re-address a type that is meant for "users who hold a permission".
-    const roles = def.roleConfigurable && rule && rule.recipient_roles.length > 0 ? rule.recipient_roles : null;
+    const roles =
+      def.roleConfigurable && rule && rule.recipient_roles.length > 0 ? rule.recipient_roles : null;
     const recipients = roles ? await usersWithRoles(tx, roles) : await sub.recipients(event, tx);
     if (recipients.length === 0) return;
 

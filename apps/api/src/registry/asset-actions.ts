@@ -99,7 +99,10 @@ export function refuseAssetAction(action: AssetAction, ctx: AssetActionContext):
         };
       }
       if (ctx.stateType === 'lost') {
-        return { code: 'conflict', detail: 'The asset is marked lost. Mark it found before repairing it.' };
+        return {
+          code: 'conflict',
+          detail: 'The asset is marked lost. Mark it found before repairing it.',
+        };
       }
       if (ctx.stateType === 'archived') {
         return {

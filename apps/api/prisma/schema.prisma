@@ -13,6 +13,50 @@ datasource db {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model accessory {
+  id                  String        @id @db.Uuid
+  tenant_id           String        @db.Uuid
+  company_id          String        @db.Uuid
+  category_id         String        @db.Uuid
+  category_kind       String        @default("accessory")
+  manufacturer_id     String?       @db.Uuid
+  vendor_id           String?       @db.Uuid
+  location_id         String?       @db.Uuid
+  name                String
+  model_number        String?
+  qty_total           Int           @default(0)
+  min_qty             Int           @default(0)
+  purchase_date       DateTime?     @db.Date
+  purchase_cost_minor BigInt?
+  currency            String?
+  notes               String?
+  label_code          String        @default(dbgenerated("replace((gen_random_uuid())::text, '-'::text, ''::text)"))
+  low_stock_alerted   Boolean       @default(false)
+  created_at          DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime      @default(now()) @db.Timestamptz(6)
+  created_by          String?       @db.Uuid
+  updated_by          String?       @db.Uuid
+  archived_at         DateTime?     @db.Timestamptz(6)
+  version             Int           @default(1)
+  search_text         String?       @default(dbgenerated("lower(((name || chr(31)) || COALESCE(model_number, ''::text)))"))
+  category            category      @relation(fields: [tenant_id, category_id, category_kind], references: [tenant_id, id, kind], onDelete: NoAction, onUpdate: NoAction)
+  company             company       @relation(fields: [tenant_id, company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant              tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location            location?     @relation(fields: [tenant_id, location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  manufacturer        manufacturer? @relation(fields: [tenant_id, manufacturer_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  vendor              vendor?       @relation(fields: [tenant_id, vendor_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  assignment          assignment[]
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, label_code])
+  @@index([tenant_id, category_id], map: "accessory_category_idx")
+  @@index([tenant_id, location_id], map: "accessory_location_idx", where: raw("(location_id IS NOT NULL)"))
+  @@index([tenant_id, name, id], map: "accessory_name_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model api_key {
   id             String           @id @db.Uuid
   tenant_id      String           @db.Uuid
@@ -214,6 +258,7 @@ model assignment {
   version                                                     Int             @default(1)
   checkin_condition                                           String?
   asset_history                                               asset_history[]
+  accessory                                                   accessory?      @relation(fields: [tenant_id, accessory_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "assignment_accessory_fk")
   asset_assignment_tenant_id_asset_idToasset                  asset?          @relation("assignment_tenant_id_asset_idToasset", fields: [tenant_id, asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   location_assignment_tenant_id_checkin_location_idTolocation location?       @relation("assignment_tenant_id_checkin_location_idTolocation", fields: [tenant_id, checkin_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   tenant                                                      tenant          @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -266,6 +311,7 @@ model attachment {
   asset              asset[]
   asset_model        asset_model[]
   tenant             tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  label_batch        label_batch[]
 
   @@unique([tenant_id, id])
   @@unique([tenant_id, storage_key])
@@ -317,9 +363,11 @@ model category {
   updated_by       String?            @db.Uuid
   archived_at      DateTime?          @db.Timestamptz(6)
   version          Int                @default(1)
+  accessory        accessory[]
   asset            asset[]
   asset_model      asset_model[]
   tenant           tenant             @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  consumable       consumable[]
   custom_field_def custom_field_def[]
 
   @@unique([tenant_id, id])
@@ -342,13 +390,59 @@ model company {
   updated_by      String?           @db.Uuid
   archived_at     DateTime?         @db.Timestamptz(6)
   version         Int               @default(1)
+  accessory       accessory[]
   asset           asset[]
   tenant          tenant            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  consumable      consumable[]
   location        location[]
   person          person[]
   role_assignment role_assignment[]
 
   @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model consumable {
+  id                String           @id @db.Uuid
+  tenant_id         String           @db.Uuid
+  company_id        String           @db.Uuid
+  category_id       String           @db.Uuid
+  category_kind     String           @default("consumable")
+  manufacturer_id   String?          @db.Uuid
+  vendor_id         String?          @db.Uuid
+  location_id       String?          @db.Uuid
+  name              String
+  model_number      String?
+  unit              String           @default("each")
+  qty_on_hand       Int              @default(0)
+  min_qty           Int              @default(0)
+  unit_cost_minor   BigInt?
+  currency          String?
+  notes             String?
+  label_code        String           @default(dbgenerated("replace((gen_random_uuid())::text, '-'::text, ''::text)"))
+  low_stock_alerted Boolean          @default(false)
+  created_at        DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime         @default(now()) @db.Timestamptz(6)
+  created_by        String?          @db.Uuid
+  updated_by        String?          @db.Uuid
+  archived_at       DateTime?        @db.Timestamptz(6)
+  version           Int              @default(1)
+  search_text       String?          @default(dbgenerated("lower(((name || chr(31)) || COALESCE(model_number, ''::text)))"))
+  category          category         @relation(fields: [tenant_id, category_id, category_kind], references: [tenant_id, id, kind], onDelete: NoAction, onUpdate: NoAction)
+  company           company          @relation(fields: [tenant_id, company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant            tenant           @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location          location?        @relation(fields: [tenant_id, location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  manufacturer      manufacturer?    @relation(fields: [tenant_id, manufacturer_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  vendor            vendor?          @relation(fields: [tenant_id, vendor_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  stock_movement    stock_movement[]
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, label_code])
+  @@index([tenant_id, category_id], map: "consumable_category_idx")
+  @@index([tenant_id, location_id], map: "consumable_location_idx", where: raw("(location_id IS NOT NULL)"))
+  @@index([tenant_id, name, id], map: "consumable_name_idx")
   @@schema("app")
 }
 
@@ -465,6 +559,85 @@ model invitation {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model label_batch {
+  id                 String         @id @db.Uuid
+  tenant_id          String         @db.Uuid
+  template_id        String         @db.Uuid
+  template_key       String
+  status             String         @default("queued")
+  asset_ids          String[]       @db.Uuid
+  source_filter      Json?
+  asset_count        Int
+  copies             Int            @default(1)
+  label_count        Int
+  start_position     Int            @default(1)
+  codes              String[]
+  fields             String[]
+  outlines           Boolean        @default(false)
+  logo_attachment_id String?        @db.Uuid
+  requested_by_type  String         @default("user")
+  page_count         Int?
+  storage_key        String?
+  content_type       String?
+  size_bytes         BigInt?
+  sha256             String?
+  rendered_at        DateTime?      @db.Timestamptz(6)
+  render_ms          Int?
+  error_code         String?
+  error_detail       String?
+  expires_at         DateTime       @db.Timestamptz(6)
+  created_at         DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime       @default(now()) @db.Timestamptz(6)
+  created_by         String?        @db.Uuid
+  version            Int            @default(1)
+  tenant             tenant         @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  attachment         attachment?    @relation(fields: [tenant_id, logo_attachment_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  label_template     label_template @relation(fields: [tenant_id, template_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, expires_at], map: "label_batch_expiry_idx", where: raw("(status = 'ready'::text)"))
+  @@index([tenant_id, created_at], map: "label_batch_open_idx", where: raw("(status = 'queued'::text)"))
+  @@index([tenant_id, created_by, created_at(sort: Desc), id(sort: Desc)], map: "label_batch_requester_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model label_template {
+  id              String        @id @db.Uuid
+  tenant_id       String        @db.Uuid
+  key             String
+  name            String
+  page_size       String
+  page_width_mm   Decimal       @db.Decimal(7, 2)
+  page_height_mm  Decimal       @db.Decimal(7, 2)
+  label_width_mm  Decimal       @db.Decimal(7, 2)
+  label_height_mm Decimal       @db.Decimal(7, 2)
+  cols            Int
+  rows            Int
+  margin_top_mm   Decimal       @default(0) @db.Decimal(7, 2)
+  margin_left_mm  Decimal       @default(0) @db.Decimal(7, 2)
+  gap_x_mm        Decimal       @default(0) @db.Decimal(7, 2)
+  gap_y_mm        Decimal       @default(0) @db.Decimal(7, 2)
+  offset_x_mm     Decimal       @default(0) @db.Decimal(5, 2)
+  offset_y_mm     Decimal       @default(0) @db.Decimal(5, 2)
+  code_type       String        @default("qr")
+  fields          String[]      @default(["asset_tag"])
+  is_system       Boolean       @default(true)
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime      @default(now()) @db.Timestamptz(6)
+  updated_by      String?       @db.Uuid
+  version         Int           @default(1)
+  label_batch     label_batch[]
+  tenant          tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@unique([tenant_id, key])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model location {
   id                                                            String            @id @db.Uuid
@@ -486,9 +659,11 @@ model location {
   updated_by                                                    String?           @db.Uuid
   archived_at                                                   DateTime?         @db.Timestamptz(6)
   version                                                       Int               @default(1)
+  accessory                                                     accessory[]
   asset                                                         asset[]
   assignment_assignment_tenant_id_checkin_location_idTolocation assignment[]      @relation("assignment_tenant_id_checkin_location_idTolocation")
   assignment_assignment_tenant_id_location_idTolocation         assignment[]      @relation("assignment_tenant_id_location_idTolocation")
+  consumable                                                    consumable[]
   company                                                       company           @relation(fields: [tenant_id, company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   tenant                                                        tenant            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   location                                                      location?         @relation("locationTolocation", fields: [tenant_id, parent_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
@@ -589,7 +764,9 @@ model manufacturer {
   updated_by    String?       @db.Uuid
   archived_at   DateTime?     @db.Timestamptz(6)
   version       Int           @default(1)
+  accessory     accessory[]
   asset_model   asset_model[]
+  consumable    consumable[]
   tenant        tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, id])
@@ -761,6 +938,7 @@ model person {
   tenant             tenant               @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   location           location?            @relation(fields: [tenant_id, location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   user_account       user_account?        @relation(fields: [tenant_id, user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  stock_movement     stock_movement[]
 
   @@unique([tenant_id, email_key], map: "person_email_uq", where: raw("((email IS NOT NULL) AND (archived_at IS NULL))"))
   @@unique([tenant_id, employee_ref], map: "person_employee_ref_uq", where: raw("((employee_ref IS NOT NULL) AND (archived_at IS NULL))"))
@@ -876,6 +1054,29 @@ model status_label {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model stock_movement {
+  id            String     @id @db.Uuid
+  tenant_id     String     @db.Uuid
+  consumable_id String     @db.Uuid
+  qty_delta     Int
+  reason        String
+  person_id     String?    @db.Uuid
+  note          String?
+  balance_after Int?
+  by_user_id    String?    @db.Uuid
+  at            DateTime   @default(now()) @db.Timestamptz(6)
+  consumable    consumable @relation(fields: [tenant_id, consumable_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant        tenant     @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  person        person?    @relation(fields: [tenant_id, person_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, consumable_id, at(sort: Desc), id(sort: Desc)], map: "stock_movement_consumable_idx")
+  @@index([tenant_id, person_id, at(sort: Desc), id(sort: Desc)], map: "stock_movement_person_idx", where: raw("(person_id IS NOT NULL)"))
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model tenant {
   id                      String                    @id @db.Uuid
   name                    String
@@ -887,6 +1088,7 @@ model tenant {
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
   version                 Int                       @default(1)
+  accessory               accessory[]
   api_key                 api_key[]
   asset                   asset[]
   asset_history           asset_history[]
@@ -896,10 +1098,13 @@ model tenant {
   attachment              attachment[]
   category                category[]
   company                 company?
+  consumable              consumable[]
   custom_field_def        custom_field_def[]
   export_job              export_job[]
   idempotency_key         idempotency_key[]
   invitation              invitation[]
+  label_batch             label_batch[]
+  label_template          label_template[]
   location                location[]
   mail_outbox             mail_outbox[]
   maintenance_record      maintenance_record[]
@@ -914,6 +1119,7 @@ model tenant {
   role_assignment         role_assignment[]
   saved_view              saved_view[]
   status_label            status_label?
+  stock_movement          stock_movement[]
   transfer                transfer[]
   user_account            user_account[]
   vendor                  vendor[]
@@ -1011,7 +1217,9 @@ model vendor {
   updated_by         String?              @db.Uuid
   archived_at        DateTime?            @db.Timestamptz(6)
   version            Int                  @default(1)
+  accessory          accessory[]
   asset              asset[]
+  consumable         consumable[]
   maintenance_record maintenance_record[]
   tenant             tenant               @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 

@@ -195,11 +195,12 @@ describe.skipIf(!dbEnabled).each(variants)('attachments pipeline: $name', ({ dri
       expect(meta.width).toBe(320);
       expect(meta.height).toBe(160);
       expect(meta.exif).toBeUndefined();
-      // list shows the thumbnail too, but never the download link
+      // the list carries both URLs of a clean file (no request per item needed)
       const list = await A.admin.get(`/v1/attachments?entity_type=asset&entity_id=${assetA}`);
       const item = list.body.data.find((a: { id: string }) => a.id === id);
       expect(item.thumbnail_url).toMatch(/^https?:\/\//);
-      expect(item.download_url).toBeNull();
+      expect(item.download_url).toMatch(/^https?:\/\//);
+      expect((await fetchUrl(h, item.download_url)).status).toBe(200);
     });
 
     it('EXIF and GPS never reach a derivative; the original is kept unless the tenant asks otherwise', async () => {

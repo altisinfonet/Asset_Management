@@ -79,6 +79,10 @@ export function inUse(label: string, usage: Record<string, number>): ApiProblem 
   });
 }
 
+/** The entries of `counts` that are not zero: optional `usage` members that older clients never saw. */
+export const nonZero = (counts: Record<string, number>): Record<string, number> =>
+  Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0));
+
 export const duplicate = (label: string, pointer: string, value: string): ApiProblem =>
   new ApiProblem({
     code: 'conflict',

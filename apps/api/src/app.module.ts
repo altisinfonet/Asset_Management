@@ -14,6 +14,7 @@ import { PeopleModule } from './people/index.js';
 import { PlatformModule } from './platform/index.js';
 import { FilesModule } from './files/index.js';
 import { RegistryModule } from './registry/index.js';
+import { StockModule } from './stock/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
 export interface AppModuleOptions {
@@ -50,6 +51,7 @@ export class AppModule {
               PeopleModule,
               LifecycleModule,
               FilesModule,
+              StockModule,
             ]
           : []),
         HealthModule,

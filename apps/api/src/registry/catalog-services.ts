@@ -22,7 +22,7 @@ import {
   statusLabelDto,
   vendorDto,
 } from './dto.js';
-import { duplicate, inUse, invalidRef } from './registry-base.js';
+import { duplicate, inUse, invalidRef, nonZero } from './registry-base.js';
 import type {
   CategoryCreate,
   CategoryUpdate,
@@ -122,13 +122,21 @@ export class CategoriesService extends CatalogService<CategoryRow, CategoryCreat
       });
     },
     assertArchivable: async (trx, row) => {
-      const [assets, models, customFields] = await Promise.all([
+      const [assets, models, customFields, accessories, consumables] = await Promise.all([
         trx.asset.count({ where: { category_id: row.id } }),
         trx.asset_model.count({ where: { category_id: row.id, archived_at: null } }),
         trx.custom_field_def.count({ where: { category_id: row.id, archived_at: null } }),
+        // [M2-W2 ACC]
+        trx.accessory.count({ where: { category_id: row.id, archived_at: null } }),
+        trx.consumable.count({ where: { category_id: row.id, archived_at: null } }),
       ]);
-      if (assets + models + customFields > 0) {
-        throw inUse('Category', { assets, models, custom_fields: customFields });
+      if (assets + models + customFields + accessories + consumables > 0) {
+        throw inUse('Category', {
+          assets,
+          models,
+          custom_fields: customFields,
+          ...nonZero({ accessories, consumables }),
+        });
       }
     },
     onUnique: (b) =>
@@ -179,10 +187,15 @@ export class ManufacturersService extends CatalogService<
     }),
     prepareUpdate: async (_trx, _auth, row, b) => changed(row, { ...b }),
     assertArchivable: async (trx, row) => {
-      const models = await trx.asset_model.count({
-        where: { manufacturer_id: row.id, archived_at: null },
-      });
-      if (models > 0) throw inUse('Manufacturer', { models });
+      const [models, accessories, consumables] = await Promise.all([
+        trx.asset_model.count({ where: { manufacturer_id: row.id, archived_at: null } }),
+        // [M2-W2 ACC]
+        trx.accessory.count({ where: { manufacturer_id: row.id, archived_at: null } }),
+        trx.consumable.count({ where: { manufacturer_id: row.id, archived_at: null } }),
+      ]);
+      if (models + accessories + consumables > 0) {
+        throw inUse('Manufacturer', { models, ...nonZero({ accessories, consumables }) });
+      }
     },
     onUnique: (b) =>
       duplicate('A manufacturer named', '/name', String((b as { name?: string }).name ?? '')),
@@ -230,8 +243,15 @@ export class VendorsService extends CatalogService<VendorRow, VendorCreate, Vend
     }),
     prepareUpdate: async (_trx, _auth, row, b) => changed(row, { ...b }),
     assertArchivable: async (trx, row) => {
-      const assets = await trx.asset.count({ where: { vendor_id: row.id } });
-      if (assets > 0) throw inUse('Vendor', { assets });
+      const [assets, accessories, consumables] = await Promise.all([
+        trx.asset.count({ where: { vendor_id: row.id } }),
+        // [M2-W2 ACC]
+        trx.accessory.count({ where: { vendor_id: row.id, archived_at: null } }),
+        trx.consumable.count({ where: { vendor_id: row.id, archived_at: null } }),
+      ]);
+      if (assets + accessories + consumables > 0) {
+        throw inUse('Vendor', { assets, ...nonZero({ accessories, consumables }) });
+      }
     },
     onUnique: (b) =>
       duplicate('A vendor named', '/name', String((b as { name?: string }).name ?? '')),

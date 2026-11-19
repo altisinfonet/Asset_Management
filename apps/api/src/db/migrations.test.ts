@@ -22,13 +22,11 @@ describe('shipped migrations', async () => {
       expect(tables).toContain(`app.${wave1}`);
     }
     // built by the other M2 agents (accessories, loaners, repairs, labels, imports): not in this range
-    for (const later of [
-      'accessory',
-      'consumable',
-      'maintenance_record',
-      'label_template',
-      'import_job',
-    ]) {
+    // [M2-W2 ACC] accessories and consumables (0080-0089)
+    for (const stock of ['accessory', 'consumable', 'stock_movement']) {
+      expect(tables).toContain(`app.${stock}`);
+    }
+    for (const later of ['maintenance_record', 'label_template', 'import_job']) {
       expect(tables).not.toContain(`app.${later}`);
     }
     for (const m1 of [

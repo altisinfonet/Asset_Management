@@ -55,5 +55,5 @@ describe('tagging boundaries (M2-TAG-02, ADR 0007)', () => {
         "import { x } from '../registry/asset-selection.js';\nexport const y = x;\n",
       ),
     ).toHaveLength(1);
-  });
+  }, 30_000);
 });

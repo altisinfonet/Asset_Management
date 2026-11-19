@@ -48,6 +48,30 @@ describe('assets list state', () => {
     });
   });
 
+  it('sends the custody filters and the sublocations switch', () => {
+    const query = toAssetQuery({
+      ...defaultViewState(),
+      location_id: 'l1',
+      include_sublocations: false,
+      assigned: 'yes',
+      person_id: 'p1',
+      person_name: 'Maria Reyes',
+    });
+    expect(query).toMatchObject({
+      location_id: 'l1',
+      include_sublocations: false,
+      assigned: true,
+      assigned_person_id: 'p1',
+    });
+    expect(toAssetQuery({ ...defaultViewState(), assigned: 'no' }).assigned).toBe(false);
+    expect(toAssetQuery(defaultViewState()).assigned).toBeUndefined();
+  });
+
+  it('custody filters count as active filters', () => {
+    expect(hasActiveFilters({ ...defaultViewState(), assigned: 'no' })).toBe(true);
+    expect(hasActiveFilters({ ...defaultViewState(), person_id: 'p' })).toBe(true);
+  });
+
   it('a custom field filter without a value is not sent', () => {
     const query = toAssetQuery({ ...defaultViewState(), cf: { key: 'x', value: '' } });
     expect(query.cf).toBeUndefined();
@@ -89,6 +113,13 @@ describe('saved views (this browser only)', () => {
     const views = readSavedViews();
     expect(views).toHaveLength(1);
     expect(views[0]!.state).toEqual(defaultViewState());
+  });
+
+  it('sanitiseState defaults the custody filters of a view saved before they existed', () => {
+    const state = sanitiseState({ q: 'x', assigned: 'maybe', include_sublocations: 'no' });
+    expect(state).toMatchObject({ assigned: '', person_id: '', include_sublocations: true });
+    expect(sanitiseState({ assigned: 'yes', include_sublocations: false }).assigned).toBe('yes');
+    expect(sanitiseState({ include_sublocations: false }).include_sublocations).toBe(false);
   });
 
   it('sanitiseState keeps well-formed values', () => {

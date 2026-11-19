@@ -26,6 +26,11 @@ export interface ComboboxProps {
    */
   onQueryChange?: (query: string) => void;
   loading?: boolean;
+  /**
+   * The options belong to an earlier text (an async search still running): Enter then chooses
+   * nothing, so a fast typist or a scanner never picks a row of the previous query.
+   */
+  stale?: boolean;
   placeholder?: string;
   /** Shown in the open list when nothing matches. */
   emptyText: string;
@@ -62,6 +67,7 @@ export function Combobox({
   onValueChange,
   onQueryChange,
   loading = false,
+  stale = false,
   placeholder,
   emptyText,
   loadingText,
@@ -86,6 +92,8 @@ export function Combobox({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [typing, setTyping] = useState(false);
+  // Enter pressed while the async options still belong to an earlier text: choose once they arrive.
+  const [wantFirst, setWantFirst] = useState(false);
 
   const setOpen = (next: boolean) => {
     setOpenState(next);
@@ -93,6 +101,7 @@ export function Combobox({
     if (!next) {
       setTyping(false);
       setQuery('');
+      setWantFirst(false);
     }
   };
 
@@ -124,10 +133,20 @@ export function Combobox({
   }, [active, open]);
 
   const choose = (option: ComboboxOption | undefined) => {
+    setWantFirst(false);
     if (!option || option.disabled) return;
     onValueChange(option.value, option);
     setOpen(false);
   };
+
+  useEffect(() => {
+    if (!wantFirst || stale || !open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the deferred Enter fires once, then clears itself
+    setWantFirst(false);
+    choose(shown[firstEnabled(shown)]);
+    // `choose` and `firstEnabled` only close over state that `shown` and `open` already track
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantFirst, stale, open, shown]);
 
   const move = (step: 1 | -1) => {
     if (shown.length === 0) return;
@@ -154,7 +173,8 @@ export function Combobox({
       case 'Enter':
         if (open) {
           event.preventDefault(); // choosing must not submit the form around the field
-          choose(shown[active]);
+          if (stale) setWantFirst(true);
+          else choose(shown[active]);
         }
         break;
       case 'Escape':
@@ -238,6 +258,7 @@ export function Combobox({
           id={listId}
           role="listbox"
           aria-label={ariaLabel}
+          aria-busy={stale || undefined}
           className="absolute top-full right-0 left-0 z-(--z-popover) mt-1 max-h-60 overflow-auto rounded-lg border border-border bg-surface p-1 text-text shadow-md"
           onMouseDown={(event) => event.preventDefault()}
         >

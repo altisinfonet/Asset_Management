@@ -163,8 +163,8 @@ describe('keyboard shortcuts', () => {
 
   it('g then a goes to Assets; g then an unknown key does nothing; typing in a field is ignored', async () => {
     await renderShell();
-    // A person types a key every 100 ms or more; keys closer than 50 ms are a keyboard-wedge scanner.
-    const user = userEvent.setup({ delay: 80 });
+    // A person types a key every 100 ms or more; keys closer than 80 ms are a keyboard-wedge scanner.
+    const user = userEvent.setup({ delay: 150 });
     await user.keyboard('ga');
     expect(router.push).toHaveBeenCalledWith('/assets');
 

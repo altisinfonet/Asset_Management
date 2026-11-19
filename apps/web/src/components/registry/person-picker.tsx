@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Combobox } from '@/components/ui/combobox';
 import { useT } from '@/i18n';
@@ -67,6 +67,7 @@ export function PersonPicker({
       ),
     enabled: open && can('person:read'),
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
   });
 
   const options = useMemo(
@@ -86,6 +87,7 @@ export function PersonPicker({
       value={value?.id ?? null}
       selectedLabel={value?.display_name}
       loading={people.isFetching}
+      stale={people.isPlaceholderData || query.trim() !== q}
       placeholder={placeholder ?? t('picker.personPlaceholder')}
       emptyText={q ? t('picker.noPeopleMatch', { query: q }) : t('picker.noPeople')}
       loadingText={t('common.loading')}

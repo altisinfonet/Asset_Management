@@ -197,7 +197,8 @@ export function UploadList({
         const failed = item.status === 'failed';
         const message = failed
           ? item.error
-            ? uiErrorText(t, item.error)
+            ? // a refused type or size: the server's message on the field
+              (item.error.fieldErrors[0]?.message ?? uiErrorText(t, item.error))
             : item.uploadFailure
               ? t('files.uploadFailed')
               : ''

@@ -45,7 +45,7 @@ export const registryMessages = {
       allLocations: 'All locations',
       includeSublocations: 'Include sublocations',
       assigned: 'Custody',
-      anyAssigned: 'Checked out or in stock',
+      anyAssigned: 'Any custody status',
       checkedOut: 'Checked out',
       inStock: 'In stock',
       heldBy: 'Held by',

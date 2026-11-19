@@ -5,7 +5,7 @@
  * is treated as typing and ignored. Pure (no DOM), so it is unit tested with simulated key times.
  */
 export interface WedgeOptions {
-  /** Largest gap (ms) between two keys of one burst. Scanners type at <= 30 ms; people at >= 80 ms. */
+  /** Largest gap (ms) between two keys of one burst. Scanners type at <= 30 ms (a loaded machine can stretch that); people take 100 ms or more between keys. */
   maxGapMs?: number;
   /** Shortest code that counts as a scan. */
   minLength?: number;
@@ -29,7 +29,7 @@ export class WedgeDetector {
   private readonly max: number;
 
   constructor(options: WedgeOptions = {}) {
-    this.maxGap = options.maxGapMs ?? 50;
+    this.maxGap = options.maxGapMs ?? 80;
     this.min = options.minLength ?? 3;
     this.max = options.maxLength ?? 200;
   }

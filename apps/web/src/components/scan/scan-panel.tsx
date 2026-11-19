@@ -44,7 +44,20 @@ export function ScanPanel() {
       : []),
   ];
 
-  const focusInput = () => requestAnimationFrame(() => input.current?.focus());
+  /**
+   * Back to the scan field for the next scan, unless the user has moved on to another text field
+   * (the person picker). `force` also takes focus from the control that was just used (a select
+   * hands focus back to its trigger as it closes, so wait for that first).
+   */
+  const focusInput = (force = false) => {
+    const run = () => {
+      const active = document.activeElement;
+      const typing = active instanceof HTMLInputElement && active !== input.current;
+      if (force || !typing) input.current?.focus();
+    };
+    if (force) window.setTimeout(run, 60);
+    else requestAnimationFrame(run);
+  };
   useEffect(() => {
     if (scan.panelOpen) focusInput();
   }, [scan.panelOpen]);
@@ -80,7 +93,7 @@ export function ScanPanel() {
                 value={batch.mode}
                 onValueChange={(value) => {
                   scan.setMode(value as ScanMode);
-                  focusInput();
+                  focusInput(true);
                 }}
                 options={modes}
               />
@@ -94,7 +107,7 @@ export function ScanPanel() {
                   value={batch.person}
                   onChange={(person) => {
                     scan.setPerson(person);
-                    if (person) focusInput();
+                    if (person) focusInput(true);
                   }}
                 />
               )}

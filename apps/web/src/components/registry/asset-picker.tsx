@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Combobox } from '@/components/ui/combobox';
 import { useT } from '@/i18n';
@@ -37,6 +37,7 @@ export function AssetPicker({ value, onChange, excludeId, ...rest }: AssetPicker
     queryFn: () => assetsApi.list({ limit: 15, ...(q ? { q } : {}), sort: ['asset_tag'] }),
     enabled: open,
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
   });
 
   const options = useMemo(
@@ -57,6 +58,7 @@ export function AssetPicker({ value, onChange, excludeId, ...rest }: AssetPicker
       value={value?.id ?? null}
       selectedLabel={value?.label}
       loading={assets.isFetching}
+      stale={assets.isPlaceholderData || query.trim() !== q}
       placeholder={t('picker.assetPlaceholder')}
       emptyText={t('picker.noAssets')}
       loadingText={t('common.loading')}

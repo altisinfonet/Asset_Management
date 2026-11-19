@@ -268,7 +268,9 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
   const { toast } = useToast();
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  // The refusal and the version of the asset it was about: a reload (new ETag) makes it obsolete.
+  const [failure, setFailure] = useState<{ ui: UiError; atEtag: string | undefined } | null>(null);
+  const error = failure && failure.atEtag === etag ? failure.ui : null;
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [results, setResults] = useState<BulkResult[] | null>(null);
   const keeper = useRef(createKeyKeeper());
@@ -299,7 +301,7 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
     bulkDone: (count: number) => string,
   ) => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     setFieldErrors({});
     try {
       if (assets.length === 1) {
@@ -340,7 +342,7 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
     } catch (err) {
       const ui = getApi().toUiError(err);
       setFieldErrors(fieldErrorsOf(ui));
-      setError(ui);
+      setFailure({ ui, atEtag: etag });
       // A definitive refusal changes the situation; a dropped connection keeps the key for the retry.
       if (ui.kind !== 'network' && ui.kind !== 'server') keeper.current.renew();
     } finally {

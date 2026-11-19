@@ -125,6 +125,8 @@ test.describe('consumables', () => {
     dialog = page.getByRole('dialog', { name: 'Count Toner HP 26A' });
     await dialog.getByRole('spinbutton', { name: /^Counted on hand/ }).fill('4');
     await expect(dialog.getByTestId('count-delta')).toHaveText('Change: +1');
+    // the API wants the reason of a count
+    await dialog.getByRole('textbox', { name: /^Note/ }).fill('Stock count');
     await dialog.getByRole('button', { name: 'Save count' }).click();
     await expect(page.getByTestId('figure-on-hand')).toHaveText('4 each');
 

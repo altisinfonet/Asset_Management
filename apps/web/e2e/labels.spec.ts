@@ -24,7 +24,7 @@ test.describe('print labels', () => {
     await expect(dialog.getByTestId('label-preview')).toBeVisible();
     await expect(dialog.getByRole('img', { name: 'QR code' })).toBeVisible();
 
-    await choose(page, dialog.getByRole('combobox', { name: 'Sheet template' }), /A4 sheet, 3 x 7/);
+    await choose(page, dialog.getByRole('combobox', { name: 'Sheet template' }), /A4 21-up/);
     const grid = dialog.getByRole('radiogroup', { name: 'Start position on the sheet' });
     await expect(grid.getByRole('radio')).toHaveCount(21);
     await grid.getByRole('radio', { name: /^Position 8,/ }).click();
@@ -33,13 +33,15 @@ test.describe('print labels', () => {
     await expect(grid.getByRole('radio', { name: /^Position 9,.*gets a label/ })).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Generate PDF' }).click();
+    // the PDF is made in the background: queued first, then ready with a short-lived link
+    await expect(dialog.getByTestId('labels-queued')).toBeVisible();
     const ready = dialog.getByTestId('labels-ready');
     await expect(ready).toContainText('3 labels on 1 sheet');
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       ready.getByRole('link', { name: 'Download PDF' }).click(),
     ]);
-    expect(download.suggestedFilename()).toBe('labels-a4-21up.pdf');
+    expect(download.suggestedFilename()).toMatch(/^labels-a4-21up-qr-.+\.pdf$/);
   });
 
   test('remembers the last template for the next time', async ({ page }) => {
@@ -47,7 +49,7 @@ test.describe('print labels', () => {
     await page.getByRole('button', { name: 'Print labels' }).click();
     let dialog = page.getByRole('dialog', { name: /^Print label for / });
     await expect(dialog.getByTestId('labels-source')).toHaveText('1 selected asset');
-    await choose(page, dialog.getByRole('combobox', { name: 'Sheet template' }), /A4 sheet, 2 x 5/);
+    await choose(page, dialog.getByRole('combobox', { name: 'Sheet template' }), /Letter 10-up/);
     await dialog.getByRole('checkbox', { name: 'Code 128 barcode' }).click();
     await dialog.getByRole('button', { name: 'Generate PDF' }).click();
     await expect(dialog.getByTestId('labels-ready')).toBeVisible();
@@ -58,7 +60,7 @@ test.describe('print labels', () => {
     await page.getByRole('button', { name: 'Print labels' }).click();
     dialog = page.getByRole('dialog', { name: /^Print label for / });
     await expect(dialog.getByRole('combobox', { name: 'Sheet template' })).toContainText(
-      'A4 sheet, 2 x 5',
+      'US Letter 10-up',
     );
     await expect(dialog.getByRole('checkbox', { name: 'Code 128 barcode' })).not.toBeChecked();
     await expect(dialog.getByRole('checkbox', { name: 'QR code' })).toBeChecked();
@@ -88,10 +90,31 @@ test.describe('print labels', () => {
     await page.goto(`/assets/view?id=${assetId(124)}`);
     await page.getByRole('button', { name: 'Print labels' }).click();
     const dialog = page.getByRole('dialog', { name: /^Print label for / });
-    await choose(page, dialog.getByRole('combobox', { name: 'Sheet template' }), /Single label/);
+    await choose(
+      page,
+      dialog.getByRole('combobox', { name: 'Sheet template' }),
+      /Single label 50 x 25/,
+    );
     await expect(dialog.getByText(/one label per page/)).toBeVisible();
     await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
     await expect(dialog.getByTestId('label-preview')).toBeVisible();
+  });
+});
+
+test.describe('label batches that do not finish well', () => {
+  test('says why a batch failed and lets the user try again', async ({ page }) => {
+    await page.addInitScript(() =>
+      window.localStorage.setItem('at-mock-label-failure', 'logo-invalid'),
+    );
+    await page.goto(`/assets/view?id=${assetId(124)}`);
+    await page.getByRole('button', { name: 'Print labels' }).click();
+    const dialog = page.getByRole('dialog', { name: /^Print label for / });
+    await dialog.getByRole('button', { name: 'Generate PDF' }).click();
+    const failed = dialog.getByTestId('labels-failed');
+    await expect(failed).toContainText('The labels could not be made');
+    await expect(failed).toContainText('The logo is not a clean PNG or JPEG.');
+    await failed.getByRole('button', { name: 'Try again' }).click();
+    await expect(dialog.getByRole('button', { name: 'Generate PDF' })).toBeVisible();
   });
 });
 
@@ -100,7 +123,8 @@ test.describe('print labels without permission', () => {
 
   test('a viewer gets no print button on the list or the asset page', async ({ page }) => {
     await page.goto('/assets');
-    await expect(page.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+    // viewers read assets but hold neither export:run nor asset:label
+    await expect(page.getByRole('button', { name: 'Export CSV' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Print labels for this filter' })).toHaveCount(0);
     await page.goto(`/assets/view?id=${assetId(124)}`);
     await settled(page);

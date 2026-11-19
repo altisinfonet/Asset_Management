@@ -234,6 +234,24 @@ export function setMockLabelFailure(reason: MockLabelBatch['fail']): void {
   labelFailure = reason;
 }
 
+/**
+ * Playwright runs the mock inside the page, out of reach of the test: it sets these keys in
+ * localStorage instead (`at-mock-label-delay` in ms, `at-mock-label-failure` with a reason).
+ */
+function labelSwitches(): { delay: number; fail: MockLabelBatch['fail'] } {
+  let delay = labelDelayMs;
+  let fail = labelFailure;
+  try {
+    const storedDelay = Number(globalThis.localStorage?.getItem('at-mock-label-delay'));
+    if (Number.isFinite(storedDelay) && storedDelay > 0) delay = storedDelay;
+    const storedFail = globalThis.localStorage?.getItem('at-mock-label-failure');
+    if (storedFail === 'render-failed' || storedFail === 'logo-invalid') fail = storedFail;
+  } catch {
+    // storage unavailable: the defaults
+  }
+  return { delay, fail };
+}
+
 const BATCH_KEYS = [
   'template_key',
   'asset_ids',
@@ -492,6 +510,7 @@ const labelHandlers: HttpHandler[] = [
 
     return idempotent(request, w2(), `${request.method} ${text}`, () => {
       const labels = assets.length * (copies as number);
+      const switches = labelSwitches();
       const codes =
         (body.codes as MockLabelBatch['codes'] | undefined) ??
         (template.code_type === 'qr_and_code128'
@@ -522,8 +541,8 @@ const labelHandlers: HttpHandler[] = [
           download_url: null,
           download_expires_at: null,
           error: null,
-          ready_at: Date.now() + labelDelayMs,
-          ...(labelFailure ? { fail: labelFailure } : {}),
+          ready_at: Date.now() + switches.delay,
+          ...(switches.fail ? { fail: switches.fail } : {}),
         };
         data.labelBatches.push(created);
         return created;
@@ -608,10 +627,21 @@ function preferenceOf(userId: string, type: (typeof NOTIFICATION_TYPES)[number])
 
 const TYPE_PATH = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
+/**
+ * The background workers: a label batch or an export finishes (and notifies its requester) when
+ * its time has come, whether or not anybody reads it. The mock has no clock of its own, so every
+ * read of the notifications runs them.
+ */
+function runWorkers(): void {
+  for (const batch of [...w2().labelBatches]) batchView(batch);
+  for (const job of [...w2().exports]) exportView(job, false);
+}
+
 const notificationHandlers: HttpHandler[] = [
   http.get('/v1/notifications', ({ request }) => {
     const guard = requireSession(request);
     if (!guard.ok) return guard.response;
+    runWorkers();
     const unread = new URL(request.url).searchParams.get('unread') === 'true';
     const rows = inboxOf(guard.user.id)
       .filter((n) => !unread || !n.read_at)
@@ -630,6 +660,7 @@ const notificationHandlers: HttpHandler[] = [
   http.get('/v1/notifications/unread-count', ({ request }) => {
     const guard = requireSession(request);
     if (!guard.ok) return guard.response;
+    runWorkers();
     return HttpResponse.json({ count: inboxOf(guard.user.id).filter((n) => !n.read_at).length });
   }),
 

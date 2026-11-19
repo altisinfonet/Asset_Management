@@ -144,13 +144,13 @@ describe('SecurityScreen', () => {
       expect(screen.queryByText(/Your organisation requires two-step verification/)).toBeNull();
     });
 
-    it('still explains the 403 when /me did not say (an older API) and disables Turn off afterwards', async () => {
+    it('still explains the 403 when /me said the policy does not apply but the API refuses, and disables Turn off afterwards', async () => {
       seedSession(MOCK_ACCOUNTS.mfaEnforced);
       const me = (await (await fetch(`${window.location.origin}/v1/auth/me`)).json()) as Record<
         string,
         unknown
       >;
-      delete me.mfa_policy;
+      me.mfa_policy = { required: false, scope: 'off' };
       server.use(http.get('/v1/auth/me', () => HttpResponse.json(me)));
       renderApp(<SecurityScreen />);
       const user = userEvent.setup();

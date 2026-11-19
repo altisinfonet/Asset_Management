@@ -1,6 +1,6 @@
 'use client';
 
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Plus, Wrench } from 'lucide-react';
 import { useState } from 'react';
 import { Banner } from '@/components/ui/banner';
@@ -10,7 +10,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useI18n } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import { repairsApi } from '@/lib/repairs/api';
-import { totalCost } from '@/lib/repairs/helpers';
 import { LogRepairDialog } from './repair-dialogs';
 import { RepairDrawer } from './repair-drawer';
 import { RepairTable, useMoneyText } from './repair-parts';
@@ -42,18 +41,23 @@ export function AssetRepairs({
       last.page.has_more ? (last.page.next_cursor ?? undefined) : undefined,
   });
   const rows = list.data?.pages.flatMap((page) => page.data) ?? [];
-  const totals = totalCost(rows.filter((repair) => repair.status !== 'cancelled'));
-  const amount = totals.map((total) => money(total)).join(', ');
+  // The totals come from the API, per currency and without the cancelled ones, whatever the list shows.
+  const summary = useQuery({
+    queryKey: ['repairs', 'summary', asset.id],
+    queryFn: () => repairsApi.summary(asset.id),
+  });
+  const count = summary.data?.total_count ?? 0;
+  const amount = (summary.data?.total_cost ?? []).map((total) => money(total)).join(', ');
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-base" data-testid="repairs-summary">
-          {rows.length === 0
+          {count === 0
             ? ''
             : amount
-              ? t('repairs.assetTab.summary', { count: rows.length, amount })
-              : t('repairs.assetTab.summaryNoCost', { count: rows.length })}
+              ? t('repairs.assetTab.summary', { count, amount })
+              : t('repairs.assetTab.summaryNoCost', { count })}
         </p>
         {can('repair:manage') && !archived ? (
           <Button variant="primary" onClick={() => setLogging(true)}>

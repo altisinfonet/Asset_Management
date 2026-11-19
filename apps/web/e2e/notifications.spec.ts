@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { assetId } from './fixtures';
 import { choose } from './m2-helpers';
 
 /**
@@ -16,11 +17,9 @@ test.describe('notification bell and panel', () => {
     const panel = page.getByRole('dialog', { name: 'Notifications' });
     await expect(panel.getByTestId('notification-list').getByRole('listitem')).toHaveCount(5);
     await expect(panel.getByRole('listitem').first()).toContainText(
-      'Unread: Toner HP 26A is low on stock',
+      'Unread: Low stock: Toner HP 26A',
     );
-    await panel
-      .getByRole('button', { name: 'Mark as read: Import finished: 120 assets created' })
-      .click();
+    await panel.getByRole('button', { name: 'Mark as read: Import finished' }).click();
     await expect(page.getByTestId('notification-count')).toHaveText('2');
 
     await panel.getByRole('button', { name: 'Unread', exact: true }).click();
@@ -36,7 +35,7 @@ test.describe('notification bell and panel', () => {
     await page.getByRole('button', { name: 'Notifications, 3 unread' }).click();
     await page
       .getByRole('dialog', { name: 'Notifications' })
-      .getByRole('button', { name: 'View: Toner HP 26A is low on stock' })
+      .getByRole('button', { name: 'View: Low stock: Toner HP 26A' })
       .click();
     await expect(page).toHaveURL(/\/stock\/view\/?\?kind=consumable&id=/);
     await expect(page.getByRole('heading', { level: 1, name: 'Toner HP 26A' })).toBeVisible();
@@ -62,6 +61,58 @@ test.describe('notification bell and panel', () => {
   });
 });
 
+test.describe('notifications from background work', () => {
+  test('labels that finish while the dialog is closed arrive as a notification that opens the batch', async ({
+    page,
+  }) => {
+    // the mock worker needs a moment (not a minute), so the batch is queued when the dialog closes
+    await page.addInitScript(() => window.localStorage.setItem('at-mock-label-delay', '400'));
+    await page.goto(`/assets/view?id=${assetId(124)}`);
+    await page.getByRole('button', { name: 'Print labels' }).click();
+    const dialog = page.getByRole('dialog', { name: /^Print label for / });
+    await dialog.getByRole('button', { name: 'Generate PDF' }).click();
+    await expect(dialog.getByTestId('labels-queued')).toBeVisible();
+    await dialog.getByTestId('labels-queued').getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toBeHidden();
+
+    // the worker finishes in the background; the bell picks it up when it reads again
+    await page.waitForTimeout(600);
+    await page.reload();
+    await page.getByRole('button', { name: /^Notifications, 4 unread/ }).click({ timeout: 15_000 });
+    const panel = page.getByRole('dialog', { name: 'Notifications' });
+    await panel.getByRole('button', { name: 'View: Your labels are ready' }).first().click();
+    await expect(page).toHaveURL(/\/assets\/?$/);
+    const batch = page.getByRole('dialog', { name: 'Print labels' });
+    await expect(batch.getByTestId('labels-ready')).toBeVisible();
+    await expect(batch.getByRole('link', { name: 'Download PDF' })).toBeVisible();
+  });
+
+  test('an export that finishes arrives as a notification that opens the download', async ({
+    page,
+  }) => {
+    await page.goto('/people');
+    await page.getByRole('button', { name: 'Export CSV' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Export to CSV' });
+    await expect(dialog.getByRole('link', { name: 'Download CSV' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await page.getByRole('button', { name: /^Notifications, 4 unread/ }).click();
+    await page
+      .getByRole('dialog', { name: 'Notifications' })
+      .getByRole('button', { name: 'View: Your export is ready' })
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/assets\/?$/);
+    await expect(
+      page.getByRole('dialog', { name: 'Export to CSV' }).getByRole('link', {
+        name: 'Download CSV',
+      }),
+    ).toBeVisible();
+  });
+});
+
 test.describe('notification settings', () => {
   test('changes how the user hears about each event and keeps it after a reload', async ({
     page,
@@ -70,19 +121,22 @@ test.describe('notification settings', () => {
     await expect(
       page.getByRole('heading', { level: 1, name: 'Notification settings' }),
     ).toBeVisible();
-    const stock = page.getByRole('combobox', { name: 'Delivery for Stock is low' });
-    await expect(stock).toContainText('Right away');
+    const stock = page.getByRole('combobox', { name: 'E-mail for Low stock' });
+    await expect(stock).toContainText('Daily summary');
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
 
-    await choose(page, stock, 'Daily summary', true);
+    await choose(page, stock, 'Off', true);
+    await page.getByRole('checkbox', { name: 'Show Loan overdue in the bell' }).click();
     await expect(page.getByText('You have unsaved changes.')).toBeVisible();
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByText('Notification settings saved.').first()).toBeVisible();
 
     await page.reload();
-    await expect(page.getByRole('combobox', { name: 'Delivery for Stock is low' })).toContainText(
-      'Daily summary',
-    );
+    await expect(page.getByRole('combobox', { name: 'E-mail for Low stock' })).toContainText('Off');
+    await expect(
+      page.getByRole('checkbox', { name: 'Show Loan overdue in the bell' }),
+    ).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Show Low stock in the bell' })).toBeChecked();
   });
 
   test('is reachable from the panel and from the user menu', async ({ page }) => {

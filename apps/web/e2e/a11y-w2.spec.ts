@@ -295,7 +295,11 @@ const SCENARIOS: Scenario[] = [
       await p.goto(`/assets/view?id=${assetId(124)}`);
       await p.getByRole('button', { name: 'Print labels' }).click();
       const dialog = p.getByRole('dialog', { name: /^Print label for / });
-      await choose(p, dialog.getByRole('combobox', { name: 'Sheet template' }), /Single label/);
+      await choose(
+        p,
+        dialog.getByRole('combobox', { name: 'Sheet template' }),
+        /Single label 50 x 25/,
+      );
       await expect(dialog.getByText(/one label per page/)).toBeVisible();
     },
   },
@@ -316,8 +320,32 @@ const SCENARIOS: Scenario[] = [
       await p.getByRole('button', { name: 'Print labels' }).click();
       const dialog = p.getByRole('dialog', { name: /^Print label for / });
       await dialog.getByRole('checkbox', { name: 'QR code' }).click();
-      await dialog.getByRole('checkbox', { name: 'Code 128 barcode' }).click();
-      await expect(dialog.getByText('Choose at least one code.')).toBeVisible();
+      await expect(dialog.getByText(/carry text only/)).toBeVisible();
+    },
+  },
+  {
+    name: 'labels: batch queued',
+    open: async (p) => {
+      // the mock worker takes a minute, so the batch stays queued while axe looks
+      await p.addInitScript(() => window.localStorage.setItem('at-mock-label-delay', '60000'));
+      await p.goto(`/assets/view?id=${assetId(124)}`);
+      await p.getByRole('button', { name: 'Print labels' }).click();
+      const dialog = p.getByRole('dialog', { name: /^Print label for / });
+      await dialog.getByRole('button', { name: 'Generate PDF' }).click();
+      await expect(dialog.getByTestId('labels-queued')).toBeVisible();
+    },
+  },
+  {
+    name: 'labels: batch failed',
+    open: async (p) => {
+      await p.addInitScript(() =>
+        window.localStorage.setItem('at-mock-label-failure', 'render-failed'),
+      );
+      await p.goto(`/assets/view?id=${assetId(124)}`);
+      await p.getByRole('button', { name: 'Print labels' }).click();
+      const dialog = p.getByRole('dialog', { name: /^Print label for / });
+      await dialog.getByRole('button', { name: 'Generate PDF' }).click();
+      await expect(dialog.getByTestId('labels-failed')).toBeVisible();
     },
   },
   // ---- notifications ----
@@ -344,7 +372,7 @@ const SCENARIOS: Scenario[] = [
     name: 'notifications: settings',
     open: async (p) => {
       await p.goto('/account/notifications');
-      await expect(p.getByRole('table', { name: 'Notification delivery by event' })).toBeVisible();
+      await expect(p.getByRole('table', { name: 'Notification delivery by type' })).toBeVisible();
       await settled(p);
     },
   },
@@ -352,8 +380,16 @@ const SCENARIOS: Scenario[] = [
     name: 'notifications: settings with unsaved changes',
     open: async (p) => {
       await p.goto('/account/notifications');
-      await choose(p, p.getByRole('combobox', { name: 'Delivery for Stock is low' }), 'Off', true);
+      await choose(p, p.getByRole('combobox', { name: 'E-mail for Low stock' }), 'Off', true);
       await expect(p.getByText('You have unsaved changes.')).toBeVisible();
+    },
+  },
+  {
+    name: 'notifications: the rules of the organisation',
+    open: async (p) => {
+      await p.goto('/settings/notifications');
+      await expect(p.getByRole('table', { name: 'Notification rules by type' })).toBeVisible();
+      await settled(p);
     },
   },
   // ---- saved views and export ----
@@ -378,7 +414,17 @@ const SCENARIOS: Scenario[] = [
     name: 'assets: delete view confirmation',
     open: async (p) => {
       await p.goto('/assets');
-      await choose(p, p.getByRole('combobox', { name: 'View' }), 'Teacher devices (shared)', true);
+      // only the owner of a view deletes it: save one of the user's own first
+      await p.getByRole('button', { name: 'Save view' }).click();
+      await p
+        .getByRole('dialog', { name: 'Save this view' })
+        .getByLabel(/^View name/)
+        .fill('Mine');
+      await p
+        .getByRole('dialog', { name: 'Save this view' })
+        .getByRole('button', { name: 'Save view' })
+        .click();
+      await expect(p.getByRole('combobox', { name: 'View' })).toContainText('Mine');
       await p.getByRole('button', { name: 'Delete view' }).click();
       await expect(p.getByRole('dialog', { name: /^Delete view/ })).toBeVisible();
     },
@@ -407,6 +453,14 @@ const SCENARIOS: Scenario[] = [
       await expect(p.getByRole('heading', { name: 'No assets match' })).toBeVisible();
       await p.getByRole('button', { name: 'Export CSV' }).click();
       await expect(p.getByText('The export failed.')).toBeVisible({ timeout: 15_000 });
+    },
+  },
+  {
+    name: 'people: export dialog',
+    open: async (p) => {
+      await p.goto('/people');
+      await p.getByRole('button', { name: 'Export CSV' }).click();
+      await expect(p.getByRole('link', { name: 'Download CSV' })).toBeVisible({ timeout: 15_000 });
     },
   },
   {

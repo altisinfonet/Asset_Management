@@ -72,6 +72,7 @@ export const SETTINGS_SECTIONS = [
   'status',
   'tags',
   'vendors',
+  'notifications',
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

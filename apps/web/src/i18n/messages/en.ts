@@ -212,6 +212,7 @@ export const en = {
       status: 'Status labels',
       tags: 'Tag numbering',
       vendors: 'Vendors',
+      notifications: 'Notification rules',
     },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',

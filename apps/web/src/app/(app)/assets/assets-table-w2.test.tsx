@@ -2,6 +2,9 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { exportsApi } from '@/lib/exports/api';
+import { labelsApi } from '@/lib/labels/api';
+import { assetsApi } from '@/lib/registry/api';
 import { SAVED_VIEWS_KEY, defaultViewState } from '@/lib/registry/asset-view';
 import { MIGRATED_KEY, toDefinition } from '@/lib/views/convert';
 import { savedViewsApi } from '@/lib/views/api';
@@ -9,7 +12,7 @@ import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { server } from '@/mocks/server';
 import { setMockExportDelay } from '@/mocks/w2-misc-handlers';
 import { expectNoA11yViolations } from '@/test/axe';
-import { resetRouter } from '@/test/navigation';
+import { resetRouter, router } from '@/test/navigation';
 import { renderApp, seedSession } from '@/test/render';
 import { AssetsTable } from './assets-table';
 
@@ -227,6 +230,44 @@ describe('AssetsTable: saved views on the server', () => {
     await loaded();
     expect(await screen.findByText('We could not load the saved views.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Save view' })).toBeEnabled();
+  });
+});
+
+describe('AssetsTable: following a label batch or an export from a notification', () => {
+  beforeEach(() => {
+    resetRouter();
+    window.localStorage.clear();
+    seedSession(MOCK_ACCOUNTS.owner);
+    setMockExportDelay(0);
+  });
+
+  it('opens the label batch named in the address, then goes back to the plain list', async () => {
+    const assets = (await assetsApi.list({ limit: 2, sort: ['asset_tag'] })).data;
+    const batch = await labelsApi.createBatch(
+      { template_key: 'letter-30up-qr', asset_ids: assets.map((a) => a.id) },
+      'key-follow-batch',
+    );
+    window.history.pushState({}, '', `/assets?label_batch=${batch.id}`);
+    renderApp(<AssetsTable />, { workflows: true });
+    const dialog = await screen.findByRole('dialog', { name: 'Print labels' });
+    expect(
+      await within(dialog).findByTestId('labels-ready', {}, { timeout: 5000 }),
+    ).toHaveTextContent('2 labels on 1 sheet');
+    expect(router.replace).toHaveBeenCalledWith('/assets');
+  });
+
+  it('opens the export named in the address with its download, without starting another', async () => {
+    const job = await exportsApi.create({ resource: 'assets', filters: { q: 'PRJ-' } });
+    window.history.pushState({}, '', `/assets?export=${job.id}`);
+    renderApp(<AssetsTable />, { workflows: true });
+    const dialog = await screen.findByRole('dialog', { name: 'Export to CSV' });
+    expect(
+      await within(dialog).findByRole('link', { name: 'Download CSV' }, { timeout: 5000 }),
+    ).toBeVisible();
+    expect(within(dialog).getByTestId('export-status')).toHaveTextContent('10 rows exported.');
+    // following a job is not a reason to start a new one
+    expect(within(dialog).queryByRole('button', { name: 'Start again' })).not.toBeInTheDocument();
+    expect(router.replace).toHaveBeenCalledWith('/assets');
   });
 });
 

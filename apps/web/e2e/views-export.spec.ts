@@ -51,6 +51,39 @@ test.describe('saved views', () => {
     );
     await expect(range(page)).toHaveText('Showing 1-39 of 39');
     await expect(page.getByText('shared by Sam Lee')).toBeVisible();
+    // only its owner changes it, also for an administrator
+    await expect(page.getByRole('button', { name: 'Rename or share' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete view' })).toHaveCount(0);
+  });
+
+  test('shares a view with the organisation and stops sharing it', async ({ page }) => {
+    await page.goto('/assets');
+    await page.getByRole('button', { name: 'Save view' }).click();
+    const save = page.getByRole('dialog', { name: 'Save this view' });
+    await save.getByLabel(/^View name/).fill('Everything');
+    await save.getByRole('checkbox', { name: /Share with everyone/ }).click();
+    await save.getByRole('button', { name: 'Save view' }).click();
+    await expect(page.getByRole('combobox', { name: 'View' })).toContainText('Everything (shared)');
+    await page.getByRole('button', { name: 'Rename or share' }).click();
+    const edit = page.getByRole('dialog', { name: 'Edit view "Everything"' });
+    await edit.getByRole('checkbox', { name: /Share with everyone/ }).click();
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('combobox', { name: 'View' })).not.toContainText('shared');
+  });
+
+  test('refuses a second view with the same name, on the field', async ({ page }) => {
+    await page.goto('/assets');
+    for (const attempt of [1, 2]) {
+      await page.getByRole('button', { name: 'Save view' }).click();
+      const save = page.getByRole('dialog', { name: 'Save this view' });
+      await save.getByLabel(/^View name/).fill('Mine');
+      await save.getByRole('button', { name: 'Save view' }).click();
+      if (attempt === 2) {
+        await expect(save.getByText('This value is already in use.')).toBeVisible();
+      } else {
+        await expect(page.getByRole('combobox', { name: 'View' })).toContainText('Mine');
+      }
+    }
   });
 
   test('moves the views of the earlier version from this browser to the account, once', async ({
@@ -97,6 +130,18 @@ test.describe('saved views', () => {
   });
 });
 
+test.describe('exports without export:run', () => {
+  test.use({ session: MOCK_ACCOUNTS.viewer });
+
+  test('a viewer reads the lists but has no export button on any of them', async ({ page }) => {
+    for (const url of ['/assets', '/people', '/locations']) {
+      await page.goto(url);
+      await expect(page.locator('main#main')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Export CSV' })).toHaveCount(0);
+    }
+  });
+});
+
 test.describe('saved views as a viewer', () => {
   test.use({ session: MOCK_ACCOUNTS.viewer });
 
@@ -117,6 +162,22 @@ test.describe('saved views as a viewer', () => {
 });
 
 test.describe('CSV export', () => {
+  test('people and locations can be exported too, with what their lists show', async ({ page }) => {
+    await page.goto('/people');
+    await page.getByRole('button', { name: 'Export CSV' }).click();
+    let dialog = page.getByRole('dialog', { name: 'Export to CSV' });
+    await expect(dialog.getByRole('link', { name: 'Download CSV' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.keyboard.press('Escape');
+    await page.goto('/locations');
+    await page.getByRole('button', { name: 'Export CSV' }).click();
+    dialog = page.getByRole('dialog', { name: 'Export to CSV' });
+    await expect(dialog.getByRole('link', { name: 'Download CSV' })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
   test('exports what the filters show: progress, then a CSV download with those rows', async ({
     page,
   }) => {
@@ -128,13 +189,14 @@ test.describe('CSV export', () => {
     await expect(dialog.getByTestId('export-status')).toContainText(/Starting|Preparing/);
     const link = dialog.getByRole('link', { name: 'Download CSV' });
     await expect(link).toBeVisible({ timeout: 15_000 });
-    await expect(dialog.getByTestId('export-status')).toContainText('10 assets exported.');
+    await expect(dialog.getByTestId('export-status')).toContainText('10 rows exported.');
     const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
     expect(download.suggestedFilename()).toMatch(/\.csv$/);
     // the downloaded file is read through the same link (the download itself is a browser matter)
     const href = (await link.getAttribute('href'))!;
     const text = (await page.evaluate(async (url) => (await fetch(url)).text(), href)).trim();
-    const lines = text.split('\n');
+    // CRLF line ends, like the API's files
+    const lines = text.split('\r\n');
     expect(lines[0]).toBe(
       'asset_tag,name,serial,category,status,location,purchase_date,warranty_end',
     );

@@ -46,6 +46,21 @@ export const notificationsMessages = {
       hint: '"Right away" sends one e-mail per notification, "Daily summary" collects them into one e-mail a day.',
       partial: 'Some changes could not be saved. Try again.',
     },
+    rules: {
+      title: 'Notification rules',
+      description:
+        'Choose which notifications this organisation sends. A type that is off produces no notification for anybody.',
+      table: 'Notification rules by type',
+      type: 'Notification',
+      recipients: 'Who gets it',
+      roles: 'Users with the role {roles}',
+      enabled: 'On',
+      enabledNamed: 'Send {name}',
+      turnedOn: '{name} is on.',
+      turnedOff: '{name} is off.',
+      saveFailed: 'We could not change the rule.',
+      loadFailed: 'We could not load the notification rules.',
+    },
     email: {
       immediate: 'Right away',
       digest: 'Daily summary',

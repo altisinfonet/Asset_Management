@@ -1,6 +1,6 @@
 import { type Client } from '../auth/support.js';
 import type { Json } from '../lifecycle/support.js';
-import { type TenantFixture, unique } from '../registry/support.js';
+import { unique } from '../registry/support.js';
 
 export {
   type App,

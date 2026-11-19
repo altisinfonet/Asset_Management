@@ -3681,7 +3681,7 @@ export interface components {
             /** @description Actions valid for the asset in its current state and for the caller. */
             allowed_actions: ("checkout" | "checkin" | "transfer" | "update" | "open_repair")[];
             /**
-             * @description Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field. (enum property replaced by openapi-typescript)
+             * @description Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             entity_type: "asset";

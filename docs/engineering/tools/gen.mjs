@@ -598,7 +598,7 @@ S_.ScanResolveResult = obj({
   asset: S('Asset'),
   allowed_actions: arr(en(['checkout', 'checkin', 'transfer', 'update', 'open_repair']), { description: 'Actions valid for the asset in its current state and for the caller.' }),
   // M2 wave 1b (scan codes): BEGIN
-  entity_type: en(['asset'], { description: 'Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.' }),
+  entity_type: en(['asset'], { description: 'Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field.' }),
   // M2 wave 1b (scan codes): END
 }, ['match_type', 'entity_type', 'asset', 'allowed_actions']);
 

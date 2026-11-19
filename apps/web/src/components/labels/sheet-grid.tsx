@@ -8,7 +8,7 @@ import { sheetSlots, slotCell, slotsPerSheet } from '@/lib/labels/helpers';
 
 type Geometry = Pick<LabelTemplate, 'cols' | 'rows' | 'page_width_mm' | 'page_height_mm'>;
 
-const CELL_STYLE = {
+export const CELL_STYLE = {
   used: 'border-border bg-sunken text-muted [background-image:repeating-linear-gradient(135deg,transparent_0_4px,var(--color-border)_4px_5px)]',
   label: 'border-primary bg-primary-subtle text-primary-text',
   empty: 'border-dashed border-border-strong bg-surface text-muted',

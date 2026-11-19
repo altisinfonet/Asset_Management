@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
+import { cn } from '@/lib/cn';
 import { uiErrorText } from '@/lib/error-text';
 import {
   labelsApi,
@@ -47,7 +48,7 @@ import { assetsApi, type AssetListQuery } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
 import type { Asset } from '@/lib/registry/types';
 import { LabelPreview, type LabelSample } from './label-preview';
-import { SheetGrid } from './sheet-grid';
+import { CELL_STYLE, SheetGrid } from './sheet-grid';
 
 /** What to print: assets already chosen (a selection, one asset), or everything a list filter shows. */
 export type LabelsRequest =
@@ -430,7 +431,13 @@ function LabelBody({ request, onClose }: { request: LabelsRequest; onClose: () =
                   </p>
                   <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
                     {(['used', 'label', 'empty'] as const).map((state) => (
-                      <li key={state}>{t(`labels.legend.${state}`)}</li>
+                      <li key={state} className="flex items-center gap-1.5">
+                        <span
+                          aria-hidden
+                          className={cn('size-3.5 shrink-0 rounded-sm border', CELL_STYLE[state])}
+                        />
+                        {t(`labels.legend.${state}`)}
+                      </li>
                     ))}
                   </ul>
                 </>

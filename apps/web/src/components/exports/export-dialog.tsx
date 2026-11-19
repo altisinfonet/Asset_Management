@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { FormError } from '@/components/auth/form-error';
@@ -43,6 +43,7 @@ export function ExportDialog({
   query: AssetListQuery;
 }) {
   const { t, formatDateTime } = useI18n();
+  const client = useQueryClient();
   const [job, setJob] = useState<ExportJob | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -85,6 +86,12 @@ export function ExportDialog({
   const ready = current?.status === 'ready' && !!current.download_url;
   const pollError = polled.error ? getApi().toUiError(polled.error) : null;
   const shownError = error ?? pollError;
+
+  // a finished export raises an `export.ready` notification: the bell reads again
+  const finishedStatus = current?.status;
+  useEffect(() => {
+    if (finishedStatus === 'ready') void client.invalidateQueries({ queryKey: ['notifications'] });
+  }, [finishedStatus, client]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

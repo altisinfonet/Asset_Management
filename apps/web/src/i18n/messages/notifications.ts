@@ -12,7 +12,7 @@ export const notificationsMessages = {
     panelDescription: 'What happened that you may want to act on.',
     markAllRead: 'Mark all as read',
     markRead: 'Mark as read',
-    markReadNamed: 'Mark "{title}" as read',
+    markReadNamed: 'Mark as read: {title}',
     allMarked: 'All notifications marked as read.',
     markFailed: 'We could not update the notification.',
     unread: 'Unread',

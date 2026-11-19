@@ -9,5 +9,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
+    // long screen flows (type, save, reload) take more than the 5 s default when the suite runs in parallel
+    testTimeout: 15_000,
   },
 });

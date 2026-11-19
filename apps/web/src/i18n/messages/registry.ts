@@ -137,7 +137,6 @@ export const registryMessages = {
       purchase: 'Purchase',
       customFields: 'Fields for {category}',
     },
-    tabPlaceholder: 'This tab arrives in a later milestone.',
     copyTag: 'Copy tag',
     clone: 'Clone',
     restore: 'Restore',

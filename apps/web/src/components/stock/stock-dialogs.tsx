@@ -32,7 +32,12 @@ import { adjustmentDelta, outstanding, parseCount } from '@/lib/stock/helpers';
 
 const useStockRefresh = () => {
   const client = useQueryClient();
-  return () => client.invalidateQueries({ queryKey: ['stock'] });
+  // a movement below the minimum raises a `stock.low` notification: the bell reads again
+  return () =>
+    Promise.all([
+      client.invalidateQueries({ queryKey: ['stock'] }),
+      client.invalidateQueries({ queryKey: ['notifications'] }),
+    ]);
 };
 
 function QuantityField({

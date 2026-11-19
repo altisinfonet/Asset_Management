@@ -302,7 +302,7 @@ function buildSeed(): W2Data {
       {
         id: w2Id('view', 1),
         entity: 'asset',
-        name: 'Laptops',
+        name: 'Teacher devices',
         shared: true,
         owner_user_id: MANAGER_ID,
         owner_name: 'Sam Lee',

@@ -33,9 +33,10 @@ describe('AssetsTable: saved views on the server', () => {
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.click(await viewSelect());
-    await user.click(await screen.findByRole('option', { name: 'Laptops (shared)' }));
-    await waitFor(() =>
-      expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-39 of 39'),
+    await user.click(await screen.findByRole('option', { name: 'Teacher devices (shared)' }));
+    await waitFor(
+      () => expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-39 of 39'),
+      { timeout: 5000 },
     );
     expect(screen.queryByRole('columnheader', { name: 'Assigned to' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Location' })).toBeVisible();
@@ -49,7 +50,7 @@ describe('AssetsTable: saved views on the server', () => {
     const first = renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
-    await screen.findByText('Showing 1-10 of 10');
+    await screen.findByText('Showing 1-10 of 10', {}, { timeout: 5000 });
     await user.click(screen.getByRole('button', { name: 'Save view' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save this view' });
     expect(dialog).toHaveTextContent('to your account');
@@ -64,8 +65,9 @@ describe('AssetsTable: saved views on the server', () => {
     await loaded();
     await user.click(await viewSelect());
     await user.click(await screen.findByRole('option', { name: 'Projectors' }));
-    await waitFor(() =>
-      expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-10 of 10'),
+    await waitFor(
+      () => expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-10 of 10'),
+      { timeout: 5000 },
     );
     expect(screen.getByPlaceholderText('Tag, serial or name')).toHaveValue('PRJ-');
   });
@@ -94,7 +96,7 @@ describe('AssetsTable: saved views on the server', () => {
 
     // narrow the list, then update the view with it
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'TAB-');
-    await screen.findByText('Showing 1-19 of 19');
+    await screen.findByText('Showing 1-19 of 19', {}, { timeout: 5000 });
     await user.click(screen.getByRole('button', { name: 'Update view' }));
     expect(
       await screen.findByText('View "All kit" now uses the current search, filters and columns.'),
@@ -107,7 +109,7 @@ describe('AssetsTable: saved views on the server', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('View deleted.')).toBeVisible();
     await waitFor(async () =>
-      expect((await savedViewsApi.list()).map((v) => v.name)).toEqual(['Laptops']),
+      expect((await savedViewsApi.list()).map((v) => v.name)).toEqual(['Teacher devices']),
     );
     expect(await viewSelect()).toHaveTextContent('All assets');
   });
@@ -135,9 +137,10 @@ describe('AssetsTable: saved views on the server', () => {
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.click(await viewSelect());
-    await user.click(await screen.findByRole('option', { name: 'Laptops (shared)' }));
-    await waitFor(() =>
-      expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-39 of 39'),
+    await user.click(await screen.findByRole('option', { name: 'Teacher devices (shared)' }));
+    await waitFor(
+      () => expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-39 of 39'),
+      { timeout: 5000 },
     );
     expect(screen.queryByRole('button', { name: 'Rename or share' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete view' })).not.toBeInTheDocument();
@@ -168,8 +171,9 @@ describe('AssetsTable: saved views on the server', () => {
     expect(warning).toBeVisible();
     expect(screen.getByText('They were left out of the filters: a status.')).toBeVisible();
     // the category part still applies: the 19 live tablets, not zero and not everything
-    await waitFor(() =>
-      expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-19 of 19'),
+    await waitFor(
+      () => expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-19 of 19'),
+      { timeout: 5000 },
     );
     await expectNoA11yViolations(document.body);
   });
@@ -197,7 +201,7 @@ describe('AssetsTable: saved views on the server', () => {
     expect(window.localStorage.getItem(SAVED_VIEWS_KEY)).toBeNull();
     expect(window.localStorage.getItem(MIGRATED_KEY)).toBeTruthy();
     const names = (await savedViewsApi.list()).map((v) => v.name).sort();
-    expect(names).toEqual(['Laptops', 'Old laptops', 'Old tablets']);
+    expect(names).toEqual(['Old laptops', 'Old tablets', 'Teacher devices']);
     first.unmount();
 
     // a second load finds nothing left to move, so nothing is duplicated
@@ -247,7 +251,7 @@ describe('AssetsTable: CSV export and labels', () => {
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
-    await screen.findByText('Showing 1-10 of 10');
+    await screen.findByText('Showing 1-10 of 10', {}, { timeout: 5000 });
     await user.click(screen.getByRole('button', { name: 'Export CSV' }));
     const dialog = await screen.findByRole('dialog', { name: 'Export to CSV' });
     expect(
@@ -301,7 +305,7 @@ describe('AssetsTable: CSV export and labels', () => {
     renderApp(<AssetsTable />, { workflows: true });
     await loaded();
     await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
-    await screen.findByText('Showing 1-10 of 10');
+    await screen.findByText('Showing 1-10 of 10', {}, { timeout: 5000 });
     await user.click(screen.getByRole('button', { name: 'Print labels for this filter' }));
     let dialog = await screen.findByRole('dialog', { name: 'Print labels' });
     await waitFor(() =>

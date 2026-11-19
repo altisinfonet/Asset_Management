@@ -71,7 +71,7 @@ describe('NotificationBell', () => {
     const panel = await screen.findByRole('dialog', { name: 'Notifications' });
     await user.click(
       await within(panel).findByRole('button', {
-        name: 'Mark "Import finished: 120 assets created" as read',
+        name: 'Mark as read: Import finished: 120 assets created',
       }),
     );
     // the panel is modal, so the bell behind it is hidden from the accessibility tree
@@ -84,7 +84,7 @@ describe('NotificationBell', () => {
     await waitFor(() => expect(screen.queryByTestId('notification-count')).not.toBeInTheDocument());
     expect(within(panel).getByRole('button', { name: 'Mark all as read' })).toBeDisabled();
     expect(
-      within(panel).queryByRole('button', { name: /^Mark ".*" as read$/ }),
+      within(panel).queryByRole('button', { name: /^Mark as read: / }),
     ).not.toBeInTheDocument();
   });
 

@@ -553,7 +553,7 @@ describe('mock saved views', () => {
   it('shows own views and shared ones; sharing needs view:share', async () => {
     seedSession(MOCK_ACCOUNTS.viewer);
     const before = await savedViewsApi.list();
-    expect(before.map((v) => v.name)).toEqual(['Laptops']);
+    expect(before.map((v) => v.name)).toEqual(['Teacher devices']);
     expect(before[0]).toMatchObject({ shared: true, owner_name: 'Sam Lee' });
 
     const mine = await savedViewsApi.create({ name: 'My view', shared: false, definition });
@@ -566,14 +566,14 @@ describe('mock saved views', () => {
     seedSession(MOCK_ACCOUNTS.manager);
     const managers = await savedViewsApi.list();
     // the viewer's personal view is not visible to others
-    expect(managers.map((v) => v.name)).toEqual(['Laptops']);
+    expect(managers.map((v) => v.name)).toEqual(['Teacher devices']);
     const shared = await savedViewsApi.create({ name: 'Everyone', shared: true, definition });
     expect(shared.shared).toBe(true);
     seedSession(MOCK_ACCOUNTS.viewer);
     expect((await savedViewsApi.list()).map((v) => v.name)).toEqual([
       'My view',
       'Everyone',
-      'Laptops',
+      'Teacher devices',
     ]);
   });
 
@@ -589,7 +589,7 @@ describe('mock saved views', () => {
     const denied = await fails(savedViewsApi.remove(shared.id));
     expect(denied.status).toBe(403);
     await savedViewsApi.remove(a.id);
-    expect((await savedViewsApi.list()).map((v) => v.name)).toEqual(['Laptops']);
+    expect((await savedViewsApi.list()).map((v) => v.name)).toEqual(['Teacher devices']);
     const gone = await fails(savedViewsApi.remove(a.id));
     expect(gone.status).toBe(404);
   });

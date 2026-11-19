@@ -1,0 +1,77 @@
+import type { OutboxDelivery } from '../outbox/index.js';
+import type { Tx } from '../tenancy/index.js';
+
+/**
+ * Who a subscription notifies, resolved under RLS in the relay's transaction. A resolver returns USER
+ * ids (login accounts); an empty list means "nobody to tell" and is not an error. Combine the
+ * constructors below in `subscriptions.ts`.
+ */
+export type RecipientResolver = (event: OutboxDelivery, tx: Tx) => Promise<string[]>;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const idOf = (value: unknown): string | null =>
+  typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : null;
+
+/** The user named by one of the payload keys (the first present one wins). */
+export const payloadUser =
+  (...keys: string[]): RecipientResolver =>
+  async (event) => {
+    for (const key of keys) {
+      const id = idOf(event.payload[key]);
+      if (id) return [id];
+    }
+    return [];
+  };
+
+/** The login of the person named by a payload key (a person without a login is nobody to notify). */
+export const loginOfPerson =
+  (key: string): RecipientResolver =>
+  async (event, tx) => {
+    const personId = idOf(event.payload[key]);
+    if (!personId) return [];
+    const person = await tx.person.findUnique({
+      where: { id: personId },
+      select: { user_id: true },
+    });
+    return person?.user_id ? [person.user_id] : [];
+  };
+
+/** Active users that hold `permission` through any role (`*` and `resource:*` count). */
+export const holdersOf =
+  (permission: string): RecipientResolver =>
+  (_event, tx) =>
+    usersWithPermission(tx, permission);
+
+export async function usersWithPermission(tx: Tx, permission: string): Promise<string[]> {
+  const grants = ['*', permission, `${permission.split(':')[0]}:*`];
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    select distinct u.id
+      from app.user_account u
+      join app.role_assignment ra on ra.tenant_id = u.tenant_id and ra.user_id = u.id
+      join app.role r on r.tenant_id = ra.tenant_id and r.id = ra.role_id
+     where u.status = 'active' and u.archived_at is null
+       and r.permissions && ${grants}::text[]`;
+  return rows.map((r) => r.id);
+}
+
+/** Active users that hold one of the roles (by role key); used when an administrator re-addresses a type. */
+export async function usersWithRoles(tx: Tx, roleKeys: readonly string[]): Promise<string[]> {
+  if (roleKeys.length === 0) return [];
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    select distinct u.id
+      from app.user_account u
+      join app.role_assignment ra on ra.tenant_id = u.tenant_id and ra.user_id = u.id
+      join app.role r on r.tenant_id = ra.tenant_id and r.id = ra.role_id
+     where u.status = 'active' and u.archived_at is null
+       and r.key = any(${[...roleKeys]}::text[])`;
+  return rows.map((r) => r.id);
+}
+
+/** A recipient list that is the union of several resolvers (duplicates folded). */
+export const anyOf =
+  (...resolvers: RecipientResolver[]): RecipientResolver =>
+  async (event, tx) => {
+    const all = new Set<string>();
+    for (const resolve of resolvers) for (const id of await resolve(event, tx)) all.add(id);
+    return [...all];
+  };

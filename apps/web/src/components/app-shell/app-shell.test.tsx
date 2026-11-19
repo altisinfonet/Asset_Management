@@ -53,6 +53,28 @@ describe('AppShell navigation', () => {
     expect(within(viewerNav).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
+  it('offers accessories and repairs by permission, with the notification bell in the top bar', async () => {
+    const owner = await renderShell(MOCK_ACCOUNTS.owner);
+    const nav = screen.getAllByRole('navigation', { name: 'Primary' })[0]!;
+    expect(within(nav).getByRole('link', { name: 'Accessories and consumables' })).toHaveAttribute(
+      'href',
+      '/stock',
+    );
+    expect(within(nav).getByRole('link', { name: 'Repairs' })).toHaveAttribute('href', '/repairs');
+    expect(await screen.findByRole('button', { name: 'Notifications, 3 unread' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'User menu' }));
+    expect(await screen.findByRole('menuitem', { name: 'Notification settings' })).toHaveAttribute(
+      'href',
+      '/account/notifications',
+    );
+    owner.unmount();
+
+    // a viewer reads both (every built-in role holds the read permissions)
+    await renderShell(MOCK_ACCOUNTS.viewer);
+    const viewerNav = screen.getAllByRole('navigation', { name: 'Primary' })[0]!;
+    expect(within(viewerNav).getByRole('link', { name: 'Repairs' })).toBeVisible();
+  });
+
   it('sign out ends the session and returns to the login screen with a notice', async () => {
     await renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'User menu' }));

@@ -44,10 +44,17 @@ import {
   splitCustomFieldParams,
 } from './asset-queries.js';
 import { AssetTagService, tagExists } from './asset-tags.js';
+import { ScanResolverRegistry } from './scan-resolvers.js';
 import { ScanResolveThrottle } from './scan-throttle.js';
 import { mergeCustomData, missingRequired, validateProvided } from './custom-fields.js';
 import { categoryDto, locationDto, modelDto, vendorDto } from './dto.js';
-import { RegistryBase, duplicate, invalidRef, stalePrecondition } from './registry-base.js';
+import {
+  RegistryBase,
+  type TxScope,
+  duplicate,
+  invalidRef,
+  stalePrecondition,
+} from './registry-base.js';
 import { inSavepoint } from './savepoint.js';
 import {
   type AssetCreate,
@@ -107,6 +114,7 @@ export class AssetsFacade extends RegistryBase {
     @Inject(OUTBOX_PUBLISHER) outbox: OutboxPublisher,
     private readonly tags: AssetTagService,
     private readonly scanThrottle: ScanResolveThrottle,
+    private readonly scanResolvers: ScanResolverRegistry,
   ) {
     super(tenancy, audit, outbox);
   }
@@ -125,9 +133,22 @@ export class AssetsFacade extends RegistryBase {
 
   /** `GET /v1/assets`: filters, `cf[key]`, sort, keyset cursor, optional total. */
   async list(
-    auth: AuthContext,
+    auth: TxScope,
     rawQuery: Record<string, unknown>,
   ): Promise<Page<Record<string, unknown>>> {
+    const { query, cf } = this.parseListQuery(rawQuery);
+    return this.listParsed(auth, query, cf);
+  }
+
+  /**
+   * Validates the query string of the asset list (the same rules as `GET /v1/assets`) and returns the
+   * parsed filters and the custom-field filters; throws the `400` problem the endpoint would answer.
+   * An export validates its filters with it when it is requested and again when it runs.
+   */
+  parseListQuery(rawQuery: Record<string, unknown>): {
+    query: AssetListQuery;
+    cf: Array<{ key: string; raw: string }>;
+  } {
     const { rest, cf } = splitCustomFieldParams(rawQuery);
     for (const name of M2_ONLY_ASSET_FILTERS) {
       if (rest[name] !== undefined) {
@@ -151,11 +172,11 @@ export class AssetsFacade extends RegistryBase {
         })),
       });
     }
-    return this.listParsed(auth, parsed.data, cf);
+    return { query: parsed.data, cf };
   }
 
   async listParsed(
-    auth: AuthContext,
+    auth: TxScope,
     q: AssetListQuery,
     cfRaw: Array<{ key: string; raw: string }>,
   ): Promise<Page<Record<string, unknown>>> {
@@ -327,7 +348,10 @@ export class AssetsFacade extends RegistryBase {
         }
         if (row) break;
       }
-      if (!row) return null;
+      if (!row) {
+        // [M2-W2 ACC] labelled records of other modules (accessories, consumables)
+        return this.scanResolvers.resolve(auth, trx, candidates);
+      }
       // Actions valid in the asset's current state AND for the caller (contract order).
       const allowed: string[] = [];
       const state = {
@@ -341,6 +365,7 @@ export class AssetsFacade extends RegistryBase {
       if (may('checkin', 'asset:checkin')) allowed.push('checkin');
       if (may('transfer', 'asset:transfer')) allowed.push('transfer');
       if (may('update', 'asset:update')) allowed.push('update');
+      if (may('open_repair', 'repair:manage')) allowed.push('open_repair');
       return {
         data: {
           match_type: matchType,
@@ -354,7 +379,7 @@ export class AssetsFacade extends RegistryBase {
     if (!found) {
       // Misses (and only misses) are counted: see ScanResolveThrottle.
       await this.scanThrottle.recordMiss(auth);
-      throw problem.notFound('No asset matches this code.');
+      throw problem.notFound('No record matches this code.');
     }
     return found;
   }
@@ -769,6 +794,8 @@ export class AssetsFacade extends RegistryBase {
       if (open && open.n > 0n) {
         throw problem.conflict('The asset is checked out. Check it in before archiving it.');
       }
+      await this.assertNoOpenRepair(trx, current.id, 'archiving it');
+      await this.assertNoOpenAccessoryAssignments(trx, current.id, 'archiving it');
     }
     // Restoring a DISPOSED asset takes it back for real: the disposal record is cleared and an
     // archived-type status moves to the tenant default (so it is not "retired" yet active).
@@ -921,6 +948,42 @@ export class AssetsFacade extends RegistryBase {
   }
 
   /** `POST /v1/assets/{id}/dispose` (M2-LIFE-05): archived-type status + archive + disposal record. */
+  /** M2-MNT-01: an asset with an open repair cannot be archived or disposed of (complete or cancel it first). */
+  private async assertNoOpenRepair(trx: Tx, assetId: string, doing: string): Promise<void> {
+    const [repairs] = await trx.$queryRaw<Array<{ n: bigint }>>`
+      select count(*) as n from app.maintenance_record
+       where asset_id = ${assetId}::uuid and status in ('open', 'in_progress') and archived_at is null`;
+    if (repairs && repairs.n > 0n) {
+      throw problem.conflict(
+        `The asset has an open repair. Complete or cancel it before ${doing}.`,
+      );
+    }
+  }
+
+  /**
+   * M2-ACC-02 (wave-1 gap): accessories checked out TO this asset (a charger issued to a laptop) are
+   * still out while the asset is archived or disposed of, so the units would never come back. 409 with
+   * the usage; check the accessories in first.
+   */
+  private async assertNoOpenAccessoryAssignments(
+    trx: Tx,
+    assetId: string,
+    doing: string,
+  ): Promise<void> {
+    const [open] = await trx.$queryRaw<Array<{ assignments: bigint; units: bigint }>>`
+      select count(*) as assignments, coalesce(sum(quantity - quantity_returned), 0) as units
+        from app.assignment
+       where target_asset_id = ${assetId}::uuid and accessory_id is not null and checked_in_at is null`;
+    if (open && open.assignments > 0n) {
+      const usage = { accessory_assignments: Number(open.assignments), units: Number(open.units) };
+      throw new ApiProblem({
+        code: 'conflict',
+        detail: `${usage.units} accessory unit(s) in ${usage.accessory_assignments} open assignment(s) are checked out to this asset. Check them in before ${doing}.`,
+        extensions: { usage },
+      });
+    }
+  }
+
   async dispose(
     auth: AuthContext,
     id: string,
@@ -932,6 +995,8 @@ export class AssetsFacade extends RegistryBase {
       if (!current) throw problem.notFound('Asset not found.');
       assertIfMatch(ifMatch, current.version);
       assertAssetAction('dispose', this.stateOf(current));
+      await this.assertNoOpenRepair(trx, current.id, 'disposing of it');
+      await this.assertNoOpenAccessoryAssignments(trx, current.id, 'disposing of it');
       const status = await this.statusOfType(trx, 'archived', body.status_id);
       const disposedOn = body.disposed_on
         ? new Date(`${body.disposed_on}T00:00:00Z`)

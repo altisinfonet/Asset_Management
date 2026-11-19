@@ -31,10 +31,17 @@ export const FACADE_MODULES = [
   'locations',
   'people',
   'lifecycle',
+  'stock',
   'openapi',
   'storage',
   'scanner',
   'files',
+  'tagging',
+  // M2 wave 2 (repairs, notifications, saved views, exports)
+  'maintenance',
+  'notifications',
+  'views',
+  'exports',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [
@@ -64,6 +71,7 @@ export const DOMAIN_DIRS = [
   'people',
   'files',
   'lifecycle',
+  'stock',
   'tagging',
   'licenses',
   'maintenance',
@@ -75,6 +83,10 @@ export const DOMAIN_DIRS = [
   'workflow',
   'relationships',
   'ai',
+  // M2 wave 2
+  'notifications',
+  'views',
+  'exports',
 ];
 /** Application-level code that wires modules together. */
 export const APP_DIRS = ['bootstrap', 'seed', 'cli', 'health'];

@@ -30,6 +30,9 @@ export interface AssignmentRow {
 export interface AssignmentExtras {
   asset_tag?: string | null;
   asset_name?: string | null;
+  /** [M2-W2 ACC] accessory assignments */
+  accessory_name?: string | null;
+  target_name?: string | null;
 }
 
 /** `YYYY-MM-DD` of today in UTC: the "today" of the overdue rule (the SQL side uses the same day). */
@@ -65,6 +68,8 @@ export function assignmentDto(r: AssignmentRow, extras: AssignmentExtras = {}) {
     overdue: r.checked_in_at === null && due !== null && due < todayUtc(),
     ...(extras.asset_tag !== undefined ? { asset_tag: extras.asset_tag } : {}),
     ...(extras.asset_name !== undefined ? { asset_name: extras.asset_name } : {}),
+    ...(extras.accessory_name !== undefined ? { accessory_name: extras.accessory_name } : {}),
+    ...(extras.target_name !== undefined ? { target_name: extras.target_name } : {}),
   };
 }
 
@@ -80,12 +85,16 @@ export async function loadAssignment(trx: Tx, id: string): Promise<AssignmentRow
 }
 
 /**
- * One page of assignments, newest first (`checked_out_at desc, id desc`), for either an asset or a
- * person. Rows carry the asset's tag and name for display.
+ * One page of assignments, newest first (`checked_out_at desc, id desc`), for an asset, a person or an
+ * accessory. Rows carry the asset's tag and name (or the accessory's name and, in an accessory's own
+ * list, the holder's name) for display. A person's list holds asset AND accessory assignments.
  */
 export async function listAssignments(
   trx: Tx,
-  scope: { assetId: string } | { personId: string; state: 'open' | 'closed' | 'all' },
+  scope:
+    | { assetId: string }
+    | { personId: string; state: 'open' | 'closed' | 'all' }
+    | { accessoryId: string; state: 'open' | 'closed' | 'all' },
   query: { cursor?: string | undefined; limit: number },
 ): Promise<Page<ReturnType<typeof assignmentDto>>> {
   const filters = 'assetId' in scope ? { assetId: scope.assetId } : scope;
@@ -93,10 +102,12 @@ export async function listAssignments(
   const where: Prisma.Sql[] = [];
   if ('assetId' in scope) where.push(Prisma.sql`s.asset_id = ${scope.assetId}::uuid`);
   else {
-    where.push(Prisma.sql`s.person_id = ${scope.personId}::uuid`);
+    if ('personId' in scope) where.push(Prisma.sql`s.person_id = ${scope.personId}::uuid`);
+    else where.push(Prisma.sql`s.accessory_id = ${scope.accessoryId}::uuid`);
     if (scope.state === 'open') where.push(Prisma.sql`s.checked_in_at is null`);
     if (scope.state === 'closed') where.push(Prisma.sql`s.checked_in_at is not null`);
   }
+  const forAccessory = 'accessoryId' in scope;
   if (cur.after) {
     where.push(
       Prisma.sql`(s.checked_out_at, s.id) < (${cur.after.ts}::timestamptz, ${cur.after.id}::uuid)`,
@@ -105,14 +116,21 @@ export async function listAssignments(
   type Row = AssignmentRow & {
     asset_tag: string | null;
     asset_name: string | null;
+    accessory_name: string | null;
+    target_name: string | null;
     k0: string;
     k1: string;
   };
   const rows = await trx.$queryRaw<Row[]>`
-    select ${ASSIGNMENT_COLUMNS}, a.asset_tag, a.name as asset_name,
+    select ${ASSIGNMENT_COLUMNS}, a.asset_tag, a.name as asset_name, ac.name as accessory_name,
+           coalesce(tp.display_name, tl.name, nullif(concat_ws(' ', ta.asset_tag, ta.name), '')) as target_name,
            ${Prisma.raw(tsText('s.checked_out_at'))} as k0, s.id::text as k1
       from app.assignment s
       left join app.asset a on a.tenant_id = s.tenant_id and a.id = s.asset_id
+      left join app.accessory ac on ac.tenant_id = s.tenant_id and ac.id = s.accessory_id
+      left join app.person tp on tp.tenant_id = s.tenant_id and tp.id = s.person_id
+      left join app.location tl on tl.tenant_id = s.tenant_id and tl.id = s.location_id
+      left join app.asset ta on ta.tenant_id = s.tenant_id and ta.id = s.target_asset_id
      where ${Prisma.join(where, ' and ')}
      order by s.checked_out_at desc, s.id desc
      limit ${query.limit + 1}`;
@@ -120,7 +138,14 @@ export async function listAssignments(
   const page = hasMore ? rows.slice(0, query.limit) : rows;
   const last = page.at(-1);
   return {
-    data: page.map((r) => assignmentDto(r, { asset_tag: r.asset_tag, asset_name: r.asset_name })),
+    data: page.map((r) =>
+      assignmentDto(r, {
+        asset_tag: r.asset_tag,
+        asset_name: r.asset_name,
+        ...(r.accessory_id ? { accessory_name: r.accessory_name } : {}),
+        ...(forAccessory ? { target_name: r.target_name } : {}),
+      }),
+    ),
     page: {
       next_cursor: hasMore && last ? nextTsIdCursor(cur.binding, last) : null,
       has_more: hasMore,

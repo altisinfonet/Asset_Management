@@ -785,22 +785,26 @@ Status: done (M2 wave 1) - reusable attachments panel and upload slot (progress,
 
 #### M2-ACC-01 - Accessories
 Size: L - Owner: Claude - Deps: M2-LIFE-01, M1-REG-01
+Status: done (M2 wave 2, ADR 0008; integrated) - migration 0080, `/v1/accessories` with check-out and partial returns on `app.assignment`, derived availability, label codes for scan resolve; an asset that still holds accessory units cannot be archived or disposed of (409 with the usage); the screens are M2-ACC-04.
 - [ ] `accessory` table (category kind=accessory, total quantity, minimum quantity, location, purchase info); checkout/checkin of N units to a person, location or asset using `assignment.quantity`; remaining quantity derived transactionally.
 - [ ] Over-checkout is refused (409); concurrent checkouts never exceed stock (test).
 - [ ] Audit and events; list API shows total, checked out, available.
 
 #### M2-ACC-02 - Consumables
 Size: L - Owner: Claude - Deps: M1-REG-01, M2-LOC-01
+Status: done (M2 wave 2, ADR 0008; integrated) - `/v1/consumables`, append-only ledger with a trigger-maintained balance, `GET /v1/people/{id}/stock-movements`; per-location stock is not built (one home location per consumable).
 - [ ] `consumable` and append-only `stock_movement` ledger (receive, consume, adjust) with actor, note, optional assignee; on-hand quantity derived from the ledger and protected by a non-negative CHECK.
 - [ ] Minimum-stock threshold per consumable; consume log queryable per consumable and per person.
 - [ ] Concurrent consumes cannot drive stock negative (test).
 
 #### M2-ACC-03 - Minimum-stock alerts
 Size: S - Owner: Claude - Deps: M2-ACC-02, M2-NOT-01
+Status: done (M2 wave 2, integrated) - the events `consumable.low_stock` {consumableId, movementId?} and `accessory.low_stock` {accessoryId, assignmentId?} (ids only, once per crossing, re-armed on restock) notify the stock managers (holders of `consumable:manage` / `accessory:manage`, or the roles an administrator picks) in-app and by email (digest by default); the notification links to the stock item. Covered by an API e2e (a real issue below the minimum) and the real-stack e2e (bell and Mailpit). The event types are `consumable.low_stock` / `accessory.low_stock`, not the placeholder `stock.low` of the criterion.
 - [ ] Crossing below minimum emits `stock.low` once per crossing (not per movement); the notification goes to subscribed roles in-app and by email, and is folded into the daily digest.
 
 #### M2-ACC-04 - Accessories and consumables UI
 Size: L - Owner: Both - Deps: M2-ACC-01, M2-ACC-02, M2-USR-02
+Status: done (M2 wave 2) - `/stock` (accessories and consumables, low-stock filter), `/stock/view`, check-out / check-in with quantities, receive / issue / return / adjust (note required), movement history, holders from `Assignment.target_name`; axe in light and dark, mock and real-stack e2e.
 - [ ] List/detail/create/edit for both; quantity-aware checkout/checkin and consume/receive/adjust dialogs; movement history.
 - [ ] Low-stock indicators and filter; usable at 375 px.
 
@@ -834,6 +838,7 @@ Size: S - Owner: Both - Deps: M2-LOAN-02
 
 #### M2-MNT-01 - Repair and maintenance records
 Size: L - Owner: Claude - Deps: M1-REG-05, M2-FILE-01
+Status: done (2026-11-19, ADR 0009, contract tag Repairs; screens in M2-MNT-02). Forcing a checked-out asset into repair needs `force_checkin`, a note, an in-repair status and `asset:checkin`.
 - [ ] `maintenance_record` tenant table: asset, opened/closed dates, type (repair, maintenance, inspection note), description, cost (minor units + currency), vendor, status open/closed, attachments.
 - [ ] Opening a repair optionally moves the asset to an in-repair status (and blocks check-out); closing restores a chosen status; both write history, audit and events.
 - [ ] CRUD API and filters (open, by asset, by vendor, date range); total repair cost per asset exposed.
@@ -841,6 +846,7 @@ Size: L - Owner: Claude - Deps: M1-REG-05, M2-FILE-01
 
 #### M2-MNT-02 - Repair log UI
 Size: M - Owner: Both - Deps: M2-MNT-01, M2-FILE-04
+Status: done (M2 wave 2) - `/repairs` (open repairs list), the Repairs tab on the asset page with the cost total from `GET /v1/assets/{id}/repair-summary`, open / complete dialogs with status restore; mock and real-stack e2e. Not in the UI: `force_checkin` / `force_note` (the API explanation is shown for a checked-out asset).
 - [ ] Repair tab on the asset page; "open repairs" list screen; cost totals; attachment support.
 
 ### E2.7 Codes and labels
@@ -854,6 +860,7 @@ Size: M - Owner: Claude - Deps: M1-REG-05, M1-REG-08
 
 #### M2-TAG-02 - Label rendering worker
 Size: L - Owner: Claude - Deps: M2-TAG-01, M2-FILE-01
+Status: done (M2 wave 2, ADR 0007) - `POST /v1/labels/batches` (explicit ids or the list filter, template, start position, copies, QR and/or Code128, fields, optional logo) queues `label.render`; the worker renders the PDF with pdfkit + bwip-js, stores it through the StorageAdapter and emits `label.batch.ready` (or `label.batch.failed`); polling and presigned download on `GET /v1/labels/batches/{id}`; six fixed templates (the three asked for plus Avery 5163, A4 24-up and a 50 x 25 mm page) with calibration offsets (`PATCH /v1/labels/templates/{id}`). 500 labels render in about 2 s; sampled pages are rasterised and every QR and Code128 decoded back in the tests. The PDF is kept on `label_batch` (7 days), not in `attachment` (ADR 0007 section 3). Open: die-line geometry is unverified until M2-TAG-04.
 - [ ] Worker job renders QR and Code128 (bwip-js or equivalent) into PDF sheets with fixed templates (at least Avery 5160 Letter 30-up, A4 3x8, and a single-label 2x1 inch page for thermal/roll printers), with per-template offset calibration values.
 - [ ] Label content: tag, asset name, organisation name, optional logo; text auto-shrinks to fit.
 - [ ] A 500-label job completes under 30 s and is written as an attachment (tenant-scoped, short-lived download).
@@ -861,6 +868,7 @@ Size: L - Owner: Claude - Deps: M2-TAG-01, M2-FILE-01
 
 #### M2-TAG-03 - Label generation UI
 Size: M - Owner: Both - Deps: M2-TAG-02, M1-WEB-07
+Status: done (M2 wave 2) - the print dialog on the assets list (selection or current filter): template, start position, QR / Code128 and fields; asynchronous: POST 202, polling, presigned download, failed and expired states, and a notification when the batch is ready or failed. Open: copies, outlines and logo are API-only so far; the per-asset reprint history is the `label_printed` history event.
 - [ ] Select assets in the list (or a saved filter), choose template and start position on a partly used sheet, generate; progress and download.
 - [ ] Reprint history per asset (who printed when).
 
@@ -932,21 +940,25 @@ Size: M - Owner: Both - Deps: M2-IMP-05, F-09
 
 #### M2-NOT-01 - Notification module
 Size: L - Owner: Claude - Deps: M1-PLAT-05, M1-PLAT-09
+Status: done (2026-11-19, ADR 0009; integrated): `NOTIFIER` port, outbox subscriber table (`notifications/subscriptions.ts`), preferences, rules, delivery log, daily digest. Wired to the real payloads: `attachment.infected`, `asset.checked_out`, `export.completed`, `consumable.low_stock`, `accessory.low_stock`, `label.batch.ready`, `label.batch.failed`; `loan.overdue` / `loan.due_soon` / `import.completed` have their type and text and need a subscription entry when their producers exist. Repairs write history events, not notifications. In-app texts are English only.
 - [ ] `notification_rule` and `notification` tenant tables; outbox subscribers create in-app notifications and send email via `MailAdapter` through worker jobs; per-user preferences (immediate, daily digest, off) per event type.
 - [ ] Throttling and de-duplication (one digest of 50 items, not 50 emails); a delivery log is visible to admins through the API.
 - [ ] Event types registered by modules (`stock.low`, `loan.overdue`, `import.completed`, `attachment.infected`), localised templates (English).
 
 #### M2-NOT-02 - Notification UI
 Size: M - Owner: Both - Deps: M2-NOT-01, M1-WEB-04
+Status: done (M2 wave 2) - bell with unread count (`/v1/notifications/unread-count`), list, mark read / all, preferences at Account > Notifications, the administrators' rules screen at Settings > Notifications; the delivery-log view is not built (API only).
 - [ ] Notification bell with unread count, list, mark read/all; user preferences screen; admin delivery-log view.
 
 #### M2-REG-01 - Saved views
 Size: M - Owner: Both - Deps: M1-WEB-07
+Status: done (2026-11-19, ADR 0009, tag Views; integrated) - the assets list saves, renames, shares (`PUT /v1/saved-views/{id}/sharing`, needs `view:share`) and applies server-side views with If-Match.
 - [ ] `saved_view` per user (filters, columns, sort), optionally shared tenant-wide with a `view:share` permission; API and UI to save, rename, delete and apply views on the asset list.
 - [ ] Views referencing deleted fields/statuses degrade gracefully with a warning.
 
 #### M2-REG-02 - List export to CSV
 Size: M - Owner: Claude - Deps: M1-REG-07, M1-PLAT-06
+Status: done (2026-11-19, ADR 0009, tag Exports; integrated) - export of assets, people and locations from their lists (permission `export:run`), job, notification and short-lived download; the importer must call `stripFormulaGuard` on text cells for the round trip (the importer story owns that test).
 - [ ] Any asset/people/location list (with current filters) can be exported to CSV through a worker job and a short-lived download; permission-gated and audited as a sensitive read.
 - [ ] Exported files re-import cleanly through the importer (round-trip test).
 
@@ -975,6 +987,7 @@ Size: S - Owner: Claude - Deps: M2-IMP-08, M2-TAG-03, M2-LOAN-02
 
 #### M2-AUTH-01 - Expose the MFA policy to the client
 Size: S - Owner: Claude - Deps: M1-AUTH-04
+Status: done (2026-11-19) - contract, API, client and the Security page ("Turn off" disabled with the explanation when the policy requires it); mock, unit and real-stack coverage.
 Founder request (2026-11-18): the Security page cannot know up front whether the organisation enforces two-step verification, so "Turn off" is always shown and only explains the policy after a 403 `mfa-required-by-policy`.
 - [ ] `GET /v1/auth/me` returns `mfa_policy: { required: boolean, scope: 'off' | 'admins' | 'all' }` for the current user (contract, generator, API, generated client).
 - [ ] Security page shows "Turn off" disabled with the explanation when `required` is true; the 403 path stays as a fallback.

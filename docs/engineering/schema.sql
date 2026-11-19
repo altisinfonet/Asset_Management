@@ -672,13 +672,17 @@ CREATE TABLE app.accessory (
   purchase_cost_minor bigint CHECK (purchase_cost_minor IS NULL OR purchase_cost_minor >= 0),
   currency            text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
   notes               text,
+  label_code          text NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),   -- opaque QR payload (ADR 0008)
+  low_stock_alerted   boolean NOT NULL DEFAULT false,                                    -- latch of the minimum-stock event
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   created_by          uuid,
   updated_by          uuid,
   archived_at         timestamptz,
   version             integer NOT NULL DEFAULT 1,
+  search_text         text GENERATED ALWAYS AS (lower(name || chr(31) || coalesce(model_number, ''))) STORED,  -- list search (ADR 0005)
   UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, label_code),
   FOREIGN KEY (tenant_id, company_id)  REFERENCES app.company (tenant_id, id),
   FOREIGN KEY (tenant_id, category_id, category_kind) REFERENCES app.category (tenant_id, id, kind),
   FOREIGN KEY (tenant_id, manufacturer_id) REFERENCES app.manufacturer (tenant_id, id),
@@ -688,7 +692,7 @@ CREATE TABLE app.accessory (
 );
 CREATE INDEX accessory_category_idx ON app.accessory (tenant_id, category_id);
 CREATE INDEX accessory_location_idx ON app.accessory (tenant_id, location_id);
-CREATE INDEX accessory_name_trgm ON app.accessory USING gin (tenant_id, name public.gin_trgm_ops);
+CREATE INDEX accessory_name_idx ON app.accessory (tenant_id, name, id);   -- ADR 0005: no trigram index under RLS
 
 CREATE TABLE app.consumable (
   id                  uuid PRIMARY KEY,
@@ -707,13 +711,17 @@ CREATE TABLE app.consumable (
   unit_cost_minor     bigint CHECK (unit_cost_minor IS NULL OR unit_cost_minor >= 0),
   currency            text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
   notes               text,
+  label_code          text NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
+  low_stock_alerted   boolean NOT NULL DEFAULT false,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   created_by          uuid,
   updated_by          uuid,
   archived_at         timestamptz,
   version             integer NOT NULL DEFAULT 1,
+  search_text         text GENERATED ALWAYS AS (lower(name || chr(31) || coalesce(model_number, ''))) STORED,
   UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, label_code),
   FOREIGN KEY (tenant_id, company_id)  REFERENCES app.company (tenant_id, id),
   FOREIGN KEY (tenant_id, category_id, category_kind) REFERENCES app.category (tenant_id, id, kind),
   FOREIGN KEY (tenant_id, manufacturer_id) REFERENCES app.manufacturer (tenant_id, id),
@@ -723,7 +731,7 @@ CREATE TABLE app.consumable (
 );
 CREATE INDEX consumable_category_idx ON app.consumable (tenant_id, category_id);
 CREATE INDEX consumable_location_idx ON app.consumable (tenant_id, location_id);
-CREATE INDEX consumable_name_trgm ON app.consumable USING gin (tenant_id, name public.gin_trgm_ops);
+CREATE INDEX consumable_name_idx ON app.consumable (tenant_id, name, id);
 
 -- Append-only stock ledger. A BEFORE INSERT trigger applies the delta to consumable.qty_on_hand
 -- (the CHECK on that column rejects overdraw) and records the resulting balance.
@@ -740,9 +748,17 @@ CREATE TABLE app.stock_movement (
   at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, id),
   FOREIGN KEY (tenant_id, consumable_id) REFERENCES app.consumable (tenant_id, id),
-  FOREIGN KEY (tenant_id, person_id)     REFERENCES app.person (tenant_id, id)
+  FOREIGN KEY (tenant_id, person_id)     REFERENCES app.person (tenant_id, id),
+  -- the sign says which way the stock moved; an adjustment or correction needs a note (ADR 0008)
+  CONSTRAINT stock_movement_sign CHECK (
+    (reason IN ('receive','return') AND qty_delta > 0)
+    OR (reason = 'issue' AND qty_delta < 0)
+    OR reason IN ('adjust','correction')),
+  CONSTRAINT stock_movement_adjust_note CHECK (
+    reason NOT IN ('adjust','correction') OR length(btrim(coalesce(note, ''))) > 0)
 );
 CREATE INDEX stock_movement_consumable_idx ON app.stock_movement (tenant_id, consumable_id, at DESC, id DESC);
+CREATE INDEX stock_movement_person_idx ON app.stock_movement (tenant_id, person_id, at DESC, id DESC) WHERE person_id IS NOT NULL;
 
 CREATE FUNCTION app.stock_movement_apply() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
@@ -751,9 +767,15 @@ BEGIN
      SET qty_on_hand = c.qty_on_hand + NEW.qty_delta
    WHERE c.tenant_id = NEW.tenant_id AND c.id = NEW.consumable_id
   RETURNING c.qty_on_hand INTO NEW.balance_after;   -- CHECK (qty_on_hand >= 0) rejects overdraw
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'consumable % not found', NEW.consumable_id USING ERRCODE = 'foreign_key_violation';
+  END IF;
+  NEW.at := clock_timestamp();                      -- after the row lock: `at` follows the balance order (ADR 0008)
   RETURN NEW;
 END
 $$;
+-- qty_on_hand changes only inside the ledger trigger (trigger depth 2); see migration 0080 consumable_guard_qty
+-- and accessory_guard_total (the total cannot drop below the units that are out).
 CREATE TRIGGER stock_movement_apply BEFORE INSERT ON app.stock_movement
   FOR EACH ROW EXECUTE FUNCTION app.stock_movement_apply();
 
@@ -976,7 +998,8 @@ CREATE TABLE app.maintenance_record (
   ticket_ref              text,
   cost_minor              bigint CHECK (cost_minor IS NULL OR cost_minor >= 0),
   currency                text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
-  restore_status_id       uuid,                                  -- asset status to put back on completion
+  set_status_id           uuid,                                  -- status the asset was moved to when the record opened (M2 wave 2, ADR 0009)
+  restore_status_id       uuid,                                  -- asset status to put back on completion / cancellation
   created_at              timestamptz NOT NULL DEFAULT now(),
   updated_at              timestamptz NOT NULL DEFAULT now(),
   created_by              uuid,
@@ -987,18 +1010,163 @@ CREATE TABLE app.maintenance_record (
   FOREIGN KEY (tenant_id, asset_id)               REFERENCES app.asset (tenant_id, id),
   FOREIGN KEY (tenant_id, vendor_id)              REFERENCES app.vendor (tenant_id, id),
   FOREIGN KEY (tenant_id, performed_by_person_id) REFERENCES app.person (tenant_id, id),
+  FOREIGN KEY (tenant_id, set_status_id)          REFERENCES app.status_label (tenant_id, id),
   FOREIGN KEY (tenant_id, restore_status_id)      REFERENCES app.status_label (tenant_id, id),
   CHECK (cost_minor IS NULL OR currency IS NOT NULL),
   CHECK (completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at),
-  CHECK ((status = 'completed') = (completed_at IS NOT NULL) OR status = 'cancelled')
+  CHECK ((status = 'completed') = (completed_at IS NOT NULL)),            -- a cancelled record has no completed_at
+  CHECK (restore_status_id IS NULL OR set_status_id IS NOT NULL)
 );
+-- Only ONE open record per asset may move its status (what makes "restore the previous status" unambiguous).
+CREATE UNIQUE INDEX maintenance_one_status_move_uq ON app.maintenance_record (tenant_id, asset_id)
+  WHERE set_status_id IS NOT NULL AND status IN ('open','in_progress') AND archived_at IS NULL;
+-- M2 wave 2 (migrations 0091-0093, ADR 0009): notifications, saved views and CSV exports. Every table
+-- also carries the standard tenant columns (created_by / updated_by / archived_at / version) added by
+-- app.create_tenant_table; they are shown here once.
+CREATE TABLE app.notification (                       -- a user's inbox; no FK to the subject (it may be gone)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id      uuid NOT NULL,
+  type         text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  title        text NOT NULL CHECK (length(title) BETWEEN 1 AND 300),
+  body         text CHECK (body IS NULL OR length(body) <= 2000),
+  link         text CHECK (link IS NULL OR length(link) <= 500),      -- a path inside the web app
+  entity_type  text CHECK (entity_type IS NULL OR length(entity_type) <= 64),
+  entity_id    uuid,
+  dedupe_key   text NOT NULL CHECK (length(dedupe_key) BETWEEN 1 AND 200),
+  in_app       boolean NOT NULL DEFAULT true,
+  email_state  text NOT NULL DEFAULT 'none' CHECK (email_state IN ('none','queued','pending_digest','digested')),
+  read_at      timestamptz,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_dedupe_uq ON app.notification (tenant_id, user_id, dedupe_key);
+CREATE INDEX notification_inbox_idx  ON app.notification (tenant_id, user_id, created_at DESC, id DESC) WHERE in_app;
+CREATE INDEX notification_unread_idx ON app.notification (tenant_id, user_id) WHERE in_app AND read_at IS NULL;
+CREATE INDEX notification_digest_idx ON app.notification (tenant_id, user_id, created_at, id) WHERE email_state = 'pending_digest';
+
+CREATE TABLE app.notification_preference (            -- what one user wants per type (types are code, not rows)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id  uuid NOT NULL,
+  type     text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  in_app   boolean NOT NULL,
+  email    text NOT NULL CHECK (email IN ('immediate','digest','off')),
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_preference_uq ON app.notification_preference (tenant_id, user_id, type);
+
+CREATE TABLE app.notification_rule (                  -- what the organisation decided per type; no row = enabled, default recipients
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  type             text NOT NULL CHECK (type ~ '^[a-z][a-z0-9_]*(.[a-z][a-z0-9_]*)+$' AND length(type) <= 64),
+  enabled          boolean NOT NULL DEFAULT true,
+  recipient_roles  text[] CHECK (recipient_roles IS NULL OR cardinality(recipient_roles) <= 20),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX notification_rule_uq ON app.notification_rule (tenant_id, type);
+
+CREATE TABLE app.notification_delivery (              -- append-only delivery log (administrators)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  notification_id  uuid,
+  user_id          uuid NOT NULL,
+  type             text NOT NULL CHECK (length(type) BETWEEN 3 AND 64),
+  channel          text NOT NULL CHECK (channel IN ('in_app','email')),
+  status           text NOT NULL CHECK (status IN ('delivered','queued','deferred','skipped','failed')),
+  reason           text CHECK (reason IS NULL OR length(reason) <= 100),
+  FOREIGN KEY (tenant_id, user_id)         REFERENCES app.user_account (tenant_id, id),
+  FOREIGN KEY (tenant_id, notification_id) REFERENCES app.notification (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE INDEX notification_delivery_user_idx ON app.notification_delivery (tenant_id, user_id, created_at DESC, id DESC);
+CREATE INDEX notification_delivery_throttle_idx ON app.notification_delivery (tenant_id, user_id, created_at DESC)
+  WHERE channel = 'email' AND status = 'queued';
+
+CREATE TABLE app.saved_view (                         -- a saved asset-list view; personal, or shared with the organisation (view:share)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  user_id   uuid NOT NULL,
+  resource  text NOT NULL CHECK (resource IN ('assets')),
+  name      text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+  name_key  text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
+  filters   jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filters) = 'object' AND pg_column_size(filters) <= 16384),
+  columns   text[] NOT NULL DEFAULT '{}' CHECK (cardinality(columns) <= 40),
+  sort      text CHECK (sort IS NULL OR length(sort) <= 64),
+  is_shared boolean NOT NULL DEFAULT false,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES app.user_account (tenant_id, id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX saved_view_owner_name_uq  ON app.saved_view (tenant_id, user_id, resource, name_key);
+CREATE UNIQUE INDEX saved_view_shared_name_uq ON app.saved_view (tenant_id, resource, name_key) WHERE is_shared;
+
+CREATE TABLE app.export_job (                         -- a CSV export; the worker writes the file, it is removed 24 h after completion
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  requested_by  uuid NOT NULL,
+  resource      text NOT NULL CHECK (resource IN ('assets','people','locations')),
+  format        text NOT NULL DEFAULT 'csv' CHECK (format IN ('csv')),
+  filters       jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(filters) = 'object' AND pg_column_size(filters) <= 16384),
+  status        text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','succeeded','failed','expired')),
+  row_count     integer CHECK (row_count IS NULL OR row_count >= 0),
+  size_bytes    bigint CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  filename      text CHECK (filename IS NULL OR length(filename) <= 200),
+  storage_key   text CHECK (storage_key IS NULL OR storage_key LIKE 'tenants/' || tenant_id::text || '/%'),
+  error         text CHECK (error IS NULL OR length(error) <= 500),
+  started_at    timestamptz,
+  completed_at  timestamptz,
+  expires_at    timestamptz,
+  FOREIGN KEY (tenant_id, requested_by) REFERENCES app.user_account (tenant_id, id),
+  CONSTRAINT export_job_file_state CHECK ((status = 'succeeded') = (storage_key IS NOT NULL) OR status = 'expired'),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE INDEX export_job_user_idx   ON app.export_job (tenant_id, requested_by, created_at DESC, id DESC);
+CREATE INDEX export_job_expiry_idx ON app.export_job (tenant_id, expires_at) WHERE status = 'succeeded';
 CREATE INDEX maintenance_asset_idx  ON app.maintenance_record (tenant_id, asset_id, reported_at DESC, id DESC);
 CREATE INDEX maintenance_open_idx   ON app.maintenance_record (tenant_id, status, reported_at DESC)
   WHERE status IN ('open','in_progress') AND archived_at IS NULL;
 CREATE INDEX maintenance_vendor_idx ON app.maintenance_record (tenant_id, vendor_id) WHERE vendor_id IS NOT NULL;
 
--- Fixed templates only in the MVP (plan decision 22): rows are seeded per tenant by
--- app.provision_tenant and are read-only through the API. The editor is v1.1.
+-- Fixed templates only in the MVP (plan decision 22): rows are seeded per tenant (the migration
+-- 0070 does it through app.seed_label_templates, ADR 0007) and the API only lets a manager change the
+-- two calibration offsets. The editor is v1.1.
 CREATE TABLE app.label_template (
   id              uuid PRIMARY KEY,
   tenant_id       uuid NOT NULL REFERENCES app.tenant (id),
@@ -1015,15 +1183,67 @@ CREATE TABLE app.label_template (
   margin_left_mm  numeric(7,2) NOT NULL DEFAULT 0 CHECK (margin_left_mm >= 0),
   gap_x_mm        numeric(7,2) NOT NULL DEFAULT 0 CHECK (gap_x_mm >= 0),
   gap_y_mm        numeric(7,2) NOT NULL DEFAULT 0 CHECK (gap_y_mm >= 0),
+  offset_x_mm     numeric(5,2) NOT NULL DEFAULT 0 CHECK (offset_x_mm BETWEEN -10 AND 10),  -- calibration (M2-TAG-04)
+  offset_y_mm     numeric(5,2) NOT NULL DEFAULT 0 CHECK (offset_y_mm BETWEEN -10 AND 10),
   code_type       text NOT NULL DEFAULT 'qr' CHECK (code_type IN ('qr','code128','qr_and_code128')),
-  fields          text[] NOT NULL DEFAULT '{asset_tag}',      -- printed text lines
+  fields          text[] NOT NULL DEFAULT '{asset_tag}'                                  -- printed text lines
+                  CHECK (cardinality(fields) BETWEEN 1 AND 6
+                         AND fields <@ ARRAY['asset_tag','name','serial','location','model','organisation']),
   is_system       boolean NOT NULL DEFAULT true,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
+  updated_by      uuid,
   version         integer NOT NULL DEFAULT 1,
   UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, key)
+  UNIQUE (tenant_id, key),
+  CHECK (margin_left_mm + cols * label_width_mm  + (cols - 1) * gap_x_mm <= page_width_mm  + 0.05),
+  CHECK (margin_top_mm  + rows * label_height_mm + (rows - 1) * gap_y_mm <= page_height_mm + 0.05)
 );
+
+-- One request to print labels (M2-TAG-02, ADR 0007): the worker renders the PDF, stores it through the
+-- StorageAdapter and flips the row to 'ready'; the requester downloads it via a short-lived presigned URL
+-- until expires_at.
+CREATE TABLE app.label_batch (
+  id                  uuid PRIMARY KEY,
+  tenant_id           uuid NOT NULL REFERENCES app.tenant (id),
+  template_id         uuid NOT NULL,
+  template_key        text NOT NULL,
+  status              text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','ready','failed','expired')),
+  asset_ids           uuid[] NOT NULL CHECK (cardinality(asset_ids) BETWEEN 1 AND 5000),   -- print order
+  source_filter       jsonb CHECK (source_filter IS NULL OR jsonb_typeof(source_filter) = 'object'),
+  asset_count         integer NOT NULL CHECK (asset_count BETWEEN 1 AND 5000),
+  copies              integer NOT NULL DEFAULT 1 CHECK (copies BETWEEN 1 AND 10),
+  label_count         integer NOT NULL CHECK (label_count BETWEEN 1 AND 10000),
+  start_position      integer NOT NULL DEFAULT 1 CHECK (start_position >= 1),
+  codes               text[] NOT NULL CHECK (cardinality(codes) <= 2 AND codes <@ ARRAY['qr','code128']),
+  fields              text[] NOT NULL CHECK (cardinality(fields) <= 6
+                                             AND fields <@ ARRAY['asset_tag','name','serial','location','model','organisation']),
+  outlines            boolean NOT NULL DEFAULT false,
+  logo_attachment_id  uuid,
+  requested_by_type   text NOT NULL DEFAULT 'user' CHECK (requested_by_type IN ('user','api_key')),
+  page_count          integer CHECK (page_count IS NULL OR page_count >= 1),
+  storage_key         text,
+  content_type        text,
+  size_bytes          bigint CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  sha256              text CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
+  rendered_at         timestamptz,
+  render_ms           integer CHECK (render_ms IS NULL OR render_ms >= 0),
+  error_code          text CHECK (error_code IS NULL OR length(error_code) <= 100),
+  error_detail        text CHECK (error_detail IS NULL OR length(error_detail) <= 1000),
+  expires_at          timestamptz NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  created_by          uuid,
+  version             integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, template_id)        REFERENCES app.label_template (tenant_id, id),
+  FOREIGN KEY (tenant_id, logo_attachment_id) REFERENCES app.attachment (tenant_id, id),
+  CONSTRAINT label_batch_storage_prefix CHECK (storage_key IS NULL OR storage_key LIKE 'tenants/' || tenant_id::text || '/%'),
+  CONSTRAINT label_batch_ready_has_file CHECK (status <> 'ready' OR (storage_key IS NOT NULL AND size_bytes IS NOT NULL AND page_count IS NOT NULL))
+);
+CREATE INDEX label_batch_requester_idx ON app.label_batch (tenant_id, created_by, created_at DESC, id DESC);
+CREATE INDEX label_batch_open_idx      ON app.label_batch (tenant_id, created_at) WHERE status = 'queued';
+CREATE INDEX label_batch_expiry_idx    ON app.label_batch (tenant_id, expires_at) WHERE status = 'ready';
 
 CREATE TABLE app.import_job (
   id                   uuid PRIMARY KEY,
@@ -1400,14 +1620,17 @@ BEGIN
     (gen_random_uuid(), p_tenant_id, 'Retired',         'archived',     '#616161', 60, false),
     (gen_random_uuid(), p_tenant_id, 'Lost or stolen',  'lost',         '#6a1b9a', 70, false);
 
-  -- fixed PDF label sheets (geometry follows the published Avery layouts; verify against a test print)
+  -- fixed PDF label sheets (geometry follows the published Avery layouts; verify against a test print).
+  -- The migrations seed the same six rows through app.seed_label_templates (0070), not provision_tenant.
   INSERT INTO app.label_template
     (id, tenant_id, key, name, page_size, page_width_mm, page_height_mm, label_width_mm, label_height_mm,
      cols, rows, margin_top_mm, margin_left_mm, gap_x_mm, gap_y_mm, code_type, fields) VALUES
-    (gen_random_uuid(), p_tenant_id, 'letter-30up-qr',  'US Letter 30-up (Avery 5160 layout), QR',   'letter', 215.90, 279.40, 66.68, 25.40, 3, 10, 12.70,  4.76, 3.18, 0.00, 'qr', ARRAY['asset_tag','name']),
-    (gen_random_uuid(), p_tenant_id, 'a4-21up-qr',      'A4 21-up (Avery L7160 layout), QR',          'a4',     210.00, 297.00, 63.50, 38.10, 3,  7, 15.15,  7.20, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
-    (gen_random_uuid(), p_tenant_id, 'letter-10up-qr',  'US Letter 10-up (Avery 5163 layout), QR',   'letter', 215.90, 279.40, 101.60, 50.80, 2,  5, 12.70,  4.00, 0.00, 0.00, 'qr_and_code128', ARRAY['asset_tag','name','serial']),
-    (gen_random_uuid(), p_tenant_id, 'single-50x25-qr', 'Single label 50 x 25 mm, QR (one per page)', 'custom', 50.00,  25.00,  50.00, 25.00, 1,  1,  0.00,  0.00, 0.00, 0.00, 'qr', ARRAY['asset_tag']);
+    (gen_random_uuid(), p_tenant_id, 'letter-30up-qr',   'US Letter 30-up (Avery 5160 layout), QR',     'letter', 215.90, 279.40,  66.68, 25.40, 3, 10, 12.70, 4.76, 3.18, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'a4-21up-qr',       'A4 21-up (Avery L7160 layout), QR',            'a4',     210.00, 297.00,  63.50, 38.10, 3,  7, 15.15, 7.21, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'a4-24up-qr',       'A4 24-up, 3 x 8 (Avery L7159 layout), QR',     'a4',     210.00, 297.00,  63.50, 33.90, 3,  8, 12.90, 7.21, 2.54, 0.00, 'qr', ARRAY['asset_tag','name']),
+    (gen_random_uuid(), p_tenant_id, 'letter-10up-qr',   'US Letter 10-up (Avery 5163 layout), QR and Code128', 'letter', 215.90, 279.40, 101.60, 50.80, 2,  5, 12.70, 3.97, 4.76, 0.00, 'qr_and_code128', ARRAY['asset_tag','name','serial']),
+    (gen_random_uuid(), p_tenant_id, 'single-50x25-qr',  'Single label 50 x 25 mm, QR (one per page)',   'custom',  50.00,  25.00,  50.00, 25.00, 1,  1,  0.00, 0.00, 0.00, 0.00, 'qr', ARRAY['asset_tag']),
+    (gen_random_uuid(), p_tenant_id, 'thermal-2x1in-qr', 'Single label 2 x 1 inch for thermal / roll printers, QR and Code128', 'custom', 50.80, 25.40, 50.80, 25.40, 1, 1, 0.00, 0.00, 0.00, 0.00, 'qr_and_code128', ARRAY['asset_tag','name']);
 
   RETURN p_tenant_id;
 END
@@ -1484,7 +1707,7 @@ GRANT SELECT, INSERT, UPDATE ON
   app.location, app.person, app.category, app.manufacturer, app.vendor, app.asset_model,
   app.status_label, app.custom_field_def, app.asset_tag_counter, app.asset, app.attachment,
   app.accessory, app.consumable, app.loaner_pool, app.assignment, app.transfer,
-  app.maintenance_record, app.label_template, app.import_job, app.outbox_event
+  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.outbox_event
   TO app_user;
 -- app: limited deletes
 GRANT DELETE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key, app.outbox_event TO app_user;

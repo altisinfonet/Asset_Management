@@ -17,6 +17,12 @@ import {
 } from '../ports/index.js';
 import { isUniqueViolation, sqlStateOf, TenancyService, type Tx } from '../tenancy/index.js';
 
+/**
+ * Who a transaction acts for: the tenant and the principal (user or API key id). Every request's
+ * AuthContext has it, and so can a background job (an export runs as the user that asked for it).
+ */
+export type TxScope = Pick<AuthContext, 'tenantId' | 'principalId'>;
+
 /** What a state-changing registry operation records next to the change (DoD 7). */
 export interface ChangeRecord {
   /** Entity name: audit `entity_type`, the prefix of the audit action and of the outbox event type. */
@@ -40,7 +46,7 @@ export abstract class RegistryBase {
   ) {}
 
   /** Joins the keyed-request transaction when there is one, otherwise opens its own. */
-  protected tx<T>(auth: AuthContext, fn: (trx: Tx) => Promise<T>): Promise<T> {
+  protected tx<T>(auth: TxScope, fn: (trx: Tx) => Promise<T>): Promise<T> {
     return this.tenancy.withTenantTx({ tenantId: auth.tenantId, actorId: auth.principalId }, fn);
   }
 
@@ -78,6 +84,10 @@ export function inUse(label: string, usage: Record<string, number>): ApiProblem 
     extensions: { usage },
   });
 }
+
+/** The entries of `counts` that are not zero: optional `usage` members that older clients never saw. */
+export const nonZero = (counts: Record<string, number>): Record<string, number> =>
+  Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0));
 
 export const duplicate = (label: string, pointer: string, value: string): ApiProblem =>
   new ApiProblem({

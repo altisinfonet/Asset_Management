@@ -8,12 +8,18 @@ import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
 import { LifecycleModule } from './lifecycle/index.js';
 import { LocationsModule } from './locations/index.js';
+import { MaintenanceModule } from './maintenance/index.js';
+import { NotificationsModule } from './notifications/index.js';
+import { ExportsModule } from './exports/index.js';
+import { ViewsModule } from './views/index.js';
 import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
 import { PeopleModule } from './people/index.js';
 import { PlatformModule } from './platform/index.js';
 import { FilesModule } from './files/index.js';
 import { RegistryModule } from './registry/index.js';
+import { StockModule } from './stock/index.js';
+import { TaggingModule } from './tagging/index.js';
 import { TenancyModule } from './tenancy/index.js';
 
 export interface AppModuleOptions {
@@ -50,6 +56,13 @@ export class AppModule {
               PeopleModule,
               LifecycleModule,
               FilesModule,
+              StockModule,
+              TaggingModule,
+              // M2 wave 2
+              MaintenanceModule,
+              NotificationsModule,
+              ViewsModule,
+              ExportsModule,
             ]
           : []),
         HealthModule,

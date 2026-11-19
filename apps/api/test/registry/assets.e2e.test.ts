@@ -1308,7 +1308,7 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
         match_type: 'label_code',
         asset: { id: asset.id },
         // M2 wave 1: a deployable, unassigned asset can also be checked out and handed over
-        allowed_actions: ['checkout', 'transfer', 'update'],
+        allowed_actions: ['checkout', 'transfer', 'update', 'open_repair'],
       });
       const byTag = await a().get(`/v1/scan/resolve?code=${asset.asset_tag.toLowerCase()}`);
       expect(byTag.body).toMatchObject({ match_type: 'asset_tag', asset: { id: asset.id } });

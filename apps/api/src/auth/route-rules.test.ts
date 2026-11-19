@@ -6,10 +6,13 @@ import { AppModule } from '../app.module.js';
 import { loadConfig } from '../config/env.js';
 import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
+  ACC_TAGS,
   M2_OPERATIONS,
   FILES_TAGS,
+  LABELS_TAGS,
   REGISTRY_TAGS,
   WAVE1_TAGS,
+  WAVE2_NOT_TAGS,
   loadContract,
   loadProblemCodes,
   ruleOf,
@@ -114,11 +117,50 @@ describe('route access rules', async () => {
     }
   });
 
+  // [M2-W2 ACC]: BEGIN
+  it('implements every Accessories and Consumables operation of the contract (M2-ACC-01..03)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const stock = operations.filter((o) => ACC_TAGS.has(o.tag));
+    expect(stock.length).toBeGreaterThanOrEqual(16);
+    const missing = stock
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+  // [M2-W2 ACC]: END
+
   it('implements every Attachments operation of the contract (M2-FILE-01..03, settings, local file links)', () => {
     const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
     const files = operations.filter((o) => FILES_TAGS.has(o.tag));
     expect(files.length).toBeGreaterThanOrEqual(9);
     const missing = files
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every Labels operation of the contract (M2-TAG-02: templates, calibration, label batches)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const labels = operations.filter((o) => LABELS_TAGS.has(o.tag));
+    expect(labels.map((o) => o.operationId).sort()).toEqual([
+      'createLabelBatch',
+      'getLabelBatch',
+      'getLabelTemplate',
+      'listLabelBatches',
+      'listLabelTemplates',
+      'updateLabelTemplate',
+    ]);
+    const missing = labels
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every operation of the M2 wave-2 tags (repairs, notifications, saved views, exports)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const wave2 = operations.filter((o) => WAVE2_NOT_TAGS.has(o.tag));
+    expect(wave2.length).toBeGreaterThanOrEqual(25);
+    const missing = wave2
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

@@ -20,6 +20,7 @@ import {
   StatusLabelsService,
   VendorsService,
 } from './catalog-services.js';
+import { ScanResolverRegistry } from './scan-resolvers.js';
 import { ScanResolveThrottle } from './scan-throttle.js';
 import { SearchService } from './search.service.js';
 
@@ -54,8 +55,9 @@ import { SearchService } from './search.service.js';
     AssetTagService,
     AssetsFacade,
     ScanResolveThrottle,
+    ScanResolverRegistry,
     SearchService,
   ],
-  exports: [AssetsFacade, AssetTagService],
+  exports: [AssetsFacade, AssetTagService, ScanResolverRegistry],
 })
 export class RegistryModule {}

@@ -6,12 +6,12 @@ import {
   ChevronRight,
   Columns3,
   Copy,
+  Download,
   LogIn,
   LogOut,
   Package,
   Plus,
-  Save,
-  Trash2,
+  Printer,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -21,7 +21,9 @@ import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-deta
 import { LocationPicker } from '@/components/registry/location-picker';
 import { PersonPicker } from '@/components/registry/person-picker';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
-import { FormDialog } from '@/components/registry/form-dialog';
+import { ExportDialog } from '@/components/exports/export-dialog';
+import { useLabels } from '@/components/labels/labels-provider';
+import { SavedViewsBar } from '@/components/views/saved-views-bar';
 import { StatusBadge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
 import { Button, IconButton } from '@/components/ui/button';
@@ -50,19 +52,16 @@ import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { availableActions, isOverdue } from '@/lib/custody/helpers';
+import { EXPORT_PERMISSION } from '@/lib/exports/api';
 import { assetsApi, peopleApi } from '@/lib/registry/api';
 import {
   COLUMN_BY_SORT_KEY,
   PAGE_SIZE,
   SORT_KEY_BY_COLUMN,
   defaultViewState,
-  deleteView,
   hasActiveFilters,
-  readSavedViews,
-  saveView,
   toAssetQuery,
   type AssetViewState,
-  type SavedView,
 } from '@/lib/registry/asset-view';
 import { runBulk, type BulkItem, type BulkResult } from '@/lib/registry/bulk';
 import { formatValue } from '@/lib/registry/custom-fields';
@@ -75,11 +74,10 @@ import { ColumnsDialog } from './columns-dialog';
 import { uiErrorText } from '@/lib/error-text';
 
 const ALL = '__all__';
-const DEFAULT_VIEW = '__default__';
 
 /**
  * Assets list (WEB-04): server-side search, filters (status, category, location, archived and one
- * custom field), sort and cursor pagination; a column picker; saved views kept in this browser;
+ * custom field), sort and cursor pagination; a column picker; saved views kept on the server (personal or shared), CSV export and label printing;
  * row selection with bulk edit / archive / restore; a 480px quick-view drawer on row click and the
  * full page on Enter. Keyboard: arrows move between rows, Space selects, Enter opens.
  */
@@ -92,6 +90,7 @@ export function AssetsTable() {
   const { can } = useAuth();
   const lookups = useLookups();
   const custody = useCustody();
+  const labels = useLabels();
   const params = useSearchParams();
 
   // Deep links from the locations tree (`?location=`) and a person's page (`?person=`) start filtered.
@@ -112,18 +111,13 @@ export function AssetsTable() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState<Asset | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const [views, setViews] = useState<SavedView[]>([]);
-  const [activeView, setActiveView] = useState(DEFAULT_VIEW);
-  const [saveOpen, setSaveOpen] = useState(false);
+  // The notifications "labels ready" and "export ready" link here with the job to follow.
+  const [followedExport, setFollowedExport] = useState<string | null>(() => params.get('export'));
+  const [exportOpen, setExportOpen] = useState(() => !!params.get('export'));
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [results, setResults] = useState<{ title: string; results: BulkResult[] } | null>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from localStorage
-    setViews(readSavedViews());
-  }, []);
 
   /** Any change of search, filters or sort starts again from page one with nothing selected. */
   const update = useCallback((patch: Partial<AssetViewState>) => {
@@ -131,6 +125,14 @@ export function AssetsTable() {
     setCursors([]);
     setSelected(new Set());
   }, []);
+
+  const followedBatch = params.get('label_batch');
+  useEffect(() => {
+    if (!followedBatch && !params.get('export')) return;
+    if (followedBatch) labels.open({ kind: 'batch', id: followedBatch });
+    // the job is followed once; the address goes back to the plain list
+    router.replace(routes.assets);
+  }, [followedBatch, params, labels, router]);
 
   const debouncedSearch = useDebounced(searchText, 300);
   useEffect(() => {
@@ -303,11 +305,8 @@ export function AssetsTable() {
       }
     : null;
 
-  // ---- saved views --------------------------------------------------------------------------------
-  const applyView = (id: string) => {
-    setActiveView(id);
-    const next = id === DEFAULT_VIEW ? defaultViewState() : views.find((v) => v.id === id)?.state;
-    if (!next) return;
+  // ---- saved views (the bar owns the list; this applies one) --------------------------------------------------------------------------------
+  const applyView = (next: AssetViewState) => {
     setSearchText(next.q);
     setState(next);
     setCursors([]);
@@ -533,35 +532,7 @@ export function AssetsTable() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          {t('assets.views.label')}
-          <Select
-            aria-label={t('assets.views.label')}
-            value={activeView}
-            onValueChange={applyView}
-            className="w-52"
-            options={[
-              { value: DEFAULT_VIEW, label: t('assets.views.all') },
-              ...views.map((v) => ({ value: v.id, label: v.name })),
-            ]}
-          />
-        </label>
-        <Button size="sm" onClick={() => setSaveOpen(true)}>
-          <Save aria-hidden className="size-4" />
-          {t('assets.views.save')}
-        </Button>
-        {activeView !== DEFAULT_VIEW ? (
-          <Button
-            size="sm"
-            onClick={() => {
-              setViews(deleteView(activeView));
-              setActiveView(DEFAULT_VIEW);
-            }}
-          >
-            <Trash2 aria-hidden className="size-4" />
-            {t('assets.views.delete')}
-          </Button>
-        ) : null}
+        <SavedViewsBar current={state} lookups={lookups} onApply={applyView} />
         {filtered ? (
           <Button
             size="sm"
@@ -574,7 +545,31 @@ export function AssetsTable() {
             {t('assets.filters.clearAll')}
           </Button>
         ) : null}
-        <span className="ml-auto flex items-center gap-2">
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          {can(EXPORT_PERMISSION) ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setFollowedExport(null);
+                setExportOpen(true);
+              }}
+            >
+              <Download aria-hidden className="size-4" />
+              {t('exports.button')}
+            </Button>
+          ) : null}
+          {can('asset:label') ? (
+            <Button
+              size="sm"
+              disabled={rows.length === 0}
+              onClick={() =>
+                labels.open({ kind: 'filter', query: toAssetQuery(state), total: total ?? null })
+              }
+            >
+              <Printer aria-hidden className="size-4" />
+              {t('labels.printFiltered')}
+            </Button>
+          ) : null}
           <Button size="sm" onClick={() => setColumnsOpen(true)}>
             <Columns3 aria-hidden className="size-4" />
             {t('assets.columnsButton')}
@@ -729,6 +724,15 @@ export function AssetsTable() {
                 {t('assets.bulk.checkIn', { count: eligibleCount('checkin') })}
               </Button>
             ) : null}
+            {can('asset:label') ? (
+              <Button
+                size="sm"
+                onClick={() => labels.open({ kind: 'assets', assets: selectedRows })}
+              >
+                <Printer aria-hidden className="size-4" />
+                {t('labels.printSelected', { count: selectedRows.length })}
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button size="sm" onClick={() => setBulkEditOpen(true)}>
                 {t('assets.bulk.edit')}
@@ -751,21 +755,12 @@ export function AssetsTable() {
         fields={lookups.fields}
         onChange={(next) => setState((s) => ({ ...s, columns: next }))}
       />
-      <FormDialog
-        open={saveOpen}
-        onOpenChange={setSaveOpen}
-        title={t('assets.views.saveTitle')}
-        description={t('assets.views.saveDescription')}
-        fields={[{ name: 'name', label: t('assets.views.name'), kind: 'text', required: true }]}
-        initial={{ name: '' }}
-        submitLabel={t('assets.views.save')}
-        onSubmit={async (values) => {
-          const next = saveView(String(values.name), state);
-          setViews(next);
-          setActiveView(
-            next.find((v) => v.name === String(values.name).trim())?.id ?? DEFAULT_VIEW,
-          );
-        }}
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        resource="assets"
+        query={toAssetQuery(state)}
+        jobId={followedExport ?? undefined}
       />
       <BulkEditDialog
         open={bulkEditOpen}

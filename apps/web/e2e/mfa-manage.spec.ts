@@ -88,24 +88,20 @@ test.describe('two-step verification on', () => {
 test.describe('policy-enforced two-step verification', () => {
   test.use({ session: MOCK_ACCOUNTS.mfaEnforced });
 
-  test('Turn off is refused with an explanation and then disabled; MFA stays on', async ({
-    page,
-  }) => {
+  // M2-AUTH-01: `GET /v1/auth/me` carries `mfa_policy.required`, so the page knows up front. The 403
+  // fallback (an API that does not say) is covered by the unit test of the Security screen.
+  test('Turn off is disabled up front with the explanation; MFA stays on', async ({ page }) => {
     await page.goto('/account/security');
-    await page.getByRole('button', { name: 'Turn off', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Turn off two-step verification?' });
-    await dialog.getByLabel(/^Current password/).fill(MOCK_PASSWORD);
-    await dialog.getByRole('button', { name: TURN_OFF }).click();
-    await expect(
-      dialog.getByText('Your organisation requires two-step verification'),
-    ).toBeVisible();
-    await dialog.getByRole('button', { name: 'Got it' }).click();
-
-    await expect(page.getByRole('button', { name: 'Turn off', exact: true })).toBeDisabled();
+    const turnOff = page.getByRole('button', { name: 'Turn off', exact: true });
+    await expect(turnOff).toBeDisabled();
     await expect(page.getByText(/so you cannot turn it off/)).toBeVisible();
+    await expect(turnOff).toHaveAccessibleDescription(/requires two-step verification/);
     await expect(page.getByText('On', { exact: true })).toBeVisible();
+    // the other action stays available
+    await expect(page.getByRole('button', { name: 'New recovery codes' })).toBeEnabled();
     // a reload still shows On (the server kept the factor)
     await page.reload();
     await expect(page.getByText('On', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Turn off', exact: true })).toBeDisabled();
   });
 });

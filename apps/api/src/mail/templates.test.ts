@@ -22,6 +22,12 @@ const SAMPLE: Record<string, Record<string, unknown>> = {
     occurredAt: '2026-11-18 10:00 UTC',
     securityUrl: 'https://app.example.com/security',
   },
+  'notification.message': {
+    title: 'A file you uploaded was blocked',
+    body: 'invoice.pdf was removed: Win.Test.EICAR_HDB-1.',
+    items: ['Low stock: Toner', 'Overdue: LAP-0001'],
+    url: 'https://app.example.com/assets/view?id=1',
+  },
   'auth.new-login': {
     userName: 'Bob',
     occurredAt: '2026-11-18 10:00 UTC',
@@ -32,12 +38,13 @@ const SAMPLE: Record<string, Record<string, unknown>> = {
 };
 
 describe('mail templates (M1-PLAT-09)', () => {
-  it('ships the four auth templates', () => {
+  it('ships the four auth templates and the generic notification template', () => {
     expect(TEMPLATE_IDS.sort()).toEqual([
       'auth.invitation',
       'auth.mfa-enabled',
       'auth.new-login',
       'auth.password-reset',
+      'notification.message',
     ]);
   });
 

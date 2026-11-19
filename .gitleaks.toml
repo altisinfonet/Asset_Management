@@ -40,3 +40,16 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)apps/web/src/mocks/m2-handlers\.test\.ts$''']
 regexes = ['''key-hist-xfer1''']
+
+[[allowlists]]
+description = "False positive: the label template key 'thermal-2x1in-qr' (a catalogue name of the fixed label sheets, ADR 0007) and the fake storage key 'tenants/other/2026/x' of a tenant-prefix CHECK test are matched as API keys"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)apps/web/src/mocks/w2-misc-handlers\.ts$''',
+  '''(^|/)apps/api/src/tagging/templates\.ts$''',
+  '''(^|/)apps/api/test/tagging/labels\.e2e\.test\.ts$''',
+  '''(^|/)apps/api/test/isolation/labels-isolation\.e2e\.test\.ts$''',
+]
+regexes = ['''thermal-2x1in-qr''', '''tenants/other/2026/x''']

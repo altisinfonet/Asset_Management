@@ -343,13 +343,19 @@ function lcg(seed: number): () => number {
  */
 export async function seedDemoData(
   tenancy: TenancyService,
-  options: { nodeEnv?: string; logger?: SeedLogger; secretBox?: SecretBox } = {},
+  options: {
+    nodeEnv?: string;
+    logger?: SeedLogger;
+    secretBox?: SecretBox;
+    /** Which tenants to seed (default: the demo tenants Acme and Globex). Tests pass their own, so they never depend on, or change, the shared demo data. */
+    tenants?: SeedTenantSpec[];
+  } = {},
 ): Promise<{ tenants: Array<{ slug: string; tenantId: string; seeded: boolean }> }> {
   if ((options.nodeEnv ?? process.env.NODE_ENV) === 'production') throw new SeedRefusedError();
   const log = options.logger ?? { info: () => undefined };
 
   const tenants: Array<{ slug: string; tenantId: string; seeded: boolean }> = [];
-  for (const spec of DEMO_TENANTS) {
+  for (const spec of options.tenants ?? DEMO_TENANTS) {
     const boot = await bootstrapTenant(tenancy, {
       name: spec.name,
       slug: spec.slug,
@@ -541,8 +547,298 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
   }
   await trx.asset.createMany({ data: assets });
   await seedCustody(trx, tenantId, assets, staff, places, statusByName.get('Deployed')!);
+  await seedStock(trx, tenantId, company.id, staff, places);
 
   return true;
+}
+
+// ------------------------------------------------------------------------------ M2 wave 2: stock
+
+/** [M2-W2 ACC] Accessories (quantity-tracked, handed out) of the demo tenants. */
+export const DEMO_ACCESSORIES = [
+  {
+    name: 'USB-C charger 65 W',
+    category: 'Chargers and power',
+    total: 40,
+    min: 8,
+    out: [4, 2],
+    home: 'Storage A',
+    model: 'PD-65',
+  },
+  {
+    name: 'Chromebook charger 45 W',
+    category: 'Chargers and power',
+    total: 60,
+    min: 10,
+    out: [12],
+    home: 'Storage A',
+    model: 'CB-45',
+  },
+  {
+    name: 'USB-C cable 1 m',
+    category: 'Cables',
+    total: 80,
+    min: 15,
+    out: [6],
+    home: 'Storage A',
+    model: 'CAB-C1',
+  },
+  {
+    name: 'HDMI cable 2 m',
+    category: 'Cables',
+    total: 25,
+    min: 5,
+    out: [10, 11],
+    home: 'Storage B',
+    model: 'CAB-H2',
+  },
+  {
+    name: 'USB headset',
+    category: 'Audio',
+    total: 30,
+    min: 6,
+    out: [3, 1],
+    home: 'Storage A',
+    model: 'HS-USB',
+  },
+  {
+    name: 'Wireless mouse',
+    category: 'Input devices',
+    total: 20,
+    min: 4,
+    out: [2],
+    home: 'Storage B',
+    model: 'MS-W2',
+  },
+] as const;
+
+/** [M2-W2 ACC] Consumables (used up, with a stock ledger) of the demo tenants. */
+export const DEMO_CONSUMABLES = [
+  {
+    name: 'Toner black (HP 410X)',
+    category: 'Toner and ink',
+    unit: 'cartridge',
+    min: 4,
+    receive: 12,
+    issue: [2, 1],
+    home: 'Storage A',
+    model: 'CF410X',
+  },
+  {
+    name: 'Toner cyan (HP 410X)',
+    category: 'Toner and ink',
+    unit: 'cartridge',
+    min: 3,
+    receive: 6,
+    issue: [2, 1],
+    home: 'Storage A',
+    model: 'CF411X',
+  },
+  {
+    name: 'Label rolls 57 x 32 mm',
+    category: 'Labels and paper',
+    unit: 'roll',
+    min: 10,
+    receive: 40,
+    issue: [5, 3, 4],
+    home: 'Storage A',
+    model: 'LBL-5732',
+  },
+  {
+    name: 'Copy paper A4',
+    category: 'Labels and paper',
+    unit: 'ream',
+    min: 20,
+    receive: 100,
+    issue: [10, 8],
+    home: 'Storage B',
+    model: 'PAP-A4',
+  },
+  {
+    name: 'Whiteboard markers',
+    category: 'Office supplies',
+    unit: 'box',
+    min: 3,
+    receive: 15,
+    issue: [4],
+    home: 'Storage B',
+    model: 'WBM-12',
+  },
+] as const;
+
+/**
+ * Accessories and consumables: categories of their own kinds, a handful of accessories with units
+ * out (one with a partial return, one already below its minimum) and consumables with a ledger
+ * (opening receive, issues to people, one adjustment). The low-stock latch is set to the current
+ * state without events: demo data must not raise notifications.
+ */
+async function seedStock(
+  trx: Tx,
+  tenantId: string,
+  companyId: string,
+  people: Array<{ id: string; name: string }>,
+  places: Places,
+): Promise<void> {
+  const owner = await trx.user_account.findFirst({
+    where: { role_assignment: { some: { role: { key: 'tenant_admin' } } } },
+    select: { id: true },
+  });
+  const now = Date.now();
+  const day = 86_400_000;
+
+  const categoryIds = new Map<string, string>();
+  const category = async (name: string, kind: 'accessory' | 'consumable'): Promise<string> => {
+    const key = `${kind}:${name}`;
+    const known = categoryIds.get(key);
+    if (known) return known;
+    const id = uuidv7();
+    await trx.category.create({ data: { id, tenant_id: tenantId, name, kind } });
+    categoryIds.set(key, id);
+    return id;
+  };
+
+  // Accessories and their hand-overs: the first people in turn, the last of a list to a room.
+  let turn = 0;
+  for (const spec of DEMO_ACCESSORIES) {
+    const id = uuidv7();
+    await trx.accessory.create({
+      data: {
+        id,
+        tenant_id: tenantId,
+        company_id: companyId,
+        category_id: await category(spec.category, 'accessory'),
+        location_id: places.byName.get(spec.home) ?? null,
+        name: spec.name,
+        model_number: spec.model,
+        qty_total: spec.total,
+        min_qty: spec.min,
+        purchase_date: new Date(Date.UTC(2025, 8, 1)),
+        purchase_cost_minor: BigInt(1200 + spec.total * 5),
+        currency: 'USD',
+        created_by: owner?.id ?? null,
+      },
+    });
+    for (const [i, quantity] of spec.out.entries()) {
+      const toRoom = spec.out.length > 1 && i === spec.out.length - 1;
+      const person = people[turn++ % people.length]!;
+      const place = places.leaves[turn % places.leaves.length]!;
+      await trx.assignment.create({
+        data: {
+          id: uuidv7(),
+          tenant_id: tenantId,
+          accessory_id: id,
+          person_id: toRoom ? null : person.id,
+          location_id: toRoom ? place : null,
+          quantity,
+          checked_out_at: new Date(now - (i + 2) * 9 * day),
+          checked_out_by: owner?.id ?? null,
+          note: 'Demo hand-over',
+        },
+      });
+    }
+  }
+  // A partial return (3 of 5 headsets back, 2 still out) and a fully returned loan, for the lists.
+  const headset = await trx.accessory.findFirstOrThrow({ where: { name: 'USB headset' } });
+  const partial = uuidv7();
+  await trx.assignment.create({
+    data: {
+      id: partial,
+      tenant_id: tenantId,
+      accessory_id: headset.id,
+      person_id: people[0]!.id,
+      quantity: 5,
+      checked_out_at: new Date(now - 40 * day),
+      checked_out_by: owner?.id ?? null,
+      note: 'Exam week',
+    },
+  });
+  await trx.$executeRaw`
+    update app.assignment set quantity_returned = 3, checkin_note = 'Three back after the exams'
+     where id = ${partial}::uuid`;
+  const returned = uuidv7();
+  await trx.assignment.create({
+    data: {
+      id: returned,
+      tenant_id: tenantId,
+      accessory_id: headset.id,
+      person_id: people[1]!.id,
+      quantity: 2,
+      checked_out_at: new Date(now - 60 * day),
+      checked_out_by: owner?.id ?? null,
+    },
+  });
+  await trx.$executeRaw`
+    update app.assignment
+       set quantity_returned = 2, checked_in_at = ${new Date(now - 50 * day)}::timestamptz,
+           checked_in_by = ${owner?.id ?? null}::uuid
+     where id = ${returned}::uuid`;
+
+  // Consumables: opening stock, issues to people, one stock-count adjustment.
+  for (const spec of DEMO_CONSUMABLES) {
+    const id = uuidv7();
+    await trx.consumable.create({
+      data: {
+        id,
+        tenant_id: tenantId,
+        company_id: companyId,
+        category_id: await category(spec.category, 'consumable'),
+        location_id: places.byName.get(spec.home) ?? null,
+        name: spec.name,
+        model_number: spec.model,
+        unit: spec.unit,
+        min_qty: spec.min,
+        unit_cost_minor: BigInt(450 + spec.receive * 20),
+        currency: 'USD',
+        created_by: owner?.id ?? null,
+      },
+    });
+    const move = (
+      qty_delta: number,
+      reason: string,
+      person_id: string | null,
+      note: string | null,
+    ) =>
+      trx.stock_movement.create({
+        data: {
+          id: uuidv7(),
+          tenant_id: tenantId,
+          consumable_id: id,
+          qty_delta,
+          reason,
+          person_id,
+          note,
+          by_user_id: owner?.id ?? null,
+        },
+      });
+    await move(spec.receive, 'receive', null, 'Opening stock');
+    for (const quantity of spec.issue) {
+      const person = people[turn++ % people.length]!;
+      await move(-quantity, 'issue', person.id, 'Demo issue');
+    }
+  }
+  const labels = await trx.consumable.findFirstOrThrow({
+    where: { name: 'Label rolls 57 x 32 mm' },
+  });
+  await trx.stock_movement.create({
+    data: {
+      id: uuidv7(),
+      tenant_id: tenantId,
+      consumable_id: labels.id,
+      qty_delta: -1,
+      reason: 'adjust',
+      note: 'Stock count: one roll damaged',
+      by_user_id: owner?.id ?? null,
+    },
+  });
+
+  // The latch is the current state (below / above the minimum): no event for demo data.
+  await trx.$executeRaw`
+    update app.consumable set low_stock_alerted = (min_qty > 0 and qty_on_hand <= min_qty)`;
+  await trx.$executeRaw`
+    update app.accessory a set low_stock_alerted = (
+      a.min_qty > 0 and a.qty_total - coalesce((
+        select sum(s.quantity - s.quantity_returned) from app.assignment s
+         where s.tenant_id = a.tenant_id and s.accessory_id = a.id and s.checked_in_at is null), 0) <= a.min_qty)`;
 }
 
 // ------------------------------------------------------------------------------ M2 wave 1 data

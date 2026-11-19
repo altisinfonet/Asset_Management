@@ -99,6 +99,8 @@ async function bootstrapOnce(
       await trx.$executeRaw`select app.provision_tenant(${tenantId}::uuid, ${input.name}, ${slug}, ${input.baseCurrency}, 'us-1')`;
     }
     await ensureDefaultCategories(trx, tenantId);
+    // M2-TAG-02: the fixed label templates (own function, idempotent; also fills a tenant that lacks them)
+    await trx.$executeRaw`select app.seed_label_templates(${tenantId}::uuid)`;
     const admin = await ensureAdmin(trx, tenantId, input.adminEmail, input.adminName);
 
     if (created) {

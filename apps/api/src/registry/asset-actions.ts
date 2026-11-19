@@ -16,6 +16,7 @@ import { ApiProblem } from '../platform/index.js';
  *   mark_lost       yes         yes (closes custody) yes   yes       409        yes
  *   mark_found      409         409          409        409        yes        409
  *   move / update   yes         yes          yes        yes        yes        yes
+ *   open_repair     yes         409 (check in first, or force)  yes  yes   409        409
  *
  * An archived asset (archived_at set) refuses every action except restore.
  */
@@ -29,6 +30,8 @@ export const ASSET_ACTIONS = [
   'mark_found',
   'move',
   'update',
+  /** M2-MNT-01: open a repair / maintenance record (and move the asset to an in-repair status). */
+  'open_repair',
 ] as const;
 export type AssetAction = (typeof ASSET_ACTIONS)[number];
 
@@ -87,6 +90,27 @@ export function refuseAssetAction(action: AssetAction, ctx: AssetActionContext):
       return ctx.stateType === 'lost'
         ? null
         : { code: 'conflict', detail: 'The asset is not marked lost.' };
+    case 'open_repair':
+      if (ctx.hasAssignment) {
+        return {
+          code: 'asset-already-checked-out',
+          detail:
+            'The asset is checked out. Check it in first, or open the repair with force_checkin and a note.',
+        };
+      }
+      if (ctx.stateType === 'lost') {
+        return {
+          code: 'conflict',
+          detail: 'The asset is marked lost. Mark it found before repairing it.',
+        };
+      }
+      if (ctx.stateType === 'archived') {
+        return {
+          code: 'conflict',
+          detail: 'The asset is retired. Give it another status before repairing it.',
+        };
+      }
+      return null;
     case 'move':
     case 'update':
       return null;

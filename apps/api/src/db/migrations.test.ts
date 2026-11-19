@@ -13,22 +13,40 @@ describe('shipped migrations', async () => {
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
   });
 
-  it('ships the M1 tables and M2 wave 1 (locations, people, custody), and no later M2 table yet', () => {
-    const tables = [...sql.matchAll(/create table (app|identity)\.([a-z_]+)/gi)].map(
-      (m) => `${m[1]}.${m[2]}`,
-    );
+  it('ships the M1 tables, M2 wave 1 (locations, people, custody) and the wave-2 repairs / notifications / views / exports tables', () => {
+    const tables = [
+      ...[...sql.matchAll(/create table (app|identity)\.([a-z_]+)/gi)].map(
+        (m) => `${m[1]}.${m[2]}`,
+      ),
+      // tables made through the helper (it applies the tenant conventions itself)
+      ...[...sql.matchAll(/create_tenant_table\(\s*'([a-z_]+)'/gi)].map((m) => `app.${m[1]}`),
+    ];
     // M2 wave 1 (migrations 0040-0049)
     for (const wave1 of ['location', 'person', 'assignment', 'transfer', 'asset_history']) {
       expect(tables).toContain(`app.${wave1}`);
     }
-    // built by the other M2 agents (accessories, loaners, repairs, labels, imports): not in this range
-    for (const later of [
-      'accessory',
-      'consumable',
+    // [M2-W2 ACC] accessories and consumables (0080-0089)
+    for (const stock of ['accessory', 'consumable', 'stock_movement']) {
+      expect(tables).toContain(`app.${stock}`);
+    }
+    // [M2-W2 LABELS] labels (0070-0079)
+    for (const labels of ['label_template', 'label_batch']) {
+      expect(tables).toContain(`app.${labels}`);
+    }
+    // M2 wave 2, repairs / notifications / saved views / export (migrations 0090-0099)
+    for (const wave2 of [
       'maintenance_record',
-      'label_template',
-      'import_job',
+      'notification',
+      'notification_preference',
+      'notification_rule',
+      'notification_delivery',
+      'saved_view',
+      'export_job',
     ]) {
+      expect(tables).toContain(`app.${wave2}`);
+    }
+    // built by the other M2 agents (imports): not in this range
+    for (const later of ['import_job']) {
       expect(tables).not.toContain(`app.${later}`);
     }
     for (const m1 of [

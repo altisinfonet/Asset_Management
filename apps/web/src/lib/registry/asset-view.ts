@@ -125,7 +125,7 @@ export function toAssetQuery(state: AssetViewState, cursor?: string): AssetListQ
   return query;
 }
 
-// ---- saved views (this browser only) ---------------------------------------------------------
+// ---- the views the earlier version kept in this browser ----------------------------------------
 
 export interface SavedView {
   id: string;
@@ -133,6 +133,7 @@ export interface SavedView {
   state: AssetViewState;
 }
 
+/** Where the earlier version kept saved views; they move to the server on first load (`lib/views`). */
 export const SAVED_VIEWS_KEY = 'at-asset-views';
 const MAX_VIEWS = 20;
 
@@ -187,31 +188,4 @@ export function readSavedViews(): SavedView[] {
   } catch {
     return [];
   }
-}
-
-function writeSavedViews(views: SavedView[]): SavedView[] {
-  const list = views.slice(0, MAX_VIEWS);
-  try {
-    window.localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(list));
-  } catch {
-    // storage unavailable (private mode, quota): the in-memory list is still returned
-  }
-  return list;
-}
-
-/** Save `state` under `name` (a view with the same name is replaced). */
-export function saveView(name: string, state: AssetViewState): SavedView[] {
-  const trimmed = name.trim().slice(0, 60);
-  const existing = readSavedViews();
-  const same = existing.find((v) => v.name.toLowerCase() === trimmed.toLowerCase());
-  const entry: SavedView = {
-    id: same?.id ?? `view-${Date.now().toString(36)}`,
-    name: trimmed,
-    state: { ...state, q: state.q },
-  };
-  return writeSavedViews([entry, ...existing.filter((v) => v.id !== entry.id)]);
-}
-
-export function deleteView(id: string): SavedView[] {
-  return writeSavedViews(readSavedViews().filter((v) => v.id !== id));
 }

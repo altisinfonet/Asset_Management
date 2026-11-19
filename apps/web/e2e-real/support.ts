@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Browser, type Locator, type Page } from '@playwright/test';
 
 /**
  * Helpers of the real-stack e2e suite (`E2E_TARGET=real`): sign in as the seeded demo Owner, compute
@@ -107,6 +107,86 @@ export async function waitForMail(
     if (Date.now() > deadline) throw new Error(`no mail to ${to} within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+}
+
+/**
+ * Waits (polling Mailpit) for a message to `to` whose subject contains `subject`: other mails to the
+ * same address (invitations, digests) never match by accident. Newest first.
+ */
+export async function waitForMailWithSubject(
+  to: string,
+  subject: string,
+  timeoutMs = 60_000,
+): Promise<MailpitMessage & { Text: string }> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const res = await fetch(
+      `${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}&limit=100`,
+    );
+    if (res.ok) {
+      const body = (await res.json()) as { messages?: MailpitMessage[] };
+      const found = body.messages?.find((m) => m.Subject.includes(subject));
+      if (found) {
+        const full = await fetch(`${MAILPIT_URL}/api/v1/message/${found.ID}`);
+        const detail = (await full.json()) as { Text?: string };
+        return { ...found, Text: detail.Text ?? '' };
+      }
+    }
+    if (Date.now() > deadline)
+      throw new Error(`no mail "${subject}" to ${to} within ${timeoutMs} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/** Calls the real API from a signed-in page (cookie + CSRF + a fresh Idempotency-Key), for set-up and read-back. */
+export async function api<T = unknown>(
+  p: Page,
+  method: string,
+  path: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; json: T; etag: string | null }> {
+  return p.evaluate(
+    async ({ method, path, body, headers }) => {
+      const me = (await (await fetch('/v1/auth/me')).json()) as { csrf_token: string };
+      const res = await fetch(path, {
+        method,
+        headers: {
+          // a JSON content type with no body is a 400 for the server
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          'x-csrf-token': me.csrf_token,
+          'idempotency-key': `e2e-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+          ...headers,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      return {
+        status: res.status,
+        json: (text ? JSON.parse(text) : null) as never,
+        etag: res.headers.get('etag'),
+      };
+    },
+    { method, path, body, headers },
+  );
+}
+
+/** A fresh browser context signed in with a demo password-only account (everybody but the Owners). */
+export async function signInWithPassword(browser: Browser, email: string): Promise<Page> {
+  const other = await (await browser.newContext()).newPage();
+  await other.goto('/login');
+  await other.getByLabel(/^Email/).fill(email);
+  await other.getByLabel(/^Password/).fill(DEMO_PASSWORD);
+  await other.getByRole('button', { name: 'Sign in' }).click();
+  await expect(other.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
+  return other;
+}
+
+/** Types into a combobox (a search picker) and chooses the option with that name. */
+export async function pick(p: Page, name: RegExp | string, text: string, option: RegExp | string) {
+  const box = p.getByRole('combobox', { name });
+  await box.fill(text);
+  await p.getByRole('option', { name: option }).first().click();
 }
 
 /** Opens a select (Radix combobox) by its label and picks an option. */

@@ -126,7 +126,7 @@ SAML/SCIM tables are out of scope (SAML is a Should at MVP, SCIM is v2).
 
 The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the design. Wave 1 built `location`, `person`, `assignment`, `transfer` and `asset_history` as designed, with these differences:
 
-- **`assignment`** has two extra columns, `attachment_ids uuid[]` and `checkin_attachment_ids uuid[]` (at most 10 each): the photos linked at check-out and check-in. They are plain uuid arrays **without a foreign key or existence check** because the attachments table is built in parallel; the integrator adds the validation (and, if wanted, the back-link `attachment.entity_id`) when the branches meet. `accessory_id` and `loaner_pool_id` exist as columns **without foreign keys** (those tables belong to other waves) and the accessory stock trigger `assignment_accessory_stock` is not created yet; the integrator adds `FOREIGN KEY (tenant_id, accessory_id)`, `FOREIGN KEY (tenant_id, loaner_pool_id)` and the trigger with those tables.
+- **`assignment`** has two extra columns, `attachment_ids uuid[]` and `checkin_attachment_ids uuid[]` (at most 10 each): the photos linked at check-out and check-in. They are plain uuid arrays **without a foreign key or existence check** because the attachments table is built in parallel; the integrator adds the validation (and, if wanted, the back-link `attachment.entity_id`) when the branches meet. `accessory_id` and `loaner_pool_id` exist as columns **without foreign keys** (those tables belong to other waves) and the accessory stock trigger `assignment_accessory_stock` is not created yet; the integrator adds `FOREIGN KEY (tenant_id, accessory_id)`, `FOREIGN KEY (tenant_id, loaner_pool_id)` and the trigger with those tables. **Update (wave 2, migration 0080):** the accessory foreign key and the stock trigger now exist (section 3.7.1); only the loaner foreign key is still open.
 - **`asset`** gains `disposed_on`, `disposal_reason` (sold, donated, recycled, scrapped, stolen, returned_to_vendor, other) and `disposal_note`, all-or-none (`asset_disposal_chk` on date and reason): the disposal record of M2-LIFE-05. `asset.location_id` and `role_assignment.scope_location_id` now have their composite foreign keys (`asset_location_fk`, `role_assignment_scope_location_fk`).
 - **`person`** has stored generated columns `email_key` (`lower(email)`) and `search_text` (lower-case name, email and employee number joined with `chr(31)`), so lookups and the people search use btree equality / `strpos` through RLS instead of `lower()` / ILIKE / trigram expressions that are not leakproof (ADR 0005); the trigram index of the design is not created. The partial unique index on the email is on `email_key`.
 - **One person per login account (ED-01)** is enforced by triggers on `user_account`: `AFTER INSERT` links an existing unlinked person with the same email, otherwise creates one (display name and email copied; the email is left empty if another live person already has it); `AFTER UPDATE OF display_name, email` keeps the linked person in step. The migration backfills existing accounts. Persons created by the trigger have ids from `gen_random_uuid()` (v4, ED-08).
@@ -148,12 +148,24 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | `app.consumable` | M2 | Quantity-tracked item used up | `name`, `unit`, `qty_on_hand`, `min_qty`, `unit_cost_minor` | `qty_on_hand >= 0` CHECK; changed only through stock movements |
 | `app.stock_movement` | M2 | **Append-only stock ledger** | `consumable_id`, `qty_delta <> 0`, `reason` (receive/issue/return/adjust/correction), `person_id`, `balance_after` | BEFORE INSERT trigger applies the delta to `consumable.qty_on_hand` and records the balance; an overdraw fails with 23514; no UPDATE/DELETE grants; index `(tenant_id, consumable_id, at DESC, id DESC)` |
 
+#### 3.7.1 As built in M2 wave 2 (migration 0080, ADR 0008): deltas from the table above
+
+- **`accessory` and `consumable`** also carry `label_code` (opaque QR payload, unique per tenant, same default as `asset.label_code`; scan resolve answers them), `low_stock_alerted boolean` (the latch of the minimum-stock event: set when the item crosses to at-or-below `min_qty`, cleared when it is restocked above it) and a stored generated `search_text` (`lower(name || chr(31) || model_number)`) for the list search (ADR 0005). Indexes: `(tenant_id, name, id)` for the default order, partial ones on `location_id`, `(tenant_id, category_id)`; the trigram index of the design is not created.
+- **`assignment.accessory_id`** now has its composite foreign key (`assignment_accessory_fk`) and the trigger `assignment_accessory_stock` (before insert, locks the accessory row and refuses an over-checkout with 23514, counts `quantity - quantity_returned`) that migration 0041 left to the integrator. The loaner foreign key (`loaner_pool_id`) is not part of this wave.
+- **`accessory_guard_total`** (before update of `qty_total`) refuses a total below the units that are out (23514).
+- **`consumable.qty_on_hand`** changes only through the ledger: `consumable_guard_qty` refuses any other change (and a non-zero starting value) by trigger depth. `stock_movement` additionally has `stock_movement_sign` (receive/return positive, issue negative, adjust/correction either way) and `stock_movement_adjust_note` (adjust and correction need a note); its trigger stamps `balance_after` and `at := clock_timestamp()` after the row lock; a movement for an unknown consumable fails with 23503. The ledger index also has a partial `(tenant_id, person_id, at DESC, id DESC)` for the per-person consume log.
+- **Views** `v_accessory_availability` and `v_low_stock` exist as designed (security invoker, granted to `app_user`); the API computes availability for a page of accessories with one grouped query instead of joining the view (the view skips archived accessories).
+
 ### 3.8 Repairs, labels, imports (M2)
 
 | Entity | M | Purpose | Key columns | Notes |
 |---|---|---|---|---|
-| `app.maintenance_record` | M2 | **Repair / maintenance log** (API: `/v1/repairs`) | `asset_id`, `kind`, `status` (open/in_progress/completed/cancelled), `title`, `reported_at`, `started_at`, `completed_at`, `vendor_id`, `performed_by_person_id`, `cost_minor`, `currency`, `restore_status_id`, `resolution_notes` | indexes by asset and open records; photos/invoices via `attachment` |
-| `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 4 templates seeded per tenant by `provision_tenant`; read-only through the API |
+| `app.maintenance_record` | M2 | **Repair / maintenance log** (API: `/v1/repairs`; ADR 0009) | `asset_id`, `kind`, `status` (open/in_progress/completed/cancelled), `title`, `reported_at`, `started_at`, `completed_at`, `vendor_id`, `performed_by_person_id`, `cost_minor`, `currency`, `set_status_id` (status the asset was moved to), `restore_status_id`, `resolution_notes` | indexes by asset and open records; partial unique index: one open record per asset moves its status; photos/invoices via `attachment` (owner `maintenance_record`) |
+| `app.notification`, `notification_preference`, `notification_rule`, `notification_delivery` | M2 | **Notifications** (ADR 0009): a user's inbox (unique per user and `dedupe_key`; `email_state` none/queued/pending_digest/digested), per-user delivery choice per type, per-tenant rule per type, append-only delivery log | types are code (`src/notifications/types.ts`); no foreign key to the subject |
+| `app.saved_view` | M2 | **Saved list views** (API: `/v1/saved-views`) | `user_id`, `resource`, `name` + stored `name_key`, `filters`, `columns`, `sort`, `is_shared` | unique name per user and list, and among shared views |
+| `app.export_job` | M2 | **CSV exports** (API: `/v1/exports`) | `requested_by`, `resource`, `filters`, `status`, `row_count`, `size_bytes`, `storage_key` (tenant-prefixed), `expires_at` | file deleted 24 h after completion |
+| `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `offset_x_mm` / `offset_y_mm` (calibration, [M2-W2 LABELS]), `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 6 templates seeded per tenant by `app.seed_label_templates` (migration 0070, ADR 0007), mirrored by code constants (`tagging/templates.ts`) and checked for drift; only the two offsets change through the API; CHECKs: the grid fits the page, offsets within +-10 mm |
+| `app.label_batch` | M2 | One request to print labels; the worker renders the PDF (ADR 0007) | `template_id`/`template_key`, `status` (queued/ready/failed/expired), `asset_ids uuid[]` (print order), `source_filter`, `copies`, `label_count`, `start_position`, `codes`, `fields`, `outlines`, `logo_attachment_id`, `storage_key`, `size_bytes`, `sha256`, `page_count`, `render_ms`, `error_code`, `expires_at`, `created_by` (the requester: only they can read it) | the file is stored through the StorageAdapter under a tenant-prefixed key (CHECK) and deleted after `expires_at`; ready requires the file; indexes by requester, open (queued) and expiry |
 | `app.import_job` | M2 | Import with **mandatory dry run** | `source` (csv/xlsx/snipe_it/google_admin_csv), `entity_type`, `state`, `file_attachment_id`, `mapping`, `options`, row counters, `dry_run_digest`, `dry_run_completed_at`, `committed_at` | `CHECK` that commit states require a `dry_run_digest`; commit must quote the reviewed digest |
 | `app.import_row` | M2 | Per-row dry-run / commit outcome and errors | `job_id`, `phase`, `row_no`, `outcome` (create/update/skip/error), `entity_id`, `errors`, `warnings`, `source_data` | unique `(tenant_id, job_id, phase, row_no)` |
 
@@ -164,7 +176,8 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | `app.v_accessory_availability` (security_invoker) | `qty_total`, `qty_checked_out`, `qty_available`, `min_qty` per accessory |
 | `app.v_overdue_checkouts` (security_invoker) | Open asset check-outs past `expected_return` (loaner or not) with `days_overdue` |
 | `app.v_low_stock` (security_invoker) | Consumables and accessories at or below `min_qty` |
-| `app.provision_tenant(tenant_id, name, slug, currency, cell)` | Seeds a tenant under the caller's RLS: tenant row, directory row, **default company**, 5 built-in roles, 7 status labels, 4 label templates (seed rows get `gen_random_uuid()` ids). Refuses to run unless `app.tenant_id` equals the new id (42501) |
+| `app.provision_tenant(tenant_id, name, slug, currency, cell)` | Seeds a tenant under the caller's RLS: tenant row, directory row, **default company**, 5 built-in roles, 7 status labels (label templates: `app.seed_label_templates`, next row; seed rows get `gen_random_uuid()` ids). Refuses to run unless `app.tenant_id` equals the new id (42501) |
+| `app.seed_label_templates(tenant_id)` | [M2-W2 LABELS] Idempotently seeds the 6 fixed label templates under the caller's RLS (`ON CONFLICT DO NOTHING`; refuses unless `app.tenant_id` equals the tenant, 42501). Called by `bootstrapTenant`, by migration 0070 for every existing tenant and lazily by the labels service; deliberately **not** part of `provision_tenant` |
 | `app.next_asset_tag(prefix)` | Sequential per-tenant asset tags (`LAP-00001`) |
 | `app.ensure_partitions(from, months)` | Creates the monthly partitions of **both** `audit_log` and `asset_history` plus a default partition for each, with FORCE RLS and no grants; idempotent; returns the number created (owner only) |
 | `app.schema_lint()` | Returns violations: missing RLS/FORCE/policy form, no tenant-led index, any grant on a partition, non-invoker view, SECURITY DEFINER, dangerous runtime role, any `uuidv7()` column default (ED-08). Run at install and in CI |
@@ -186,6 +199,7 @@ erDiagram
     TENANT ||--o{ IDEMPOTENCY_KEY : replays
     TENANT ||--o{ OUTBOX_EVENT : emits
     TENANT ||--o{ LABEL_TEMPLATE : seeds
+    LABEL_TEMPLATE ||--o{ LABEL_BATCH : renders
     TENANT ||--o{ IMPORT_JOB : runs
     TENANT ||--|| TENANT_DIRECTORY : "registered in"
 
@@ -553,6 +567,14 @@ erDiagram
         integer rows
         text code_type
     }
+    LABEL_BATCH {
+        uuid id PK
+        uuid tenant_id FK
+        uuid template_id FK
+        text status
+        uuid[] asset_ids
+        text storage_key
+    }
     IMPORT_JOB {
         uuid id PK
         uuid tenant_id FK
@@ -708,7 +730,7 @@ PASS T19k asset assignment cannot be open with quantity_returned = 1 | SQLSTATE 
 PASS T19l final return closes the row (quantity_returned = quantity, checked_in_at set); availability 1
 ```
 
-The remaining checks, all PASS on all three versions: security_invoker views show only the caller's tenant (T6a-T6c); assignment CHECKs, one open custody per asset, loaner due date, accessory over-checkout and consumable overdraw rejected, stock ledger append-only, view results (T8a-T8m); location path, subtree re-parenting and cycle rejection (T8n-T8p); attachment key prefix (T10a/b); `provision_tenant` guard (T11); asset tag generation, version bump, default company trigger, seed counts (5 roles, 7 status labels, 4 label templates), duplicate custom-field key rejected (T14-T18); `app_user` cannot CREATE TABLE in `app` or `public`, cannot DISABLE/NO FORCE RLS, cannot call `ensure_partitions`, cannot `SET ROLE app_owner`, is not superuser/BYPASSRLS and owns nothing (T9a-T9g).
+The remaining checks, all PASS on all three versions: security_invoker views show only the caller's tenant (T6a-T6c); assignment CHECKs, one open custody per asset, loaner due date, accessory over-checkout and consumable overdraw rejected, stock ledger append-only, view results (T8a-T8m); location path, subtree re-parenting and cycle rejection (T8n-T8p); attachment key prefix (T10a/b); `provision_tenant` guard (T11); asset tag generation, version bump, default company trigger, seed counts (5 roles, 7 status labels, 6 label templates), duplicate custom-field key rejected (T14-T18); `app_user` cannot CREATE TABLE in `app` or `public`, cannot DISABLE/NO FORCE RLS, cannot call `ensure_partitions`, cannot `SET ROLE app_owner`, is not superuser/BYPASSRLS and owns nothing (T9a-T9g).
 
 ### 10.2 Lint negative control
 

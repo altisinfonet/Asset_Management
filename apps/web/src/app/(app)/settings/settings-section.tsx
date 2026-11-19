@@ -16,6 +16,7 @@ import {
   VendorsScreen,
 } from './catalog-screens';
 import { FieldsScreen } from './fields-screen';
+import { NotificationRulesScreen } from './notification-rules-screen';
 import { UsersScreen } from './users-screen';
 
 /** The body of a settings page. Each section has its own screen; the organisation page is a placeholder. */
@@ -40,6 +41,8 @@ export function SettingsSectionScreen({ section }: { section: SettingsSection })
         <VendorsScreen />
       ) : section === 'users' ? (
         <UsersScreen />
+      ) : section === 'notifications' ? (
+        <NotificationRulesScreen />
       ) : (
         <>
           <PageTitle title={name} />

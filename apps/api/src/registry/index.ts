@@ -11,6 +11,15 @@ export {
   openAssignmentSummaries,
   withStatus,
 } from './asset-queries.js';
+// [M2-W2 LABELS] bulk selection by ids or by the list's own filter language
+export {
+  ASSET_SELECTION_KEYS,
+  type AssetSelectionFilter,
+  type LabelAssetRow,
+  loadLabelAssets,
+  parseAssetSelection,
+  selectAssetIds,
+} from './asset-selection.js';
 export {
   ASSET_ACTIONS,
   type AssetAction,
@@ -32,13 +41,16 @@ export { type LocationCounts, locationDto } from './dto.js';
 export {
   type ChangeRecord,
   RegistryBase,
+  type TxScope,
   duplicate,
   inUse,
   invalidRef,
   isForeignKeyViolation,
+  nonZero,
   stalePrecondition,
 } from './registry-base.js';
 export { inSavepoint } from './savepoint.js';
+export { ScanResolverRegistry, type ScanResolution, type ScanResolver } from './scan-resolvers.js';
 export { RegistryModule } from './registry.module.js';
 export {
   coerceValue,

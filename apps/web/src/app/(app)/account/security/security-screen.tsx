@@ -32,9 +32,10 @@ type OpenDialog = 'off' | 'codes' | null;
  * and the list of signed-in devices with a revoke button each (M1-WEB-03). Revoked sessions fail on
  * their next request (M1-AUTH-03). The current device is signed out with "Sign out", not revoked here.
  *
- * `GET /v1/auth/me` does not say whether the tenant enforces MFA for an enrolled user, so "Turn off"
- * is offered and the API's `403 mfa-required-by-policy` is explained; once seen, the button is
- * disabled for the rest of the visit.
+ * `GET /v1/auth/me` says whether the organisation enforces MFA for this user (`mfa_policy.required`,
+ * M2-AUTH-01): then "Turn off" is disabled up front with the explanation. The API's
+ * `403 mfa-required-by-policy` stays as a fallback (a policy that changed since
+ * the page loaded); once seen, the button is disabled for the rest of the visit.
  */
 export function SecurityScreen() {
   const { t, formatDateTime } = useI18n();
@@ -80,6 +81,8 @@ export function SecurityScreen() {
   );
 
   const mfaEnabled = auth.me?.user.mfa_enabled === true;
+  const policyRequired = auth.me?.mfa_policy.required === true;
+  const turnOffLocked = policyLocked || policyRequired;
 
   const turnOff = async (reauth: ReauthRequest) => {
     await authApi.disableMfa(reauth);
@@ -128,8 +131,8 @@ export function SecurityScreen() {
                 <Button onClick={() => setDialog('codes')}>{t('security.mfaNewCodes')}</Button>
                 <Button
                   className="text-danger-text"
-                  disabled={policyLocked}
-                  aria-describedby={policyLocked ? 'security-mfa-policy' : undefined}
+                  disabled={turnOffLocked}
+                  aria-describedby={turnOffLocked ? 'security-mfa-policy' : undefined}
                   onClick={() => setDialog('off')}
                 >
                   {t('security.mfaTurnOff')}
@@ -143,7 +146,7 @@ export function SecurityScreen() {
               </Button>
             )}
           </div>
-          {mfaEnabled && policyLocked ? (
+          {mfaEnabled && turnOffLocked ? (
             <p id="security-mfa-policy" className="mt-3 text-sm text-muted">
               {t('security.mfaPolicyLocked')}
             </p>

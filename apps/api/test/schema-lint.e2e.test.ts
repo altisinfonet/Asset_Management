@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { uuidv7 } from '../src/ids/uuidv7.js';
 import { auditRoles, ensurePartitions, schemaLint } from '../src/db/maintenance.js';
 import { applyMigrations, DEFAULT_MIGRATIONS_DIR, loadMigrations } from '../src/db/migrator.js';
@@ -281,12 +281,17 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
 
   describe('partition rotation (M1-TEN-06)', () => {
     const year = 2040 + Math.floor(Math.random() * 50);
-    afterAll(async () => {
-      await withClient(env.migratorUrl!, async (c) => {
-        for (const m of ['01', '02', '03'])
-          await c.query(`drop table if exists app.audit_log_${year}_${m}`);
+    // Both partitioned tables get partitions in the far-future year (audit_log and asset_history); drop
+    // both before and after, otherwise a leftover of an earlier run that drew the same random year
+    // makes the "created 6" count come out smaller.
+    const dropFutureYear = () =>
+      withClient(env.migratorUrl!, async (c) => {
+        for (const table of ['audit_log', 'asset_history'])
+          for (const m of ['01', '02', '03'])
+            await c.query(`drop table if exists app.${table}_${year}_${m}`);
       });
-    });
+    beforeAll(dropFutureYear);
+    afterAll(dropFutureYear);
 
     it('creating future partitions needs no manual step, is idempotent, and every partition is FORCE-RLS with no grants', async () => {
       await withClient(env.migratorUrl!, async (c) => {

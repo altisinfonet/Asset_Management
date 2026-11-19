@@ -466,8 +466,16 @@ defineResource('Accessory', {
     notes: nstr(),
   },
   required: ['category_id', 'name', 'qty_total'],
-  readOnly: { qty_checked_out: ro(int()), qty_available: ro(int()) },
+  // [M2-W2 ACC] units out and available are computed per request from the open assignments (never stored)
+  readOnly: {
+    qty_checked_out: ro(int({ minimum: 0, description: 'Units still out: the sum of `quantity - quantity_returned` over the open assignments.' })),
+    qty_available: ro(int({ description: '`qty_total - qty_checked_out`: what can be checked out right now.' })),
+    low_stock: ro(bool({ description: 'True while `min_qty > 0` and `qty_available <= min_qty`.' })),
+    label_code: ro(str({ description: 'Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: accessory`.' })),
+  },
 });
+// [M2-W2 ACC] the computed members are always present in a response
+S_.Accessory.required.push('qty_checked_out', 'qty_available', 'low_stock', 'label_code');
 defineResource('Consumable', {
   props: {
     category_id: uuid('A consumable-kind category.'),
@@ -484,8 +492,14 @@ defineResource('Consumable', {
   },
   required: ['category_id', 'name'],
   createOnly: { initial_qty: int({ minimum: 0, default: 0, description: 'Creates an initial `receive` stock movement.' }) },
-  readOnly: { qty_on_hand: ro(int({ description: 'Changed only through stock movements.' })) },
+  // [M2-W2 ACC] `qty_on_hand` is the balance of the ledger: only stock movements change it
+  readOnly: {
+    qty_on_hand: ro(int({ minimum: 0, description: 'Changed only through stock movements; always the sum of the ledger.' })),
+    low_stock: ro(bool({ description: 'True while `min_qty > 0` and `qty_on_hand <= min_qty`.' })),
+    label_code: ro(str({ description: 'Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: consumable`.' })),
+  },
 });
+S_.Consumable.required.push('qty_on_hand', 'low_stock', 'label_code');
 defineResource('LoanerPool', {
   props: {
     name: str({ minLength: 1, maxLength: 200 }),
@@ -584,9 +598,31 @@ S_.ScanResolveResult = obj({
   asset: S('Asset'),
   allowed_actions: arr(en(['checkout', 'checkin', 'transfer', 'update', 'open_repair']), { description: 'Actions valid for the asset in its current state and for the caller.' }),
   // M2 wave 1b (scan codes): BEGIN
-  entity_type: en(['asset'], { description: 'Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.' }),
+  entity_type: en(['asset'], { description: 'Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field.' }),
   // M2 wave 1b (scan codes): END
 }, ['match_type', 'entity_type', 'asset', 'allowed_actions']);
+
+// [M2-W2 ACC]: BEGIN - scan resolve answers accessories and consumables too (their own `entity_type`).
+// `ScanResolveResult` above stays the answer for an asset; the 200 response of `resolveScan` is a oneOf of the
+// three results, told apart by `entity_type`.
+S_.ScanResolveAccessoryResult = obj({
+  match_type: en(['label_code'], { description: 'Accessories are found by their `label_code` only.' }),
+  entity_type: en(['accessory']),
+  accessory: S('Accessory'),
+  allowed_actions: arr(en(['checkout', 'checkin', 'update']), { description: '`checkout`: the caller may check units out and some are available. `checkin`: the caller may return units and some are out. `update`: the caller may edit the accessory.' }),
+}, ['match_type', 'entity_type', 'accessory', 'allowed_actions'], { description: 'A scanned accessory label.' });
+S_.ScanResolveConsumableResult = obj({
+  match_type: en(['label_code']),
+  entity_type: en(['consumable']),
+  consumable: S('Consumable'),
+  allowed_actions: arr(en(['issue', 'receive', 'adjust', 'update']), { description: '`issue` (consume) needs stock on hand; `receive` and `adjust` need `consumable:adjust`; `update` needs `consumable:manage`.' }),
+}, ['match_type', 'entity_type', 'consumable', 'allowed_actions'], { description: 'A scanned consumable label.' });
+S_.ScanResolveResponse = {
+  description: 'What a scanned code identifies. Branch on `entity_type`.',
+  oneOf: [S('ScanResolveResult'), S('ScanResolveAccessoryResult'), S('ScanResolveConsumableResult')],
+  discriminator: { propertyName: 'entity_type', mapping: { asset: '#/components/schemas/ScanResolveResult', accessory: '#/components/schemas/ScanResolveAccessoryResult', consumable: '#/components/schemas/ScanResolveConsumableResult' } },
+};
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- custody
 S_.Assignment = obj({
@@ -616,6 +652,9 @@ S_.Assignment = obj({
   overdue: bool({ description: 'Computed: the assignment is open and `expected_return` is before today (UTC).' }),
   asset_tag: nstr({ description: 'Tag of the asset; present in the assignment lists of a person and of an asset.' }),
   asset_name: nstr({ description: 'Name of the asset; present together with `asset_tag`.' }),
+  // [M2-W2 ACC] accessory assignments
+  accessory_name: nstr({ description: 'Name of the accessory; present in the assignment lists of a person and of an accessory (accessory assignments only).' }),
+  target_name: nstr({ description: 'Display name of the person, location or asset the units are with; present in the assignment list of an accessory.' }),
 }, ['id', 'quantity', 'quantity_returned', 'checked_out_at', 'acceptance_state'], { description: 'One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set.' });
 S_.AssignmentList = obj({ data: arr(S('Assignment')), page: S('PageInfo') }, ['data', 'page']);
 S_.CheckoutRequest = {
@@ -693,7 +732,8 @@ S_.HistoryEvent = obj({
     '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
     '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
     '- `restored`: `{}` or `{was_disposed: true}`',
-    '- `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)',
+    '- `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch',
+    '- `repair_opened`, `repair_completed`, `imported`: reserved for later milestones (an empty object until then)',
   ].join('\n') },
 }, ['id', 'asset_id', 'at', 'event_type', 'actor_type']);
 S_.HistoryEventList = obj({ data: arr(S('HistoryEvent')), page: S('PageInfo') }, ['data', 'page']);
@@ -718,15 +758,18 @@ S_.StockMovement = obj({
   reason: en(['receive', 'issue', 'return', 'adjust', 'correction']),
   person_id: nuuid(),
   note: nstr(),
-  balance_after: int(),
+  balance_after: int({ minimum: 0, description: 'Stock on hand right after this movement.' }),
   by_user_id: nuuid(),
   at: dt(),
+  // [M2-W2 ACC] display names, present in the stock lists
+  consumable_name: nstr({ description: 'Name of the consumable; present in the lists.' }),
+  person_name: nstr({ description: 'Name of the person the stock was issued to / returned by; present in the lists.' }),
 }, ['id', 'consumable_id', 'qty_delta', 'reason', 'balance_after', 'at']);
 S_.StockMovementCreate = obj({
-  qty_delta: { type: 'integer', not: { const: 0 }, description: 'Non-zero. Rejected with 409 if it would make stock negative.' },
-  reason: en(['receive', 'issue', 'return', 'adjust', 'correction']),
+  qty_delta: { type: 'integer', not: { const: 0 }, description: 'Non-zero. The sign must match the reason: `receive` and `return` are positive, `issue` is negative, `adjust` and `correction` either way (422 `validation` otherwise). Rejected with 409 `insufficient-stock` if it would make stock negative.' },
+  reason: en(['receive', 'issue', 'return', 'adjust', 'correction'], { description: '`receive`: stock arrives. `issue`: stock is consumed (optionally by a person). `return`: unused stock comes back. `adjust` / `correction`: the count differs from the ledger; these two need a `note` saying why.' }),
   person_id: nuuid('Who it was issued to / returned by.'),
-  note: str({ maxLength: 2000 }),
+  note: str({ maxLength: 2000, description: 'Required (non-blank) for `adjust` and `correction`.' }),
 }, ['qty_delta', 'reason'], { additionalProperties: false });
 S_.StockMovementList = obj({ data: arr(S('StockMovement')), page: S('PageInfo') }, ['data', 'page']);
 
@@ -760,24 +803,83 @@ S_.RepairCompleteRequest = obj({
 }, [], { additionalProperties: false });
 
 // labels
+// [M2-W2 LABELS] BEGIN - M2-TAG-02: fixed templates (read, calibrate) and asynchronous label batches (replaces the first
+// draft's synchronous `POST /v1/labels/render`).
+const LABEL_FIELD_VALUES = ['asset_tag', 'name', 'serial', 'location', 'model', 'organisation'];
 S_.LabelTemplate = obj({
   id: uuid(),
-  key: str(),
+  key: str({ description: 'Stable key, the `template_key` of a batch.' }),
   name: str(),
   page_size: en(['letter', 'a4', 'custom']),
   page_width_mm: { type: 'number' }, page_height_mm: { type: 'number' },
   label_width_mm: { type: 'number' }, label_height_mm: { type: 'number' },
   cols: int(), rows: int(),
-  code_type: en(['qr', 'code128', 'qr_and_code128']),
-  fields: arr(str()),
-  is_system: bool({ description: 'System templates are read-only in the MVP; the editor arrives in v1.1.' }),
-}, ['id', 'key', 'name', 'page_size', 'cols', 'rows', 'code_type']);
+  slots: int({ description: 'Labels per sheet (`cols` x `rows`): the upper bound of a batch\'s `start_position`.' }),
+  margin_top_mm: { type: 'number' }, margin_left_mm: { type: 'number' },
+  gap_x_mm: { type: 'number', description: 'Space between two columns of labels.' }, gap_y_mm: { type: 'number', description: 'Space between two rows of labels.' },
+  offset_x_mm: { type: 'number', minimum: -10, maximum: 10, description: 'Calibration: shifts the whole sheet to the right (negative: left). Change it with `PATCH` after a test print (M2-TAG-04).' },
+  offset_y_mm: { type: 'number', minimum: -10, maximum: 10, description: 'Calibration: shifts the whole sheet down (negative: up).' },
+  code_type: en(['qr', 'code128', 'qr_and_code128'], { description: 'The codes the template draws unless a batch says otherwise.' }),
+  fields: arr(en(LABEL_FIELD_VALUES), { description: 'The text lines the template prints unless a batch says otherwise, first line first.' }),
+  is_system: bool({ description: 'System templates are fixed in the MVP (the editor arrives in v1.1): only the two calibration offsets can change.' }),
+}, ['id', 'key', 'name', 'page_size', 'page_width_mm', 'page_height_mm', 'label_width_mm', 'label_height_mm', 'cols', 'rows', 'slots', 'offset_x_mm', 'offset_y_mm', 'code_type', 'fields', 'is_system']);
 S_.LabelTemplateList = obj({ data: arr(S('LabelTemplate')) }, ['data']);
-S_.LabelRenderRequest = obj({
+S_.LabelTemplateUpdate = obj({
+  offset_x_mm: { type: 'number', minimum: -10, maximum: 10, multipleOf: 0.01 },
+  offset_y_mm: { type: 'number', minimum: -10, maximum: 10, multipleOf: 0.01 },
+}, [], { additionalProperties: false, minProperties: 1, description: 'Calibration of a fixed template. At least one offset.' });
+S_.LabelAssetFilter = obj({
+  q: str({ minLength: 1, maxLength: 200 }),
+  archived: en(['exclude', 'include', 'only'], { default: 'exclude' }),
+  tag: str(), serial: str(),
+  status_id: arr(uuid(), { maxItems: 200 }),
+  state_type: arr(en(['deployable', 'deployed', 'pending', 'undeployable', 'archived', 'lost'])),
+  category_id: arr(uuid(), { maxItems: 200 }),
+  model_id: arr(uuid(), { maxItems: 200 }),
+  manufacturer_id: uuid(),
+  location_id: uuid(),
+  include_sublocations: bool({ default: true }),
+  assigned: bool(), assigned_person_id: uuid(), overdue: bool(),
+  company_id: uuid(), vendor_id: uuid(), parent_asset_id: uuid(),
+  warranty_end_before: date(), warranty_end_after: date(),
+  purchase_date_from: date(), purchase_date_to: date(),
+  updated_since: dt(),
+  sort: str({ description: 'As the `sort` of `GET /v1/assets` (`asset_tag` by default here, so a sheet reads in tag order).', maxLength: 200 }),
+}, [], { additionalProperties: false, description: 'The filters of `GET /v1/assets` that narrow the set (no paging, no `cf[...]` custom-field filters), as JSON: lists are arrays, flags are booleans.' });
+S_.LabelBatchCreate = obj({
   template_key: str({ description: 'Key from `GET /v1/labels/templates`.' }),
-  asset_ids: arr(uuid(), { minItems: 1, maxItems: 500, uniqueItems: true }),
-  start_position: int({ minimum: 1, default: 1, description: 'First label slot to use on the first sheet (re-use a partly used sheet).' }),
-}, ['template_key', 'asset_ids'], { additionalProperties: false });
+  asset_ids: arr(uuid(), { minItems: 1, maxItems: 2000, uniqueItems: true, description: 'The assets, printed in this order. Send this or `filter`.' }),
+  filter: S('LabelAssetFilter'),
+  start_position: int({ minimum: 1, maximum: 1000, default: 1, description: '1-based slot of the first label on the first sheet (re-use a partly used sheet); at most the template\'s `slots`. Slots are numbered row by row, left to right.' }),
+  copies: int({ minimum: 1, maximum: 10, default: 1, description: 'Labels per asset, printed next to each other.' }),
+  codes: arr(en(['qr', 'code128']), { maxItems: 2, uniqueItems: true, description: 'Which codes to draw; default: the template\'s `code_type`. The QR encodes `<web base url>/s/<label_code>` (an opaque code, never an internal id), the Code128 encodes the asset tag (printable ASCII only). An empty list prints text only.' }),
+  fields: arr(en(LABEL_FIELD_VALUES), { maxItems: 6, uniqueItems: true, description: 'The text lines to print, first line first and largest; default: the template\'s `fields`. Text shrinks to fit and ends with an ellipsis when it still does not.' }),
+  logo_attachment_id: nuuid('Optional logo: a clean PNG or JPEG attachment of your organisation (at most 2 MiB), printed small above the text.'),
+  outlines: bool({ default: false, description: 'Draw a hairline around every label: for calibration prints on plain paper.' }),
+}, ['template_key'], { additionalProperties: false, description: 'Exactly one of `asset_ids` and `filter`. At most 2000 assets and 2000 labels (assets x copies) per batch.' });
+S_.LabelBatch = obj({
+  id: ro(uuid()),
+  status: ro(en(['queued', 'ready', 'failed', 'expired'], { description: '`queued` until the worker has rendered the PDF, then `ready` (download it), `failed` (see `error`) or, after `expires_at`, `expired` (the file is deleted).' })),
+  template_key: str(),
+  source: en(['asset_ids', 'filter']),
+  asset_count: int(), copies: int(), label_count: int({ description: 'Labels printed: `asset_count` x `copies`.' }),
+  start_position: int(),
+  codes: arr(en(['qr', 'code128'])),
+  fields: arr(en(LABEL_FIELD_VALUES)),
+  outlines: bool(),
+  logo_attachment_id: nuuid(),
+  page_count: { type: ['integer', 'null'], description: 'Sheets in the PDF, once rendered.' },
+  filename: nstr({ description: 'Suggested file name, once ready.' }),
+  size_bytes: { type: ['integer', 'null'], format: 'int64' },
+  created_at: ro(dt()),
+  rendered_at: ro(ndt()),
+  expires_at: ro(dt({ description: 'After this moment the file is deleted and the batch becomes `expired`.' })),
+  download_url: ro({ type: ['string', 'null'], format: 'uri', description: 'A short-lived presigned URL of the PDF; only when `ready`. A fresh one comes with every read.' }),
+  download_expires_at: ro(ndt()),
+  error: ro({ oneOf: [obj({ code: str({ description: 'e.g. `logo-invalid`, `render-failed`.' }), detail: str() }, ['code', 'detail']), { type: 'null' }], description: 'Why the batch failed; `null` otherwise.' }),
+}, ['id', 'status', 'template_key', 'source', 'asset_count', 'copies', 'label_count', 'start_position', 'codes', 'fields', 'outlines', 'page_count', 'created_at', 'expires_at', 'download_url', 'error'], { description: 'One request to print labels. Visible to the user (or API key) that made it, nobody else.' });
+S_.LabelBatchList = obj({ data: arr(S('LabelBatch')), page: S('PageInfo') }, ['data', 'page']);
+// [M2-W2 LABELS] END
 
 // attachments
 S_.Attachment = obj({
@@ -1530,10 +1632,10 @@ addOp('/v1/assets/{id}/assignments', 'get', {
 });
 addOp('/v1/scan/resolve', 'get', {
   tag: 'Assets', id: 'resolveScan', summary: 'Resolve a scanned code', perm: 'asset:read', hasId: true,
-  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
+  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies: `asset`, or (M2 wave 2) `accessory` / `consumable`, which are found by the `label_code` of their label only and answered with their own member (`accessory` / `consumable`) and actions; the accessory and consumable answers need `accessory:read` / `consumable:read` (without it the code is a plain 404). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
   problems: { 409: { codes: ['conflict'], text: 'The serial number belongs to several assets; use the label or the asset tag.' } },
   params: [{ name: 'code', in: 'query', required: true, description: 'Scanned value.', schema: str({ minLength: 1, maxLength: 200 }) }],
-  success: { 200: okResp(200, 'The matching asset.', S('ScanResolveResult'), { replay: false }) },
+  success: { 200: okResp(200, 'The matching asset, accessory or consumable.', S('ScanResolveResponse'), { replay: false }) },
 });
 
 // ---------------------------------------------------------------- CUSTODY
@@ -1629,46 +1731,70 @@ addOp('/v1/people/{id}/history', 'get', {
 });
 
 // ---------------------------------------------------------------- ACCESSORIES
+// [M2-W2 ACC]: BEGIN accessories (M2-ACC-01). Check-out and check-in use the same assignment table as assets.
 crud({
   tag: 'Accessories', base: 'accessories', name: 'Accessory', plural: 'Accessories', singular: 'accessory', readPerm: 'accessory:read', writePerm: 'accessory:manage',
-  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'Only accessories at or below `min_qty` available.')],
+  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'true = only accessories with `min_qty > 0` and `qty_available <= min_qty`; false = all the others.')],
   sorts: ['name', 'qty_total', 'created_at'], defSort: ['name'],
 });
+// The generic operations get the accessory-specific problem codes.
+{
+  const upd = doc.paths['/v1/accessories/{id}'].patch.responses;
+  upd['409'] = specificProblem('409', ['insufficient-stock', 'conflict'], 'The new `qty_total` is below the units that are checked out (`insufficient-stock`), or another uniqueness conflict.');
+  upd['422'] = R('Unprocessable');
+  doc.paths['/v1/accessories/{id}'].delete.responses['409'] = specificProblem('409', ['conflict'], 'Units are still checked out (`usage.open_assignments`); return them first.');
+}
 addOp('/v1/accessories/{id}/checkout', 'post', {
   tag: 'Accessories', id: 'checkoutAccessory', summary: 'Check out accessory units', perm: 'accessory:checkout', params: [ID], idem: 'required',
-  description: 'Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments).',
-  body: jsonBody(S('AccessoryCheckoutRequest')),
+  description: 'Hands `quantity` units (default 1) to a person, a location or an asset: one assignment row with `quantity` and `quantity_returned = 0`. Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments); concurrent check-outs are serialised on the accessory, so the stock is never exceeded. The person must be active, the location and target asset live. Writes an audit record and the outbox event `accessory.checked_out` in the same transaction; when the check-out brings `qty_available` to or below `min_qty` the outbox event `accessory.low_stock` is emitted once per crossing.',
+  problems: { 409: { codes: ['insufficient-stock', 'conflict', 'idempotency-key-in-flight'], text: 'Not enough units available (`insufficient-stock`), the accessory is archived, or a request with the same Idempotency-Key is still running.' } },
+  body: jsonBody(S('AccessoryCheckoutRequest'), true, { person_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91', quantity: 2, note: 'Two chargers for the new starter' }),
   success: { 201: okResp(201, 'Checked out.', S('Assignment'), { location: true }) },
 });
 addOp('/v1/accessories/{id}/checkin', 'post', {
   tag: 'Accessories', id: 'checkinAccessory', summary: 'Return accessory units', perm: 'accessory:checkout', params: [ID], idem: 'required',
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The assignment is already fully returned, or a request with the same Idempotency-Key is still running.' } },
   description: 'Returns `quantity` units (default: everything still outstanding) of an open assignment. A partial return increases `quantity_returned` on the same assignment, which stays open; the return that completes it sets `checked_in_at`. The returned units are available again immediately. Returning more than the outstanding units is rejected with 422.',
   body: jsonBody(S('AccessoryCheckinRequest')),
   success: { 200: okResp(200, 'The assignment after the return: still open with a higher `quantity_returned` after a partial return, closed (`checked_in_at` set) after the last units come back.', S('Assignment')) },
 });
 addOp('/v1/accessories/{id}/assignments', 'get', {
   tag: 'Accessories', id: 'listAccessoryAssignments', summary: 'Who holds this accessory', perm: 'accessory:read',
+  description: 'Newest first. Each row carries `quantity`, `quantity_returned` and `target_name`.',
   params: [ID, P('Cursor'), P('Limit'), qp('state', en(['open', 'closed', 'all']), 'Defaults to `open`.')],
   success: { 200: okResp(200, 'A page of assignments.', S('AssignmentList'), { replay: false }) },
 });
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- CONSUMABLES
+// [M2-W2 ACC]: BEGIN consumables (M2-ACC-02, M2-ACC-03)
 crud({
   tag: 'Consumables', base: 'consumables', name: 'Consumable', plural: 'Consumables', singular: 'consumable', readPerm: 'consumable:read', writePerm: 'consumable:manage',
-  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'Only consumables at or below `min_qty`.')],
+  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'true = only consumables with `min_qty > 0` and `qty_on_hand <= min_qty`; false = all the others.')],
   sorts: ['name', 'qty_on_hand', 'created_at'], defSort: ['name'],
 });
+doc.paths['/v1/consumables'].post.description = 'A positive `initial_qty` is recorded as the first `receive` movement of the ledger (note: "Opening stock"), in the same transaction.\n\nRequires permission `consumable:manage`.';
+doc.paths['/v1/consumables/{id}'].delete.responses['409'] = specificProblem('409', ['conflict'], 'Reserved for a uniqueness conflict; a consumable with stock can be archived (its ledger stays).');
 addOp('/v1/consumables/{id}/movements', 'get', {
   tag: 'Consumables', id: 'listStockMovements', summary: 'Stock ledger of a consumable', perm: 'consumable:read',
-  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.')],
+  description: 'The consume log of one consumable, newest first; filter by reason and by the person the stock went to.',
+  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.'), qp('person_id', uuid(), 'Only movements issued to / returned by this person.')],
   success: { 200: okResp(200, 'A page of movements, newest first.', S('StockMovementList'), { replay: false }) },
 });
 addOp('/v1/consumables/{id}/movements', 'post', {
   tag: 'Consumables', id: 'createStockMovement', summary: 'Receive, issue or adjust stock', perm: 'consumable:adjust', params: [ID], idem: 'required',
-  description: 'Appends to the ledger and updates `qty_on_hand` atomically. The ledger is append-only: fix mistakes with a `correction` movement.',
-  body: jsonBody(S('StockMovementCreate')),
+  description: 'Appends to the ledger and updates `qty_on_hand` atomically; concurrent movements of one consumable are serialised, so stock can never go negative (409 `insufficient-stock`). The ledger is append-only: fix mistakes with a `correction` movement. Writes an audit record and the outbox event `consumable.stock_moved`; when the movement brings `qty_on_hand` to or below `min_qty` the outbox event `consumable.low_stock` is emitted once per crossing (ids only; re-armed when the stock rises above the minimum again). An archived consumable takes no movements (409 `conflict`).',
+  problems: { 409: { codes: ['insufficient-stock', 'conflict', 'idempotency-key-in-flight'], text: 'The movement would make stock negative (`insufficient-stock`), the consumable is archived, or a request with the same Idempotency-Key is still running.' } },
+  body: jsonBody(S('StockMovementCreate'), true, { qty_delta: -2, reason: 'issue', person_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91', note: 'Printer on floor 2' }),
   success: { 201: okResp(201, 'Movement recorded.', S('StockMovement'), { location: true }) },
 });
+addOp('/v1/people/{id}/stock-movements', 'get', {
+  tag: 'Consumables', id: 'listPersonStockMovements', summary: 'Consumption log of a person', perm: 'consumable:read',
+  description: 'Every stock movement issued to or returned by this person, across consumables, newest first (M2-ACC-02: "consume log queryable per person").',
+  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.')],
+  success: { 200: okResp(200, 'A page of movements, newest first.', S('StockMovementList'), { replay: false }) },
+});
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- LOANERS
 crud({
@@ -1718,18 +1844,41 @@ addOp('/v1/repairs/{id}/complete', 'post', {
 });
 
 // ---------------------------------------------------------------- LABELS
+// [M2-W2 LABELS] BEGIN - M2-TAG-02 (see ADR 0007)
 addOp('/v1/labels/templates', 'get', {
   tag: 'Labels', id: 'listLabelTemplates', summary: 'List fixed label templates', perm: 'asset:label', hasId: false,
-  description: 'Standard sheet templates (US Letter 30-up, A4 21-up, 10-up, single 50x25 mm). Read-only in the MVP; a template editor arrives in v1.1.',
+  description: 'The fixed sheet templates: US Letter 30-up (Avery 5160 layout), A4 21-up (L7160) and 24-up 3 x 8 (L7159), US Letter 10-up (5163), and two single-label pages for roll and thermal printers (50 x 25 mm and 2 x 1 inch). Geometry is fixed in the MVP (the editor arrives in v1.1); only the calibration offsets can change.',
   success: { 200: okResp(200, 'All templates.', S('LabelTemplateList'), { replay: false }) },
 });
-addOp('/v1/labels/render', 'post', {
-  tag: 'Labels', id: 'renderLabels', summary: 'Render a PDF label sheet', perm: 'asset:label', hasId: false, conflict: false, idem: 'none',
-  description: 'Renders QR / Code128 labels for up to 500 assets into a PDF (synchronously). Each QR encodes `https://<host>/s/<label_code>`. Writes a `label_printed` history event per asset.',
-  body: jsonBody(S('LabelRenderRequest')),
-  success: { 200: { description: 'The PDF.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'attachment filename.', schema: str() } }, content: { 'application/pdf': { schema: str({ format: 'binary' }) } } } },
-  extraErrors: [404],
+addOp('/v1/labels/templates/{id}', 'get', {
+  tag: 'Labels', id: 'getLabelTemplate', summary: 'Get a label template', perm: 'asset:label', params: [ID],
+  success: { 200: okResp(200, 'The template.', S('LabelTemplate'), { etag: true, replay: false }) },
 });
+addOp('/v1/labels/templates/{id}', 'patch', {
+  tag: 'Labels', id: 'updateLabelTemplate', summary: 'Calibrate a label template', perm: 'catalog:manage', params: [ID], ifMatch: true,
+  description: 'Sets the calibration offsets of a template after a test print on real label stock (M2-TAG-04). The geometry itself cannot be changed.',
+  body: jsonBody(S('LabelTemplateUpdate')),
+  success: { 200: okResp(200, 'The calibrated template.', S('LabelTemplate'), { etag: true }) },
+});
+addOp('/v1/labels/batches', 'post', {
+  tag: 'Labels', id: 'createLabelBatch', summary: 'Request a PDF label sheet', perm: 'asset:label', hasId: false, idem: 'required',
+  description: 'Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.',
+  problems: { 422: { codes: ['validation'], text: 'Validation failed: unknown template or asset, `start_position` beyond the template\'s slots, neither or both of `asset_ids` and `filter`, a filter that matches nothing or more than 2000 assets, more than 2000 labels, a tag that cannot be a readable Code128 (`barcode-unprintable`), or a logo that is not a clean PNG/JPEG.' } },
+  body: jsonBody(S('LabelBatchCreate')),
+  success: { 202: okResp(202, 'Accepted: the batch is queued.', S('LabelBatch'), { location: true }) },
+});
+addOp('/v1/labels/batches', 'get', {
+  tag: 'Labels', id: 'listLabelBatches', summary: 'List my label batches', perm: 'asset:label',
+  description: 'The label batches the caller requested, newest first. Nobody sees another user\'s batches.',
+  params: [P('Cursor'), P('Limit'), P('IncludeTotal'), arrQ('status', en(['queued', 'ready', 'failed', 'expired']), 'Filter by status.'), sortParam(['created_at'], ['-created_at'])],
+  success: { 200: okResp(200, 'A page of batches.', S('LabelBatchList'), { replay: false }) },
+});
+addOp('/v1/labels/batches/{id}', 'get', {
+  tag: 'Labels', id: 'getLabelBatch', summary: 'Get a label batch', perm: 'asset:label', params: [ID],
+  description: 'The status of a batch (poll this) and, once `ready`, a fresh presigned `download_url` (valid for a couple of minutes; read again for a new one). `404` for a batch someone else requested.',
+  success: { 200: okResp(200, 'The batch.', S('LabelBatch'), { replay: false }) },
+});
+// [M2-W2 LABELS] END
 
 // ---------------------------------------------------------------- ATTACHMENTS
 addOp('/v1/attachments', 'get', {
@@ -1855,8 +2004,302 @@ addOp('/v1/audit-log', 'get', {
   success: { 200: { description: 'A page of audit entries.', headers: { 'X-Request-Id': H('RequestId') }, content: { 'application/json': { schema: S('AuditEntryList') }, 'text/csv': { schema: str() } } } },
 });
 
+// ================================================================ [M2-W2 NOT] BEGIN
+// M2 wave 2, repairs / notifications / saved views / export / MFA policy (stories M2-MNT-01, M2-NOT-01,
+// M2-REG-01, M2-REG-02, M2-AUTH-01). Everything of this wave lives in this block so parallel branches merge cleanly.
+doc.tags.push(
+  { name: 'Notifications', description: 'In-app notifications, per-user delivery preferences, tenant notification rules and the delivery log.' },
+  { name: 'Views', description: 'Saved list views (filters, columns, sort), private or shared tenant-wide.' },
+  { name: 'Exports', description: 'CSV exports of lists, produced by a background job and downloaded through a short-lived link.' },
+);
+
+// ---- M2-AUTH-01: the MFA policy of the organisation, as it applies to the caller
+S_.Me.properties.mfa_policy = obj({
+  required: bool({ description: 'True when the policy requires THIS user to have two-step verification (always false for API keys). While true, "Turn off" is refused with `403 mfa-required-by-policy`.' }),
+  scope: en(['off', 'admins', 'all'], { description: 'Who the organisation requires to use two-step verification: nobody, administrators (roles holding `*` or `user:manage`), or everybody.' }),
+}, ['required', 'scope'], { description: 'The organisation\'s MFA policy and whether it applies to the caller (M2-AUTH-01).' });
+S_.Me.required.push('mfa_policy');
+
+// ---- M2-MNT-01: repairs and maintenance
+{
+  const attachmentIds = arr(uuid(), { maxItems: 10, uniqueItems: true, description: 'Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record.' });
+  S_.RepairCreate.properties.attachment_ids = attachmentIds;
+  S_.RepairCreate.properties.force_checkin = bool({ default: false, description: 'The asset is checked out: close its custody period (a check-in) and open the repair in one step. Needs `asset:checkin` as well as `repair:manage`, and `force_note`. Without it a checked-out asset is refused with `409 asset-already-checked-out` (check it in first).' });
+  S_.RepairCreate.properties.force_note = str({ minLength: 1, maxLength: 500, description: 'Why the custody period is closed (recorded on the check-in, the history and the audit log). Required with `force_checkin`.' });
+  S_.RepairCreate.properties.status = en(['open', 'in_progress'], { default: 'open', description: 'Initial status (`in_progress` also sets `started_at`). A record is closed by `POST /v1/repairs/{id}/complete` or by cancelling it.' });
+  S_.RepairCreate.properties.set_status_id.description += ' Required with `force_checkin`.';
+  // Sorting by the nullable `completed_at` is not supported (keyset cursors cannot carry a NULL).
+  {
+    const sortIndex = doc.paths['/v1/repairs'].get.parameters.findIndex((p) => p.name === 'sort');
+    doc.paths['/v1/repairs'].get.parameters[sortIndex] = sortParam(['reported_at', 'created_at'], ['-reported_at']);
+  }
+  // The asset of a record never changes: open a new record for another asset.
+  delete S_.RepairUpdate.properties.asset_id;
+  S_.RepairUpdate.properties.status = en(['open', 'in_progress', 'cancelled'], { description: 'Move to `in_progress`, or `cancelled` (restores the asset status like a completion). A closed record (`completed`, `cancelled`) keeps its status.' });
+  Object.assign(S_.Repair.properties, {
+    set_status_id: ro(nuuid('The status label the asset was moved to when the repair opened (null when the repair did not move it).')),
+    asset_tag: ro(nstr({ description: 'Tag of the asset, so lists can label their rows.' })),
+    asset_name: ro(nstr()),
+    vendor_name: ro(nstr()),
+  });
+  S_.RepairCompleteRequest.properties.attachment_ids = attachmentIds;
+  S_.RepairSummary = obj({
+    asset_id: uuid(),
+    open_count: int({ description: 'Records in status `open` or `in_progress`.' }),
+    total_count: int({ description: 'Records that are not cancelled or archived.' }),
+    total_cost: arr(S('Money'), { description: 'Total recorded cost of the non-cancelled records, one entry per currency (amounts in different currencies are never added together).' }),
+  }, ['asset_id', 'open_count', 'total_count', 'total_cost']);
+
+  doc.paths['/v1/repairs'].post.description = [
+    'Opens a repair or maintenance record for an asset.',
+    '`set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant\'s default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset\'s status (`409 conflict` otherwise).',
+    'A checked-out asset goes to repair through check-in first; with `force_checkin` and `force_note` (and the `asset:checkin` permission) the custody period is closed in the same transaction. A lost or retired asset, or an archived one, cannot be repaired (`409`).',
+    'Writes a `repair_opened` history event, an audit row and the outbox event `repair.opened`. Requires permission `repair:manage`.',
+  ].join('\n\n');
+  doc.paths['/v1/repairs'].post.responses['409'] = specificProblem('409', ['asset-already-checked-out', 'conflict', 'idempotency-key-in-flight'], 'The asset is checked out (check it in or use `force_checkin`), is lost, retired or archived, or another open repair already moved its status.');
+  doc.paths['/v1/repairs/{id}'].patch.description = 'Edit a record (RFC 7396 merge). `status` may move to `in_progress` or `cancelled`; cancelling restores the asset status. The asset cannot change. Closed records stay editable except for their status. Requires permission `repair:manage`.';
+  doc.paths['/v1/repairs/{id}'].delete.description = 'Soft delete. `409` while the record is open or in progress (cancel or complete it first).\n\nRequires permission `repair:manage`.';
+  doc.paths['/v1/repairs/{id}/complete'].post.description = 'Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status: the explicit `restore_status_id` of the request, else the one remembered when the repair opened, but only when the asset still has the status the repair moved it to (a status someone chose meanwhile is left alone). Writes a `repair_completed` history event, an audit row and the outbox event `repair.completed`. `409` when the record is already closed.\n\nRequires permission `repair:manage`.';
+  addOp('/v1/assets/{id}/repair-summary', 'get', {
+    tag: 'Repairs', id: 'getAssetRepairSummary', summary: 'Repair totals of an asset', perm: 'repair:read', params: [ID],
+    description: 'Counts and the total recorded cost per currency of the asset\'s repair and maintenance records (cancelled and archived records excluded).',
+    success: { 200: okResp(200, 'The totals.', S('RepairSummary'), { replay: false }) },
+  });
+}
+
+// ---- M2-NOT-01: notifications
+{
+  const TYPE_PARAM = { name: 'type', in: 'path', required: true, description: 'Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`).', schema: str({ pattern: '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$', maxLength: 64 }) };
+  const EMAIL_MODE = en(['immediate', 'digest', 'off'], { description: '`immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.' });
+  S_.Notification = obj({
+    id: uuid(),
+    type: str({ description: 'Notification type (the domain event it comes from), e.g. `attachment.infected`.' }),
+    title: str(),
+    body: nstr(),
+    link: nstr({ description: 'Path inside the web app that shows the subject, e.g. `/assets/view?id=...`.' }),
+    entity_type: nstr(),
+    entity_id: nuuid(),
+    created_at: dt(),
+    read_at: ndt(),
+  }, ['id', 'type', 'title', 'body', 'link', 'entity_type', 'entity_id', 'created_at', 'read_at']);
+  S_.NotificationList = obj({ data: arr(S('Notification')), page: S('PageInfo') }, ['data', 'page']);
+  S_.NotificationUnreadCount = obj({ count: int({ minimum: 0 }) }, ['count']);
+  S_.NotificationReadAllResult = obj({ updated: int({ minimum: 0, description: 'Notifications that were unread and are now read.' }) }, ['updated']);
+  S_.NotificationPreference = obj({
+    type: str(),
+    label: str(),
+    description: str(),
+    in_app: bool({ description: 'Show in the notification bell.' }),
+    email: EMAIL_MODE,
+    is_default: bool({ description: 'True while the user has not chosen: the values are the type\'s defaults.' }),
+  }, ['type', 'label', 'description', 'in_app', 'email', 'is_default']);
+  S_.NotificationPreferenceList = obj({ data: arr(S('NotificationPreference')) }, ['data']);
+  S_.NotificationPreferenceUpdate = obj({ in_app: bool(), email: EMAIL_MODE }, [], { additionalProperties: false, description: 'At least one field.' });
+  S_.NotificationRule = obj({
+    type: str(),
+    label: str(),
+    description: str(),
+    enabled: bool({ description: 'When false the type produces no notification for anybody in this organisation.' }),
+    recipients: str({ description: 'Who gets it by default, in words.' }),
+    role_configurable: bool({ description: 'True when `recipient_roles` can replace the default recipients (types addressed to users that hold a permission).' }),
+    recipient_roles: { type: ['array', 'null'], items: str(), description: 'Role keys that receive it instead of the default recipients; null = the default.' },
+    updated_at: ndt(),
+  }, ['type', 'label', 'description', 'enabled', 'recipients', 'role_configurable', 'recipient_roles', 'updated_at']);
+  S_.NotificationRuleList = obj({ data: arr(S('NotificationRule')) }, ['data']);
+  S_.NotificationRuleUpdate = obj({
+    enabled: bool(),
+    recipient_roles: { type: ['array', 'null'], items: str({ pattern: '^[a-z][a-z0-9_]{1,62}$' }), maxItems: 20, description: 'Role keys, or null to go back to the default recipients. Only for `role_configurable` types.' },
+  }, [], { additionalProperties: false, description: 'At least one field.' });
+  S_.NotificationDelivery = obj({
+    id: uuid(),
+    notification_id: nuuid(),
+    user_id: uuid(),
+    type: str(),
+    channel: en(['in_app', 'email']),
+    status: en(['delivered', 'queued', 'deferred', 'skipped', 'failed']),
+    reason: nstr({ description: 'Why a delivery was skipped or deferred, e.g. `preference-off`, `no-email`, `throttled`, `digest`.' }),
+    created_at: dt(),
+  }, ['id', 'notification_id', 'user_id', 'type', 'channel', 'status', 'reason', 'created_at'], { description: '`queued` = handed to the mail queue (the mail job has its own retries and dead-letter list).' });
+  S_.NotificationDeliveryList = obj({ data: arr(S('NotificationDelivery')), page: S('PageInfo') }, ['data', 'page']);
+
+  const SELF = { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } };
+  const SELF_MUTATE = { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session with a valid `X-CSRF-Token`.' } };
+  addOp('/v1/notifications', 'get', {
+    tag: 'Notifications', id: 'listNotifications', summary: 'My notifications', selfService: true, hasId: false,
+    description: 'The caller\'s in-app notifications, newest first.',
+    params: [P('Cursor'), P('Limit'), qp('unread', bool(), 'true = only unread ones.')],
+    problems: SELF,
+    success: { 200: okResp(200, 'A page of notifications.', S('NotificationList'), { replay: false }) },
+  });
+  addOp('/v1/notifications/unread-count', 'get', {
+    tag: 'Notifications', id: 'getNotificationUnreadCount', summary: 'Number of unread notifications', selfService: true, hasId: false,
+    problems: SELF,
+    success: { 200: okResp(200, 'The count (for the bell badge).', S('NotificationUnreadCount'), { replay: false }) },
+  });
+  addOp('/v1/notifications/read-all', 'post', {
+    tag: 'Notifications', id: 'markAllNotificationsRead', summary: 'Mark every notification read', selfService: true, hasId: false, conflict: false,
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'How many were updated.', S('NotificationReadAllResult')) },
+  });
+  addOp('/v1/notifications/{id}/read', 'post', {
+    tag: 'Notifications', id: 'markNotificationRead', summary: 'Mark a notification read', selfService: true, params: [ID], conflict: false,
+    description: 'Idempotent: an already-read notification keeps its first `read_at`. Another user\'s notification is `404`.',
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'The notification.', S('Notification')) },
+  });
+  addOp('/v1/notification-preferences', 'get', {
+    tag: 'Notifications', id: 'listNotificationPreferences', summary: 'My notification preferences', selfService: true, hasId: false,
+    description: 'One entry per notification type, with the caller\'s choice (or the default).',
+    problems: SELF,
+    success: { 200: okResp(200, 'Preferences.', S('NotificationPreferenceList'), { replay: false }) },
+  });
+  addOp('/v1/notification-preferences/{type}', 'put', {
+    tag: 'Notifications', id: 'updateNotificationPreference', summary: 'Set my preference for a type', selfService: true, params: [TYPE_PARAM], conflict: false, hasId: true,
+    description: 'Chooses in-app and email delivery (`immediate`, `digest`, `off`) for one notification type. Omitted fields keep their current value (or the default).',
+    body: jsonBody(S('NotificationPreferenceUpdate')),
+    problems: SELF_MUTATE,
+    success: { 200: okResp(200, 'The preference.', S('NotificationPreference')) },
+  });
+  addOp('/v1/notification-rules', 'get', {
+    tag: 'Notifications', id: 'listNotificationRules', summary: 'Notification rules of the organisation', perm: 'notification:manage', hasId: false,
+    description: 'Every notification type with whether it is enabled and who receives it.',
+    success: { 200: okResp(200, 'Rules.', S('NotificationRuleList'), { replay: false }) },
+  });
+  addOp('/v1/notification-rules/{type}', 'put', {
+    tag: 'Notifications', id: 'updateNotificationRule', summary: 'Enable, disable or re-address a type', perm: 'notification:manage', params: [TYPE_PARAM], conflict: false, hasId: true,
+    body: jsonBody(S('NotificationRuleUpdate')),
+    success: { 200: okResp(200, 'The rule.', S('NotificationRule')) },
+  });
+  addOp('/v1/notification-deliveries', 'get', {
+    tag: 'Notifications', id: 'listNotificationDeliveries', summary: 'Delivery log', perm: 'notification:manage', hasId: false,
+    description: 'What was delivered, queued, deferred (digest) or skipped, newest first.',
+    params: [P('Cursor'), P('Limit'), qp('user_id', uuid(), 'Recipient.'), qp('type', str(), 'Notification type.'), qp('channel', en(['in_app', 'email']), 'Channel.'), arrQ('status', en(['delivered', 'queued', 'deferred', 'skipped', 'failed']), 'Status.'), qp('from', dt(), 'At or after.'), qp('to', dt(), 'Before.')],
+    success: { 200: okResp(200, 'A page of deliveries.', S('NotificationDeliveryList'), { replay: false }) },
+  });
+}
+
+// ---- M2-REG-01: saved views
+{
+  S_.SavedView = obj({
+    id: uuid(),
+    resource: en(['assets'], { description: 'The list the view belongs to.' }),
+    name: str({ minLength: 1, maxLength: 100 }),
+    filters: { type: 'object', additionalProperties: true, description: 'The list filters as the client keeps them (opaque to the server apart from the id references checked for `warnings`).' },
+    columns: arr(str({ maxLength: 64 }), { maxItems: 40, description: 'Visible column ids in display order.' }),
+    sort: nstr({ maxLength: 64, description: 'Sort key with `-` for descending, or null for the default.' }),
+    is_shared: bool({ description: 'Visible to everybody in the organisation.' }),
+    is_owner: bool({ description: 'The caller created it (only the owner edits it).' }),
+    owner: obj({ id: uuid(), display_name: str() }, ['id', 'display_name']),
+    warnings: arr(obj({ field: str(), id: uuid(), reason: en(['not-found', 'archived']) }, ['field', 'id', 'reason']), { description: 'Id references in `filters` (status, category, location, model, vendor, person) that no longer resolve: the client applies the rest of the view and shows a warning.' }),
+    created_at: dt(),
+    updated_at: dt(),
+  }, ['id', 'resource', 'name', 'filters', 'columns', 'sort', 'is_shared', 'is_owner', 'owner', 'warnings', 'created_at', 'updated_at']);
+  S_.SavedViewList = obj({ data: arr(S('SavedView')), page: S('PageInfo') }, ['data', 'page']);
+  const viewProps = {
+    name: str({ minLength: 1, maxLength: 100 }),
+    filters: { type: 'object', additionalProperties: true, description: 'At most 16 KiB of JSON.' },
+    columns: arr(str({ maxLength: 64 }), { maxItems: 40 }),
+    sort: nstr({ maxLength: 64 }),
+  };
+  S_.SavedViewCreate = obj({ resource: en(['assets'], { default: 'assets' }), ...viewProps }, ['name'], { additionalProperties: false });
+  S_.SavedViewUpdate = obj({ ...viewProps }, [], { additionalProperties: false, description: 'Partial update (RFC 7396 merge semantics).' });
+  S_.SavedViewShare = obj({ shared: bool() }, ['shared'], { additionalProperties: false });
+  const VIEW_403 = { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Needs a browser session with a valid `X-CSRF-Token`.' } };
+  addOp('/v1/saved-views', 'get', {
+    tag: 'Views', id: 'listSavedViews', summary: 'Saved views I can use', selfService: true, hasId: false,
+    description: 'The caller\'s own views plus the views shared in the organisation, ordered by name (`is_owner` tells them apart).',
+    params: [P('Cursor'), P('Limit'), qp('resource', en(['assets']), 'The list (default `assets`).'), qp('scope', en(['all', 'mine', 'shared']), '`mine` = created by the caller, `shared` = shared by anybody, `all` (default) = both.')],
+    problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
+    success: { 200: okResp(200, 'A page of views.', S('SavedViewList'), { replay: false }) },
+  });
+  addOp('/v1/saved-views', 'post', {
+    tag: 'Views', id: 'createSavedView', summary: 'Save a view', selfService: true, hasId: false,
+    description: 'Creates a private view. The name is unique among the caller\'s views of the list (`409`); at most 50 per user and list. Share it afterwards with `PUT /v1/saved-views/{id}/sharing`.',
+    body: jsonBody(S('SavedViewCreate')),
+    problems: VIEW_403,
+    success: { 201: okResp(201, 'View saved.', S('SavedView'), { etag: true, location: true }) },
+  });
+  addOp('/v1/saved-views/{id}', 'get', {
+    tag: 'Views', id: 'getSavedView', summary: 'Get a saved view', selfService: true, params: [ID],
+    description: 'An own view or a shared one; anybody else\'s private view is `404`.',
+    problems: { 403: { codes: ['forbidden'], text: 'Needs a browser session, not an API key.' } },
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true, replay: false }) },
+  });
+  addOp('/v1/saved-views/{id}', 'patch', {
+    tag: 'Views', id: 'updateSavedView', summary: 'Rename or change a view', selfService: true, params: [ID], ifMatch: true,
+    description: 'Only the owner (`404` for anybody else, also for a shared view). A shared view stays shared.',
+    body: jsonBody(S('SavedViewUpdate')),
+    problems: VIEW_403,
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+  });
+  addOp('/v1/saved-views/{id}', 'delete', {
+    tag: 'Views', id: 'deleteSavedView', summary: 'Delete a view', selfService: true, params: [ID], ifMatch: true, conflict: false,
+    description: 'Deletes the view for good. Only the owner (`404` for anybody else).',
+    problems: VIEW_403,
+    success: { 204: okResp(204, 'Deleted.') },
+  });
+  addOp('/v1/saved-views/{id}/sharing', 'put', {
+    tag: 'Views', id: 'shareSavedView', summary: 'Share a view with the organisation, or stop sharing', perm: 'view:share', params: [ID], ifMatch: true,
+    description: 'Owner only. A shared view is visible to every user of the organisation (read only, they can copy it). The name must be unique among the shared views of the list (`409`).',
+    body: jsonBody(S('SavedViewShare')),
+    success: { 200: okResp(200, 'The view.', S('SavedView'), { etag: true }) },
+  });
+}
+
+// ---- M2-REG-02: CSV export of lists
+{
+  const FILTER_NOTE = 'The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`.';
+  S_.ExportCreate = obj({
+    resource: en(['assets', 'people', 'locations']),
+    format: en(['csv'], { default: 'csv' }),
+    filters: { type: 'object', additionalProperties: { oneOf: [str(), { type: 'number' }, bool(), arr(str())] }, description: FILTER_NOTE },
+  }, ['resource'], { additionalProperties: false });
+  S_.Export = obj({
+    id: uuid(),
+    resource: en(['assets', 'people', 'locations']),
+    format: en(['csv']),
+    status: en(['queued', 'running', 'succeeded', 'failed', 'expired']),
+    filters: { type: 'object', additionalProperties: true, description: 'The filters the export was requested with (normalised to query-string form).' },
+    row_count: { type: ['integer', 'null'], minimum: 0 },
+    size_bytes: { type: ['integer', 'null'], minimum: 0 },
+    filename: nstr(),
+    error: nstr({ description: 'Why a failed export failed (a sentence without internals).' }),
+    requested_by: uuid(),
+    created_at: dt(),
+    started_at: ndt(),
+    completed_at: ndt(),
+    expires_at: ndt({ description: 'The file is deleted at this time (24 hours after completion).' }),
+    download_url: nstr({ format: 'uri', description: 'Short-lived link to the CSV file; only while `status=succeeded`. A new link is issued by every `GET /v1/exports/{id}` and each issue is audited as a sensitive read.' }),
+    download_expires_at: ndt(),
+  }, ['id', 'resource', 'format', 'status', 'filters', 'row_count', 'size_bytes', 'filename', 'error', 'requested_by', 'created_at', 'started_at', 'completed_at', 'expires_at', 'download_url', 'download_expires_at']);
+  S_.ExportList = obj({ data: arr(S('Export')), page: S('PageInfo') }, ['data', 'page']);
+  addOp('/v1/exports', 'post', {
+    tag: 'Exports', id: 'createExport', summary: 'Export a list to CSV', perm: 'export:run', hasId: false,
+    description: [
+      'Queues a background job that writes every row matching `filters` to a UTF-8 CSV file (with a byte order mark, CRLF line ends, a header row) and stores it for 24 hours. Poll `GET /v1/exports/{id}` until `status=succeeded`, then use `download_url`.',
+      'The caller also needs the read permission of the list (`asset:read`, `person:read` or `location:read`, `403` otherwise). Cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading apostrophe so spreadsheets never run them as formulas. Asset exports include one `cf:<key>` column per custom field. At most 100,000 rows. Requested and downloaded exports are audited (sensitive read).',
+      FILTER_NOTE,
+    ].join('\n\n'),
+    body: jsonBody(S('ExportCreate')),
+    problems: { 403: { codes: ['forbidden', 'csrf-invalid'], text: 'Missing `export:run` or the read permission of the list.' } },
+    success: { 202: { description: 'Export queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter'), 'Idempotent-Replayed': H('IdempotentReplayed') }, content: { 'application/json': { schema: S('Export') } } } },
+  });
+  addOp('/v1/exports', 'get', {
+    tag: 'Exports', id: 'listExports', summary: 'My exports', perm: 'export:run', hasId: false,
+    description: 'The caller\'s exports, newest first. `download_url` is never set in a list; fetch one export for a link.',
+    params: [P('Cursor'), P('Limit'), arrQ('status', en(['queued', 'running', 'succeeded', 'failed', 'expired']), 'Filter by status.')],
+    success: { 200: okResp(200, 'A page of exports.', S('ExportList'), { replay: false }) },
+  });
+  addOp('/v1/exports/{id}', 'get', {
+    tag: 'Exports', id: 'getExport', summary: 'Get an export', perm: 'export:run', params: [ID],
+    description: 'Status of one export. For a succeeded one it issues a fresh short-lived `download_url` (audited as a sensitive read). Another user\'s export is `404`.',
+    success: { 200: okResp(200, 'The export.', S('Export'), { replay: false }) },
+  });
+}
+// ================================================================ [M2-W2 NOT] END
+
 // ---------------------------------------------------------------- prune unused components, order, emit
-const text = () => JSON.stringify({ paths: doc.paths, security: doc.security });
+const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {
   const used = { schemas: new Set(), parameters: new Set(), responses: new Set(), headers: new Set() };
   const scan = (node) => {

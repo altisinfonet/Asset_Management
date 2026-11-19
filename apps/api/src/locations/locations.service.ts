@@ -19,10 +19,12 @@ import {
 import {
   type LocationCounts,
   RegistryBase,
+  type TxScope,
   duplicate,
   inUse,
   invalidRef,
   locationDto,
+  nonZero,
   stalePrecondition,
 } from '../registry/index.js';
 import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
@@ -75,7 +77,7 @@ export class LocationsService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------ reads
 
-  async list(auth: AuthContext, query: LocationListQuery): Promise<Page<Record<string, unknown>>> {
+  async list(auth: TxScope, query: LocationListQuery): Promise<Page<Record<string, unknown>>> {
     return this.tx(auth, async (trx) => {
       const archived =
         query.archived === 'only'
@@ -345,18 +347,23 @@ export class LocationsService extends RegistryBase {
       assertIfMatch(ifMatch, row.version);
 
       // Refused while anything still points at the location (M2-LOC-01: "with counts").
-      const [children, assets, people, openAssignments] = await Promise.all([
-        trx.location.count({ where: { parent_id: id, archived_at: null } }),
-        trx.asset.count({ where: { location_id: id, archived_at: null } }),
-        trx.person.count({ where: { location_id: id, archived_at: null } }),
-        trx.assignment.count({ where: { location_id: id, checked_in_at: null } }),
-      ]);
-      if (children + assets + people + openAssignments > 0) {
+      const [children, assets, people, openAssignments, accessories, consumables] =
+        await Promise.all([
+          trx.location.count({ where: { parent_id: id, archived_at: null } }),
+          trx.asset.count({ where: { location_id: id, archived_at: null } }),
+          trx.person.count({ where: { location_id: id, archived_at: null } }),
+          trx.assignment.count({ where: { location_id: id, checked_in_at: null } }),
+          // [M2-W2 ACC] stock kept at the location
+          trx.accessory.count({ where: { location_id: id, archived_at: null } }),
+          trx.consumable.count({ where: { location_id: id, archived_at: null } }),
+        ]);
+      if (children + assets + people + openAssignments + accessories + consumables > 0) {
         throw inUse('Location', {
           children,
           assets,
           people,
           open_assignments: openAssignments,
+          ...nonZero({ accessories, consumables }),
         });
       }
       const result = await trx.location.updateMany({

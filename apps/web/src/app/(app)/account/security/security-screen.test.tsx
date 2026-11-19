@@ -125,8 +125,37 @@ describe('SecurityScreen', () => {
       await expectNoA11yViolations(dialog);
     });
 
-    it('explains a policy-enforced account and disables Turn off afterwards', async () => {
-      const { user, dialog } = await openTurnOff(MOCK_ACCOUNTS.mfaEnforced);
+    it('disables Turn off up front, with the explanation, when /me says the policy is enforced', async () => {
+      seedSession(MOCK_ACCOUNTS.mfaEnforced);
+      const { container } = renderApp(<SecurityScreen />);
+      const turnOff = await screen.findByRole('button', { name: 'Turn off' });
+      await waitFor(() => expect(turnOff).toBeDisabled());
+      expect(turnOff).toHaveAccessibleDescription(/requires two-step verification/);
+      expect(screen.getByText(/Your organisation requires two-step verification/)).toBeVisible();
+      // the other action stays available
+      expect(screen.getByRole('button', { name: 'New recovery codes' })).toBeEnabled();
+      await expectNoA11yViolations(container);
+    });
+
+    it('offers Turn off to an account the policy does not cover', async () => {
+      seedSession(MOCK_ACCOUNTS.mfaOwner);
+      renderApp(<SecurityScreen />);
+      expect(await screen.findByRole('button', { name: 'Turn off' })).toBeEnabled();
+      expect(screen.queryByText(/Your organisation requires two-step verification/)).toBeNull();
+    });
+
+    it('still explains the 403 when /me said the policy does not apply but the API refuses, and disables Turn off afterwards', async () => {
+      seedSession(MOCK_ACCOUNTS.mfaEnforced);
+      const me = (await (await fetch(`${window.location.origin}/v1/auth/me`)).json()) as Record<
+        string,
+        unknown
+      >;
+      me.mfa_policy = { required: false, scope: 'off' };
+      server.use(http.get('/v1/auth/me', () => HttpResponse.json(me)));
+      renderApp(<SecurityScreen />);
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'Turn off' }));
+      const dialog = await screen.findByRole('dialog', { name: TURN_OFF_TITLE });
       await user.type(within(dialog).getByLabelText(/^Current password/), MOCK_PASSWORD);
       await user.click(within(dialog).getByRole('button', { name: TURN_OFF_CONFIRM }));
       expect(

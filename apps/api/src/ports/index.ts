@@ -156,6 +156,44 @@ export interface VirusScanner {
   ping(): Promise<boolean>;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Notifications (M2-NOT-01)
+
+/** One notification to create for one or more users. */
+export interface NotificationRequest {
+  /** A registered notification type (`src/notifications/types.ts`), e.g. `attachment.infected`. */
+  type: string;
+  /** Login accounts (user ids) to notify; duplicates are folded. */
+  recipients: readonly string[];
+  /** Template variables (names, counts): rendered into the in-app text and the email. */
+  vars: Readonly<Record<string, string | number>>;
+  /** The record the notification is about, so the bell can link to it. */
+  entity?: { type: string; id: string };
+  /** Path inside the web app that shows the subject (`/assets/view?id=...`). */
+  link?: string;
+  /**
+   * What makes this notification "the same" for a recipient: a second request with the same key and
+   * recipient is ignored (an outbox redelivery, a producer that fires twice).
+   */
+  dedupeKey: string;
+}
+
+export interface NotifyResult {
+  /** Notifications created (one per recipient that wants this type and was not notified already). */
+  created: number;
+  /** Recipients left out: duplicate, switched off by preference or rule, no longer active. */
+  skipped: number;
+}
+
+/**
+ * Creates in-app notifications and queues their email (per user preference: immediately, in the daily
+ * digest, or not at all). MUST be called inside a tenant transaction (ADR 0004): the rows, the delivery
+ * log and the mail commit together with the change that caused them, like audit rows and outbox events.
+ */
+export interface Notifier {
+  notify(tx: Tx, request: NotificationRequest): Promise<NotifyResult>;
+}
+
 export const AUDIT_WRITER = Symbol('AUDIT_WRITER');
 export const OUTBOX_PUBLISHER = Symbol('OUTBOX_PUBLISHER');
 export const JOB_QUEUE = Symbol('JOB_QUEUE');
@@ -163,3 +201,4 @@ export const MAIL_SENDER = Symbol('MAIL_SENDER');
 export const SECRET_BOX = Symbol('SECRET_BOX');
 export const STORAGE_ADAPTER = Symbol('STORAGE_ADAPTER');
 export const VIRUS_SCANNER = Symbol('VIRUS_SCANNER');
+export const NOTIFIER = Symbol('NOTIFIER');

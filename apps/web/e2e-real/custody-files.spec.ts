@@ -118,7 +118,7 @@ test('signs in and builds a location tree: campus, hall and room', async () => {
 
 test('sets up an asset (with a serial) in the room and two people', async () => {
   const category = (
-    await api<{ data: Array<{ id: string }> }>(page, 'GET', '/v1/categories?limit=1')
+    await api<{ data: Array<{ id: string }> }>(page, 'GET', '/v1/categories?kind=asset&limit=1')
   ).json.data[0]!;
   const asset = await api<{ id: string; asset_tag: string }>(page, 'POST', '/v1/assets', {
     category_id: category.id,

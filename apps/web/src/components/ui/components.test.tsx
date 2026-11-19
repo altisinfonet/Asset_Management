@@ -240,9 +240,13 @@ describe('Drawer', () => {
 describe('Toast', () => {
   function Trigger() {
     const { toast, error } = useToast();
+    // A long duration keeps the toasts from timing out while the test clicks (the 5 s default made
+    // the count depend on how busy the machine is, which flaked under the parallel suite).
     return (
       <>
-        <button onClick={() => toast({ title: 'Saved', variant: 'success' })}>ok</button>
+        <button onClick={() => toast({ title: 'Saved', variant: 'success', duration: 120_000 })}>
+          ok
+        </button>
         <button onClick={() => error('error.server', 'req-42')}>fail</button>
       </>
     );
@@ -257,7 +261,9 @@ describe('Toast', () => {
     );
     await user.click(screen.getByText('fail'));
     expect(await screen.findByText('Request ID req-42')).toBeInTheDocument();
-    expect(screen.getByText(/went wrong on our side/)).toBeInTheDocument();
+    // the message is in the toast and, a moment later (timing depends on the machine), also in the polite
+    // live region that announces it: one or both are there, never none
+    expect((await screen.findAllByText(/went wrong on our side/)).length).toBeGreaterThanOrEqual(1);
 
     for (let i = 0; i < 4; i++) await user.click(screen.getByText('ok'));
     expect(screen.getAllByText('Saved')).toHaveLength(3);

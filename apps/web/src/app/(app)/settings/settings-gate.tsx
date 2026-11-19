@@ -17,6 +17,7 @@ const SECTION_PERMISSION: Record<SettingsSection, string | readonly string[]> = 
   status: 'catalog:manage',
   tags: 'catalog:manage',
   vendors: 'catalog:manage',
+  notifications: 'notification:manage',
 };
 
 /** Shows the 403 screen (WEB-24) instead of a settings page the user's role cannot open. */

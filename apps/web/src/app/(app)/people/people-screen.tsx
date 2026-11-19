@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '@/components/page-header';
+import { ExportButton } from '@/components/exports/export-button';
 import { PageTitle } from '@/components/page-title';
 import { Badge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
@@ -178,12 +179,15 @@ export function PeopleScreen() {
         title={t('people.title')}
         description={t('people.description')}
         actions={
-          manage ? (
-            <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus aria-hidden className="size-4" />
-              {t('people.add')}
-            </Button>
-          ) : null
+          <>
+            <ExportButton resource="people" query={query} />
+            {manage ? (
+              <Button variant="primary" onClick={() => setCreating(true)}>
+                <Plus aria-hidden className="size-4" />
+                {t('people.add')}
+              </Button>
+            ) : null}
+          </>
         }
       />
 

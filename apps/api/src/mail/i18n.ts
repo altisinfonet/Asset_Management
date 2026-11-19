@@ -40,6 +40,8 @@ export const en: Catalogue = {
   'auth.mfa-enabled.method.totp': 'authenticator app',
   'auth.mfa-enabled.method.passkey': 'passkey',
 
+  'notification.message.cta': 'Open {product}',
+
   'auth.new-login.subject': 'New sign-in to your {product} account',
   'auth.new-login.preheader': 'We noticed a sign-in from a new device or location.',
   'auth.new-login.intro':

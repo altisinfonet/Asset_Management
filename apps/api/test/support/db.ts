@@ -33,7 +33,7 @@ export const mode: 'direct' | 'pooled' =
 /** True when the database-backed suites can run. */
 export const dbEnabled = Boolean(env.databaseUrl && env.migratorUrl);
 
-export function newTenancy(url = env.databaseUrl!, poolMax = 10): TenancyService {
+export function newTenancy(url = env.databaseUrl!, poolMax = 5): TenancyService {
   return new TenancyService({ connectionString: url, poolMax, applicationName: 'e2e' });
 }
 

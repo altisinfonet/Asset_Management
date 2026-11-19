@@ -149,8 +149,16 @@ ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app \
 ```
 
 Prove nothing was skipped (what CI does): add `--reporter=default --reporter=json --outputFile.json=e2e.json`
-to the command above, then `node scripts/ci/assert-no-skips.mjs apps/api/e2e.json`. A full run is about 184
-tests in 13 files and takes roughly 15 seconds per mode.
+to the command above, then `node scripts/ci/assert-no-skips.mjs apps/api/e2e.json`. A full run is about 570
+tests in 43 files and takes two to three minutes per mode.
+
+- **Parallelism is bounded on purpose.** Each test file boots its own app (connection pool, pg-boss pool), so the
+  files in flight are the database clients. `vitest.e2e.config.ts` runs at most six files at once
+  (`E2E_MAX_WORKERS` overrides) and gives each app a pool of 6. The dev/CI stack matches: PgBouncer
+  `default_pool_size=16`, `max_client_conn=1000`, Postgres `max_connections=300`. At the vitest default (cores - 1)
+  the suite opened 60+ pooled clients on a 4-connection pool and 300+ direct connections, so a busy machine
+  produced 30 s timeouts, 500s and "remaining connection slots are reserved" errors in 8 to 22 files. After
+  changing `pgbouncer.ini` run `docker compose restart pgbouncer`.
 
 - The suite uses its own pg-boss schema (`pgboss_e2e`, provisioned by `test/support/global-setup.ts`), so
   it is safe to run while the compose `worker` and `scheduler` are up.

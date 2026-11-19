@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { bootstrapTenant } from '../src/bootstrap/bootstrap-tenant.js';
 import {
@@ -40,6 +41,13 @@ const TENANT_TABLES = [
   'app.assignment',
   'app.transfer',
   'app.asset_history',
+  // [M2-W2 ACC]
+  'app.accessory',
+  'app.consumable',
+  'app.stock_movement',
+  // M2 wave 2 labels
+  'app.label_template',
+  'app.label_batch',
   'app.idempotency_key',
   'app.outbox_event',
   'app.audit_log',
@@ -93,6 +101,8 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
         'app.audit_log': 1,
         'app.outbox_event': 1,
         'app.asset': 0,
+        'app.label_template': 6, // seeded by bootstrapTenant (app.seed_label_templates)
+        'app.label_batch': 0,
       });
       expect(await rowCounts(b.tenantId)).toEqual(countsA);
 
@@ -333,11 +343,21 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
     });
 
     it('creates Acme and Globex with 4 users and 200 assets each, overlapping tags and serials, and is idempotent', async () => {
-      const first = await seedDemoData(tenancy, { nodeEnv: 'test' });
-      const second = await seedDemoData(tenancy, { nodeEnv: 'test' });
+      // Own tenants with unique slugs and domains: the shared demo tenants (Acme, Globex) are used and
+      // changed by other suites and by the real-stack e2e, so exact seed counts can only be asserted on
+      // tenants nobody else touches.
+      const tag = randomUUID().slice(0, 8);
+      const specs = DEMO_TENANTS.map((t) => ({
+        name: `${t.name} ${tag}`,
+        slug: `${t.slug}-${tag}`,
+        domain: `${tag}.${t.domain}`,
+      }));
+      const first = await seedDemoData(tenancy, { nodeEnv: 'test', tenants: specs });
+      const second = await seedDemoData(tenancy, { nodeEnv: 'test', tenants: specs });
       expect(second.tenants.map((t) => t.seeded)).toEqual([false, false]);
       expect(second.tenants.map((t) => t.tenantId)).toEqual(first.tenants.map((t) => t.tenantId));
-      expect(first.tenants.map((t) => t.slug)).toEqual(DEMO_TENANTS.map((t) => t.slug));
+      expect(first.tenants.map((t) => t.slug)).toEqual(specs.map((t) => t.slug));
+      expect(first.tenants.map((t) => t.seeded)).toEqual([true, true]);
 
       const snapshot = async (tenantId: string) =>
         tenancy.withTenantTx({ tenantId }, async (trx) => ({
@@ -393,7 +413,9 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           expect(await countOf(trx, 'app.person')).toBe(16);
           expect(await trx.person.count({ where: { user_id: null } })).toBe(12);
           expect(await trx.asset.count({ where: { location_id: null } })).toBe(0);
-          const open = await trx.assignment.count({ where: { checked_in_at: null } });
+          const open = await trx.assignment.count({
+            where: { checked_in_at: null, asset_id: { not: null } },
+          });
           expect(open).toBeGreaterThan(40);
           expect(
             await trx.assignment.count({
@@ -411,6 +433,35 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           const [out] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.asset_history where event_type = 'checked_out'`;
           expect(out!.n).toBe(open);
+        });
+        // [M2-W2 ACC] demo accessories (some out, one with a partial return, some low) and consumables with a ledger
+        await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
+          expect(await trx.accessory.count()).toBe(6);
+          expect(await trx.consumable.count()).toBe(5);
+          expect(await trx.category.count({ where: { kind: 'accessory' } })).toBe(4);
+          expect(await trx.category.count({ where: { kind: 'consumable' } })).toBe(3);
+          const lowAccessories = await trx.$queryRaw<Array<{ name: string }>>`
+            select name from app.v_low_stock where item_type = 'accessory' order by name`;
+          expect(lowAccessories.map((r) => r.name)).toEqual(['HDMI cable 2 m']);
+          const lowConsumables = await trx.$queryRaw<Array<{ name: string }>>`
+            select name from app.v_low_stock where item_type = 'consumable' order by name`;
+          expect(lowConsumables.map((r) => r.name)).toEqual(['Toner cyan (HP 410X)']);
+          // the latch matches the state: nothing alerts again on the next movement of a low item
+          expect(await trx.consumable.count({ where: { low_stock_alerted: true } })).toBe(1);
+          expect(await trx.accessory.count({ where: { low_stock_alerted: true } })).toBe(1);
+          // the balance is the ledger
+          const [drift] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.consumable c
+             where c.qty_on_hand <> coalesce((select sum(qty_delta) from app.stock_movement m where m.consumable_id = c.id), 0)`;
+          expect(drift!.n).toBe(0);
+          const partial = await trx.assignment.count({
+            where: {
+              accessory_id: { not: null },
+              checked_in_at: null,
+              quantity_returned: { gt: 0 },
+            },
+          });
+          expect(partial).toBe(1);
         });
       }
       expect(acme.tags).toEqual(globex.tags); // deliberately overlapping

@@ -242,7 +242,7 @@ test.describe('asset detail (M1-WEB-08)', () => {
       'true',
     );
     await page.getByRole('tab', { name: 'Repairs' }).click();
-    await expect(page.getByText('This tab arrives in a later milestone.')).toBeVisible();
+    await expect(page.getByText('No repairs for this asset yet.')).toBeVisible();
   });
 
   test('an unknown asset id shows a not-found screen', async ({ page }) => {

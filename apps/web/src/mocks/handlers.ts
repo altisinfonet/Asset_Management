@@ -24,6 +24,7 @@ import { problem, requireSession } from './http';
 import { roleIdFor } from './registry-fixtures';
 import { m2Handlers } from './m2-handlers';
 import { registryHandlers } from './registry-handlers';
+import { w2Handlers } from './w2-handlers';
 import {
   availableRecoveryCodes,
   findUser,
@@ -72,6 +73,11 @@ function buildMe(user: MockUser): Me {
     // Like the real API: a limited session still gets a 200 here (so the client learns its CSRF
     // token and that it must enrol); every other endpoint answers 403 mfa-enrolment-required.
     mfa_enrolment_required: !!session?.limited,
+    // M2-AUTH-01: whether the organisation policy enforces two-step verification for this user
+    mfa_policy: {
+      required: !!user.mfaPolicy || !!user.mfaRequired,
+      scope: user.mfaPolicy || user.mfaRequired ? 'all' : 'off',
+    },
     session: {
       idle_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       absolute_expires_at: new Date(Date.now() + 12 * 3_600_000).toISOString(),
@@ -246,6 +252,7 @@ export const handlers: HttpHandler[] = [
   // ---- not auth, but the dashboard and the API-status tile call them --------------------
   ...registryHandlers,
   ...m2Handlers,
+  ...w2Handlers,
 
   http.get('/v1/health', () =>
     HttpResponse.json({

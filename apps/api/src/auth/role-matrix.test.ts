@@ -214,6 +214,24 @@ describe('role x operation matrix', () => {
     markAssetLost: ['tenant_admin', 'asset_manager', 'technician'],
     markAssetFound: ['tenant_admin', 'asset_manager', 'technician'],
     disposeAsset: ['tenant_admin', 'asset_manager'],
+    // [M2-W2 ACC]: BEGIN accessories and consumables
+    listAccessories: ALL,
+    getAccessory: ALL,
+    listAccessoryAssignments: ALL,
+    createAccessory: ['tenant_admin', 'asset_manager'],
+    updateAccessory: ['tenant_admin', 'asset_manager'],
+    archiveAccessory: ['tenant_admin', 'asset_manager'],
+    checkoutAccessory: ['tenant_admin', 'asset_manager', 'technician'],
+    checkinAccessory: ['tenant_admin', 'asset_manager', 'technician'],
+    listConsumables: ALL,
+    getConsumable: ALL,
+    listStockMovements: ALL,
+    listPersonStockMovements: ALL,
+    createConsumable: ['tenant_admin', 'asset_manager'],
+    updateConsumable: ['tenant_admin', 'asset_manager'],
+    archiveConsumable: ['tenant_admin', 'asset_manager'],
+    createStockMovement: ['tenant_admin', 'asset_manager', 'technician'],
+    // [M2-W2 ACC]: END
     // files (M2-FILE): everyone reads attachments; uploading needs attachment:write; settings are catalogue-level
     listAttachments: ALL,
     getAttachment: ALL,
@@ -222,6 +240,13 @@ describe('role x operation matrix', () => {
     archiveAttachment: ['tenant_admin', 'asset_manager', 'technician'],
     getFilesSettings: ALL,
     putFilesSettings: ['tenant_admin', 'asset_manager'],
+    // [M2-W2 LABELS] printing needs asset:label; calibrating a template needs catalog:manage
+    listLabelTemplates: ['tenant_admin', 'asset_manager', 'technician'],
+    getLabelTemplate: ['tenant_admin', 'asset_manager', 'technician'],
+    updateLabelTemplate: ['tenant_admin', 'asset_manager'],
+    createLabelBatch: ['tenant_admin', 'asset_manager', 'technician'],
+    listLabelBatches: ['tenant_admin', 'asset_manager', 'technician'],
+    getLabelBatch: ['tenant_admin', 'asset_manager', 'technician'],
   };
   it.each(Object.entries(allowed))('%s is allowed for exactly %j', (operationId, expectedRoles) => {
     const op = operations.find((o) => o.operationId === operationId);

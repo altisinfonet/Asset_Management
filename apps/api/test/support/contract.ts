@@ -142,8 +142,17 @@ export const REGISTRY_TAGS = new Set([
  * the registry tag and are walked there.
  */
 export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
+/**
+ * Tags of M2 wave 2 (repairs, notifications, saved views, exports; the `[M2-W2 NOT]` block of gen.mjs):
+ * every operation under them has a route and is walked live by `test/wave2/contract-wave2.e2e.test.ts`.
+ */
+export const WAVE2_NOT_TAGS = new Set(['Repairs', 'Notifications', 'Views', 'Exports']);
 /** Tags whose operations the files module (M2-FILE) owns: every one must be implemented. */
 export const FILES_TAGS = new Set(['Attachments']);
+/** [M2-W2 ACC] Tags of the accessories and consumables module: every operation is implemented. */
+export const ACC_TAGS = new Set(['Accessories', 'Consumables']);
+/** [M2-W2 LABELS] Tags whose operations the tagging module (M2-TAG-02) owns: every one must be implemented. */
+export const LABELS_TAGS = new Set(['Labels']);
 
 /** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
 export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];

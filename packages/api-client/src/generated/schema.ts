@@ -70,7 +70,9 @@ export interface paths {
         };
         /**
          * Who holds this accessory
-         * @description Requires permission `accessory:read`.
+         * @description Newest first. Each row carries `quantity`, `quantity_returned` and `target_name`.
+         *
+         *     Requires permission `accessory:read`.
          */
         get: operations["listAccessoryAssignments"];
         put?: never;
@@ -114,7 +116,7 @@ export interface paths {
         put?: never;
         /**
          * Check out accessory units
-         * @description Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments).
+         * @description Hands `quantity` units (default 1) to a person, a location or an asset: one assignment row with `quantity` and `quantity_returned = 0`. Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments); concurrent check-outs are serialised on the accessory, so the stock is never exceeded. The person must be active, the location and target asset live. Writes an audit record and the outbox event `accessory.checked_out` in the same transaction; when the check-out brings `qty_available` to or below `min_qty` the outbox event `accessory.low_stock` is emitted once per crossing.
          *
          *     Requires permission `accessory:checkout`.
          */
@@ -427,6 +429,28 @@ export interface paths {
          *     Requires permission `asset:update`.
          */
         post: operations["moveAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/repair-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repair totals of an asset
+         * @description Counts and the total recorded cost per currency of the asset's repair and maintenance records (cancelled and archived records excluded).
+         *
+         *     Requires permission `repair:read`.
+         */
+        get: operations["getAssetRepairSummary"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1078,7 +1102,9 @@ export interface paths {
         put?: never;
         /**
          * Create consumable
-         * @description Requires permission `consumable:manage`.
+         * @description A positive `initial_qty` is recorded as the first `receive` movement of the ledger (note: "Opening stock"), in the same transaction.
+         *
+         *     Requires permission `consumable:manage`.
          */
         post: operations["createConsumable"];
         delete?: never;
@@ -1126,13 +1152,15 @@ export interface paths {
         };
         /**
          * Stock ledger of a consumable
-         * @description Requires permission `consumable:read`.
+         * @description The consume log of one consumable, newest first; filter by reason and by the person the stock went to.
+         *
+         *     Requires permission `consumable:read`.
          */
         get: operations["listStockMovements"];
         put?: never;
         /**
          * Receive, issue or adjust stock
-         * @description Appends to the ledger and updates `qty_on_hand` atomically. The ledger is append-only: fix mistakes with a `correction` movement.
+         * @description Appends to the ledger and updates `qty_on_hand` atomically; concurrent movements of one consumable are serialised, so stock can never go negative (409 `insufficient-stock`). The ledger is append-only: fix mistakes with a `correction` movement. Writes an audit record and the outbox event `consumable.stock_moved`; when the movement brings `qty_on_hand` to or below `min_qty` the outbox event `consumable.low_stock` is emitted once per crossing (ids only; re-armed when the stock rises above the minimum again). An archived consumable takes no movements (409 `conflict`).
          *
          *     Requires permission `consumable:adjust`.
          */
@@ -1197,6 +1225,60 @@ export interface paths {
          * @description Requires permission `catalog:manage`.
          */
         patch: operations["updateCustomFieldDef"];
+        trace?: never;
+    };
+    "/v1/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My exports
+         * @description The caller's exports, newest first. `download_url` is never set in a list; fetch one export for a link.
+         *
+         *     Requires permission `export:run`.
+         */
+        get: operations["listExports"];
+        put?: never;
+        /**
+         * Export a list to CSV
+         * @description Queues a background job that writes every row matching `filters` to a UTF-8 CSV file (with a byte order mark, CRLF line ends, a header row) and stores it for 24 hours. Poll `GET /v1/exports/{id}` until `status=succeeded`, then use `download_url`.
+         *
+         *     The caller also needs the read permission of the list (`asset:read`, `person:read` or `location:read`, `403` otherwise). Cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading apostrophe so spreadsheets never run them as formulas. Asset exports include one `cf:<key>` column per custom field. At most 100,000 rows. Requested and downloaded exports are audited (sensitive read).
+         *
+         *     The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`.
+         *
+         *     Requires permission `export:run`.
+         */
+        post: operations["createExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an export
+         * @description Status of one export. For a succeeded one it issues a fresh short-lived `download_url` (audited as a sensitive read). Another user's export is `404`.
+         *
+         *     Requires permission `export:run`.
+         */
+        get: operations["getExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/files/{token}": {
@@ -1379,22 +1461,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/labels/render": {
+    "/v1/labels/batches": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Render a PDF label sheet
-         * @description Renders QR / Code128 labels for up to 500 assets into a PDF (synchronously). Each QR encodes `https://<host>/s/<label_code>`. Writes a `label_printed` history event per asset.
+         * List my label batches
+         * @description The label batches the caller requested, newest first. Nobody sees another user's batches.
          *
          *     Requires permission `asset:label`.
          */
-        post: operations["renderLabels"];
+        get: operations["listLabelBatches"];
+        put?: never;
+        /**
+         * Request a PDF label sheet
+         * @description Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.
+         *
+         *     Requires permission `asset:label`.
+         */
+        post: operations["createLabelBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/labels/batches/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a label batch
+         * @description The status of a batch (poll this) and, once `ready`, a fresh presigned `download_url` (valid for a couple of minutes; read again for a new one). `404` for a batch someone else requested.
+         *
+         *     Requires permission `asset:label`.
+         */
+        get: operations["getLabelBatch"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1410,7 +1520,7 @@ export interface paths {
         };
         /**
          * List fixed label templates
-         * @description Standard sheet templates (US Letter 30-up, A4 21-up, 10-up, single 50x25 mm). Read-only in the MVP; a template editor arrives in v1.1.
+         * @description The fixed sheet templates: US Letter 30-up (Avery 5160 layout), A4 21-up (L7160) and 24-up 3 x 8 (L7159), US Letter 10-up (5163), and two single-label pages for roll and thermal printers (50 x 25 mm and 2 x 1 inch). Geometry is fixed in the MVP (the editor arrives in v1.1); only the calibration offsets can change.
          *
          *     Requires permission `asset:label`.
          */
@@ -1421,6 +1531,32 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/labels/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a label template
+         * @description Requires permission `asset:label`.
+         */
+        get: operations["getLabelTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Calibrate a label template
+         * @description Sets the calibration offsets of a template after a test print on real label stock (M2-TAG-04). The geometry itself cannot be changed.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        patch: operations["updateLabelTemplate"];
         trace?: never;
     };
     "/v1/loaner-pools": {
@@ -1737,6 +1873,184 @@ export interface paths {
         patch: operations["updateAssetModel"];
         trace?: never;
     };
+    "/v1/notification-deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Delivery log
+         * @description What was delivered, queued, deferred (digest) or skipped, newest first.
+         *
+         *     Requires permission `notification:manage`.
+         */
+        get: operations["listNotificationDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My notification preferences
+         * @description One entry per notification type, with the caller's choice (or the default).
+         */
+        get: operations["listNotificationPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-preferences/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set my preference for a type
+         * @description Chooses in-app and email delivery (`immediate`, `digest`, `off`) for one notification type. Omitted fields keep their current value (or the default).
+         */
+        put: operations["updateNotificationPreference"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Notification rules of the organisation
+         * @description Every notification type with whether it is enabled and who receives it.
+         *
+         *     Requires permission `notification:manage`.
+         */
+        get: operations["listNotificationRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notification-rules/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Enable, disable or re-address a type
+         * @description Requires permission `notification:manage`.
+         */
+        put: operations["updateNotificationRule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My notifications
+         * @description The caller's in-app notifications, newest first.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a notification read
+         * @description Idempotent: an already-read notification keeps its first `read_at`. Another user's notification is `404`.
+         */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark every notification read */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Number of unread notifications */
+        get: operations["getNotificationUnreadCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/people": {
         parameters: {
             query?: never;
@@ -1835,6 +2149,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/people/{id}/stock-movements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Consumption log of a person
+         * @description Every stock movement issued to or returned by this person, across consumables, newest first (M2-ACC-02: "consume log queryable per person").
+         *
+         *     Requires permission `consumable:read`.
+         */
+        get: operations["listPersonStockMovements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/repairs": {
         parameters: {
             query?: never;
@@ -1852,7 +2188,13 @@ export interface paths {
         put?: never;
         /**
          * Create repair record
-         * @description Requires permission `repair:manage`.
+         * @description Opens a repair or maintenance record for an asset.
+         *
+         *     `set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant's default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset's status (`409 conflict` otherwise).
+         *
+         *     A checked-out asset goes to repair through check-in first; with `force_checkin` and `force_note` (and the `asset:checkin` permission) the custody period is closed in the same transaction. A lost or retired asset, or an archived one, cannot be repaired (`409`).
+         *
+         *     Writes a `repair_opened` history event, an audit row and the outbox event `repair.opened`. Requires permission `repair:manage`.
          */
         post: operations["createRepair"];
         delete?: never;
@@ -1877,7 +2219,7 @@ export interface paths {
         post?: never;
         /**
          * Archive repair record
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
+         * @description Soft delete. `409` while the record is open or in progress (cancel or complete it first).
          *
          *     Requires permission `repair:manage`.
          */
@@ -1886,7 +2228,7 @@ export interface paths {
         head?: never;
         /**
          * Update repair record
-         * @description Requires permission `repair:manage`.
+         * @description Edit a record (RFC 7396 merge). `status` may move to `in_progress` or `cancelled`; cancelling restores the asset status. The asset cannot change. Closed records stay editable except for their status. Requires permission `repair:manage`.
          */
         patch: operations["updateRepair"];
         trace?: never;
@@ -1902,7 +2244,7 @@ export interface paths {
         put?: never;
         /**
          * Complete a repair
-         * @description Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status (`restore_status_id`).
+         * @description Sets `completed_at` and status `completed`, records cost and resolution, and restores the asset status: the explicit `restore_status_id` of the request, else the one remembered when the repair opened, but only when the asset still has the status the repair moved it to (a status someone chose meanwhile is left alone). Writes a `repair_completed` history event, an audit row and the outbox event `repair.completed`. `409` when the record is already closed.
          *
          *     Requires permission `repair:manage`.
          */
@@ -1935,6 +2277,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/saved-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved views I can use
+         * @description The caller's own views plus the views shared in the organisation, ordered by name (`is_owner` tells them apart).
+         */
+        get: operations["listSavedViews"];
+        put?: never;
+        /**
+         * Save a view
+         * @description Creates a private view. The name is unique among the caller's views of the list (`409`); at most 50 per user and list. Share it afterwards with `PUT /v1/saved-views/{id}/sharing`.
+         */
+        post: operations["createSavedView"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-views/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a saved view
+         * @description An own view or a shared one; anybody else's private view is `404`.
+         */
+        get: operations["getSavedView"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a view
+         * @description Deletes the view for good. Only the owner (`404` for anybody else).
+         */
+        delete: operations["deleteSavedView"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename or change a view
+         * @description Only the owner (`404` for anybody else, also for a shared view). A shared view stays shared.
+         */
+        patch: operations["updateSavedView"];
+        trace?: never;
+    };
+    "/v1/saved-views/{id}/sharing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a view with the organisation, or stop sharing
+         * @description Owner only. A shared view is visible to every user of the organisation (read only, they can copy it). The name must be unique among the shared views of the list (`409`).
+         *
+         *     Requires permission `view:share`.
+         */
+        put: operations["shareSavedView"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/scan/resolve": {
         parameters: {
             query?: never;
@@ -1944,7 +2360,7 @@ export interface paths {
         };
         /**
          * Resolve a scanned code
-         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
+         * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies: `asset`, or (M2 wave 2) `accessory` / `consumable`, which are found by the `label_code` of their label only and answered with their own member (`accessory` / `consumable`) and actions; the accessory and consumable answers need `accessory:read` / `consumable:read` (without it the code is a plain 404). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
          *
          *     Requires permission `asset:read`.
          */
@@ -3112,8 +3528,14 @@ export interface components {
             /** @description Per-unit or total cost; unit semantics are tenant convention. */
             purchase_cost?: components["schemas"]["Money"] | null;
             notes?: string | null;
-            readonly qty_checked_out?: number;
-            readonly qty_available?: number;
+            /** @description Units still out: the sum of `quantity - quantity_returned` over the open assignments. */
+            readonly qty_checked_out: number;
+            /** @description `qty_total - qty_checked_out`: what can be checked out right now. */
+            readonly qty_available: number;
+            /** @description True while `min_qty > 0` and `qty_available <= min_qty`. */
+            readonly low_stock: boolean;
+            /** @description Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: accessory`. */
+            readonly label_code: string;
         };
         AccessoryCreate: {
             /**
@@ -3209,8 +3631,12 @@ export interface components {
             min_qty?: number;
             unit_cost?: components["schemas"]["Money"] | null;
             notes?: string | null;
-            /** @description Changed only through stock movements. */
-            readonly qty_on_hand?: number;
+            /** @description Changed only through stock movements; always the sum of the ledger. */
+            readonly qty_on_hand: number;
+            /** @description True while `min_qty > 0` and `qty_on_hand <= min_qty`. */
+            readonly low_stock: boolean;
+            /** @description Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: consumable`. */
+            readonly label_code: string;
         };
         ConsumableCreate: {
             /**
@@ -3365,6 +3791,15 @@ export interface components {
             /** Format: date-time */
             readonly completed_at?: string | null;
             readonly resolution_notes?: string | null;
+            /**
+             * Format: uuid
+             * @description The status label the asset was moved to when the repair opened (null when the repair did not move it).
+             */
+            readonly set_status_id?: string | null;
+            /** @description Tag of the asset, so lists can label their rows. */
+            readonly asset_tag?: string | null;
+            readonly asset_name?: string | null;
+            readonly vendor_name?: string | null;
         };
         RepairCreate: {
             /** Format: uuid */
@@ -3392,21 +3827,28 @@ export interface components {
              */
             restore_status_id?: string | null;
             /**
-             * @description Completion happens through `POST /v1/repairs/{id}/complete`.
+             * @description Initial status (`in_progress` also sets `started_at`). A record is closed by `POST /v1/repairs/{id}/complete` or by cancelling it.
              * @default open
              * @enum {string}
              */
-            status?: "open" | "in_progress" | "cancelled";
+            status?: "open" | "in_progress";
             /**
              * Format: uuid
-             * @description Status label to put the asset in while the repair is open (typically an undeployable label such as "In repair").
+             * @description Status label to put the asset in while the repair is open (typically an undeployable label such as "In repair"). Required with `force_checkin`.
              */
             set_status_id?: string;
+            /** @description Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record. */
+            attachment_ids?: string[];
+            /**
+             * @description The asset is checked out: close its custody period (a check-in) and open the repair in one step. Needs `asset:checkin` as well as `repair:manage`, and `force_note`. Without it a checked-out asset is refused with `409 asset-already-checked-out` (check it in first).
+             * @default false
+             */
+            force_checkin?: boolean;
+            /** @description Why the custody period is closed (recorded on the check-in, the history and the audit log). Required with `force_checkin`. */
+            force_note?: string;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         RepairUpdate: {
-            /** Format: uuid */
-            asset_id?: string;
             /**
              * @default repair
              * @enum {string}
@@ -3430,8 +3872,7 @@ export interface components {
              */
             restore_status_id?: string | null;
             /**
-             * @description Completion happens through `POST /v1/repairs/{id}/complete`.
-             * @default open
+             * @description Move to `in_progress`, or `cancelled` (restores the asset status like a completion). A closed record (`completed`, `cancelled`) keeps its status.
              * @enum {string}
              */
             status?: "open" | "in_progress" | "cancelled";
@@ -3643,11 +4084,42 @@ export interface components {
             /** @description Actions valid for the asset in its current state and for the caller. */
             allowed_actions: ("checkout" | "checkin" | "transfer" | "update" | "open_repair")[];
             /**
-             * @description Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
+             * @description Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             entity_type: "asset";
         };
+        /** @description A scanned accessory label. */
+        ScanResolveAccessoryResult: {
+            /**
+             * @description Accessories are found by their `label_code` only.
+             * @enum {string}
+             */
+            match_type: "label_code";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            entity_type: "accessory";
+            accessory: components["schemas"]["Accessory"];
+            /** @description `checkout`: the caller may check units out and some are available. `checkin`: the caller may return units and some are out. `update`: the caller may edit the accessory. */
+            allowed_actions: ("checkout" | "checkin" | "update")[];
+        };
+        /** @description A scanned consumable label. */
+        ScanResolveConsumableResult: {
+            /** @enum {string} */
+            match_type: "label_code";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            entity_type: "consumable";
+            consumable: components["schemas"]["Consumable"];
+            /** @description `issue` (consume) needs stock on hand; `receive` and `adjust` need `consumable:adjust`; `update` needs `consumable:manage`. */
+            allowed_actions: ("issue" | "receive" | "adjust" | "update")[];
+        };
+        /** @description What a scanned code identifies. Branch on `entity_type`. */
+        ScanResolveResponse: components["schemas"]["ScanResolveResult"] | components["schemas"]["ScanResolveAccessoryResult"] | components["schemas"]["ScanResolveConsumableResult"];
         /** @description One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set. */
         Assignment: {
             /** Format: uuid */
@@ -3698,6 +4170,10 @@ export interface components {
             asset_tag?: string | null;
             /** @description Name of the asset; present together with `asset_tag`. */
             asset_name?: string | null;
+            /** @description Name of the accessory; present in the assignment lists of a person and of an accessory (accessory assignments only). */
+            accessory_name?: string | null;
+            /** @description Display name of the person, location or asset the units are with; present in the assignment list of an accessory. */
+            target_name?: string | null;
         };
         AssignmentList: {
             data: components["schemas"]["Assignment"][];
@@ -3827,7 +4303,8 @@ export interface components {
              *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
              *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
              *     - `restored`: `{}` or `{was_disposed: true}`
-             *     - `repair_opened`, `repair_completed`, `label_printed`, `imported`: reserved for later milestones (an empty object until then)
+             *     - `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch
+             *     - `repair_opened`, `repair_completed`, `imported`: reserved for later milestones (an empty object until then)
              */
             payload?: {
                 [key: string]: unknown;
@@ -3866,22 +4343,31 @@ export interface components {
             /** Format: uuid */
             person_id?: string | null;
             note?: string | null;
+            /** @description Stock on hand right after this movement. */
             balance_after: number;
             /** Format: uuid */
             by_user_id?: string | null;
             /** Format: date-time */
             at: string;
+            /** @description Name of the consumable; present in the lists. */
+            consumable_name?: string | null;
+            /** @description Name of the person the stock was issued to / returned by; present in the lists. */
+            person_name?: string | null;
         };
         StockMovementCreate: {
-            /** @description Non-zero. Rejected with 409 if it would make stock negative. */
+            /** @description Non-zero. The sign must match the reason: `receive` and `return` are positive, `issue` is negative, `adjust` and `correction` either way (422 `validation` otherwise). Rejected with 409 `insufficient-stock` if it would make stock negative. */
             qty_delta: number;
-            /** @enum {string} */
+            /**
+             * @description `receive`: stock arrives. `issue`: stock is consumed (optionally by a person). `return`: unused stock comes back. `adjust` / `correction`: the count differs from the ledger; these two need a `note` saying why.
+             * @enum {string}
+             */
             reason: "receive" | "issue" | "return" | "adjust" | "correction";
             /**
              * Format: uuid
              * @description Who it was issued to / returned by.
              */
             person_id?: string | null;
+            /** @description Required (non-blank) for `adjust` and `correction`. */
             note?: string;
         };
         StockMovementList: {
@@ -3952,38 +4438,182 @@ export interface components {
              * @description Overrides the repair's `restore_status_id`.
              */
             restore_status_id?: string | null;
+            /** @description Ids of attachments (photos, invoices) uploaded against the asset beforehand: they are re-pointed at this repair record. */
+            attachment_ids?: string[];
         };
         LabelTemplate: {
             /** Format: uuid */
             id: string;
+            /** @description Stable key, the `template_key` of a batch. */
             key: string;
             name: string;
             /** @enum {string} */
             page_size: "letter" | "a4" | "custom";
-            page_width_mm?: number;
-            page_height_mm?: number;
-            label_width_mm?: number;
-            label_height_mm?: number;
+            page_width_mm: number;
+            page_height_mm: number;
+            label_width_mm: number;
+            label_height_mm: number;
             cols: number;
             rows: number;
-            /** @enum {string} */
+            /** @description Labels per sheet (`cols` x `rows`): the upper bound of a batch's `start_position`. */
+            slots: number;
+            margin_top_mm?: number;
+            margin_left_mm?: number;
+            /** @description Space between two columns of labels. */
+            gap_x_mm?: number;
+            /** @description Space between two rows of labels. */
+            gap_y_mm?: number;
+            /** @description Calibration: shifts the whole sheet to the right (negative: left). Change it with `PATCH` after a test print (M2-TAG-04). */
+            offset_x_mm: number;
+            /** @description Calibration: shifts the whole sheet down (negative: up). */
+            offset_y_mm: number;
+            /**
+             * @description The codes the template draws unless a batch says otherwise.
+             * @enum {string}
+             */
             code_type: "qr" | "code128" | "qr_and_code128";
-            fields?: string[];
-            /** @description System templates are read-only in the MVP; the editor arrives in v1.1. */
-            is_system?: boolean;
+            /** @description The text lines the template prints unless a batch says otherwise, first line first. */
+            fields: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            /** @description System templates are fixed in the MVP (the editor arrives in v1.1): only the two calibration offsets can change. */
+            is_system: boolean;
         };
         LabelTemplateList: {
             data: components["schemas"]["LabelTemplate"][];
         };
-        LabelRenderRequest: {
+        /** @description Calibration of a fixed template. At least one offset. */
+        LabelTemplateUpdate: {
+            offset_x_mm?: number;
+            offset_y_mm?: number;
+        };
+        /** @description The filters of `GET /v1/assets` that narrow the set (no paging, no `cf[...]` custom-field filters), as JSON: lists are arrays, flags are booleans. */
+        LabelAssetFilter: {
+            q?: string;
+            /**
+             * @default exclude
+             * @enum {string}
+             */
+            archived?: "exclude" | "include" | "only";
+            tag?: string;
+            serial?: string;
+            status_id?: string[];
+            state_type?: ("deployable" | "deployed" | "pending" | "undeployable" | "archived" | "lost")[];
+            category_id?: string[];
+            model_id?: string[];
+            /** Format: uuid */
+            manufacturer_id?: string;
+            /** Format: uuid */
+            location_id?: string;
+            /** @default true */
+            include_sublocations?: boolean;
+            assigned?: boolean;
+            /** Format: uuid */
+            assigned_person_id?: string;
+            overdue?: boolean;
+            /** Format: uuid */
+            company_id?: string;
+            /** Format: uuid */
+            vendor_id?: string;
+            /** Format: uuid */
+            parent_asset_id?: string;
+            /** Format: date */
+            warranty_end_before?: string;
+            /** Format: date */
+            warranty_end_after?: string;
+            /** Format: date */
+            purchase_date_from?: string;
+            /** Format: date */
+            purchase_date_to?: string;
+            /** Format: date-time */
+            updated_since?: string;
+            /** @description As the `sort` of `GET /v1/assets` (`asset_tag` by default here, so a sheet reads in tag order). */
+            sort?: string;
+        };
+        /** @description Exactly one of `asset_ids` and `filter`. At most 2000 assets and 2000 labels (assets x copies) per batch. */
+        LabelBatchCreate: {
             /** @description Key from `GET /v1/labels/templates`. */
             template_key: string;
-            asset_ids: string[];
+            /** @description The assets, printed in this order. Send this or `filter`. */
+            asset_ids?: string[];
+            filter?: components["schemas"]["LabelAssetFilter"];
             /**
-             * @description First label slot to use on the first sheet (re-use a partly used sheet).
+             * @description 1-based slot of the first label on the first sheet (re-use a partly used sheet); at most the template's `slots`. Slots are numbered row by row, left to right.
              * @default 1
              */
             start_position?: number;
+            /**
+             * @description Labels per asset, printed next to each other.
+             * @default 1
+             */
+            copies?: number;
+            /** @description Which codes to draw; default: the template's `code_type`. The QR encodes `<web base url>/s/<label_code>` (an opaque code, never an internal id), the Code128 encodes the asset tag (printable ASCII only). An empty list prints text only. */
+            codes?: ("qr" | "code128")[];
+            /** @description The text lines to print, first line first and largest; default: the template's `fields`. Text shrinks to fit and ends with an ellipsis when it still does not. */
+            fields?: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            /**
+             * Format: uuid
+             * @description Optional logo: a clean PNG or JPEG attachment of your organisation (at most 2 MiB), printed small above the text.
+             */
+            logo_attachment_id?: string | null;
+            /**
+             * @description Draw a hairline around every label: for calibration prints on plain paper.
+             * @default false
+             */
+            outlines?: boolean;
+        };
+        /** @description One request to print labels. Visible to the user (or API key) that made it, nobody else. */
+        LabelBatch: {
+            /** Format: uuid */
+            readonly id: string;
+            /**
+             * @description `queued` until the worker has rendered the PDF, then `ready` (download it), `failed` (see `error`) or, after `expires_at`, `expired` (the file is deleted).
+             * @enum {string}
+             */
+            readonly status: "queued" | "ready" | "failed" | "expired";
+            template_key: string;
+            /** @enum {string} */
+            source: "asset_ids" | "filter";
+            asset_count: number;
+            copies: number;
+            /** @description Labels printed: `asset_count` x `copies`. */
+            label_count: number;
+            start_position: number;
+            codes: ("qr" | "code128")[];
+            fields: ("asset_tag" | "name" | "serial" | "location" | "model" | "organisation")[];
+            outlines: boolean;
+            /** Format: uuid */
+            logo_attachment_id?: string | null;
+            /** @description Sheets in the PDF, once rendered. */
+            page_count: number | null;
+            /** @description Suggested file name, once ready. */
+            filename?: string | null;
+            /** Format: int64 */
+            size_bytes?: number | null;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** Format: date-time */
+            readonly rendered_at?: string | null;
+            /**
+             * Format: date-time
+             * @description After this moment the file is deleted and the batch becomes `expired`.
+             */
+            readonly expires_at: string;
+            /**
+             * Format: uri
+             * @description A short-lived presigned URL of the PDF; only when `ready`. A fresh one comes with every read.
+             */
+            readonly download_url: string | null;
+            /** Format: date-time */
+            readonly download_expires_at?: string | null;
+            /** @description Why the batch failed; `null` otherwise. */
+            readonly error: {
+                /** @description e.g. `logo-invalid`, `render-failed`. */
+                code: string;
+                detail: string;
+            } | null;
+        };
+        LabelBatchList: {
+            data: components["schemas"]["LabelBatch"][];
+            page: components["schemas"]["PageInfo"];
         };
         Attachment: {
             /** Format: uuid */
@@ -4287,6 +4917,16 @@ export interface components {
             session: components["schemas"]["SessionExpiry"] | null;
             /** @description Only for cookie sessions. */
             csrf_token?: string;
+            /** @description The organisation's MFA policy and whether it applies to the caller (M2-AUTH-01). */
+            mfa_policy: {
+                /** @description True when the policy requires THIS user to have two-step verification (always false for API keys). While true, "Turn off" is refused with `403 mfa-required-by-policy`. */
+                required: boolean;
+                /**
+                 * @description Who the organisation requires to use two-step verification: nobody, administrators (roles holding `*` or `user:manage`), or everybody.
+                 * @enum {string}
+                 */
+                scope: "off" | "admins" | "all";
+            };
         };
         SessionExpiry: {
             /**
@@ -4600,6 +5240,242 @@ export interface components {
             location_id?: string | null;
             note?: string;
         };
+        RepairSummary: {
+            /** Format: uuid */
+            asset_id: string;
+            /** @description Records in status `open` or `in_progress`. */
+            open_count: number;
+            /** @description Records that are not cancelled or archived. */
+            total_count: number;
+            /** @description Total recorded cost of the non-cancelled records, one entry per currency (amounts in different currencies are never added together). */
+            total_cost: components["schemas"]["Money"][];
+        };
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @description Notification type (the domain event it comes from), e.g. `attachment.infected`. */
+            type: string;
+            title: string;
+            body: string | null;
+            /** @description Path inside the web app that shows the subject, e.g. `/assets/view?id=...`. */
+            link: string | null;
+            entity_type: string | null;
+            /** Format: uuid */
+            entity_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            read_at: string | null;
+        };
+        NotificationList: {
+            data: components["schemas"]["Notification"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        NotificationUnreadCount: {
+            count: number;
+        };
+        NotificationReadAllResult: {
+            /** @description Notifications that were unread and are now read. */
+            updated: number;
+        };
+        NotificationPreference: {
+            type: string;
+            label: string;
+            description: string;
+            /** @description Show in the notification bell. */
+            in_app: boolean;
+            /**
+             * @description `immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.
+             * @enum {string}
+             */
+            email: "immediate" | "digest" | "off";
+            /** @description True while the user has not chosen: the values are the type's defaults. */
+            is_default: boolean;
+        };
+        NotificationPreferenceList: {
+            data: components["schemas"]["NotificationPreference"][];
+        };
+        /** @description At least one field. */
+        NotificationPreferenceUpdate: {
+            in_app?: boolean;
+            /**
+             * @description `immediate`: one email per notification (more than a handful per hour are folded into the digest); `digest`: collected into one daily email (at most 50 items listed); `off`: no email.
+             * @enum {string}
+             */
+            email?: "immediate" | "digest" | "off";
+        };
+        NotificationRule: {
+            type: string;
+            label: string;
+            description: string;
+            /** @description When false the type produces no notification for anybody in this organisation. */
+            enabled: boolean;
+            /** @description Who gets it by default, in words. */
+            recipients: string;
+            /** @description True when `recipient_roles` can replace the default recipients (types addressed to users that hold a permission). */
+            role_configurable: boolean;
+            /** @description Role keys that receive it instead of the default recipients; null = the default. */
+            recipient_roles: string[] | null;
+            /** Format: date-time */
+            updated_at: string | null;
+        };
+        NotificationRuleList: {
+            data: components["schemas"]["NotificationRule"][];
+        };
+        /** @description At least one field. */
+        NotificationRuleUpdate: {
+            enabled?: boolean;
+            /** @description Role keys, or null to go back to the default recipients. Only for `role_configurable` types. */
+            recipient_roles?: string[] | null;
+        };
+        /** @description `queued` = handed to the mail queue (the mail job has its own retries and dead-letter list). */
+        NotificationDelivery: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            notification_id: string | null;
+            /** Format: uuid */
+            user_id: string;
+            type: string;
+            /** @enum {string} */
+            channel: "in_app" | "email";
+            /** @enum {string} */
+            status: "delivered" | "queued" | "deferred" | "skipped" | "failed";
+            /** @description Why a delivery was skipped or deferred, e.g. `preference-off`, `no-email`, `throttled`, `digest`. */
+            reason: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        NotificationDeliveryList: {
+            data: components["schemas"]["NotificationDelivery"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SavedView: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description The list the view belongs to.
+             * @enum {string}
+             */
+            resource: "assets";
+            name: string;
+            /** @description The list filters as the client keeps them (opaque to the server apart from the id references checked for `warnings`). */
+            filters: {
+                [key: string]: unknown;
+            };
+            /** @description Visible column ids in display order. */
+            columns: string[];
+            /** @description Sort key with `-` for descending, or null for the default. */
+            sort: string | null;
+            /** @description Visible to everybody in the organisation. */
+            is_shared: boolean;
+            /** @description The caller created it (only the owner edits it). */
+            is_owner: boolean;
+            owner: {
+                /** Format: uuid */
+                id: string;
+                display_name: string;
+            };
+            /** @description Id references in `filters` (status, category, location, model, vendor, person) that no longer resolve: the client applies the rest of the view and shows a warning. */
+            warnings: {
+                field: string;
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                reason: "not-found" | "archived";
+            }[];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedViewList: {
+            data: components["schemas"]["SavedView"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        SavedViewCreate: {
+            /**
+             * @default assets
+             * @enum {string}
+             */
+            resource?: "assets";
+            name: string;
+            /** @description At most 16 KiB of JSON. */
+            filters?: {
+                [key: string]: unknown;
+            };
+            columns?: string[];
+            sort?: string | null;
+        };
+        /** @description Partial update (RFC 7396 merge semantics). */
+        SavedViewUpdate: {
+            name?: string;
+            /** @description At most 16 KiB of JSON. */
+            filters?: {
+                [key: string]: unknown;
+            };
+            columns?: string[];
+            sort?: string | null;
+        };
+        SavedViewShare: {
+            shared: boolean;
+        };
+        ExportCreate: {
+            /** @enum {string} */
+            resource: "assets" | "people" | "locations";
+            /**
+             * @default csv
+             * @enum {string}
+             */
+            format?: "csv";
+            /** @description The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`. */
+            filters?: {
+                [key: string]: string | number | boolean | string[];
+            };
+        };
+        Export: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            resource: "assets" | "people" | "locations";
+            /** @enum {string} */
+            format: "csv";
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed" | "expired";
+            /** @description The filters the export was requested with (normalised to query-string form). */
+            filters: {
+                [key: string]: unknown;
+            };
+            row_count: number | null;
+            size_bytes: number | null;
+            filename: string | null;
+            /** @description Why a failed export failed (a sentence without internals). */
+            error: string | null;
+            /** Format: uuid */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
+            /**
+             * Format: date-time
+             * @description The file is deleted at this time (24 hours after completion).
+             */
+            expires_at: string | null;
+            /**
+             * Format: uri
+             * @description Short-lived link to the CSV file; only while `status=succeeded`. A new link is issued by every `GET /v1/exports/{id}` and each issue is audited as a sensitive read.
+             */
+            download_url: string | null;
+            /** Format: date-time */
+            download_expires_at: string | null;
+        };
+        ExportList: {
+            data: components["schemas"]["Export"][];
+            page: components["schemas"]["PageInfo"];
+        };
     };
     responses: {
         /** @description Malformed request (bad JSON, bad query parameter, invalid cursor). Codes: `bad-request`, `idempotency-key-required`, `idempotency-key-invalid`. */
@@ -4793,7 +5669,7 @@ export interface operations {
                 category_id?: string;
                 /** @description Filter by location. */
                 location_id?: string;
-                /** @description Only accessories at or below `min_qty` available. */
+                /** @description true = only accessories with `min_qty > 0` and `qty_available <= min_qty`; false = all the others. */
                 low_stock?: boolean;
                 /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: name, qty_total, created_at. A unique tiebreaker (`id`) is always appended. */
                 sort?: ("name" | "-name" | "qty_total" | "-qty_total" | "created_at" | "-created_at")[];
@@ -4931,7 +5807,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description Units are still checked out (`usage.open_assignments`); return them first. Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
@@ -4979,7 +5873,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The new `qty_total` is below the units that are checked out (`insufficient-stock`), or another uniqueness conflict. Codes: `insufficient-stock`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/insufficient-stock",
+                     *       "title": "insufficient stock",
+                     *       "status": 409,
+                     *       "code": "insufficient-stock",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
@@ -5064,7 +5976,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The assignment is already fully returned, or a request with the same Idempotency-Key is still running. Codes: `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -5086,6 +6016,13 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "person_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91",
+                 *       "quantity": 2,
+                 *       "note": "Two chargers for the new starter"
+                 *     }
+                 */
                 "application/json": components["schemas"]["AccessoryCheckoutRequest"];
             };
         };
@@ -5109,7 +6046,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description Not enough units available (`insufficient-stock`), the accessory is archived, or a request with the same Idempotency-Key is still running. Codes: `insufficient-stock`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/insufficient-stock",
+                     *       "title": "insufficient stock",
+                     *       "status": 409,
+                     *       "code": "insufficient-stock",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -6033,6 +6988,37 @@ export interface operations {
             };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getAssetRepairSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The totals. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -8187,7 +9173,7 @@ export interface operations {
                 category_id?: string;
                 /** @description Filter by location. */
                 location_id?: string;
-                /** @description Only consumables at or below `min_qty`. */
+                /** @description true = only consumables with `min_qty > 0` and `qty_on_hand <= min_qty`; false = all the others. */
                 low_stock?: boolean;
                 /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: name, qty_on_hand, created_at. A unique tiebreaker (`id`) is always appended. */
                 sort?: ("name" | "-name" | "qty_on_hand" | "-qty_on_hand" | "created_at" | "-created_at")[];
@@ -8325,7 +9311,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description Reserved for a uniqueness conflict; a consumable with stock can be archived (its ledger stays). Codes: `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
@@ -8389,6 +9393,8 @@ export interface operations {
                 limit?: components["parameters"]["Limit"];
                 /** @description Filter by reason. */
                 reason?: ("receive" | "issue" | "return" | "adjust" | "correction")[];
+                /** @description Only movements issued to / returned by this person. */
+                person_id?: string;
             };
             header?: never;
             path: {
@@ -8436,6 +9442,14 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "qty_delta": -2,
+                 *       "reason": "issue",
+                 *       "person_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91",
+                 *       "note": "Printer on floor 2"
+                 *     }
+                 */
                 "application/json": components["schemas"]["StockMovementCreate"];
             };
         };
@@ -8459,7 +9473,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The movement would make stock negative (`insufficient-stock`), the consumable is archived, or a request with the same Idempotency-Key is still running. Codes: `insufficient-stock`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/insufficient-stock",
+                     *       "title": "insufficient stock",
+                     *       "status": 409,
+                     *       "code": "insufficient-stock",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -8667,6 +9699,129 @@ export interface operations {
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listExports: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Filter by status. */
+                status?: ("queued" | "running" | "succeeded" | "failed" | "expired")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of exports. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createExport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportCreate"];
+            };
+        };
+        responses: {
+            /** @description Export queued. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    Location: components["headers"]["Location"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Export"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Missing `export:run` or the read permission of the list. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Export"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -9231,39 +10386,132 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
-    renderLabels: {
+    listLabelBatches: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Also return `page.total` (an extra count query; avoid on large lists). */
+                include_total?: components["parameters"]["IncludeTotal"];
+                /** @description Filter by status. */
+                status?: ("queued" | "ready" | "failed" | "expired")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("created_at" | "-created_at")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of batches. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelBatchList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createLabelBatch: {
         parameters: {
             query?: never;
-            header?: {
+            header: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
             };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LabelRenderRequest"];
+                "application/json": components["schemas"]["LabelBatchCreate"];
             };
         };
         responses: {
-            /** @description The PDF. */
-            200: {
+            /** @description Accepted: the batch is queued. */
+            202: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
-                    /** @description attachment filename. */
-                    "Content-Disposition"?: string;
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/pdf": string;
+                    "application/json": components["schemas"]["LabelBatch"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description Validation failed: unknown template or asset, `start_position` beyond the template's slots, neither or both of `asset_ids` and `filter`, a filter that matches nothing or more than 2000 assets, more than 2000 labels, a tag that cannot be a readable Code128 (`barcode-unprintable`), or a logo that is not a clean PNG/JPEG. Codes: `validation`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLabelBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The batch. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelBatch"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -9291,6 +10539,87 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLabelTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelTemplate"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateLabelTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description The calibrated template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10335,6 +11664,431 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listNotificationDeliveries: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Recipient. */
+                user_id?: string;
+                /** @description Notification type. */
+                type?: string;
+                /** @description Channel. */
+                channel?: "in_app" | "email";
+                /** @description Status. */
+                status?: ("delivered" | "queued" | "deferred" | "skipped" | "failed")[];
+                /** @description At or after. */
+                from?: string;
+                /** @description Before. */
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of deliveries. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDeliveryList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preferences. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferenceList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateNotificationPreference: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`). */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferenceUpdate"];
+            };
+        };
+        responses: {
+            /** @description The preference. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreference"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotificationRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rules. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRuleList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateNotificationRule: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Notification type, e.g. `attachment.infected` (see `GET /v1/notification-preferences`). */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationRuleUpdate"];
+            };
+        };
+        responses: {
+            /** @description The rule. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRule"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description true = only unread ones. */
+                unread?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of notifications. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notification"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description How many were updated. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationReadAllResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getNotificationUnreadCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The count (for the bell badge). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationUnreadCount"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listPeople: {
         parameters: {
             query?: {
@@ -10627,6 +12381,45 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listPersonStockMovements: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Filter by reason. */
+                reason?: ("receive" | "issue" | "return" | "adjust" | "correction")[];
+            };
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of movements, newest first. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listRepairs: {
         parameters: {
             query?: {
@@ -10650,8 +12443,8 @@ export interface operations {
                 reported_from?: string;
                 /** @description Reported before. */
                 reported_to?: string;
-                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: reported_at, completed_at, created_at. A unique tiebreaker (`id`) is always appended. */
-                sort?: ("reported_at" | "-reported_at" | "completed_at" | "-completed_at" | "created_at" | "-created_at")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: reported_at, created_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("reported_at" | "-reported_at" | "created_at" | "-created_at")[];
             };
             header?: never;
             path?: never;
@@ -10715,7 +12508,25 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset is checked out (check it in or use `force_checkin`), is lost, retired or archived, or another open repair already moved its status. Codes: `asset-already-checked-out`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/asset-already-checked-out",
+                     *       "title": "asset already checked out",
+                     *       "status": 409,
+                     *       "code": "asset-already-checked-out",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -10917,6 +12728,344 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listSavedViews: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description The list (default `assets`). */
+                resource?: "assets";
+                /** @description `mine` = created by the caller, `shared` = shared by anybody, `all` (default) = both. */
+                scope?: "all" | "mine" | "shared";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of views. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedViewList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createSavedView: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewCreate"];
+            };
+        };
+        responses: {
+            /** @description View saved. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getSavedView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session, not an API key. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewUpdate"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Needs a browser session with a valid `X-CSRF-Token`. Codes: `forbidden`, `csrf-invalid`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    shareSavedView: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedViewShare"];
+            };
+        };
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedView"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     resolveScan: {
         parameters: {
             query: {
@@ -10929,7 +13078,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The matching asset. */
+            /** @description The matching asset, accessory or consumable. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10939,7 +13088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ScanResolveResult"];
+                    "application/json": components["schemas"]["ScanResolveResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

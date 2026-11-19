@@ -172,7 +172,7 @@ jobs:
       - name: Create roles and extensions (same script as docker compose)
         run: psql -h localhost -U postgres -d app -v ON_ERROR_STOP=1 -f docker/postgres/init/01-roles.sql
 
-      # PgBouncer 1.26.1+ in transaction mode with the repo's config (pool_size=4, max_prepared_statements=100,
+      # PgBouncer 1.26.1+ in transaction mode with the repo's config (pool_size=16, max_prepared_statements=100,
       # empty server_reset_query, `app_one` pool_size=1 alias for the negative control). The config files are
       # mounted, so it runs as a plain container after checkout; `postgres` resolves to the host-published port.
       - name: Start PgBouncer (repo config)

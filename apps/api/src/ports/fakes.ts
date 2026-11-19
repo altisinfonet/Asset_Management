@@ -8,6 +8,9 @@ import {
   type JobQueue,
   type MailMessage,
   type MailSender,
+  type NotificationRequest,
+  type Notifier,
+  type NotifyResult,
   type OutboxEvent,
   type OutboxPublisher,
   type PresignedDownload,
@@ -45,6 +48,15 @@ export class FakeMailSender implements MailSender {
   readonly sent: MailMessage[] = [];
   async send(message: MailMessage): Promise<void> {
     this.sent.push(message);
+  }
+}
+
+/** Records the notifications a subscriber asked for (the real implementation writes rows and mail). */
+export class FakeNotifier implements Notifier {
+  readonly requests: NotificationRequest[] = [];
+  async notify(_tx: unknown, request: NotificationRequest): Promise<NotifyResult> {
+    this.requests.push(request);
+    return { created: new Set(request.recipients).size, skipped: 0 };
   }
 }
 

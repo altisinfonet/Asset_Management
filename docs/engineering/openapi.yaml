@@ -131,7 +131,7 @@ paths:
             format: uuid
         - name: low_stock
           in: query
-          description: Only accessories at or below `min_qty` available.
+          description: true = only accessories with `min_qty > 0` and `qty_available <= min_qty`; false = all the others.
           schema:
             type: boolean
         - name: sort
@@ -309,7 +309,23 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The new `qty_total` is below the units that are checked out (`insufficient-stock`), or another uniqueness conflict. Codes: `insufficient-stock`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/insufficient-stock
+                title: insufficient stock
+                status: 409
+                code: insufficient-stock
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - insufficient-stock
+            - conflict
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -354,7 +370,22 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "Units are still checked out (`usage.open_assignments`); return them first. Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "428":
@@ -367,7 +398,10 @@ paths:
         - Accessories
       operationId: listAccessoryAssignments
       summary: Who holds this accessory
-      description: Requires permission `accessory:read`.
+      description: |-
+        Newest first. Each row carries `quantity`, `quantity_returned` and `target_name`.
+
+        Requires permission `accessory:read`.
       x-permission: accessory:read
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -456,7 +490,23 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The assignment is already fully returned, or a request with the same Idempotency-Key is still running. Codes: `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
+            - idempotency-key-in-flight
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -468,7 +518,7 @@ paths:
       operationId: checkoutAccessory
       summary: Check out accessory units
       description: |-
-        Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments).
+        Hands `quantity` units (default 1) to a person, a location or an asset: one assignment row with `quantity` and `quantity_returned = 0`. Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments); concurrent check-outs are serialised on the accessory, so the stock is never exceeded. The person must be active, the location and target asset live. Writes an audit record and the outbox event `accessory.checked_out` in the same transaction; when the check-out brings `qty_available` to or below `min_qty` the outbox event `accessory.low_stock` is emitted once per crossing.
 
         Requires permission `accessory:checkout`.
       x-permission: accessory:checkout
@@ -482,6 +532,10 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AccessoryCheckoutRequest"
+            example:
+              person_id: 0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91
+              quantity: 2
+              note: Two chargers for the new starter
       responses:
         "201":
           description: Checked out.
@@ -511,7 +565,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "Not enough units available (`insufficient-stock`), the accessory is archived, or a request with the same Idempotency-Key is still running. Codes: `insufficient-stock`, `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/insufficient-stock
+                title: insufficient stock
+                status: 409
+                code: insufficient-stock
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - insufficient-stock
+            - conflict
+            - idempotency-key-in-flight
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -4081,7 +4152,7 @@ paths:
             format: uuid
         - name: low_stock
           in: query
-          description: Only consumables at or below `min_qty`.
+          description: true = only consumables with `min_qty > 0` and `qty_on_hand <= min_qty`; false = all the others.
           schema:
             type: boolean
         - name: sort
@@ -4131,7 +4202,10 @@ paths:
         - Consumables
       operationId: createConsumable
       summary: Create consumable
-      description: Requires permission `consumable:manage`.
+      description: |-
+        A positive `initial_qty` is recorded as the first `receive` movement of the ledger (note: "Opening stock"), in the same transaction.
+
+        Requires permission `consumable:manage`.
       x-permission: consumable:manage
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -4304,7 +4378,22 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "Reserved for a uniqueness conflict; a consumable with stock can be archived (its ledger stays). Codes: `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/conflict
+                title: conflict
+                status: 409
+                code: conflict
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - conflict
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "428":
@@ -4317,7 +4406,10 @@ paths:
         - Consumables
       operationId: listStockMovements
       summary: Stock ledger of a consumable
-      description: Requires permission `consumable:read`.
+      description: |-
+        The consume log of one consumable, newest first; filter by reason and by the person the stock went to.
+
+        Requires permission `consumable:read`.
       x-permission: consumable:read
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -4338,6 +4430,12 @@ paths:
                 - return
                 - adjust
                 - correction
+        - name: person_id
+          in: query
+          description: Only movements issued to / returned by this person.
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: A page of movements, newest first.
@@ -4370,7 +4468,7 @@ paths:
       operationId: createStockMovement
       summary: Receive, issue or adjust stock
       description: |-
-        Appends to the ledger and updates `qty_on_hand` atomically. The ledger is append-only: fix mistakes with a `correction` movement.
+        Appends to the ledger and updates `qty_on_hand` atomically; concurrent movements of one consumable are serialised, so stock can never go negative (409 `insufficient-stock`). The ledger is append-only: fix mistakes with a `correction` movement. Writes an audit record and the outbox event `consumable.stock_moved`; when the movement brings `qty_on_hand` to or below `min_qty` the outbox event `consumable.low_stock` is emitted once per crossing (ids only; re-armed when the stock rises above the minimum again). An archived consumable takes no movements (409 `conflict`).
 
         Requires permission `consumable:adjust`.
       x-permission: consumable:adjust
@@ -4384,6 +4482,11 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/StockMovementCreate"
+            example:
+              qty_delta: -2
+              reason: issue
+              person_id: 0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91
+              note: Printer on floor 2
       responses:
         "201":
           description: Movement recorded.
@@ -4413,7 +4516,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The movement would make stock negative (`insufficient-stock`), the consumable is archived, or a request with the same Idempotency-Key is still running. Codes: `insufficient-stock`, `conflict`, `idempotency-key-in-flight`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/insufficient-stock
+                title: insufficient stock
+                status: 409
+                code: insufficient-stock
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - insufficient-stock
+            - conflict
+            - idempotency-key-in-flight
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
@@ -7047,6 +7167,62 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/people/{id}/stock-movements:
+    get:
+      tags:
+        - Consumables
+      operationId: listPersonStockMovements
+      summary: Consumption log of a person
+      description: |-
+        Every stock movement issued to or returned by this person, across consumables, newest first (M2-ACC-02: "consume log queryable per person").
+
+        Requires permission `consumable:read`.
+      x-permission: consumable:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: reason
+          in: query
+          description: Filter by reason.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - receive
+                - issue
+                - return
+                - adjust
+                - correction
+      responses:
+        "200":
+          description: A page of movements, newest first.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovementList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/repairs:
     get:
       tags:
@@ -7442,7 +7618,7 @@ paths:
       operationId: resolveScan
       summary: Resolve a scanned code
       description: |-
-        Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
+        Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies: `asset`, or (M2 wave 2) `accessory` / `consumable`, which are found by the `label_code` of their label only and answered with their own member (`accessory` / `consumable`) and actions; the accessory and consumable answers need `accessory:read` / `consumable:read` (without it the code is a plain 404). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
 
         Requires permission `asset:read`.
       x-permission: asset:read
@@ -7457,7 +7633,7 @@ paths:
             maxLength: 200
       responses:
         "200":
-          description: The matching asset.
+          description: The matching asset, accessory or consumable.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -7470,7 +7646,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ScanResolveResult"
+                $ref: "#/components/schemas/ScanResolveResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -10872,15 +11048,30 @@ components:
             - "null"
         qty_checked_out:
           type: integer
+          minimum: 0
+          description: "Units still out: the sum of `quantity - quantity_returned` over the open assignments."
           readOnly: true
         qty_available:
           type: integer
+          description: "`qty_total - qty_checked_out`: what can be checked out right now."
+          readOnly: true
+        low_stock:
+          type: boolean
+          description: True while `min_qty > 0` and `qty_available <= min_qty`.
+          readOnly: true
+        label_code:
+          type: string
+          description: "Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: accessory`."
           readOnly: true
       required:
         - id
         - category_id
         - name
         - qty_total
+        - qty_checked_out
+        - qty_available
+        - low_stock
+        - label_code
     AccessoryCreate:
       type: object
       properties:
@@ -11079,12 +11270,24 @@ components:
             - "null"
         qty_on_hand:
           type: integer
-          description: Changed only through stock movements.
+          minimum: 0
+          description: Changed only through stock movements; always the sum of the ledger.
+          readOnly: true
+        low_stock:
+          type: boolean
+          description: True while `min_qty > 0` and `qty_on_hand <= min_qty`.
+          readOnly: true
+        label_code:
+          type: string
+          description: "Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: consumable`."
           readOnly: true
       required:
         - id
         - category_id
         - name
+        - qty_on_hand
+        - low_stock
+        - label_code
     ConsumableCreate:
       type: object
       properties:
@@ -12014,12 +12217,82 @@ components:
           type: string
           enum:
             - asset
-          description: Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.
+          description: "Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field."
       required:
         - match_type
         - entity_type
         - asset
         - allowed_actions
+    ScanResolveAccessoryResult:
+      type: object
+      properties:
+        match_type:
+          type: string
+          enum:
+            - label_code
+          description: Accessories are found by their `label_code` only.
+        entity_type:
+          type: string
+          enum:
+            - accessory
+        accessory:
+          $ref: "#/components/schemas/Accessory"
+        allowed_actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - checkout
+              - checkin
+              - update
+          description: "`checkout`: the caller may check units out and some are available. `checkin`: the caller may return units and some are out. `update`: the caller may edit the accessory."
+      required:
+        - match_type
+        - entity_type
+        - accessory
+        - allowed_actions
+      description: A scanned accessory label.
+    ScanResolveConsumableResult:
+      type: object
+      properties:
+        match_type:
+          type: string
+          enum:
+            - label_code
+        entity_type:
+          type: string
+          enum:
+            - consumable
+        consumable:
+          $ref: "#/components/schemas/Consumable"
+        allowed_actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - issue
+              - receive
+              - adjust
+              - update
+          description: "`issue` (consume) needs stock on hand; `receive` and `adjust` need `consumable:adjust`; `update` needs `consumable:manage`."
+      required:
+        - match_type
+        - entity_type
+        - consumable
+        - allowed_actions
+      description: A scanned consumable label.
+    ScanResolveResponse:
+      description: What a scanned code identifies. Branch on `entity_type`.
+      oneOf:
+        - $ref: "#/components/schemas/ScanResolveResult"
+        - $ref: "#/components/schemas/ScanResolveAccessoryResult"
+        - $ref: "#/components/schemas/ScanResolveConsumableResult"
+      discriminator:
+        propertyName: entity_type
+        mapping:
+          asset: "#/components/schemas/ScanResolveResult"
+          accessory: "#/components/schemas/ScanResolveAccessoryResult"
+          consumable: "#/components/schemas/ScanResolveConsumableResult"
     Assignment:
       type: object
       properties:
@@ -12143,6 +12416,16 @@ components:
             - string
             - "null"
           description: Name of the asset; present together with `asset_tag`.
+        accessory_name:
+          type:
+            - string
+            - "null"
+          description: Name of the accessory; present in the assignment lists of a person and of an accessory (accessory assignments only).
+        target_name:
+          type:
+            - string
+            - "null"
+          description: Display name of the person, location or asset the units are with; present in the assignment list of an accessory.
       required:
         - id
         - quantity
@@ -12495,6 +12778,8 @@ components:
             - "null"
         balance_after:
           type: integer
+          minimum: 0
+          description: Stock on hand right after this movement.
         by_user_id:
           type:
             - string
@@ -12503,6 +12788,16 @@ components:
         at:
           type: string
           format: date-time
+        consumable_name:
+          type:
+            - string
+            - "null"
+          description: Name of the consumable; present in the lists.
+        person_name:
+          type:
+            - string
+            - "null"
+          description: Name of the person the stock was issued to / returned by; present in the lists.
       required:
         - id
         - consumable_id
@@ -12517,7 +12812,7 @@ components:
           type: integer
           not:
             const: 0
-          description: Non-zero. Rejected with 409 if it would make stock negative.
+          description: "Non-zero. The sign must match the reason: `receive` and `return` are positive, `issue` is negative, `adjust` and `correction` either way (422 `validation` otherwise). Rejected with 409 `insufficient-stock` if it would make stock negative."
         reason:
           type: string
           enum:
@@ -12526,6 +12821,7 @@ components:
             - return
             - adjust
             - correction
+          description: "`receive`: stock arrives. `issue`: stock is consumed (optionally by a person). `return`: unused stock comes back. `adjust` / `correction`: the count differs from the ledger; these two need a `note` saying why."
         person_id:
           type:
             - string
@@ -12535,6 +12831,7 @@ components:
         note:
           type: string
           maxLength: 2000
+          description: Required (non-blank) for `adjust` and `correction`.
       required:
         - qty_delta
         - reason

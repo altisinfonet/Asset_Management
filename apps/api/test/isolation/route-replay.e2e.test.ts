@@ -59,6 +59,19 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     personEmail: string;
     /** an asset of tenant B (so B can try to hand it to A's person / A's location) */
     ownAssetId: string;
+    // [M2-W2 ACC]
+    accessoryId: string;
+    accessoryName: string;
+    accessoryLabel: string;
+    accessoryCategoryId: string;
+    accessoryAssignmentId: string;
+    consumableId: string;
+    consumableName: string;
+    consumableLabel: string;
+    consumableCategoryId: string;
+    /** an accessory and a consumable of tenant B */
+    ownAccessoryId: string;
+    ownConsumableId: string;
     /** strings that must never show up in a response to tenant B */
     markers: string[];
   }
@@ -238,6 +251,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         notFound('GET', `/v1/scan/resolve?code=${c.assetTag}`),
         notFound('GET', `/v1/scan/resolve?code=${c.assetTag.toLowerCase()}`),
         notFound('GET', `/v1/scan/resolve?code=${c.labelCode}`),
+        // [M2-W2 ACC] labels of A's accessory and consumable
+        notFound('GET', `/v1/scan/resolve?code=${c.accessoryLabel}`),
+        notFound('GET', `/v1/scan/resolve?code=${c.consumableLabel}`),
         notFound(
           'GET',
           `/v1/scan/resolve?code=${encodeURIComponent(`https://app.example/a/${c.labelCode}`)}`,
@@ -318,6 +334,106 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         notFound('GET', `/v1/people/${c.personId}/assignments?state=all`),
       ],
       'get /v1/people/:id/history': [notFound('GET', `/v1/people/${c.personId}/history`)],
+      // ---- [M2-W2 ACC]: BEGIN accessories and consumables
+      ...crud('accessories', c.accessoryId, { notes: 'b was here' }),
+      'get /v1/accessories': [
+        list(`/v1/accessories?q=${c.markers[0]}`),
+        list(`/v1/accessories?category_id=${c.accessoryCategoryId}`),
+        list(`/v1/accessories?location_id=${c.locationId}`),
+        list('/v1/accessories?low_stock=true&limit=200&archived=include'),
+      ],
+      'post /v1/accessories': [
+        // A's category / location: refused, nothing created in A
+        refused('POST', '/v1/accessories', {
+          category_id: c.accessoryCategoryId,
+          name: unique('X'),
+          qty_total: 1,
+        }),
+        refused('POST', '/v1/accessories', {
+          category_id: c.accessoryCategoryId,
+          location_id: c.locationId,
+          name: unique('X'),
+          qty_total: 1,
+        }),
+      ],
+      'post /v1/accessories/:id/checkout': [
+        custody(`/v1/accessories/${c.accessoryId}/checkout`, { person_id: c.personId }),
+        // B's own accessory to A's person / into A's location / onto A's asset: refused
+        custody(`/v1/accessories/${c.ownAccessoryId}/checkout`, { person_id: c.personId }, [422]),
+        custody(
+          `/v1/accessories/${c.ownAccessoryId}/checkout`,
+          { location_id: c.locationId },
+          [422],
+        ),
+        custody(
+          `/v1/accessories/${c.ownAccessoryId}/checkout`,
+          { target_asset_id: c.assetId },
+          [422],
+        ),
+      ],
+      'post /v1/accessories/:id/checkin': [
+        custody(`/v1/accessories/${c.accessoryId}/checkin`, {
+          assignment_id: c.accessoryAssignmentId,
+        }),
+        // A's assignment on B's own accessory: not a valid reference
+        custody(
+          `/v1/accessories/${c.ownAccessoryId}/checkin`,
+          { assignment_id: c.accessoryAssignmentId },
+          [422],
+        ),
+      ],
+      'get /v1/accessories/:id/assignments': [
+        notFound('GET', `/v1/accessories/${c.accessoryId}/assignments?state=all`),
+      ],
+      ...crud('consumables', c.consumableId, { notes: 'b was here' }),
+      'get /v1/consumables': [
+        list(`/v1/consumables?q=${c.markers[0]}`),
+        list(`/v1/consumables?category_id=${c.consumableCategoryId}`),
+        list(`/v1/consumables?location_id=${c.locationId}`),
+        list('/v1/consumables?low_stock=true&limit=200&archived=include'),
+      ],
+      'post /v1/consumables': [
+        refused('POST', '/v1/consumables', {
+          category_id: c.consumableCategoryId,
+          name: unique('X'),
+          initial_qty: 5,
+        }),
+        refused('POST', '/v1/consumables', {
+          category_id: c.consumableCategoryId,
+          location_id: c.locationId,
+          name: unique('X'),
+        }),
+      ],
+      'get /v1/consumables/:id/movements': [
+        notFound('GET', `/v1/consumables/${c.consumableId}/movements`),
+        // B's own consumable filtered by A's person: nothing of A's comes back
+        {
+          method: 'GET',
+          url: `/v1/consumables/${c.ownConsumableId}/movements?person_id=${c.personId}`,
+          expect: [200],
+        },
+      ],
+      'post /v1/consumables/:id/movements': [
+        custody(`/v1/consumables/${c.consumableId}/movements`, {
+          qty_delta: -1,
+          reason: 'issue',
+        }),
+        custody(
+          `/v1/consumables/${c.consumableId}/movements`,
+          { qty_delta: 5, reason: 'receive' },
+          [404],
+        ),
+        // B's own consumable issued to A's person: refused
+        custody(
+          `/v1/consumables/${c.ownConsumableId}/movements`,
+          { qty_delta: 1, reason: 'receive', person_id: c.personId },
+          [422],
+        ),
+      ],
+      'get /v1/people/:id/stock-movements': [
+        notFound('GET', `/v1/people/${c.personId}/stock-movements`),
+      ],
+      // ---- [M2-W2 ACC]: END
       // ---- M2 wave 1: custody, history, moves, lifecycle actions
       'post /v1/assets/:id/checkout': [
         custody(`/v1/assets/${c.assetId}/checkout`, { person_id: c.personId }),
@@ -482,6 +598,58 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       { person_id: person.id, note: `${marker} note` },
       { headers: { 'idempotency-key': `seed-checkout-${marker}` } },
     );
+    // [M2-W2 ACC]: BEGIN an accessory (with units out) and a consumable (with a movement) in A; one of each in B
+    const accCategory = (
+      await a.post('/v1/categories', { name: `${marker} acc category`, kind: 'accessory' })
+    ).body;
+    const accessory = (
+      await a.post('/v1/accessories', {
+        category_id: accCategory.id,
+        name: `${marker} charger`,
+        qty_total: 5,
+        location_id: location.id,
+      })
+    ).body;
+    const accAssignment = (
+      await a.post(
+        `/v1/accessories/${accessory.id}/checkout`,
+        { person_id: person.id, quantity: 2 },
+        { headers: { 'idempotency-key': `seed-acc-checkout-${marker}` } },
+      )
+    ).body;
+    const conCategory = (
+      await a.post('/v1/categories', { name: `${marker} con category`, kind: 'consumable' })
+    ).body;
+    const consumable = (
+      await a.post('/v1/consumables', {
+        category_id: conCategory.id,
+        name: `${marker} toner`,
+        initial_qty: 4,
+        location_id: location.id,
+      })
+    ).body;
+    await a.post(
+      `/v1/consumables/${consumable.id}/movements`,
+      { qty_delta: -1, reason: 'issue', person_id: person.id },
+      { headers: { 'idempotency-key': `seed-con-issue-${marker}` } },
+    );
+    const bAccCategory = (
+      await b().post('/v1/categories', { name: unique('B-acc'), kind: 'accessory' })
+    ).body;
+    const bConCategory = (
+      await b().post('/v1/categories', { name: unique('B-con'), kind: 'consumable' })
+    ).body;
+    const bAccessory = (
+      await b().post('/v1/accessories', {
+        category_id: bAccCategory.id,
+        name: unique('B-charger'),
+        qty_total: 3,
+      })
+    ).body;
+    const bConsumable = (
+      await b().post('/v1/consumables', { category_id: bConCategory.id, name: unique('B-toner') })
+    ).body;
+    // [M2-W2 ACC]: END
     const attachmentName = `${marker}-secret.png`;
     const attachment = (
       await a.post('/v1/attachments', {
@@ -528,8 +696,27 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       personId: person.id,
       personEmail,
       ownAssetId: bAsset.id,
+      // [M2-W2 ACC]
+      accessoryId: accessory.id,
+      accessoryName: accessory.name,
+      accessoryLabel: accessory.label_code,
+      accessoryCategoryId: accCategory.id,
+      accessoryAssignmentId: accAssignment.id,
+      consumableId: consumable.id,
+      consumableName: consumable.name,
+      consumableLabel: consumable.label_code,
+      consumableCategoryId: conCategory.id,
+      ownAccessoryId: bAccessory.id,
+      ownConsumableId: bConsumable.id,
       markers: [
         marker,
+        accessory.id,
+        accessory.label_code,
+        accAssignment.id,
+        accCategory.id,
+        consumable.id,
+        consumable.label_code,
+        conCategory.id,
         location.id,
         person.id,
         category.id,
@@ -582,6 +769,25 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       ),
       locations: String((await A.admin.get('/v1/locations?limit=200')).body.data.length),
       people: String((await A.admin.get('/v1/people?limit=200')).body.data.length),
+      // [M2-W2 ACC] A's stock is exactly as it was: same versions, same units out, same ledger
+      accessory: await etag(`/v1/accessories/${fx.accessoryId}`),
+      accessoryAssignments: JSON.stringify(
+        (
+          await A.admin.get(`/v1/accessories/${fx.accessoryId}/assignments?state=all`)
+        ).body.data.map((s: { id: string; quantity: number; quantity_returned: number }) => [
+          s.id,
+          s.quantity,
+          s.quantity_returned,
+        ]),
+      ),
+      accessories: String((await A.admin.get('/v1/accessories?limit=200')).body.data.length),
+      consumable: await etag(`/v1/consumables/${fx.consumableId}`),
+      consumableLedger: JSON.stringify(
+        (await A.admin.get(`/v1/consumables/${fx.consumableId}/movements?limit=200`)).body.data.map(
+          (m: { id: string; balance_after: number }) => [m.id, m.balance_after],
+        ),
+      ),
+      consumables: String((await A.admin.get('/v1/consumables?limit=200')).body.data.length),
       template: await etag('/v1/settings/asset-tag-template'),
       files: await etag('/v1/settings/files'),
       attachments: JSON.stringify(

@@ -672,13 +672,17 @@ CREATE TABLE app.accessory (
   purchase_cost_minor bigint CHECK (purchase_cost_minor IS NULL OR purchase_cost_minor >= 0),
   currency            text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
   notes               text,
+  label_code          text NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),   -- opaque QR payload (ADR 0008)
+  low_stock_alerted   boolean NOT NULL DEFAULT false,                                    -- latch of the minimum-stock event
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   created_by          uuid,
   updated_by          uuid,
   archived_at         timestamptz,
   version             integer NOT NULL DEFAULT 1,
+  search_text         text GENERATED ALWAYS AS (lower(name || chr(31) || coalesce(model_number, ''))) STORED,  -- list search (ADR 0005)
   UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, label_code),
   FOREIGN KEY (tenant_id, company_id)  REFERENCES app.company (tenant_id, id),
   FOREIGN KEY (tenant_id, category_id, category_kind) REFERENCES app.category (tenant_id, id, kind),
   FOREIGN KEY (tenant_id, manufacturer_id) REFERENCES app.manufacturer (tenant_id, id),
@@ -688,7 +692,7 @@ CREATE TABLE app.accessory (
 );
 CREATE INDEX accessory_category_idx ON app.accessory (tenant_id, category_id);
 CREATE INDEX accessory_location_idx ON app.accessory (tenant_id, location_id);
-CREATE INDEX accessory_name_trgm ON app.accessory USING gin (tenant_id, name public.gin_trgm_ops);
+CREATE INDEX accessory_name_idx ON app.accessory (tenant_id, name, id);   -- ADR 0005: no trigram index under RLS
 
 CREATE TABLE app.consumable (
   id                  uuid PRIMARY KEY,
@@ -707,13 +711,17 @@ CREATE TABLE app.consumable (
   unit_cost_minor     bigint CHECK (unit_cost_minor IS NULL OR unit_cost_minor >= 0),
   currency            text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
   notes               text,
+  label_code          text NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
+  low_stock_alerted   boolean NOT NULL DEFAULT false,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   created_by          uuid,
   updated_by          uuid,
   archived_at         timestamptz,
   version             integer NOT NULL DEFAULT 1,
+  search_text         text GENERATED ALWAYS AS (lower(name || chr(31) || coalesce(model_number, ''))) STORED,
   UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, label_code),
   FOREIGN KEY (tenant_id, company_id)  REFERENCES app.company (tenant_id, id),
   FOREIGN KEY (tenant_id, category_id, category_kind) REFERENCES app.category (tenant_id, id, kind),
   FOREIGN KEY (tenant_id, manufacturer_id) REFERENCES app.manufacturer (tenant_id, id),
@@ -723,7 +731,7 @@ CREATE TABLE app.consumable (
 );
 CREATE INDEX consumable_category_idx ON app.consumable (tenant_id, category_id);
 CREATE INDEX consumable_location_idx ON app.consumable (tenant_id, location_id);
-CREATE INDEX consumable_name_trgm ON app.consumable USING gin (tenant_id, name public.gin_trgm_ops);
+CREATE INDEX consumable_name_idx ON app.consumable (tenant_id, name, id);
 
 -- Append-only stock ledger. A BEFORE INSERT trigger applies the delta to consumable.qty_on_hand
 -- (the CHECK on that column rejects overdraw) and records the resulting balance.
@@ -740,9 +748,17 @@ CREATE TABLE app.stock_movement (
   at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, id),
   FOREIGN KEY (tenant_id, consumable_id) REFERENCES app.consumable (tenant_id, id),
-  FOREIGN KEY (tenant_id, person_id)     REFERENCES app.person (tenant_id, id)
+  FOREIGN KEY (tenant_id, person_id)     REFERENCES app.person (tenant_id, id),
+  -- the sign says which way the stock moved; an adjustment or correction needs a note (ADR 0008)
+  CONSTRAINT stock_movement_sign CHECK (
+    (reason IN ('receive','return') AND qty_delta > 0)
+    OR (reason = 'issue' AND qty_delta < 0)
+    OR reason IN ('adjust','correction')),
+  CONSTRAINT stock_movement_adjust_note CHECK (
+    reason NOT IN ('adjust','correction') OR length(btrim(coalesce(note, ''))) > 0)
 );
 CREATE INDEX stock_movement_consumable_idx ON app.stock_movement (tenant_id, consumable_id, at DESC, id DESC);
+CREATE INDEX stock_movement_person_idx ON app.stock_movement (tenant_id, person_id, at DESC, id DESC) WHERE person_id IS NOT NULL;
 
 CREATE FUNCTION app.stock_movement_apply() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
@@ -751,9 +767,15 @@ BEGIN
      SET qty_on_hand = c.qty_on_hand + NEW.qty_delta
    WHERE c.tenant_id = NEW.tenant_id AND c.id = NEW.consumable_id
   RETURNING c.qty_on_hand INTO NEW.balance_after;   -- CHECK (qty_on_hand >= 0) rejects overdraw
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'consumable % not found', NEW.consumable_id USING ERRCODE = 'foreign_key_violation';
+  END IF;
+  NEW.at := clock_timestamp();                      -- after the row lock: `at` follows the balance order (ADR 0008)
   RETURN NEW;
 END
 $$;
+-- qty_on_hand changes only inside the ledger trigger (trigger depth 2); see migration 0080 consumable_guard_qty
+-- and accessory_guard_total (the total cannot drop below the units that are out).
 CREATE TRIGGER stock_movement_apply BEFORE INSERT ON app.stock_movement
   FOR EACH ROW EXECUTE FUNCTION app.stock_movement_apply();
 

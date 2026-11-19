@@ -44,6 +44,7 @@ import {
   splitCustomFieldParams,
 } from './asset-queries.js';
 import { AssetTagService, tagExists } from './asset-tags.js';
+import { ScanResolverRegistry } from './scan-resolvers.js';
 import { ScanResolveThrottle } from './scan-throttle.js';
 import { mergeCustomData, missingRequired, validateProvided } from './custom-fields.js';
 import { categoryDto, locationDto, modelDto, vendorDto } from './dto.js';
@@ -107,6 +108,7 @@ export class AssetsFacade extends RegistryBase {
     @Inject(OUTBOX_PUBLISHER) outbox: OutboxPublisher,
     private readonly tags: AssetTagService,
     private readonly scanThrottle: ScanResolveThrottle,
+    private readonly scanResolvers: ScanResolverRegistry,
   ) {
     super(tenancy, audit, outbox);
   }
@@ -327,7 +329,10 @@ export class AssetsFacade extends RegistryBase {
         }
         if (row) break;
       }
-      if (!row) return null;
+      if (!row) {
+        // [M2-W2 ACC] labelled records of other modules (accessories, consumables)
+        return this.scanResolvers.resolve(auth, trx, candidates);
+      }
       // Actions valid in the asset's current state AND for the caller (contract order).
       const allowed: string[] = [];
       const state = {
@@ -354,7 +359,7 @@ export class AssetsFacade extends RegistryBase {
     if (!found) {
       // Misses (and only misses) are counted: see ScanResolveThrottle.
       await this.scanThrottle.recordMiss(auth);
-      throw problem.notFound('No asset matches this code.');
+      throw problem.notFound('No record matches this code.');
     }
     return found;
   }

@@ -466,8 +466,16 @@ defineResource('Accessory', {
     notes: nstr(),
   },
   required: ['category_id', 'name', 'qty_total'],
-  readOnly: { qty_checked_out: ro(int()), qty_available: ro(int()) },
+  // [M2-W2 ACC] units out and available are computed per request from the open assignments (never stored)
+  readOnly: {
+    qty_checked_out: ro(int({ minimum: 0, description: 'Units still out: the sum of `quantity - quantity_returned` over the open assignments.' })),
+    qty_available: ro(int({ description: '`qty_total - qty_checked_out`: what can be checked out right now.' })),
+    low_stock: ro(bool({ description: 'True while `min_qty > 0` and `qty_available <= min_qty`.' })),
+    label_code: ro(str({ description: 'Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: accessory`.' })),
+  },
 });
+// [M2-W2 ACC] the computed members are always present in a response
+S_.Accessory.required.push('qty_checked_out', 'qty_available', 'low_stock', 'label_code');
 defineResource('Consumable', {
   props: {
     category_id: uuid('A consumable-kind category.'),
@@ -484,8 +492,14 @@ defineResource('Consumable', {
   },
   required: ['category_id', 'name'],
   createOnly: { initial_qty: int({ minimum: 0, default: 0, description: 'Creates an initial `receive` stock movement.' }) },
-  readOnly: { qty_on_hand: ro(int({ description: 'Changed only through stock movements.' })) },
+  // [M2-W2 ACC] `qty_on_hand` is the balance of the ledger: only stock movements change it
+  readOnly: {
+    qty_on_hand: ro(int({ minimum: 0, description: 'Changed only through stock movements; always the sum of the ledger.' })),
+    low_stock: ro(bool({ description: 'True while `min_qty > 0` and `qty_on_hand <= min_qty`.' })),
+    label_code: ro(str({ description: 'Opaque QR payload of the label: `GET /v1/scan/resolve?code=` answers it with `entity_type: consumable`.' })),
+  },
 });
+S_.Consumable.required.push('qty_on_hand', 'low_stock', 'label_code');
 defineResource('LoanerPool', {
   props: {
     name: str({ minLength: 1, maxLength: 200 }),
@@ -584,9 +598,31 @@ S_.ScanResolveResult = obj({
   asset: S('Asset'),
   allowed_actions: arr(en(['checkout', 'checkin', 'transfer', 'update', 'open_repair']), { description: 'Actions valid for the asset in its current state and for the caller.' }),
   // M2 wave 1b (scan codes): BEGIN
-  entity_type: en(['asset'], { description: 'Kind of record the code identifies. Only `asset` today; accessories get their own value (and result member) when they ship, so branch on this field.' }),
+  entity_type: en(['asset'], { description: 'Kind of record the code identifies: always `asset` in this result. Accessories and consumables are answered with their own results (`ScanResolveAccessoryResult`, `ScanResolveConsumableResult`; see `ScanResolveResponse`), so branch on this field.' }),
   // M2 wave 1b (scan codes): END
 }, ['match_type', 'entity_type', 'asset', 'allowed_actions']);
+
+// [M2-W2 ACC]: BEGIN - scan resolve answers accessories and consumables too (their own `entity_type`).
+// `ScanResolveResult` above stays the answer for an asset; the 200 response of `resolveScan` is a oneOf of the
+// three results, told apart by `entity_type`.
+S_.ScanResolveAccessoryResult = obj({
+  match_type: en(['label_code'], { description: 'Accessories are found by their `label_code` only.' }),
+  entity_type: en(['accessory']),
+  accessory: S('Accessory'),
+  allowed_actions: arr(en(['checkout', 'checkin', 'update']), { description: '`checkout`: the caller may check units out and some are available. `checkin`: the caller may return units and some are out. `update`: the caller may edit the accessory.' }),
+}, ['match_type', 'entity_type', 'accessory', 'allowed_actions'], { description: 'A scanned accessory label.' });
+S_.ScanResolveConsumableResult = obj({
+  match_type: en(['label_code']),
+  entity_type: en(['consumable']),
+  consumable: S('Consumable'),
+  allowed_actions: arr(en(['issue', 'receive', 'adjust', 'update']), { description: '`issue` (consume) needs stock on hand; `receive` and `adjust` need `consumable:adjust`; `update` needs `consumable:manage`.' }),
+}, ['match_type', 'entity_type', 'consumable', 'allowed_actions'], { description: 'A scanned consumable label.' });
+S_.ScanResolveResponse = {
+  description: 'What a scanned code identifies. Branch on `entity_type`.',
+  oneOf: [S('ScanResolveResult'), S('ScanResolveAccessoryResult'), S('ScanResolveConsumableResult')],
+  discriminator: { propertyName: 'entity_type', mapping: { asset: '#/components/schemas/ScanResolveResult', accessory: '#/components/schemas/ScanResolveAccessoryResult', consumable: '#/components/schemas/ScanResolveConsumableResult' } },
+};
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- custody
 S_.Assignment = obj({
@@ -616,6 +652,9 @@ S_.Assignment = obj({
   overdue: bool({ description: 'Computed: the assignment is open and `expected_return` is before today (UTC).' }),
   asset_tag: nstr({ description: 'Tag of the asset; present in the assignment lists of a person and of an asset.' }),
   asset_name: nstr({ description: 'Name of the asset; present together with `asset_tag`.' }),
+  // [M2-W2 ACC] accessory assignments
+  accessory_name: nstr({ description: 'Name of the accessory; present in the assignment lists of a person and of an accessory (accessory assignments only).' }),
+  target_name: nstr({ description: 'Display name of the person, location or asset the units are with; present in the assignment list of an accessory.' }),
 }, ['id', 'quantity', 'quantity_returned', 'checked_out_at', 'acceptance_state'], { description: 'One custody period. Exactly one of asset_id / accessory_id and exactly one of person_id / location_id / target_asset_id is set.' });
 S_.AssignmentList = obj({ data: arr(S('Assignment')), page: S('PageInfo') }, ['data', 'page']);
 S_.CheckoutRequest = {
@@ -718,15 +757,18 @@ S_.StockMovement = obj({
   reason: en(['receive', 'issue', 'return', 'adjust', 'correction']),
   person_id: nuuid(),
   note: nstr(),
-  balance_after: int(),
+  balance_after: int({ minimum: 0, description: 'Stock on hand right after this movement.' }),
   by_user_id: nuuid(),
   at: dt(),
+  // [M2-W2 ACC] display names, present in the stock lists
+  consumable_name: nstr({ description: 'Name of the consumable; present in the lists.' }),
+  person_name: nstr({ description: 'Name of the person the stock was issued to / returned by; present in the lists.' }),
 }, ['id', 'consumable_id', 'qty_delta', 'reason', 'balance_after', 'at']);
 S_.StockMovementCreate = obj({
-  qty_delta: { type: 'integer', not: { const: 0 }, description: 'Non-zero. Rejected with 409 if it would make stock negative.' },
-  reason: en(['receive', 'issue', 'return', 'adjust', 'correction']),
+  qty_delta: { type: 'integer', not: { const: 0 }, description: 'Non-zero. The sign must match the reason: `receive` and `return` are positive, `issue` is negative, `adjust` and `correction` either way (422 `validation` otherwise). Rejected with 409 `insufficient-stock` if it would make stock negative.' },
+  reason: en(['receive', 'issue', 'return', 'adjust', 'correction'], { description: '`receive`: stock arrives. `issue`: stock is consumed (optionally by a person). `return`: unused stock comes back. `adjust` / `correction`: the count differs from the ledger; these two need a `note` saying why.' }),
   person_id: nuuid('Who it was issued to / returned by.'),
-  note: str({ maxLength: 2000 }),
+  note: str({ maxLength: 2000, description: 'Required (non-blank) for `adjust` and `correction`.' }),
 }, ['qty_delta', 'reason'], { additionalProperties: false });
 S_.StockMovementList = obj({ data: arr(S('StockMovement')), page: S('PageInfo') }, ['data', 'page']);
 
@@ -1530,10 +1572,10 @@ addOp('/v1/assets/{id}/assignments', 'get', {
 });
 addOp('/v1/scan/resolve', 'get', {
   tag: 'Assets', id: 'resolveScan', summary: 'Resolve a scanned code', perm: 'asset:read', hasId: true,
-  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies (only `asset` today). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
+  description: 'Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies: `asset`, or (M2 wave 2) `accessory` / `consumable`, which are found by the `label_code` of their label only and answered with their own member (`accessory` / `consumable`) and actions; the accessory and consumable answers need `accessory:read` / `consumable:read` (without it the code is a plain 404). `404` when nothing matches in the caller\'s tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.',
   problems: { 409: { codes: ['conflict'], text: 'The serial number belongs to several assets; use the label or the asset tag.' } },
   params: [{ name: 'code', in: 'query', required: true, description: 'Scanned value.', schema: str({ minLength: 1, maxLength: 200 }) }],
-  success: { 200: okResp(200, 'The matching asset.', S('ScanResolveResult'), { replay: false }) },
+  success: { 200: okResp(200, 'The matching asset, accessory or consumable.', S('ScanResolveResponse'), { replay: false }) },
 });
 
 // ---------------------------------------------------------------- CUSTODY
@@ -1629,46 +1671,70 @@ addOp('/v1/people/{id}/history', 'get', {
 });
 
 // ---------------------------------------------------------------- ACCESSORIES
+// [M2-W2 ACC]: BEGIN accessories (M2-ACC-01). Check-out and check-in use the same assignment table as assets.
 crud({
   tag: 'Accessories', base: 'accessories', name: 'Accessory', plural: 'Accessories', singular: 'accessory', readPerm: 'accessory:read', writePerm: 'accessory:manage',
-  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'Only accessories at or below `min_qty` available.')],
+  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'true = only accessories with `min_qty > 0` and `qty_available <= min_qty`; false = all the others.')],
   sorts: ['name', 'qty_total', 'created_at'], defSort: ['name'],
 });
+// The generic operations get the accessory-specific problem codes.
+{
+  const upd = doc.paths['/v1/accessories/{id}'].patch.responses;
+  upd['409'] = specificProblem('409', ['insufficient-stock', 'conflict'], 'The new `qty_total` is below the units that are checked out (`insufficient-stock`), or another uniqueness conflict.');
+  upd['422'] = R('Unprocessable');
+  doc.paths['/v1/accessories/{id}'].delete.responses['409'] = specificProblem('409', ['conflict'], 'Units are still checked out (`usage.open_assignments`); return them first.');
+}
 addOp('/v1/accessories/{id}/checkout', 'post', {
   tag: 'Accessories', id: 'checkoutAccessory', summary: 'Check out accessory units', perm: 'accessory:checkout', params: [ID], idem: 'required',
-  description: 'Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments).',
-  body: jsonBody(S('AccessoryCheckoutRequest')),
+  description: 'Hands `quantity` units (default 1) to a person, a location or an asset: one assignment row with `quantity` and `quantity_returned = 0`. Fails with 409 `insufficient-stock` if the quantity exceeds what is available (`qty_total` minus the units still outstanding on open assignments); concurrent check-outs are serialised on the accessory, so the stock is never exceeded. The person must be active, the location and target asset live. Writes an audit record and the outbox event `accessory.checked_out` in the same transaction; when the check-out brings `qty_available` to or below `min_qty` the outbox event `accessory.low_stock` is emitted once per crossing.',
+  problems: { 409: { codes: ['insufficient-stock', 'conflict', 'idempotency-key-in-flight'], text: 'Not enough units available (`insufficient-stock`), the accessory is archived, or a request with the same Idempotency-Key is still running.' } },
+  body: jsonBody(S('AccessoryCheckoutRequest'), true, { person_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91', quantity: 2, note: 'Two chargers for the new starter' }),
   success: { 201: okResp(201, 'Checked out.', S('Assignment'), { location: true }) },
 });
 addOp('/v1/accessories/{id}/checkin', 'post', {
   tag: 'Accessories', id: 'checkinAccessory', summary: 'Return accessory units', perm: 'accessory:checkout', params: [ID], idem: 'required',
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The assignment is already fully returned, or a request with the same Idempotency-Key is still running.' } },
   description: 'Returns `quantity` units (default: everything still outstanding) of an open assignment. A partial return increases `quantity_returned` on the same assignment, which stays open; the return that completes it sets `checked_in_at`. The returned units are available again immediately. Returning more than the outstanding units is rejected with 422.',
   body: jsonBody(S('AccessoryCheckinRequest')),
   success: { 200: okResp(200, 'The assignment after the return: still open with a higher `quantity_returned` after a partial return, closed (`checked_in_at` set) after the last units come back.', S('Assignment')) },
 });
 addOp('/v1/accessories/{id}/assignments', 'get', {
   tag: 'Accessories', id: 'listAccessoryAssignments', summary: 'Who holds this accessory', perm: 'accessory:read',
+  description: 'Newest first. Each row carries `quantity`, `quantity_returned` and `target_name`.',
   params: [ID, P('Cursor'), P('Limit'), qp('state', en(['open', 'closed', 'all']), 'Defaults to `open`.')],
   success: { 200: okResp(200, 'A page of assignments.', S('AssignmentList'), { replay: false }) },
 });
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- CONSUMABLES
+// [M2-W2 ACC]: BEGIN consumables (M2-ACC-02, M2-ACC-03)
 crud({
   tag: 'Consumables', base: 'consumables', name: 'Consumable', plural: 'Consumables', singular: 'consumable', readPerm: 'consumable:read', writePerm: 'consumable:manage',
-  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'Only consumables at or below `min_qty`.')],
+  filters: [qp('category_id', uuid(), 'Filter by category.'), qp('location_id', uuid(), 'Filter by location.'), qp('low_stock', bool(), 'true = only consumables with `min_qty > 0` and `qty_on_hand <= min_qty`; false = all the others.')],
   sorts: ['name', 'qty_on_hand', 'created_at'], defSort: ['name'],
 });
+doc.paths['/v1/consumables'].post.description = 'A positive `initial_qty` is recorded as the first `receive` movement of the ledger (note: "Opening stock"), in the same transaction.\n\nRequires permission `consumable:manage`.';
+doc.paths['/v1/consumables/{id}'].delete.responses['409'] = specificProblem('409', ['conflict'], 'Reserved for a uniqueness conflict; a consumable with stock can be archived (its ledger stays).');
 addOp('/v1/consumables/{id}/movements', 'get', {
   tag: 'Consumables', id: 'listStockMovements', summary: 'Stock ledger of a consumable', perm: 'consumable:read',
-  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.')],
+  description: 'The consume log of one consumable, newest first; filter by reason and by the person the stock went to.',
+  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.'), qp('person_id', uuid(), 'Only movements issued to / returned by this person.')],
   success: { 200: okResp(200, 'A page of movements, newest first.', S('StockMovementList'), { replay: false }) },
 });
 addOp('/v1/consumables/{id}/movements', 'post', {
   tag: 'Consumables', id: 'createStockMovement', summary: 'Receive, issue or adjust stock', perm: 'consumable:adjust', params: [ID], idem: 'required',
-  description: 'Appends to the ledger and updates `qty_on_hand` atomically. The ledger is append-only: fix mistakes with a `correction` movement.',
-  body: jsonBody(S('StockMovementCreate')),
+  description: 'Appends to the ledger and updates `qty_on_hand` atomically; concurrent movements of one consumable are serialised, so stock can never go negative (409 `insufficient-stock`). The ledger is append-only: fix mistakes with a `correction` movement. Writes an audit record and the outbox event `consumable.stock_moved`; when the movement brings `qty_on_hand` to or below `min_qty` the outbox event `consumable.low_stock` is emitted once per crossing (ids only; re-armed when the stock rises above the minimum again). An archived consumable takes no movements (409 `conflict`).',
+  problems: { 409: { codes: ['insufficient-stock', 'conflict', 'idempotency-key-in-flight'], text: 'The movement would make stock negative (`insufficient-stock`), the consumable is archived, or a request with the same Idempotency-Key is still running.' } },
+  body: jsonBody(S('StockMovementCreate'), true, { qty_delta: -2, reason: 'issue', person_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d91', note: 'Printer on floor 2' }),
   success: { 201: okResp(201, 'Movement recorded.', S('StockMovement'), { location: true }) },
 });
+addOp('/v1/people/{id}/stock-movements', 'get', {
+  tag: 'Consumables', id: 'listPersonStockMovements', summary: 'Consumption log of a person', perm: 'consumable:read',
+  description: 'Every stock movement issued to or returned by this person, across consumables, newest first (M2-ACC-02: "consume log queryable per person").',
+  params: [ID, P('Cursor'), P('Limit'), arrQ('reason', en(['receive', 'issue', 'return', 'adjust', 'correction']), 'Filter by reason.')],
+  success: { 200: okResp(200, 'A page of movements, newest first.', S('StockMovementList'), { replay: false }) },
+});
+// [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- LOANERS
 crud({

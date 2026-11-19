@@ -36,9 +36,11 @@ export {
   inUse,
   invalidRef,
   isForeignKeyViolation,
+  nonZero,
   stalePrecondition,
 } from './registry-base.js';
 export { inSavepoint } from './savepoint.js';
+export { ScanResolverRegistry, type ScanResolution, type ScanResolver } from './scan-resolvers.js';
 export { RegistryModule } from './registry.module.js';
 export {
   coerceValue,

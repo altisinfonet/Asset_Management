@@ -59,7 +59,7 @@ const ALL_STATES = [
 const OWNER_ID = '0190a6b2-0000-7000-8000-000000000001';
 
 /** How the simulated worker paces itself; tests make it quick (`setMockImportTiming`). */
-let timing = { queued: 300, dryRun: 600, batchMs: 400, batchRows: 25 };
+let timing = { queued: 300, dryRun: 600, perRow: 4, batchMs: 400, batchRows: 25 };
 export function setMockImportTiming(next: Partial<typeof timing>): void {
   timing = { ...timing, ...next };
 }
@@ -178,6 +178,12 @@ function fileOf(job: MockImportJob): FileView | { error: string } {
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'The file could not be read.' };
   }
+}
+
+/** How long the simulated dry run takes: a base time plus a little per row, so a long file shows its progress. */
+function dryRunMs(job: MockImportJob): number {
+  const file = fileOf(job);
+  return timing.dryRun + ('error' in file ? 0 : file.rows.length * timing.perRow);
 }
 
 // ---- the attached file ----------------------------------------------------------------------------
@@ -626,7 +632,7 @@ function advance(job: MockImportJob): void {
       });
     } else if (
       job.state === 'dry_run_queued' &&
-      now >= job.dry_run_ready_at - timing.dryRun + timing.queued
+      now >= job.dry_run_ready_at - dryRunMs(job) + timing.queued
     ) {
       mutateW3(() => {
         job.state = 'dry_run_running';
@@ -1027,7 +1033,7 @@ export const importHandlers: HttpHandler[] = [
     }
     mutateW3(() => {
       job.state = 'dry_run_queued';
-      job.dry_run_ready_at = Date.now() + timing.dryRun;
+      job.dry_run_ready_at = Date.now() + dryRunMs(job);
       job.error = null;
       job.updated_at = nowIso();
       job._v += 1;

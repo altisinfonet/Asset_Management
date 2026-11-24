@@ -323,9 +323,11 @@ describe('mock imports', () => {
   beforeEach(() => {
     seedSession(MOCK_ACCOUNTS.owner);
     setMockScanDelay(0);
-    setMockImportTiming({ queued: 0, dryRun: 20, batchMs: 5, batchRows: 2 });
+    setMockImportTiming({ queued: 0, dryRun: 20, perRow: 0, batchMs: 5, batchRows: 2 });
   });
-  afterEach(() => setMockImportTiming({ queued: 300, dryRun: 600, batchMs: 400, batchRows: 25 }));
+  afterEach(() =>
+    setMockImportTiming({ queued: 300, dryRun: 600, perRow: 4, batchMs: 400, batchRows: 25 }),
+  );
 
   it('creates a draft job, keeps the file for the job and refuses a file of another job', async () => {
     const job = await draftWith(CSV);

@@ -78,11 +78,13 @@ beforeEach(() => {
   resetRouter();
   seedSession(MOCK_ACCOUNTS.owner);
   setMockScanDelay(0);
-  setMockImportTiming({ queued: 0, dryRun: 20, batchMs: 5, batchRows: 2 });
+  setMockImportTiming({ queued: 0, dryRun: 20, perRow: 0, batchMs: 5, batchRows: 2 });
   URL.createObjectURL = vi.fn(() => 'blob:mock');
   URL.revokeObjectURL = vi.fn();
 });
-afterEach(() => setMockImportTiming({ queued: 300, dryRun: 600, batchMs: 400, batchRows: 25 }));
+afterEach(() =>
+  setMockImportTiming({ queued: 300, dryRun: 600, perRow: 4, batchMs: 400, batchRows: 25 }),
+);
 
 describe('import: choose the data', () => {
   it('offers the five kinds, preselects one from the link and explains the order', async () => {

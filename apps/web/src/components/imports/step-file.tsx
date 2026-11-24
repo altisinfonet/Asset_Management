@@ -53,6 +53,9 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
     onReady: (attachment) => void attach(attachment.id),
   });
   const kind = kindOf(job);
+  const busy = uploads.items.some((item) =>
+    ['queued', 'uploading', 'finishing', 'scanning'].includes(item.status),
+  );
 
   return (
     <section aria-labelledby="import-file-heading" className="flex max-w-2xl flex-col gap-4">
@@ -63,19 +66,19 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
         <p className="text-base text-muted">{t('importFile.description')}</p>
       </div>
       {replacing ? <p className="text-sm text-muted">{t('importFile.replaceNote')}</p> : null}
-      <FileDropzone
-        accept=".csv,text/csv"
-        multiple={false}
-        buttonLabel={t('importFile.button')}
-        dropLabel={t('importFile.drop')}
-        hint={
-          limit ? t('importFile.hint', { limit: megabytes(limit) }) : t('importFile.hintNoLimit')
-        }
-        onFiles={uploads.add}
-        disabled={uploads.items.some((item) =>
-          ['queued', 'uploading', 'finishing', 'scanning'].includes(item.status),
-        )}
-      />
+      {/* one file at a time: while it travels or is scanned the drop zone gives way to its progress */}
+      {busy ? null : (
+        <FileDropzone
+          accept=".csv,text/csv"
+          multiple={false}
+          buttonLabel={t('importFile.button')}
+          dropLabel={t('importFile.drop')}
+          hint={
+            limit ? t('importFile.hint', { limit: megabytes(limit) }) : t('importFile.hintNoLimit')
+          }
+          onFiles={uploads.add}
+        />
+      )}
       <UploadList
         label={t('importFile.uploads')}
         limit={limit}

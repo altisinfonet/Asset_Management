@@ -321,7 +321,7 @@ Grouped by contract tag. Tags marked "contract only" are specified but have no r
 
 <!-- api-catalogue:start -->
 
-Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **174 operations on 115 paths in 25 tags**. Paths are shown as served, with the `/v1` prefix.
+Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **179 operations on 117 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
 
 "Requires" lists headers that are mandatory for that operation beyond the credential: `If-Match` (stale or missing gives `412` / `428`) and `Idempotency-Key` (missing gives `400 idempotency-key-required`).
 
@@ -521,6 +521,18 @@ Assignable people (employees, students, contractors), with or without a login.
 | DELETE | `/v1/people/{id}`             | `person:manage` | If-Match | Archive person                  |
 | GET    | `/v1/people/{id}/assignments` | `person:read`   | -        | What is checked out to a person |
 | GET    | `/v1/people/{id}/history`     | `person:read`   | -        | Chain of custody of a person    |
+
+### Departments
+
+Managed departments (ED-17): the list people and assets are assigned to, instead of free text.
+
+| Method | Path                   | Permission          | Requires | Purpose            |
+| ------ | ---------------------- | ------------------- | -------- | ------------------ |
+| GET    | `/v1/departments`      | `department:read`   | -        | List departments   |
+| POST   | `/v1/departments`      | `department:manage` | -        | Create department  |
+| GET    | `/v1/departments/{id}` | `department:read`   | -        | Get department     |
+| PATCH  | `/v1/departments/{id}` | `department:manage` | If-Match | Update department  |
+| DELETE | `/v1/departments/{id}` | `department:manage` | If-Match | Archive department |
 
 ### Accessories
 

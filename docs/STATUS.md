@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged and pushed; dashboard fix done; wave 3 not started |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 not started |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |

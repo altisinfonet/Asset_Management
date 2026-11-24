@@ -42,19 +42,42 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-Work in progress on top of 0.2.3. Nothing here is on `main` yet.
+Nothing yet. M2 wave 3 (import wizard, loaner pool, location scoping) is next.
+
+---
+
+## 0.2.4 - 2026-11-24 - managed departments and location edit fixes (M2)
+
+`main` at `000b648` (merge "location edit fixes and managed departments"), version bump in the following commit. Both were
+founder requests from the review on 2026-11-24.
 
 ### Added
 
-- **Managed departments** (founder request, in progress). Today a department is a free-text field on a person. The change is to
-  manage departments as a maintained list. Scope and acceptance are not yet written in the backlog.
-- This documentation set: [API.md](API.md), [FEATURES.md](FEATURES.md), [VERSION.md](VERSION.md), [AUDIT.md](AUDIT.md), and the
-  generator [`engineering/tools/gen-api-md.mjs`](engineering/tools/gen-api-md.mjs).
+- **Managed departments** (M2-ORG-01, M2-ORG-02, ED-17): Settings → Departments (create, rename, archive, merge by
+  reassigning), a department picker on people and assets (also in bulk edit), department column and filter on the People and
+  Assets lists, an optional owning department on assets, department name in CSV exports, demo departments (IT, Science,
+  Mathematics, Administration, Library, Facilities). API: `/v1/departments` (5 operations), `department_id` on people and
+  assets, permissions `department:read` (all roles) and `department:manage` (asset manager; administrators have all).
+- Migration `0100`: existing free-text departments become managed departments (one per distinct value per organisation,
+  ignoring case and spacing; the most used spelling wins), and people are linked without changing their version.
+
+### Changed
+
+- **Breaking for API clients:** people are written with `department_id`; the free-text `department` field on writes and the
+  `?department=` filter are removed (422 if sent). The old column is kept read-only for one release.
+- `address.country` on a location must be a two-letter code (stored upper-case).
 
 ### Fixed
 
-- **Location edit** (founder-reported defect, fix in progress). Details are not yet recorded in the repository; this entry
-  is updated when the fix merges.
+- **Location edit** (M2-LOC-05, ED-16): an address value over its limit (typically a country name instead of the two-letter
+  code) returned a validation error the dialog could not place on a field, so only a generic banner appeared. Errors are now
+  shown on the field, limits are checked before saving, a stale save offers "Reload latest", the address is kept when the
+  type changes, and address line 2 is no longer dropped. A location's type stays freely editable.
+
+### Verification
+
+Clean build 21/21; API e2e 588/588 through PgBouncer (588/588 direct reported by the change); real-stack browser tests 54/54;
+mock browser tests 559/559 (reported). See [AUDIT.md](AUDIT.md) B.16.
 
 ---
 
@@ -70,8 +93,11 @@ Work in progress on top of 0.2.3. Nothing here is on `main` yet.
   open repair, with a "Log a repair" shortcut. It never blocks the save (`042dd6b`).
 - Demo data: every demo asset labelled "In repair" now has an open repair, so the Repairs page, the dashboard and the status
   labels agree; "Broken" demo assets have none (`f43b108`).
-- Contributing rules (`1c0a543`, on `main` right after the release): git rules, contract workflow, migrations, verification
-  checklist and the list of maintained docs.
+- Contributing rules (`1c0a543`): git rules, contract workflow, migrations, verification checklist and the list of maintained
+  docs.
+- This documentation set: [API.md](API.md), [FEATURES.md](FEATURES.md), [VERSION.md](VERSION.md), [AUDIT.md](AUDIT.md) and
+  the generator [`engineering/tools/gen-api-md.mjs`](engineering/tools/gen-api-md.mjs) (`a5357fd`); version numbers set in
+  every `package.json` and release tags added (`e117ca8`).
 
 ### Changed
 

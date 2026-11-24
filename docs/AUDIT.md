@@ -119,6 +119,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.13 | 2026-11-19 | M2 wave 2 verification                                             | API e2e 566 of 566, browser 30 of 30; one unexplained intermittent failure |
 | B.14 | 2026-11-19 | Test stability and scanner false positives                         | Four root causes fixed                                                     |
 | B.15 | 2026-11-24 | Founder review of M2 and fixes (0.2.3)                             | UX and data consistency fixes; slow-test flake root cause fixed            |
+| B.16 | 2026-11-24 | Managed departments and location edit fixes (0.2.4)                | 588/588 API e2e pooled, 54/54 real-stack; edit error root cause found      |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -298,8 +299,25 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** see [VERSION.md](VERSION.md) 0.2.3. Slow API unit tests that flaked under a loaded parallel run were traced to a
   scan that walked the generated Prisma client (5 s down to 36 ms) and to PDF decoding budgets (`c583591`); two web assertions
   fixed (`a147719`, `e5bd3e8`).
-- **Follow-up:** a full re-run of the verification checklist on the merged code is not recorded in the documents for this
-  version.
+- **Follow-up:** after the timeout fixes, three consecutive clean-state `pnpm turbo run lint typecheck test build --force`
+  runs passed 21/21 at default concurrency (orchestrator run, 2026-11-24, before merging `2d9a14b`).
+
+### B.16 Managed departments and location edit fixes - 2026-11-24 (`000b648`, version 0.2.4)
+
+- **Scope:** founder requests: the location edit error and managed departments (migration `0100`, new tenant table
+  `app.department`, permissions `department:read` / `department:manage`).
+- **Method:** the change author reproduced 15+ location-edit scenarios against a real stack before and after the fix; new API
+  e2e, web unit, mock e2e and real-stack scenarios; migration of free-text departments tested twice on messy values. The
+  orchestrator re-ran the checks independently on the branch before merging.
+- **Result:** clean-state build 21/21; API e2e **588/588 through PgBouncer**, 0 skipped (orchestrator run; the author also
+  reports 588/588 direct); real-stack browser tests **54/54** (orchestrator run); mock browser tests 559/559 (author). Root
+  cause of the founder's error: an address value over its limit (a country name instead of the two-letter code) produced a
+  validation error the dialog could not attach to a field. No server error (5xx) on any edit path.
+- **Follow-ups:** a department-name saved-view warning and department search are not built; viewers and technicians can open
+  Settings → Departments only by URL (read-only).
+- **Incident noted:** during this work the founder's local default Compose stack (containers and named volumes) was found
+  removed. All automated runs used their own project names and ports; the cause was not determined. Only local demo data was
+  affected; `docker compose up -d --build` recreates it.
 
 ---
 

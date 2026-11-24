@@ -20,8 +20,8 @@ This page is maintained by hand: update the status here whenever a story changes
 | Sign-in and security                          | ✅ passwords, two-step verification, sessions, invitations; SSO planned (M4/M6) |
 | Users and roles                               | ✅ five built-in roles; 🟡 location scoping and custom roles planned            |
 | Asset registry                                | ✅ complete for M1; some list sorts planned                                     |
-| Locations                                     | ✅ tree and moves; 🟡 edit fix in progress                                      |
-| People                                        | ✅ with or without login; 🟡 managed departments in progress                    |
+| Locations                                     | ✅ tree, moves and editing (type, parent, address)                              |
+| People                                        | ✅ with or without login; managed departments                                   |
 | Custody                                       | ✅ check-out, check-in, transfer, dispose, lost and found, history              |
 | Files                                         | ✅ uploads with virus scanning and thumbnails                                   |
 | Scanning and labels                           | ✅ labels and USB scanner; 🟡 print calibration needs the founder's hardware    |
@@ -91,7 +91,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | :------------: | :-------: | --------------------------------------------------------------- |
 | Location tree            | Site, building, room (up to ten levels), create, rename, move (the whole subtree follows), archive with guard counts, asset counts per node |       ✅       |    M2     | LOC-01, LOC-04                                                  |
 | Asset location and moves | Set a location on an asset, move one or many assets, filter the list by location including sub-locations; history records each move         |       🟡       |    M2     | LOC-02 (a default location on a model or category is not built) |
-| **Location edit fix**    | Founder-reported defect in editing a location                                                                                               | 🟡 in progress |    M2     | not yet in the backlog                                          |
+| **Location editing**     | Rename, change type (freely), move, edit the address; field-level errors (e.g. a two-letter country code), "Reload latest" after a stale save | ✅ 0.2.4 |    M2     | M2-LOC-05 (ED-16)                                               |
 | Per-location stock       | Consumable quantities per location (today one home location per item)                                                                       |       ⏳       |   later   | none                                                            |
 
 ## 5. People
@@ -101,7 +101,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | People (assignable)                     | Employees, students, contractors, with or without a login; unique e-mail and employee id; every login account gets one person automatically         |       ✅       |     M2     | USR-01                                                             |
 | People screens                          | List, detail with assets held and a history tab, create, edit, archive (with a forced path and a reason when they still hold assets), person picker |       🟡       |     M2     | USR-02 (no link-or-unlink action between a person and a login yet) |
 | Link a person and a login               | Connect an existing person to a user account (today linked automatically by e-mail)                                                                 |       ⏳       | M2 wave 3  | M2-USR-03                                                          |
-| **Managed departments**                 | Today a department is a free-text field on a person; the change manages departments as a maintained list                                            | 🟡 in progress |     M2     | not yet in the backlog                                             |
+| **Managed departments**                 | Settings → Departments (create, rename, archive, merge); picker on people and assets incl. bulk edit; column and filter on both lists; owning department on assets; in CSV exports | ✅ 0.2.4 |     M2     | M2-ORG-01, M2-ORG-02 (ED-17)                                       |
 | Directory sync (Entra ID, Google, SCIM) | Keep people in step with a directory                                                                                                                |       ⏳       | v1.1 to M6 | parked, M6-SSO-02                                                  |
 
 ## 6. Custody (check-out, check-in, transfer)

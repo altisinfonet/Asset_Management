@@ -216,7 +216,7 @@ describe('mock loans: single, quick, return', () => {
     expect(bare.email_borrowers_without_login).toBeNull();
     const free = await http.GET('/v1/assets', {
       params: {
-        query: { state_type: 'deployable', assigned: false, in_loaner_pool: false, limit: 4 },
+        query: { state_type: ['deployable'], assigned: false, in_loaner_pool: false, limit: 4 },
       },
     });
     for (const asset of free.data!.data) await loanersApi.addMember(bare.id, asset.id);

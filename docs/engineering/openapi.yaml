@@ -18185,7 +18185,7 @@ components:
             - "null"
           items:
             $ref: "#/components/schemas/ImportColumnProfile"
-          description: Per-column statistics (only on a single import, not in lists).
+          description: Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.
         samples:
           type:
             - array
@@ -18194,7 +18194,7 @@ components:
             type: array
             items:
               type: string
-          description: The first 50 data rows (only on a single import).
+          description: "The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file)."
         confidence:
           type:
             - object
@@ -18204,6 +18204,7 @@ components:
           description: How sure the suggested mapping is per column index (1 = exact header match).
         value_map:
           $ref: "#/components/schemas/ImportValueMap"
+          description: Empty without `import:run` (its keys are values of the file).
       required:
         - id
         - entity_type

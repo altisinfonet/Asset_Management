@@ -2332,10 +2332,10 @@ S_.Me.required.push('mfa_policy');
     summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created).' },
     requested_by: uuid(),
     created_at: dt(), updated_at: dt(),
-    profile: { type: ['array', 'null'], items: S('ImportColumnProfile'), description: 'Per-column statistics (only on a single import, not in lists).' },
-    samples: { type: ['array', 'null'], items: arr(str()), description: 'The first 50 data rows (only on a single import).' },
+    profile: { type: ['array', 'null'], items: S('ImportColumnProfile'), description: 'Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.' },
+    samples: { type: ['array', 'null'], items: arr(str()), description: 'The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file).' },
     confidence: { type: ['object', 'null'], additionalProperties: { type: 'number' }, description: 'How sure the suggested mapping is per column index (1 = exact header match).' },
-    value_map: S('ImportValueMap'),
+    value_map: { ...S('ImportValueMap'), description: 'Empty without `import:run` (its keys are values of the file).' },
   }, ['id', 'entity_type', 'source', 'preset_key', 'state', 'filename', 'file_attachment_id', 'parse', 'headers', 'mapping', 'options', 'rows_total', 'counts', 'progress', 'dry_run_digest', 'dry_run_at', 'committed_at', 'started_at', 'finished_at', 'cancel_requested', 'error', 'summary', 'requested_by', 'created_at', 'updated_at']);
   S_.ImportList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
   S_.ImportCreate = obj({

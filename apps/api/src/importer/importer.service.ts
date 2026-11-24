@@ -140,7 +140,7 @@ function progressOf(job: JobRecord): {
 }
 
 /** Schema `ImportJob`; the heavy members (profile, samples, value map) only when `full`. */
-export function importDto(r: JobRecord, full: boolean): Record<string, unknown> {
+export function importDto(r: JobRecord, full: boolean, content = true): Record<string, unknown> {
   const parse = (r.parse ?? {}) as Record<string, unknown>;
   return {
     id: r.id,
@@ -190,10 +190,17 @@ export function importDto(r: JobRecord, full: boolean): Record<string, unknown> 
     updated_at: r.updated_at.toISOString(),
     ...(full
       ? {
-          profile: r.profile ?? null,
-          samples: r.samples ?? null,
+          // The file's own cells (sample rows, sample values, the source values of the value map) go to
+          // whoever may run imports; `import:read` sees the shape of the file and the counts (ED-19).
+          profile: content
+            ? (r.profile ?? null)
+            : ((r.profile as Array<Record<string, unknown>> | null)?.map((c) => ({
+                ...c,
+                samples: [],
+              })) ?? null),
+          samples: content ? (r.samples ?? null) : null,
           confidence: parse.confidence ?? null,
-          value_map: r.value_map,
+          value_map: content ? r.value_map : {},
         }
       : {}),
   };
@@ -449,7 +456,10 @@ export class ImportsService extends RegistryBase {
     return this.tx(auth, async (trx) => {
       const row = await trx.import_job.findUnique({ where: { id } });
       if (!row) throw problem.notFound('Import not found.');
-      return { data: importDto(row, true), version: row.version };
+      return {
+        data: importDto(row, true, permits(auth.permissions, 'import:run')),
+        version: row.version,
+      };
     });
   }
 

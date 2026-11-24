@@ -30,7 +30,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | Notifications                                 | ✅ in-app and e-mail                                                            |
 | Views and export                              | ✅ shared saved views, CSV export                                               |
 | Dashboard                                     | ✅ counts and needs-attention panels; fuller dashboard planned (M5)             |
-| Import                                        | ⏳ M2 wave 3 (next)                                                             |
+| Import                                        | 🟡 engine and API done (M2 wave 3); the wizard screens follow                   |
 | Loaner pool                                   | ⏳ M2 wave 3                                                                    |
 | Mobile app                                    | ⏳ M3                                                                           |
 | Self-hosted edition                           | ⏳ M4 (a development Compose stack exists today)                                |
@@ -170,8 +170,9 @@ This page is maintained by hand: update the status here whenever a story changes
 | In-app notifications   | Bell with unread count, list, mark read and mark all read                                                              |   ✅   |    M2     | NOT-01, NOT-02  |
 | E-mail and digests     | Instant or daily-digest e-mail per user; per-user preferences (Account > Notifications)                                |   ✅   |    M2     | NOT-01, NOT-02  |
 | Notification rules     | Administrators choose who is notified for which event (Settings > Notifications)                                       |   ✅   |    M2     | NOT-02          |
-| Events covered         | Infected upload, asset checked out, export ready, low stock (consumables and accessories), label batch ready or failed |   ✅   |    M2     | NOT-01          |
-| Loan and import events | Overdue and due-soon loans, import completed: the messages exist, wired when loaners and imports land                  |   ⏳   | M2 wave 3 | LOAN-03, IMP-05 |
+| Events covered         | Infected upload, asset checked out, export ready, import finished, low stock (consumables and accessories), label batch ready or failed |   ✅   |    M2     | NOT-01          |
+| Loan events            | Overdue and due-soon loans: the messages exist, wired when loaners land                                                |   ⏳   | M2 wave 3 | LOAN-03         |
+| Import finished        | The person who ran an import is told when it is done, with the counts                                                  |   ✅   | M2 wave 3 | IMP-05          |
 | Delivery log screen    | Available in the API, no screen yet                                                                                    |   🟡   |    M2     | NOT-02          |
 | Slack and Teams        | Chat notifications                                                                                                     |   ⏳   |   v1.1    | parked          |
 | Mobile push            | Phone push notifications (Cloud only)                                                                                  |   ⏳   |    M6     | M6-MOBL-03      |
@@ -203,14 +204,18 @@ This page is maintained by hand: update the status here whenever a story changes
 
 ## 15. Import
 
-| Feature                                | What it does                                                                                                                            | Status | Milestone | Stories            |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | :----: | :-------: | ------------------ |
-| CSV and XLSX import wizard             | Choose a file, review the column mapping, see a dry run that changes nothing, commit in batches, download an error report, resume later |   ⏳   | M2 wave 3 | IMP-01..05, IMP-08 |
-| Google Admin ChromeOS template         | One-click mapping for a Google Admin device export; re-import updates by serial                                                         |   ⏳   | M2 wave 3 | M2-IMP-06          |
-| Generic templates                      | Downloadable templates for assets, people and locations with a data dictionary                                                          |   ⏳   | M2 wave 3 | M2-IMP-07          |
-| Import test corpus and real-data trial | Messy fixtures in CI and an anonymised real file from the founder                                                                       | ⏳ 👤  | M2 wave 3 | M2-IMP-09          |
-| Snipe-IT importer                      | Import from a running Snipe-IT instance (URL and token) with history                                                                    |   ⏳   |    M5     | M5-SNIPE-01..05    |
-| Import undo                            | Roll back an import (before-images are recorded for it)                                                                                 |   ⏳   |   v1.1    | parked             |
+| Feature                                | What it does                                                                                                                                                                                      | Status | Milestone | Stories            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----: | :-------: | ------------------ |
+| Import engine and API                  | Upload a CSV or XLSX (UTF-8, UTF-16, Windows-1252; any delimiter; 100,000 rows), see the columns profiled, map them, run a dry run that changes nothing, commit in batches, cancel, resume after a crash | ✅ API |  M2 wave 3 | IMP-01..05         |
+| Column and value mapping               | Suggested mapping from header names, custom fields, value mapping for statuses, categories, models, locations, people and departments, create-or-must-exist per kind, dates and numbers with a chosen format, saved mapping templates | ✅ API |  M2 wave 3 | IMP-03             |
+| Dry run and error report               | Every row validated by the same code as the API and classified create, update, skip or error with the field and the message; downloadable error CSV (formula-safe) to fix and upload again      | ✅ API |  M2 wave 3 | IMP-04             |
+| Safe updates                           | Match by asset tag, serial or external id; skip, update or report existing records; a record edited after the dry run is not overwritten; the replaced values are stored (for undo)              | ✅ API |  M2 wave 3 | IMP-05             |
+| Google Admin ChromeOS template         | One-click mapping for a Google Admin device export (serial, asset ID, status, model, OS version, last sync, user, org unit, MAC addresses); Chromebook category and fields created; re-import updates by serial | ✅ API |  M2 wave 3 | M2-IMP-06          |
+| Generic templates                      | Downloadable CSV or XLSX templates with example rows and a data dictionary for assets, people, locations and departments; parent locations are created from paths                                | ✅ API |  M2 wave 3 | M2-IMP-07          |
+| Import wizard screens                  | Choose type and file, review the mapping, dry-run preview, commit, results, resume from an import list                                                                                            |   ⏳   | M2 wave 3 | IMP-08             |
+| Import test corpus and real-data trial | Messy fixtures in CI and an anonymised real file from the founder (the Google export sample today is synthetic)                                                                                   | ⏳ 👤  | M2 wave 3 | M2-IMP-09          |
+| Snipe-IT importer                      | Import from a running Snipe-IT instance (URL and token) with history                                                                                                                              |   ⏳   |    M5     | M5-SNIPE-01..05    |
+| Import undo                            | Roll back an import (before-images are recorded for it)                                                                                                                                           |   ⏳   |   v1.1    | parked             |
 
 ## 16. Platform and operations
 

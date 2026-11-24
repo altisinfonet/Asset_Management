@@ -710,7 +710,14 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, () => {
     const manager = await createUser(ih.h.app, t, 'asset_manager');
     const id = list.body.data[0].id as string;
     expect((await viewer.client.get('/v1/imports')).status).toBe(200);
-    expect((await viewer.client.get(`/v1/imports/${id}`)).status).toBe(200);
+    const seen = await viewer.client.get(`/v1/imports/${id}`);
+    expect(seen.status).toBe(200);
+    // the shape of the file, not its cells: no sample rows, no sample values, no source values
+    expect(seen.body.samples).toBeNull();
+    expect(seen.body.value_map).toEqual({});
+    expect(seen.body.profile.every((c: Json) => c.samples.length === 0)).toBe(true);
+    const full = await admin().get(`/v1/imports/${id}`);
+    expect(full.body.samples.length).toBeGreaterThan(0);
     expect((await viewer.client.get(`/v1/imports/${id}/rows`)).status).toBe(403);
     expect((await viewer.client.get(`/v1/imports/${id}/errors.csv`)).status).toBe(403);
     expect((await viewer.client.post('/v1/imports', { entity_type: 'asset' })).status).toBe(403);

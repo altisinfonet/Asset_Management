@@ -713,7 +713,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Loaners (10) | app.loaner_pool, loaner_pool_member, assignment; v_overdue_checkouts |
 | Repairs (6) | app.maintenance_record, asset, asset_history |
 | Labels (2) | app.label_template, asset |
-| Imports (20) | app.import_job, import_row, import_template, attachment |
+| Imports (19) | app.import_job, import_row, import_template, attachment |
 | Attachments (5), Audit (1) | app.attachment, audit_log |
 
 The OpenAPI file has 132 operations on 82 paths (52 GET, 42 POST, 15 PATCH, 23 DELETE).

@@ -5926,14 +5926,15 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
-            /** @description Per-column statistics (only on a single import, not in lists). */
+            /** @description Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty. */
             profile?: components["schemas"]["ImportColumnProfile"][] | null;
-            /** @description The first 50 data rows (only on a single import). */
+            /** @description The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file). */
             samples?: string[][] | null;
             /** @description How sure the suggested mapping is per column index (1 = exact header match). */
             confidence?: {
                 [key: string]: number;
             } | null;
+            /** @description Empty without `import:run` (its keys are values of the file). */
             value_map?: components["schemas"]["ImportValueMap"];
         };
         ImportList: {
@@ -11655,6 +11656,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            422: components["responses"]["Unprocessable"];
             /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
             429: {
                 headers: {
@@ -11789,6 +11791,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };

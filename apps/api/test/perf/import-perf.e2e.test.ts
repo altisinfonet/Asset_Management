@@ -2,10 +2,13 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import { strToU8, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dbEnabled } from '../auth/support.js';
 import { newObjectKey } from '../../src/storage/index.js';
-import { assetCsv } from '../importer/fixtures.js';
+import { assetRows, ASSET_HEADERS, assetCsv } from '../importer/fixtures.js';
+import { analyseFile } from '../../src/importer/analysis.js';
 import {
   type ImportHarness,
   type TenantFixture,
@@ -103,6 +106,23 @@ describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {
       { headers: { 'idempotency-key': `perf-${id}` } },
     );
     expect(res.status, res.raw).toBe(202);
+    // interactive requests while the commit runs: list p95 must not suffer (M2-IMP-05)
+    const idle: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      const l0 = performance.now();
+      expect((await t.admin.get('/v1/assets?limit=50')).status).toBe(200);
+      idle.push(performance.now() - l0);
+    }
+    const loaded: number[] = [];
+    let committing = true;
+    const sampler = (async () => {
+      while (committing) {
+        const l0 = performance.now();
+        await t.admin.get('/v1/assets?limit=50');
+        loaded.push(performance.now() - l0);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    })();
     const stepMs: number[] = [];
     let done = (await t.admin.get(`/v1/imports/${id}`)).body;
     while (done.state === 'committing') {
@@ -112,6 +132,13 @@ describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {
       done = (await t.admin.get(`/v1/imports/${id}`)).body;
     }
     out.commit_step_ms = stepMs;
+    committing = false;
+    await sampler;
+    const p95 = (a: number[]) =>
+      [...a].sort((x, y) => x - y)[Math.max(0, Math.ceil(a.length * 0.95) - 1)]!;
+    out.list_p95_ms_idle = Math.round(p95(idle));
+    out.list_p95_ms_during_commit = Math.round(p95(loaded));
+    out.list_samples_during_commit = loaded.length;
     const commitMs = performance.now() - t0;
     out.commit_seconds = secs(commitMs);
     out.commit_rows_per_minute = Math.round((ROWS / commitMs) * 60_000);
@@ -136,6 +163,55 @@ describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {
     const projectedDryMinutes = ((dryMs / ROWS) * 100_000) / 60_000;
     out.projected_dry_run_minutes_100k = Math.round(projectedDryMinutes * 10) / 10;
     expect(out.commit_rows_per_minute as number).toBeGreaterThanOrEqual(GATE.commitRowsPerMinute);
+    // interactive list stays inside its 500 ms budget while an import commits
+    expect(out.list_p95_ms_during_commit as number).toBeLessThan(500);
     expect(projectedDryMinutes).toBeLessThan(GATE.dryRunMinutesPer100k);
   }, 3_600_000);
+
+  it(`reads a ${ROWS.toLocaleString('en')}-row XLSX as a stream (time and memory)`, async () => {
+    const cell = (c: number, r: number, v: string) =>
+      v === ''
+        ? ''
+        : `<c r="${String.fromCharCode(65 + c)}${r}" t="inlineStr"><is><t>${v.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</t></is></c>`;
+    const rowsXml = [ASSET_HEADERS, ...assetRows(ROWS, 'XL')]
+      .map(
+        (cells, i) => `<row r="${i + 1}">${cells.map((v, c) => cell(c, i + 1, v)).join('')}</row>`,
+      )
+      .join('');
+    const book = Buffer.from(
+      zipSync({
+        'xl/workbook.xml': strToU8(
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Assets" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        ),
+        'xl/_rels/workbook.xml.rels': strToU8(
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+        ),
+        'xl/worksheets/sheet1.xml': strToU8(
+          `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowsXml}</sheetData></worksheet>`,
+        ),
+      }),
+    );
+    out.xlsx_file_bytes = book.length;
+    let rows = 0;
+    let peak = 0;
+    const base = process.memoryUsage().heapUsed;
+    const t0 = performance.now();
+    const a = await analyseFile({
+      open: () => Promise.resolve(Readable.from([book])),
+      filename: 'perf.xlsx',
+      overrides: {},
+      entity: 'asset',
+      custom: [],
+      maxRows: 1_000_000,
+      sink: async (batch) => {
+        rows += batch.length;
+        peak = Math.max(peak, process.memoryUsage().heapUsed - base);
+      },
+    });
+    out.xlsx_analyze_seconds = secs(performance.now() - t0);
+    out.xlsx_peak_heap_growth_mb = Math.round(peak / 1_048_576);
+    expect(rows).toBe(ROWS);
+    expect(a.rowsTotal).toBe(ROWS);
+    expect(a.headers).toEqual(ASSET_HEADERS);
+  }, 600_000);
 });

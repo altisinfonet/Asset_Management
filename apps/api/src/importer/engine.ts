@@ -27,6 +27,7 @@ import {
   type Outcome,
   type RowIssue,
   type Verdict,
+  RUNNING_STATES,
   optionsSchema,
 } from './types.js';
 
@@ -114,6 +115,18 @@ export class ImportEngine {
       dataType: r.data_type,
       categoryId: r.category_id,
     }));
+  }
+
+  /** The sweep gives up on an import whose worker jobs kept failing for hours. */
+  async abandon(tx: Tx, importId: string, ctx: JobContextBase): Promise<void> {
+    const job = await this.loadJob(tx, importId);
+    if (!job || !RUNNING_STATES.includes(job.state)) return;
+    await this.fail(
+      tx,
+      job,
+      'The import did not finish: the worker kept failing. Start it again, and report this if it happens twice.',
+      ctx,
+    );
   }
 
   private async fail(tx: Tx, job: JobRow, message: string, ctx: JobContextBase): Promise<void> {

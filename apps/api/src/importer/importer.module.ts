@@ -55,11 +55,17 @@ export class ImportRunner {
 
   /** Imports that are "running" but have not moved for ten minutes lost their job: queue it again. */
   async sweep(_payload: { tenantId: string }, ctx: TenantJobContext): Promise<void> {
-    const stale = await ctx.tx.$queryRaw<Array<{ id: string; state: string }>>`
-      select id, state from app.import_job
+    const stale = await ctx.tx.$queryRaw<Array<{ id: string; state: string; abandoned: boolean }>>`
+      select id, state, coalesce(started_at, created_at) < now() - interval '6 hours' as abandoned
+        from app.import_job
        where state in ('analyzing','dry_running','committing') and updated_at < now() - interval '10 minutes'
        limit 20`;
     for (const job of stale) {
+      if (job.abandoned) {
+        // a job that kept failing for hours is not woken again: it ends, and the user starts it over
+        await this.engine.abandon(ctx.tx, job.id, ctx);
+        continue;
+      }
       await this.jobs.enqueue(
         job.state === 'analyzing' ? IMPORT_ANALYZE_JOB : IMPORT_STEP_JOB,
         { tenantId: ctx.tenantId, importId: job.id },

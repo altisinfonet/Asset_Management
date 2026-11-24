@@ -214,11 +214,11 @@ export const QUEUES = {
     retryLimit: 5,
     retryDelay: 10,
     retryDelayMax: 5 * MINUTE,
-    expireInSeconds: 3 * MINUTE,
+    expireInSeconds: 2 * MINUTE,
     dedupeSeconds: 4 * MINUTE,
     transactionTimeoutSeconds: 3 * MINUTE,
   },
-  /** Re-queues the step of imports whose job was lost, and expires old drafts (per tenant, every 5 minutes). */
+  /** Re-queues the step of imports whose worker job was lost (per tenant, every 5 minutes); ends the ones that kept failing for 6 hours. */
   'import.sweep': {
     name: 'import.sweep',
     tenantScoped: true,

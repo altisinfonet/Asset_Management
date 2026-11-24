@@ -54,7 +54,7 @@ Throughput came from three decisions: a batch runs in **one savepoint, not one p
 
 ## Consequences
 
-- New contract (`[M2-W3 IMP]`): 20 operations (tag Imports: `/v1/imports`, presets and template files, analyse, apply a template, distinct values, dry run, rows, error report CSV, commit, cancel, `/v1/import-templates`), problem codes `import-wrong-state`, `import-stale-dry-run` (now emitted), `import-quota-exceeded`. The placeholder schemas of the first drafts (`snipe_it` source, `dry_run_queued`... states) are gone; the Snipe-IT importer (M5) adds its source when it exists.
+- New contract (`[M2-W3 IMP]`): 19 operations (tag Imports: `/v1/imports`, presets and template files, analyse, apply a template, distinct values, dry run, rows, error report CSV, commit, cancel, `/v1/import-templates`), problem codes `import-wrong-state`, `import-stale-dry-run` (now emitted), `import-quota-exceeded`. The placeholder schemas of the first drafts (`snipe_it` source, `dry_run_queued`... states) are gone; the Snipe-IT importer (M5) adds its source when it exists.
 - New tables `import_job`, `import_row`, `import_template` (migration 0110) with the tenant conventions, isolation tests (`test/isolation/imports-isolation.e2e.test.ts`) and route-replay cases for every route; permissions are the catalogue's `import:read` (list, get, templates, presets) and `import:run` (everything that changes anything and everything that shows rows); the entity's own write permission and, for created references, the catalogue's, are checked when the dry run and the commit are requested.
 - New queues `import.analyze`, `import.step`, `import.sweep`; notification `import.completed` is wired (subscription in `notifications/subscriptions.ts`).
 - Dependencies: `yauzl`, `saxes`, `fflate`.

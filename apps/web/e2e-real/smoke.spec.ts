@@ -83,7 +83,7 @@ test('signs in with password and TOTP and lands on the dashboard of the Acme ten
   await expect(page.getByTestId('tenant-name').first()).toHaveText('Acme');
   // the dashboard tiles read the asset list totals through the typed client: numbers, not skeletons
   for (const tile of ['ready', 'assigned', 'inRepair', 'overdue']) {
-    await expect(page.getByTestId(`tile-${tile}`)).toContainText(/^d[d,]*s*S/);
+    await expect(page.getByTestId(`tile-${tile}`)).toContainText(/^\d[\d,]*\s*\S/);
     await expect(page.getByTestId(`tile-${tile}`)).toHaveAttribute('aria-busy', 'false');
   }
 });

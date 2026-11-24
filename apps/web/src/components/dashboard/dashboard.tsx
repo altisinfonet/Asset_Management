@@ -78,6 +78,7 @@ export function Dashboard() {
   const { can } = useAuth();
   const canAssets = can('asset:read');
   const canRepairs = can('repair:read');
+  const canLoaners = can('loaner:read');
   const canAccessories = can('accessory:read');
   const canConsumables = can('consumable:read');
   const canStock = canAccessories || canConsumables;
@@ -147,6 +148,11 @@ export function Dashboard() {
               count={overdue.data?.rows.length ?? 0}
               href={routes.assetsFiltered({ overdue: true })}
               empty={t('dashboard.overduePanel.empty')}
+              extraLink={
+                canLoaners
+                  ? { href: routes.loaners, label: t('dashboard.overduePanel.loanerLink') }
+                  : undefined
+              }
             >
               {overdue.data?.rows.map((asset) => {
                 const assignment = asset.current_assignment;
@@ -279,6 +285,7 @@ function Panel({
   count,
   href,
   empty,
+  extraLink,
   children,
 }: {
   id: string;
@@ -288,6 +295,8 @@ function Panel({
   count: number;
   href: string;
   empty: string;
+  /** A second way on from the card (the overdue card links to the loaner dashboard). */
+  extraLink?: { href: string; label: string };
   children: ReactNode;
 }) {
   const { t, formatNumber } = useI18n();
@@ -340,6 +349,15 @@ function Panel({
       ) : (
         <ul className="flex flex-col">{children}</ul>
       )}
+      {extraLink ? (
+        <Link
+          href={extraLink.href}
+          data-testid={`panel-${id}-link`}
+          className="mt-1 w-fit rounded-sm text-sm text-primary-text underline underline-offset-2"
+        >
+          {extraLink.label}
+        </Link>
+      ) : null}
     </section>
   );
 }

@@ -27,6 +27,7 @@ import { linkHandlers } from './link-handlers';
 import { m2Handlers } from './m2-handlers';
 import { registryHandlers } from './registry-handlers';
 import { w2Handlers } from './w2-handlers';
+import { w3Handlers } from './w3-handlers';
 import {
   availableRecoveryCodes,
   findUser,
@@ -257,6 +258,7 @@ export const handlers: HttpHandler[] = [
   ...departmentHandlers,
   ...linkHandlers,
   ...w2Handlers,
+  ...w3Handlers,
 
   http.get('/v1/health', () =>
     HttpResponse.json({

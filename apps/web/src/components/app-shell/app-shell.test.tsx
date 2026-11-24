@@ -96,7 +96,8 @@ describe('command palette', () => {
     expect(within(dialog).getByRole('option', { name: 'Locations' })).toBeVisible();
     expect(within(dialog).getByRole('option', { name: 'People' })).toBeVisible();
     // modules that are not built yet are not offered
-    expect(within(dialog).queryByRole('option', { name: 'Loaner pool' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('option', { name: 'Loaners' })).toBeVisible();
+    expect(within(dialog).queryByRole('option', { name: 'Stocktake' })).not.toBeInTheDocument();
 
     await user.type(within(dialog).getByRole('combobox'), 'settings');
     await user.keyboard('{Enter}');

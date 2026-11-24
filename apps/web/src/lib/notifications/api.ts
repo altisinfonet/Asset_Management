@@ -166,6 +166,11 @@ export function notificationHref(
         return routes.labelBatch(id);
       case 'export':
         return routes.exportJob(id);
+      case 'import_job':
+      case 'import':
+        return routes.importJob(id);
+      case 'loaner_pool':
+        return routes.loanerPool(id);
       default:
         break;
     }

@@ -204,6 +204,7 @@ export class PeopleService extends RegistryBase {
   async create(
     auth: AuthContext,
     body: PersonCreate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -239,6 +240,7 @@ export class PeopleService extends RegistryBase {
         await this.record(trx, {
           entity: 'person',
           verb: 'created',
+          ...(meta ? { meta } : {}),
           id: row.id,
           version: row.version,
           before: null,
@@ -256,6 +258,7 @@ export class PeopleService extends RegistryBase {
     id: string,
     ifMatch: IfMatch,
     body: PersonUpdate,
+    importMeta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -340,11 +343,11 @@ export class PeopleService extends RegistryBase {
         await this.record(trx, {
           entity: 'person',
           verb: 'updated',
+          ...(meta || importMeta ? { meta: { ...importMeta, ...meta } } : {}),
           id,
           version: updated.version,
           before: auditView(personDto(row)),
           after: auditView(personDto(updated)),
-          ...(meta ? { meta } : {}),
         });
         return { data: await this.view(trx, updated), version: updated.version };
       });

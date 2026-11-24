@@ -42,7 +42,37 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-Nothing yet. M2 wave 3 (import wizard, loaner pool, location scoping) is next.
+M2 wave 3, part 1: the import backend (M2-IMP-01..07). Not released yet.
+
+### Added
+
+- **CSV and XLSX import with a mandatory dry run** (M2-IMP-01..07, ADR 0010, ED-18, ED-19): create an import, upload the file through
+  the attachments API (it passes the virus scan first), analyse it (format, encoding UTF-8 / UTF-16 / Windows-1252, delimiter, header
+  row, per-column profile, 50 sample rows, suggested mapping), edit the mapping, options and value mapping, dry-run (every row
+  validated by the same code as the API, nothing written), commit in batches (one transaction each, resumable after a crash,
+  cancellable), download the error report. Entity types: assets, people, locations (paths such as `Site > Building > Room`; missing
+  parents are created) and departments. Missing categories, manufacturers, models, vendors, locations, departments and people can be
+  created by the import. API: tag Imports, 19 operations (`/v1/imports`, `/v1/import-templates`), problem codes
+  `import-wrong-state`, `import-quota-exceeded`, `import-stale-dry-run`; migration 0110 (`import_job`, `import_row`,
+  `import_template`); worker queues `import.analyze`, `import.step`, `import.sweep`; configuration `IMPORT_MAX_ROWS` (100,000),
+  `IMPORT_BATCH_ROWS` (1,000), `IMPORT_MAX_CONCURRENT` (2).
+- **Google Admin ChromeOS preset** and **generic templates** (downloadable CSV / XLSX with a data dictionary): `GET /v1/imports/presets`.
+  Creating an import from the Google preset creates the Chromebook category and its custom fields.
+- **Saved mapping templates** per organisation, applied to a file by header text.
+- The importer reads the `'` an export puts before cells that look like formulas, so exported files import to the original values;
+  the error report is formula-safe.
+- Notification `import.completed` (bell and e-mail) with the counts.
+- Dependencies `yauzl`, `saxes` (XLSX reading) and `fflate` (template workbooks).
+
+### Changed
+
+- The contract-only placeholders of the first drafts for imports (`ImportJob` states `dry_run_queued`..., source `snipe_it`) are
+  replaced by the built design; the Snipe-IT source returns with M5.
+- Uploads of kind `import_file` may be UTF-16 (with a byte order mark) or Windows-1252 CSV; other attachments are unchanged.
+- Creating an asset answers with the row it just wrote instead of reading it back (three queries fewer; also faster over the API);
+  the tag numbering template is read once per transaction. `people`, `locations` and `departments` create / update take an optional
+  audit metadata argument.
+
 
 ---
 

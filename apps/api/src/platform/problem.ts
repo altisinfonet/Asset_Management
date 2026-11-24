@@ -63,6 +63,10 @@ export const PROBLEM_CATALOG = {
   'asset-not-deployable': { status: 409, title: 'Asset cannot be checked out in its state' },
   // Accessories and consumables (M2 wave 2; openapi x-problem-codes)
   'insufficient-stock': { status: 409, title: 'Not enough stock' },
+  // Imports (M2 wave 3; openapi x-problem-codes)
+  'import-stale-dry-run': { status: 409, title: 'The dry run is out of date' },
+  'import-wrong-state': { status: 409, title: 'The import is not in a state that allows this' },
+  'import-quota-exceeded': { status: 429, title: 'Too many imports are running' },
   'idempotency-key-in-flight': {
     status: 409,
     title: 'Request with this Idempotency-Key in flight',

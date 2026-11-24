@@ -12,6 +12,7 @@ import { LocationsModule } from './locations/index.js';
 import { MaintenanceModule } from './maintenance/index.js';
 import { NotificationsModule } from './notifications/index.js';
 import { ExportsModule } from './exports/index.js';
+import { ImportModule } from './importer/index.js';
 import { ViewsModule } from './views/index.js';
 import { pinoHttpParams } from './logging/logger.js';
 import { OpenApiModule } from './openapi/index.js';
@@ -65,6 +66,8 @@ export class AppModule {
               NotificationsModule,
               ViewsModule,
               ExportsModule,
+              // M2 wave 3
+              ImportModule,
             ]
           : []),
         HealthModule,

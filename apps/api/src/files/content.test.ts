@@ -168,3 +168,33 @@ describe('content sniffing (declared type versus the first bytes)', () => {
     expect((await sniff('text/csv', body)).ok).toBe(true);
   });
 });
+
+describe('CSV files for the importer (M2-IMP-02)', () => {
+  const importFile = (body: Buffer) =>
+    sniffContent(body, findAllowedType('text/csv')!, { importFile: true });
+
+  it('accepts UTF-16 (with a byte order mark) and Windows-1252 text only as an import file', async () => {
+    const u16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('serial;name\r\n1;Ase\r\n', 'utf16le'),
+    ]);
+    const cp1252 = Buffer.from([0x6e, 0x0a, 0x4d, 0xfc, 0x6c, 0x6c, 0x65, 0x72, 0x0a]);
+    expect((await importFile(u16)).ok).toBe(true);
+    expect((await importFile(cp1252)).ok).toBe(true);
+    // an ordinary attachment is still UTF-8 text without NUL bytes
+    expect((await sniff('text/csv', u16)).ok).toBe(false);
+    expect((await sniff('text/csv', cp1252)).ok).toBe(false);
+  });
+
+  it('still refuses binary data and markup, whatever the encoding', async () => {
+    expect((await importFile(Buffer.from([0x00, 0x01, 0x02, 0x03, 0x00]))).ok).toBe(false);
+    const svg16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('<svg onload=x>', 'utf16le'),
+    ]);
+    expect((await importFile(svg16)).ok).toBe(false);
+    expect((await importFile(Buffer.from([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0xfc]))).ok).toBe(
+      false,
+    );
+  });
+});

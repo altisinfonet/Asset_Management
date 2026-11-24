@@ -96,7 +96,7 @@ tags:
   - name: Labels
     description: Fixed label templates and PDF label sheets.
   - name: Imports
-    description: CSV/XLSX/Snipe-IT/Google Admin imports with a mandatory dry run.
+    description: CSV/XLSX imports (assets, people, locations, departments; Google Admin ChromeOS preset) with a mandatory dry run.
   - name: Attachments
     description: File metadata and presigned upload/download.
   - name: Audit
@@ -5485,13 +5485,242 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /v1/import-templates:
+    get:
+      tags:
+        - Imports
+      operationId: listImportTemplates
+      summary: Saved mapping templates
+      description: Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: entity_type
+          in: query
+          description: Filter by entity type.
+          schema:
+            type: string
+            enum:
+              - asset
+              - person
+              - location
+              - department
+      responses:
+        "200":
+          description: A page of templates, by name.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportTemplateList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    post:
+      tags:
+        - Imports
+      operationId: createImportTemplate
+      summary: Save a mapping as a template
+      description: |-
+        From an import (`from_import_id`: its mapped columns by header, and its options) or from explicit `columns`. Names are unique per entity type (ignoring case).
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportTemplateCreate"
+      responses:
+        "201":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/import-templates/{id}:
+    get:
+      tags:
+        - Imports
+      operationId: getImportTemplate
+      summary: Get a mapping template
+      description: Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportTemplate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    patch:
+      tags:
+        - Imports
+      operationId: updateImportTemplate
+      summary: Edit a mapping template
+      description: Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportTemplateUpdate"
+      responses:
+        "200":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    delete:
+      tags:
+        - Imports
+      operationId: deleteImportTemplate
+      summary: Delete a mapping template
+      description: Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/imports:
     get:
       tags:
         - Imports
       operationId: listImports
-      summary: List import jobs
-      description: Requires permission `import:read`.
+      summary: List imports
+      description: |-
+        Newest first. Without the heavy members (`profile`, `samples`, `value_map`, `confidence`): fetch one import for those.
+
+        Requires permission `import:read`.
       x-permission: import:read
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -5507,12 +5736,14 @@ paths:
               type: string
               enum:
                 - draft
-                - dry_run_queued
-                - dry_run_running
-                - dry_run_complete
-                - commit_queued
+                - uploaded
+                - analyzing
+                - analyzed
+                - mapped
+                - dry_running
+                - dry_run_done
                 - committing
-                - committed
+                - completed
                 - failed
                 - cancelled
         - name: entity_type
@@ -5520,9 +5751,14 @@ paths:
           description: Filter by entity type.
           schema:
             type: string
+            enum:
+              - asset
+              - person
+              - location
+              - department
       responses:
         "200":
-          description: A page of import jobs, newest first.
+          description: A page of imports.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -5535,7 +5771,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ImportJobList"
+                $ref: "#/components/schemas/ImportList"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -5548,9 +5784,13 @@ paths:
       tags:
         - Imports
       operationId: createImport
-      summary: Create an import job
+      summary: Create an import
       description: |-
-        Creates a `draft` job. Upload the file first (`POST /v1/attachments` with kind `import_file`), then reference it here. Nothing is written to the registry until a dry run has completed and the job is committed.
+        Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252), complete the upload, and call `POST /v1/imports/{id}/analyze`.
+
+        The caller needs the write permission of the entity type (`asset:create`, `person:manage`, `location:manage`, `department:manage`). `preset_key: google_admin_chromeos` also creates the Chromebook category and its custom fields when missing.
+
+        Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
 
         Requires permission `import:run`.
       x-permission: import:run
@@ -5562,10 +5802,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ImportJobCreate"
+              $ref: "#/components/schemas/ImportCreate"
       responses:
         "201":
-          description: Job created.
+          description: The import.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -5579,8 +5819,6 @@ paths:
               $ref: "#/components/headers/ETag"
             Location:
               $ref: "#/components/headers/Location"
-            Idempotent-Replayed:
-              $ref: "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
@@ -5602,14 +5840,14 @@ paths:
       tags:
         - Imports
       operationId: getImport
-      summary: Get an import job
+      summary: Get an import
       description: Requires permission `import:read`.
       x-permission: import:read
       parameters:
         - $ref: "#/components/parameters/Id"
       responses:
         "200":
-          description: The job.
+          description: The import, with column profile, sample rows, mapping and value map.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -5637,8 +5875,11 @@ paths:
       tags:
         - Imports
       operationId: updateImport
-      summary: Edit mapping and options
-      description: Requires permission `import:run`.
+      summary: Edit mapping, options and value mapping
+      description: |-
+        Unknown or repeated targets are `422`. Missing essentials (no category column and no default category, ...) are reported when the dry run is requested.
+
+        Requires permission `import:run`.
       x-permission: import:run
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -5650,10 +5891,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ImportJobUpdate"
+              $ref: "#/components/schemas/ImportUpdate"
       responses:
         "200":
-          description: Updated job.
+          description: The import.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -5680,7 +5921,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -5689,24 +5947,120 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
-  /v1/imports/{id}/cancel:
+  /v1/imports/{id}/analyze:
     post:
       tags:
         - Imports
-      operationId: cancelImport
-      summary: Cancel an import job
+      operationId: analyzeImport
+      summary: Read and profile the uploaded file
       description: |-
-        Allowed before commit starts; a running commit finishes its current batch and stops (rows already written stay).
+        Queues the analysis: the file (which must have passed the upload scan) is read once as a stream; its format, encoding, delimiter and header row are detected, every data row is stored, each column is profiled (distinct values, blanks, duplicates, detected type, date order), 50 rows are kept as a sample and a mapping is suggested (or the preset's applied). A malformed file ends the analysis as `failed` with `error` naming the line. At most 100,000 data rows.
+
+        Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
 
         Requires permission `import:run`.
       x-permission: import:run
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/CsrfToken"
-        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportAnalyze"
+      responses:
+        "202":
+          description: Analysis queued.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Location:
+              $ref: "#/components/headers/Location"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          description: "Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-quota-exceeded
+                title: import quota exceeded
+                status: 429
+                code: import-quota-exceeded
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-quota-exceeded
+            - too-many-requests
+  /v1/imports/{id}/apply-template:
+    post:
+      tags:
+        - Imports
+      operationId: applyImportTemplate
+      summary: Apply a saved mapping template
+      description: |-
+        Maps the columns of the analysed file by header text and takes the template's options. Returns the import in state `mapped`.
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportTemplateApply"
       responses:
         "200":
-          description: Cancelled job.
+          description: The import.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
@@ -5716,8 +6070,71 @@ paths:
               $ref: "#/components/headers/RateLimitRemaining"
             RateLimit-Reset:
               $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
             Idempotent-Replayed:
               $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/{id}/cancel:
+    post:
+      tags:
+        - Imports
+      operationId: cancelImport
+      summary: Cancel an import
+      description: |-
+        Before a dry run or commit starts: `cancelled` at once. While one runs: `cancel_requested` is set and the job stops after its current batch (rows already written stay). A completed or cancelled import is `409`.
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: The import.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
           content:
             application/json:
               schema:
@@ -5729,7 +6146,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/imports/{id}/commit:
@@ -5739,7 +6173,9 @@ paths:
       operationId: commitImport
       summary: Commit a reviewed dry run
       description: |-
-        Only valid in state `dry_run_complete`, and only with the `dry_run_digest` the caller reviewed (409 `import-stale-dry-run` otherwise). Writes through the normal registry services, so validation, history and audit are not bypassed. Rollback of a committed import is v1.1.
+        Only valid in `dry_run_done`, and only with the `dry_run_digest` the user reviewed (`409 import-stale-dry-run` otherwise). The rows classified `create` and `update` are written in batches, one short transaction per batch, through the same services as the API, so validation, history, audit rows and events are never bypassed; every audit entry carries the `import_job_id`. A row that fails is recorded (`result: error`) and does not stop the import; a record edited after the dry run is left alone (`changed-since-dry-run`). The commit can be cancelled between batches and survives a worker restart without creating duplicates. On completion the requester is notified (`import.completed`). Rolling a commit back is v1.1 (the before-image of every update is stored already).
+
+        Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
 
         Requires permission `import:run`.
       x-permission: import:run
@@ -5752,7 +6188,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ImportCommitRequest"
+              $ref: "#/components/schemas/ImportCommit"
       responses:
         "202":
           description: Commit queued.
@@ -5774,15 +6210,71 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: "The import needs permissions the caller does not hold. Codes: `forbidden`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
         "422":
           $ref: "#/components/responses/Unprocessable"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          description: "Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-quota-exceeded
+                title: import quota exceeded
+                status: 429
+                code: import-quota-exceeded
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-quota-exceeded
+            - too-many-requests
   /v1/imports/{id}/dry-run:
     post:
       tags:
@@ -5790,14 +6282,17 @@ paths:
       operationId: startImportDryRun
       summary: Run the import without writing
       description: |-
-        Queues a dry run that validates every row, matches existing records and reports per-row outcomes (`create` / `update` / `skip` / `error`) without touching the registry. Poll `GET /v1/imports/{id}` until `state=dry_run_complete`.
+        Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
+
+        The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).
+
+        Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
 
         Requires permission `import:run`.
       x-permission: import:run
       parameters:
         - $ref: "#/components/parameters/Id"
         - $ref: "#/components/parameters/CsrfToken"
-        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "202":
           description: Dry run queued.
@@ -5815,11 +6310,104 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: "The import needs permissions the caller does not hold. Codes: `forbidden`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/forbidden
+                title: forbidden
+                status: 403
+                code: forbidden
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - forbidden
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: "The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-wrong-state
+                title: import wrong state
+                status: 409
+                code: import-wrong-state
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-wrong-state
+            - import-stale-dry-run
+            - conflict
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          description: "Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`."
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://api.assettracker.test/problems/import-quota-exceeded
+                title: import quota exceeded
+                status: 429
+                code: import-quota-exceeded
+                request_id: 01JABCDEF0123456789
+          x-problem-codes:
+            - import-quota-exceeded
+            - too-many-requests
+  /v1/imports/{id}/errors.csv:
+    get:
+      tags:
+        - Imports
+      operationId: downloadImportErrors
+      summary: Download the error report
+      description: |-
+        A CSV (UTF-8 with byte order mark) with one line per row that has errors: `Row`, `Line`, `Fields`, `Problems`, `Warnings`, then the original cells under their headers, so it can be corrected and uploaded again. After a commit it lists the rows that failed; before, the rows the dry run rejected. Cells that could be read as formulas get a leading apostrophe (the importer removes it again).
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The report.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: attachment
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/imports/{id}/rows:
@@ -5828,12 +6416,15 @@ paths:
         - Imports
       operationId: listImportRows
       summary: Per-row results
-      description: Requires permission `import:read`.
-      x-permission: import:read
+      description: |-
+        Rows in file order with their errors and warnings (field + message) and the non-empty source cells. Raw file content: needs `import:run`, not just `import:read`.
+
+        Requires permission `import:run`.
+      x-permission: import:run
       parameters:
         - $ref: "#/components/parameters/Id"
-        - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
         - name: phase
           in: query
           description: Defaults to the latest phase.
@@ -5844,7 +6435,7 @@ paths:
               - commit
         - name: outcome
           in: query
-          description: Filter by outcome.
+          description: "Filter by outcome (dry run: create/update/skip/error; commit: created/updated/skipped/error)."
           style: form
           explode: false
           schema:
@@ -5856,6 +6447,14 @@ paths:
                 - update
                 - skip
                 - error
+                - created
+                - updated
+                - skipped
+        - name: has_warnings
+          in: query
+          description: Only rows with (or without) warnings.
+          schema:
+            type: boolean
       responses:
         "200":
           description: A page of rows.
@@ -5872,6 +6471,152 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportRowList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/{id}/values:
+    get:
+      tags:
+        - Imports
+      operationId: listImportValues
+      summary: Distinct values of a reference column
+      description: |-
+        For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry.
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: field
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - category
+              - manufacturer
+              - model
+              - status
+              - location
+              - department
+              - vendor
+              - person
+          description: The reference kind (the column mapped to it, or the preset constant).
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Q"
+      responses:
+        "200":
+          description: The values.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportValues"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/presets:
+    get:
+      tags:
+        - Imports
+      operationId: listImportPresets
+      summary: Built-in import presets
+      description: |-
+        The templates for assets, people, locations and departments and the Google Admin ChromeOS preset, each with its data dictionary (column, target field, description, example). Pass `preset_key` when creating an import to apply one. Recommended order of imports: locations, departments, people, assets.
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      responses:
+        "200":
+          description: The presets.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPresetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/presets/{key}/template:
+    get:
+      tags:
+        - Imports
+      operationId: downloadImportTemplate
+      summary: Download a template file
+      description: |-
+        A CSV (UTF-8 with byte order mark) or XLSX template with the header row of the preset and example rows; the XLSX has the data dictionary on a second sheet. The asset templates also carry one `cf:<key>` column per custom field of the organisation.
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Preset key.
+        - name: format
+          in: query
+          description: File format.
+          schema:
+            type: string
+            enum:
+              - csv
+              - xlsx
+            default: csv
+      responses:
+        "200":
+          description: The template file.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: attachment
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -11054,6 +11799,8 @@ components:
         - insufficient-stock
         - no-loaner-available
         - import-stale-dry-run
+        - import-wrong-state
+        - import-quota-exceeded
         - upload-missing
         - token-expired
         - invitation-expired
@@ -15400,270 +16147,6 @@ components:
         - strip_exif_original
         - max_upload_bytes
       additionalProperties: false
-    ImportJob:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-          readOnly: true
-        source:
-          type: string
-          enum:
-            - csv
-            - xlsx
-            - snipe_it
-            - google_admin_csv
-        entity_type:
-          type: string
-          enum:
-            - asset
-            - accessory
-            - consumable
-            - location
-            - person
-            - manufacturer
-            - asset_model
-            - category
-        state:
-          type: string
-          enum:
-            - draft
-            - dry_run_queued
-            - dry_run_running
-            - dry_run_complete
-            - commit_queued
-            - committing
-            - committed
-            - failed
-            - cancelled
-          readOnly: true
-        file_attachment_id:
-          type:
-            - string
-            - "null"
-          format: uuid
-          description: Uploaded file (kind `import_file`).
-        original_filename:
-          type:
-            - string
-            - "null"
-        mapping:
-          type: object
-          additionalProperties:
-            type: string
-          description: Source column -> target field key (use `custom_data.<key>` for custom fields).
-        options:
-          type: object
-          properties:
-            match_on:
-              type: string
-              enum:
-                - asset_tag
-                - serial
-                - external_id
-              default: asset_tag
-            on_duplicate:
-              type: string
-              enum:
-                - skip
-                - update
-                - error
-              default: skip
-            create_missing_references:
-              type: boolean
-              default: true
-              description: Create missing categories, manufacturers, models, locations referenced by name.
-            delimiter:
-              type: string
-              maxLength: 1
-              default: ","
-            date_format:
-              type: string
-              default: YYYY-MM-DD
-          additionalProperties: true
-        rows_total:
-          type: integer
-          readOnly: true
-        rows_create:
-          type: integer
-          readOnly: true
-        rows_update:
-          type: integer
-          readOnly: true
-        rows_skip:
-          type: integer
-          readOnly: true
-        rows_error:
-          type: integer
-          readOnly: true
-        dry_run_digest:
-          type:
-            - string
-            - "null"
-          description: Hash of file + mapping + options at dry-run time; quote it in the commit request.
-          readOnly: true
-        dry_run_completed_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-          readOnly: true
-        committed_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-          readOnly: true
-        error:
-          type:
-            - string
-            - "null"
-          readOnly: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-        updated_at:
-          type: string
-          format: date-time
-          readOnly: true
-        created_by:
-          type:
-            - string
-            - "null"
-          format: uuid
-          readOnly: true
-      required:
-        - id
-        - source
-        - entity_type
-        - state
-        - mapping
-        - options
-    ImportJobCreate:
-      type: object
-      properties:
-        source:
-          type: string
-          enum:
-            - csv
-            - xlsx
-            - snipe_it
-            - google_admin_csv
-        entity_type:
-          type: string
-          enum:
-            - asset
-            - accessory
-            - consumable
-            - location
-            - person
-            - manufacturer
-            - asset_model
-            - category
-        file_attachment_id:
-          type: string
-          format: uuid
-          description: Required for file sources; omit for `snipe_it` (credentials are passed in `options.snipe_it`).
-        mapping:
-          type: object
-          additionalProperties:
-            type: string
-        options:
-          type: object
-          additionalProperties: true
-      required:
-        - source
-        - entity_type
-      additionalProperties: false
-    ImportJobUpdate:
-      type: object
-      properties:
-        mapping:
-          type: object
-          additionalProperties:
-            type: string
-        options:
-          type: object
-          additionalProperties: true
-      additionalProperties: false
-      description: Editing mapping/options is allowed in `draft` and `dry_run_complete` (the latter returns the job to `draft` and invalidates the digest).
-    ImportJobList:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/ImportJob"
-        page:
-          $ref: "#/components/schemas/PageInfo"
-      required:
-        - data
-        - page
-    ImportCommitRequest:
-      type: object
-      properties:
-        dry_run_digest:
-          type: string
-          description: Digest of the reviewed dry run; if the file, mapping or options changed since, commit fails with 409.
-      required:
-        - dry_run_digest
-      additionalProperties: false
-    ImportRow:
-      type: object
-      properties:
-        row_no:
-          type: integer
-          minimum: 1
-        phase:
-          type: string
-          enum:
-            - dry_run
-            - commit
-        outcome:
-          type: string
-          enum:
-            - create
-            - update
-            - skip
-            - error
-        entity_id:
-          type:
-            - string
-            - "null"
-          format: uuid
-        errors:
-          type: array
-          items:
-            $ref: "#/components/schemas/FieldError"
-        warnings:
-          type: array
-          items:
-            $ref: "#/components/schemas/FieldError"
-        source_data:
-          type:
-            - object
-            - "null"
-          additionalProperties: true
-      required:
-        - row_no
-        - phase
-        - outcome
-        - errors
-        - warnings
-    ImportRowList:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/ImportRow"
-        page:
-          $ref: "#/components/schemas/PageInfo"
-      required:
-        - data
-        - page
     AuditEntry:
       type: object
       properties:
@@ -17220,6 +17703,1020 @@ components:
       required:
         - data
         - page
+    ImportOptions:
+      type: object
+      properties:
+        match_on:
+          type: string
+          enum:
+            - auto
+            - asset_tag
+            - serial
+            - external_id
+          default: auto
+          description: "Assets: how an existing asset is found. `auto` = the tag when the row has one, else the serial number (a tag and a serial that name different assets is a row error)."
+        on_match:
+          type: string
+          enum:
+            - skip
+            - update
+            - error
+          default: skip
+          description: "What to do with a row whose record exists already, and with a row that repeats an earlier row of the file (same tag, serial, email, path or name): leave it, update it with the cells of the file, or report an error."
+        blank_cells:
+          type: string
+          enum:
+            - ignore
+            - clear
+          default: ignore
+          description: "Update only: an empty cell leaves the field alone, or empties it."
+        date_format:
+          type: string
+          enum:
+            - auto
+            - iso
+            - dmy
+            - mdy
+          default: auto
+          description: "`auto` reads ISO dates, month names and unambiguous day/month dates; `03/04/2024` needs `dmy` or `mdy`."
+        number_format:
+          type: string
+          enum:
+            - auto
+            - dot
+            - comma
+          default: auto
+          description: The decimal separator of numbers in the file; `auto` decides where the text is unambiguous (`1.234,50`, `1,234.50`) and reads `1,234` as a thousand.
+        default_currency:
+          type: string
+          pattern: ^[A-Z]{3}$
+          description: Currency of costs that name none; else the organisation's base currency.
+        external_source:
+          type: string
+          maxLength: 100
+          description: Source recorded with a mapped external id (default `import`; the Google preset uses `google_admin`).
+        references:
+          type: object
+          additionalProperties:
+            type: string
+            enum:
+              - create
+              - must_exist
+          description: "Per reference kind (`category`, `manufacturer`, `model`, `status`, `location`, `department`, `vendor`, `person`): create what is missing, or require it to exist. Defaults: `create`, except `status` and `person` (`must_exist`; a status label is never created)."
+        defaults:
+          type: object
+          properties:
+            category:
+              type: string
+              format: uuid
+            status:
+              type: string
+              format: uuid
+            location:
+              type: string
+              format: uuid
+            department:
+              type: string
+              format: uuid
+            vendor:
+              type: string
+              format: uuid
+          additionalProperties: false
+          description: Ids used when a row's own cell is empty.
+        location_kind:
+          type: string
+          enum:
+            - site
+            - building
+            - floor
+            - room
+            - storage
+            - vehicle
+            - other
+          default: other
+          description: Kind of the locations the import creates.
+        assign:
+          type: boolean
+          default: true
+          description: "Assets: check an asset out to the person in `assigned_to` (only when it can be checked out; otherwise a warning)."
+        detect_changes:
+          type: boolean
+          default: true
+          description: "Update only: a record edited after the dry run is not touched (row error `changed-since-dry-run`)."
+      additionalProperties: false
+    ImportMappingColumn:
+      type: object
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          maximum: 499
+          description: 0-based column of the file.
+        target:
+          type:
+            - string
+            - "null"
+          maxLength: 80
+          description: A field of the entity (`GET /v1/imports/presets` lists them), `cf:<custom field key>` for an asset custom field, or null to ignore the column.
+        date_format:
+          type: string
+          enum:
+            - auto
+            - iso
+            - dmy
+            - mdy
+          description: Overrides the job's date format for this column.
+      required:
+        - index
+        - target
+      additionalProperties: false
+    ImportMapping:
+      type: object
+      properties:
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportMappingColumn"
+        constants:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+            maxLength: 300
+          description: 'Text for a target that has no column (`{"category": "Chromebook"}`), used for every row whose own cell is empty.'
+      required:
+        - columns
+      additionalProperties: false
+    ImportValueEntry:
+      oneOf:
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+          required:
+            - id
+          additionalProperties: false
+          description: Use this existing record.
+        - type: object
+          properties:
+            create:
+              const: true
+            name:
+              type: string
+              minLength: 1
+              maxLength: 200
+          required:
+            - create
+          additionalProperties: false
+          description: Create it (under this name, default the text of the cell).
+        - type: object
+          properties:
+            skip:
+              const: true
+          required:
+            - skip
+          additionalProperties: false
+          description: Treat the cell as empty.
+    ImportValueMap:
+      type: object
+      additionalProperties:
+        type: object
+        additionalProperties:
+          $ref: "#/components/schemas/ImportValueEntry"
+      description: "By reference kind, then by the NORMALISED source value (trimmed, spaces collapsed, lower case): what that value of the file means."
+    ImportParse:
+      type: object
+      properties:
+        format:
+          type:
+            - string
+            - "null"
+          description: "`csv` or `xlsx`."
+        encoding:
+          type:
+            - string
+            - "null"
+          description: "CSV: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252` (detected)."
+        delimiter:
+          type:
+            - string
+            - "null"
+          description: "CSV: `,` `;` tab or `|` (detected)."
+        sheet:
+          type:
+            - string
+            - "null"
+          description: "XLSX: the sheet that is read (default: the first visible one)."
+        sheets:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+          description: "XLSX: the visible sheets."
+        header_line:
+          type:
+            - integer
+            - "null"
+          description: Row (XLSX) or line (CSV) number of the header row.
+      required:
+        - format
+        - encoding
+        - delimiter
+        - sheet
+        - sheets
+        - header_line
+    ImportColumnProfile:
+      type: object
+      properties:
+        index:
+          type: integer
+        header:
+          type: string
+        non_blank:
+          type: integer
+        blank:
+          type: integer
+        distinct:
+          type: integer
+        distinct_capped:
+          type: boolean
+          description: "More than 10,000 distinct values: `distinct` is a lower bound."
+        duplicates:
+          type: integer
+          description: Non-blank cells that repeat an earlier value.
+        type:
+          type: string
+          enum:
+            - empty
+            - integer
+            - number
+            - date
+            - boolean
+            - email
+            - text
+        date_order:
+          type:
+            - string
+            - "null"
+          enum:
+            - iso
+            - dmy
+            - mdy
+            - ambiguous
+            - mixed
+            - null
+          description: "Date columns: the order the data allows; `ambiguous` needs an explicit date format."
+        max_length:
+          type: integer
+        samples:
+          type: array
+          items:
+            type: string
+          description: Up to five distinct values.
+      required:
+        - index
+        - header
+        - non_blank
+        - blank
+        - distinct
+        - distinct_capped
+        - duplicates
+        - type
+        - date_order
+        - max_length
+        - samples
+    RowIssue:
+      type: object
+      properties:
+        field:
+          type:
+            - string
+            - "null"
+          description: The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole.
+        message:
+          type: string
+        code:
+          type: string
+          description: "Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`..."
+      required:
+        - field
+        - message
+        - code
+    ImportJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - person
+            - location
+            - department
+        source:
+          type: string
+          enum:
+            - csv
+            - xlsx
+            - google_admin_csv
+        preset_key:
+          type:
+            - string
+            - "null"
+          description: The built-in preset the import was created from (`GET /v1/imports/presets`).
+        state:
+          type: string
+          enum:
+            - draft
+            - uploaded
+            - analyzing
+            - analyzed
+            - mapped
+            - dry_running
+            - dry_run_done
+            - committing
+            - completed
+            - failed
+            - cancelled
+          description: draft (no file yet) -> uploaded -> analyzing -> analyzed -> mapped -> dry_running -> dry_run_done -> committing -> completed; `failed` and `cancelled` end it. Editing the mapping or options returns `dry_run_done` to `mapped`.
+        filename:
+          type:
+            - string
+            - "null"
+        file_attachment_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "The uploaded file: an attachment of kind `import_file` owned by this import."
+        parse:
+          $ref: "#/components/schemas/ImportParse"
+        headers:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+          description: Header names of the file, after analysis.
+        mapping:
+          $ref: "#/components/schemas/ImportMapping"
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+        rows_total:
+          type: integer
+          description: Data rows of the file.
+        counts:
+          type: object
+          properties:
+            dry_run:
+              type: object
+              properties:
+                create:
+                  type: integer
+                update:
+                  type: integer
+                skip:
+                  type: integer
+                error:
+                  type: integer
+              required:
+                - create
+                - update
+                - skip
+                - error
+            commit:
+              type: object
+              properties:
+                created:
+                  type: integer
+                updated:
+                  type: integer
+                skipped:
+                  type: integer
+                error:
+                  type: integer
+              required:
+                - created
+                - updated
+                - skipped
+                - error
+          required:
+            - dry_run
+            - commit
+        progress:
+          type: object
+          properties:
+            phase:
+              type:
+                - string
+                - "null"
+              enum:
+                - analyze
+                - dry_run
+                - commit
+                - null
+            processed:
+              type: integer
+            total:
+              type: integer
+            percent:
+              type: integer
+              minimum: 0
+              maximum: 100
+          required:
+            - phase
+            - processed
+            - total
+            - percent
+        dry_run_digest:
+          type:
+            - string
+            - "null"
+          description: Digest of the reviewed dry run (file, parse settings, mapping, options, value map and every row's outcome). Quote it in the commit request.
+        dry_run_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        committed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        finished_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        cancel_requested:
+          type: boolean
+        error:
+          type:
+            - string
+            - "null"
+          description: Why a failed import failed (a sentence; for a bad file it names the line).
+        summary:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: "After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created)."
+        requested_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        profile:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/ImportColumnProfile"
+          description: Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.
+        samples:
+          type:
+            - array
+            - "null"
+          items:
+            type: array
+            items:
+              type: string
+          description: "The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file)."
+        confidence:
+          type:
+            - object
+            - "null"
+          additionalProperties:
+            type: number
+          description: How sure the suggested mapping is per column index (1 = exact header match).
+        value_map:
+          $ref: "#/components/schemas/ImportValueMap"
+          description: Empty without `import:run` (its keys are values of the file).
+      required:
+        - id
+        - entity_type
+        - source
+        - preset_key
+        - state
+        - filename
+        - file_attachment_id
+        - parse
+        - headers
+        - mapping
+        - options
+        - rows_total
+        - counts
+        - progress
+        - dry_run_digest
+        - dry_run_at
+        - committed_at
+        - started_at
+        - finished_at
+        - cancel_requested
+        - error
+        - summary
+        - requested_by
+        - created_at
+        - updated_at
+    ImportList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportJob"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
+    ImportCreate:
+      type: object
+      properties:
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - person
+            - location
+            - department
+        preset_key:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then).
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+      required:
+        - entity_type
+      additionalProperties: false
+    ImportUpdate:
+      type: object
+      properties:
+        mapping:
+          $ref: "#/components/schemas/ImportMapping"
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+          description: Only the options to change; `references` and `defaults` are merged by key.
+        value_map:
+          $ref: "#/components/schemas/ImportValueMap"
+          description: Replaces the entries of each reference kind given (send `{}` for a kind to clear it).
+      additionalProperties: false
+      description: Any change returns a `dry_run_done` import to `mapped` and invalidates the digest. Allowed in `draft`, `uploaded`, `analyzed`, `mapped` and `dry_run_done`.
+    ImportAnalyze:
+      type: object
+      properties:
+        file_attachment_id:
+          type: string
+          format: uuid
+          description: Attachment of kind `import_file` owned by this import, uploaded and completed. Omit to analyse the file again.
+        parse:
+          type: object
+          properties:
+            encoding:
+              type: string
+              enum:
+                - utf-8
+                - utf-16le
+                - utf-16be
+                - windows-1252
+            delimiter:
+              type: string
+              enum:
+                - ","
+                - ;
+                - "\t"
+                - "|"
+            sheet:
+              type: string
+              minLength: 1
+              maxLength: 100
+            header_line:
+              type: integer
+              minimum: 1
+              maximum: 100000
+          additionalProperties: false
+          description: Overrides of what the analysis detects.
+      additionalProperties: false
+    ImportCommit:
+      type: object
+      properties:
+        dry_run_digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: The `dry_run_digest` of the dry run the user reviewed.
+      required:
+        - dry_run_digest
+      additionalProperties: false
+    ImportRow:
+      type: object
+      properties:
+        row_no:
+          type: integer
+          minimum: 1
+          description: Position among the data rows.
+        line_no:
+          type: integer
+          minimum: 1
+          description: Line (CSV) or row (XLSX) of the file; shown in error messages.
+        phase:
+          type: string
+          enum:
+            - dry_run
+            - commit
+        outcome:
+          type:
+            - string
+            - "null"
+          description: "Dry run: `create` / `update` / `skip` / `error`. Commit: `created` / `updated` / `skipped` / `error`."
+        plan:
+          type:
+            - string
+            - "null"
+          enum:
+            - create
+            - update
+            - skip
+            - error
+            - null
+        result:
+          type:
+            - string
+            - "null"
+          enum:
+            - created
+            - updated
+            - skipped
+            - error
+            - null
+        entity_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The existing record an update changes.
+        created_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The record the commit created.
+        duplicate_of:
+          type:
+            - integer
+            - "null"
+          description: Row number of the first row of the file with the same key.
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/RowIssue"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/RowIssue"
+        source:
+          type: object
+          additionalProperties:
+            type: string
+          description: The non-empty cells of the row by header.
+        mapped:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: The typed record the mapping produced (`f` fields, `r` references, `c` custom fields).
+        before_image:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+          description: "Commit of an update: the values it replaced (kept for import undo, v1.1)."
+      required:
+        - row_no
+        - line_no
+        - phase
+        - outcome
+        - plan
+        - result
+        - entity_id
+        - created_id
+        - duplicate_of
+        - errors
+        - warnings
+        - source
+        - mapped
+        - before_image
+    ImportRowList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportRow"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
+    ImportValue:
+      type: object
+      properties:
+        value:
+          type: string
+          description: A distinct value of the column (trimmed).
+        count:
+          type: integer
+        suggestion:
+          type:
+            - object
+            - "null"
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+          required:
+            - id
+            - name
+          description: The existing record with that name, if exactly one.
+        entry:
+          oneOf:
+            - $ref: "#/components/schemas/ImportValueEntry"
+            - type: "null"
+          description: What the value map says now.
+      required:
+        - value
+        - count
+        - suggestion
+        - entry
+    ImportValues:
+      type: object
+      properties:
+        field:
+          type: string
+          enum:
+            - category
+            - manufacturer
+            - model
+            - status
+            - location
+            - department
+            - vendor
+            - person
+        column:
+          type:
+            - string
+            - "null"
+        distinct:
+          type: integer
+          description: Distinct values in the column (`data` is capped by `limit`).
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportValue"
+      required:
+        - field
+        - column
+        - distinct
+        - data
+    ImportPresetColumn:
+      type: object
+      properties:
+        column:
+          type: string
+        target:
+          type: string
+        description:
+          type: string
+        required:
+          type: string
+        example:
+          type: string
+      required:
+        - column
+        - target
+        - description
+        - required
+        - example
+    ImportPreset:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - person
+            - location
+            - department
+        source:
+          type: string
+          enum:
+            - csv
+            - google_admin_csv
+        notes:
+          type: array
+          items:
+            type: string
+        sets_up:
+          type:
+            - object
+            - "null"
+          properties:
+            category:
+              type: string
+            custom_fields:
+              type: array
+              items:
+                type: string
+          required:
+            - category
+            - custom_fields
+          description: Reference data creating an import from this preset creates when it is missing.
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportPresetColumn"
+          description: The columns of the template with their data dictionary.
+      required:
+        - key
+        - label
+        - description
+        - entity_type
+        - source
+        - notes
+        - sets_up
+        - columns
+    ImportPresetList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportPreset"
+      required:
+        - data
+    ImportTemplateColumn:
+      type: object
+      properties:
+        header:
+          type: string
+          minLength: 1
+          maxLength: 200
+        target:
+          type:
+            - string
+            - "null"
+          maxLength: 80
+        date_format:
+          type: string
+          enum:
+            - auto
+            - iso
+            - dmy
+            - mdy
+      required:
+        - header
+        - target
+      additionalProperties: false
+    ImportTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - "null"
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - person
+            - location
+            - department
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportTemplateColumn"
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_by:
+          type:
+            - string
+            - "null"
+          format: uuid
+      required:
+        - id
+        - name
+        - description
+        - entity_type
+        - columns
+        - options
+        - created_at
+        - updated_at
+        - created_by
+    ImportTemplateList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportTemplate"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
+    ImportTemplateCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type:
+            - string
+            - "null"
+          maxLength: 1000
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - person
+            - location
+            - department
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportTemplateColumn"
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+        from_import_id:
+          type: string
+          format: uuid
+          description: Copy the mapping (by header) and the options of this import instead of `entity_type` and `columns`.
+      required:
+        - name
+      additionalProperties: false
+      description: Either `from_import_id`, or `entity_type` and `columns`.
+    ImportTemplateUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type:
+            - string
+            - "null"
+          maxLength: 1000
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportTemplateColumn"
+        options:
+          $ref: "#/components/schemas/ImportOptions"
+      additionalProperties: false
+    ImportTemplateApply:
+      type: object
+      properties:
+        template_id:
+          type: string
+          format: uuid
+      required:
+        - template_id
+      additionalProperties: false
 x-problem-codes:
   bad-request:
     status:
@@ -17333,7 +18830,15 @@ x-problem-codes:
   import-stale-dry-run:
     status:
       - 409
-    description: The dry run being committed is not the one reviewed.
+    description: "The dry run being committed is not the one reviewed: the file, mapping, options or value mapping changed after it, or a newer dry run exists."
+  import-wrong-state:
+    status:
+      - 409
+    description: The import is not in a state that allows this action (for example a commit before a dry run, or editing a running import). `state` and `allowed` say which.
+  import-quota-exceeded:
+    status:
+      - 429
+    description: The organisation already runs the maximum number of imports at once; retry after the time in `Retry-After`.
   upload-missing:
     status:
       - 409

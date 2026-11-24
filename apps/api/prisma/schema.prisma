@@ -314,6 +314,7 @@ model attachment {
   asset              asset[]
   asset_model        asset_model[]
   tenant             tenant        @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  import_job         import_job[]
   label_batch        label_batch[]
 
   @@unique([tenant_id, id])
@@ -561,6 +562,120 @@ model idempotency_key {
 
   @@id([tenant_id, principal_id, key])
   @@index([tenant_id, expires_at], map: "idempotency_key_expiry_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model import_job {
+  id                 String       @id @db.Uuid
+  tenant_id          String       @db.Uuid
+  created_at         DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime     @default(now()) @db.Timestamptz(6)
+  created_by         String?      @db.Uuid
+  updated_by         String?      @db.Uuid
+  archived_at        DateTime?    @db.Timestamptz(6)
+  version            Int          @default(1)
+  requested_by       String       @db.Uuid
+  source             String
+  entity_type        String
+  preset_key         String?
+  state              String       @default("draft")
+  file_attachment_id String?      @db.Uuid
+  filename           String?
+  parse              Json         @default("{}")
+  headers            Json?
+  profile            Json?
+  samples            Json?
+  mapping            Json         @default("{}")
+  options            Json         @default("{}")
+  value_map          Json         @default("{}")
+  summary            Json?
+  rows_total         Int          @default(0)
+  plan_create        Int          @default(0)
+  plan_update        Int          @default(0)
+  plan_skip          Int          @default(0)
+  plan_error         Int          @default(0)
+  done_create        Int          @default(0)
+  done_update        Int          @default(0)
+  done_skip          Int          @default(0)
+  done_error         Int          @default(0)
+  rows_processed     Int          @default(0)
+  cursor_row         Int          @default(0)
+  dry_run_digest     String?
+  dry_run_at         DateTime?    @db.Timestamptz(6)
+  committed_at       DateTime?    @db.Timestamptz(6)
+  started_at         DateTime?    @db.Timestamptz(6)
+  finished_at        DateTime?    @db.Timestamptz(6)
+  cancel_requested   Boolean      @default(false)
+  error              String?
+  attachment         attachment?  @relation(fields: [tenant_id, file_attachment_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant             tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user_account       user_account @relation(fields: [tenant_id, requested_by], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  import_row         import_row[]
+
+  @@unique([tenant_id, id])
+  @@index([tenant_id, requested_by, created_at(sort: Desc), id(sort: Desc)], map: "import_job_requester_idx")
+  @@index([tenant_id, state, updated_at], map: "import_job_state_idx", where: raw("(state = ANY (ARRAY['analyzing'::text, 'dry_running'::text, 'committing'::text]))"))
+  @@index([tenant_id, created_at(sort: Desc), id(sort: Desc)], map: "import_job_tenant_created_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model import_row {
+  tenant_id      String     @db.Uuid
+  job_id         String     @db.Uuid
+  row_no         Int
+  line_no        Int
+  raw            Json
+  mapped         Json?
+  match_key      String?
+  match_key2     String?
+  dup_of         Int?
+  plan           String?
+  errors         Json?
+  warnings       Json?
+  entity_id      String?    @db.Uuid
+  entity_version Int?
+  result         String?
+  result_errors  Json?
+  created_id     String?    @db.Uuid
+  before_image   Json?
+  processed_at   DateTime?  @db.Timestamptz(6)
+  tenant         tenant     @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  import_job     import_job @relation(fields: [tenant_id, job_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, job_id, row_no])
+  @@index([tenant_id, job_id, match_key2], map: "import_row_key2_idx", where: raw("(match_key2 IS NOT NULL)"))
+  @@index([tenant_id, job_id, match_key], map: "import_row_key_idx", where: raw("(match_key IS NOT NULL)"))
+  @@index([tenant_id, job_id, row_no], map: "import_row_pending_idx", where: raw("((result IS NULL) AND (plan = ANY (ARRAY['create'::text, 'update'::text])))"))
+  @@index([tenant_id, job_id, plan, row_no], map: "import_row_plan_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model import_template {
+  id          String    @id @db.Uuid
+  tenant_id   String    @db.Uuid
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime  @default(now()) @db.Timestamptz(6)
+  created_by  String?   @db.Uuid
+  updated_by  String?   @db.Uuid
+  archived_at DateTime? @db.Timestamptz(6)
+  version     Int       @default(1)
+  name        String
+  name_key    String?   @default(dbgenerated("lower(btrim(name))"))
+  entity_type String
+  description String?
+  columns     Json
+  options     Json      @default("{}")
+  tenant      tenant    @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, entity_type, name_key], map: "import_template_name_uq", where: raw("(archived_at IS NULL)"))
+  @@unique([tenant_id, id])
+  @@index([tenant_id, created_at(sort: Desc), id(sort: Desc)], map: "import_template_tenant_created_idx")
   @@schema("app")
 }
 
@@ -1140,6 +1255,9 @@ model tenant {
   department              department[]
   export_job              export_job[]
   idempotency_key         idempotency_key[]
+  import_job              import_job[]
+  import_row              import_row[]
+  import_template         import_template[]
   invitation              invitation[]
   label_batch             label_batch[]
   label_template          label_template[]
@@ -1214,6 +1332,7 @@ model user_account {
   archived_at             DateTime?                 @db.Timestamptz(6)
   version                 Int                       @default(1)
   export_job              export_job[]
+  import_job              import_job[]
   invitation              invitation[]
   notification            notification[]
   notification_delivery   notification_delivery[]

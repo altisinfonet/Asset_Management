@@ -88,6 +88,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     sharedViewId: string;
     privateViewId: string;
     exportId: string;
+    // M2 wave 3: an import and a saved mapping template of A
+    importId: string;
+    importTemplateId: string;
     /** strings that must never show up in a response to tenant B */
     markers: string[];
   }
@@ -632,6 +635,66 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         },
       ],
       'get /v1/exports/:id': [notFound('GET', `/v1/exports/${c.exportId}`)],
+      // ---- M2 wave 3: imports (M2-IMP-01..07)
+      'get /v1/imports/presets': [list('/v1/imports/presets')],
+      'get /v1/imports/presets/:key/template': [
+        list('/v1/imports/presets/assets/template?format=csv'),
+        list('/v1/imports/presets/google_admin_chromeos/template?format=xlsx'),
+      ],
+      'get /v1/imports': [list('/v1/imports?limit=200')],
+      'post /v1/imports': [
+        { method: 'POST', url: '/v1/imports', body: { entity_type: 'person' }, expect: [201] },
+      ],
+      'get /v1/imports/:id': [notFound('GET', `/v1/imports/${c.importId}`)],
+      'patch /v1/imports/:id': [
+        notFound('PATCH', `/v1/imports/${c.importId}`, { options: { on_match: 'update' } }),
+      ],
+      'post /v1/imports/:id/analyze': [
+        notFound('POST', `/v1/imports/${c.importId}/analyze`, {
+          file_attachment_id: c.attachmentId,
+        }),
+      ],
+      'post /v1/imports/:id/apply-template': [
+        notFound('POST', `/v1/imports/${c.importId}/apply-template`, {
+          template_id: c.importTemplateId,
+        }),
+      ],
+      'get /v1/imports/:id/values': [
+        notFound('GET', `/v1/imports/${c.importId}/values?field=category`),
+      ],
+      'post /v1/imports/:id/dry-run': [notFound('POST', `/v1/imports/${c.importId}/dry-run`, {})],
+      'get /v1/imports/:id/rows': [notFound('GET', `/v1/imports/${c.importId}/rows`)],
+      'get /v1/imports/:id/errors.csv': [notFound('GET', `/v1/imports/${c.importId}/errors.csv`)],
+      'post /v1/imports/:id/commit': [
+        custody(`/v1/imports/${c.importId}/commit`, { dry_run_digest: 'a'.repeat(64) }),
+      ],
+      'post /v1/imports/:id/cancel': [notFound('POST', `/v1/imports/${c.importId}/cancel`, {})],
+      'get /v1/import-templates': [list('/v1/import-templates?limit=200')],
+      'post /v1/import-templates': [
+        {
+          method: 'POST',
+          url: '/v1/import-templates',
+          body: {
+            name: unique('B-tpl'),
+            entity_type: 'asset',
+            columns: [{ header: 'Serial', target: 'serial' }],
+          },
+          expect: [201],
+        },
+        refused('POST', '/v1/import-templates', {
+          name: unique('B-from'),
+          from_import_id: c.importId,
+        }),
+      ],
+      'get /v1/import-templates/:id': [
+        notFound('GET', `/v1/import-templates/${c.importTemplateId}`),
+      ],
+      'patch /v1/import-templates/:id': [
+        notFound('PATCH', `/v1/import-templates/${c.importTemplateId}`, { name: 'b was here' }),
+      ],
+      'delete /v1/import-templates/:id': [
+        notFound('DELETE', `/v1/import-templates/${c.importTemplateId}`),
+      ],
       // ---- access
       'get /v1/users': [list('/v1/users?limit=200')],
       'post /v1/users': [
@@ -903,6 +966,14 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     );
     const exportJob = await a.post('/v1/exports', { resource: 'assets' });
     expect(exportJob.status, exportJob.raw).toBe(202);
+    const importJob = await a.post('/v1/imports', { entity_type: 'asset' });
+    expect(importJob.status, importJob.raw).toBe(201);
+    const importTemplate = await a.post('/v1/import-templates', {
+      name: `${marker} template`,
+      entity_type: 'asset',
+      columns: [{ header: 'Serial', target: 'serial' }],
+    });
+    expect(importTemplate.status, importTemplate.raw).toBe(201);
     fx = {
       repairId: repair.body.id,
       repairAssetId: repairAsset.id,
@@ -910,6 +981,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       sharedViewId: sharedView.body.id,
       privateViewId: privateView.body.id,
       exportId: exportJob.body.id,
+      importId: importJob.body.id,
+      importTemplateId: importTemplate.body.id,
       categoryId: category.id,
       manufacturerId: manufacturer.id,
       modelId: model.id,
@@ -986,6 +1059,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         privateView.body.id,
         department.id,
         exportJob.body.id,
+        importJob.body.id,
+        importTemplate.body.id,
       ],
     };
   });
@@ -1087,6 +1162,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         (await A.admin.get('/v1/notification-rules')).body.data.map(
           (r: { type: string; enabled: boolean }) => [r.type, r.enabled],
         ),
+      ),
+      // M2 wave 3: A's import and template are untouched
+      import: await etag(`/v1/imports/${fx.importId}`),
+      imports: String((await A.admin.get('/v1/imports?limit=200')).body.data.length),
+      importTemplate: await etag(`/v1/import-templates/${fx.importTemplateId}`),
+      importTemplates: String(
+        (await A.admin.get('/v1/import-templates?limit=200')).body.data.length,
       ),
       exports: JSON.stringify(
         (await A.admin.get('/v1/exports?limit=200')).body.data.map(

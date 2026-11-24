@@ -178,8 +178,9 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | `app.export_job` | M2 | **CSV exports** (API: `/v1/exports`) | `requested_by`, `resource`, `filters`, `status`, `row_count`, `size_bytes`, `storage_key` (tenant-prefixed), `expires_at` | file deleted 24 h after completion |
 | `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `offset_x_mm` / `offset_y_mm` (calibration, [M2-W2 LABELS]), `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 6 templates seeded per tenant by `app.seed_label_templates` (migration 0070, ADR 0007), mirrored by code constants (`tagging/templates.ts`) and checked for drift; only the two offsets change through the API; CHECKs: the grid fits the page, offsets within +-10 mm |
 | `app.label_batch` | M2 | One request to print labels; the worker renders the PDF (ADR 0007) | `template_id`/`template_key`, `status` (queued/ready/failed/expired), `asset_ids uuid[]` (print order), `source_filter`, `copies`, `label_count`, `start_position`, `codes`, `fields`, `outlines`, `logo_attachment_id`, `storage_key`, `size_bytes`, `sha256`, `page_count`, `render_ms`, `error_code`, `expires_at`, `created_by` (the requester: only they can read it) | the file is stored through the StorageAdapter under a tenant-prefixed key (CHECK) and deleted after `expires_at`; ready requires the file; indexes by requester, open (queued) and expiry |
-| `app.import_job` | M2 | Import with **mandatory dry run** | `source` (csv/xlsx/snipe_it/google_admin_csv), `entity_type`, `state`, `file_attachment_id`, `mapping`, `options`, row counters, `dry_run_digest`, `dry_run_completed_at`, `committed_at` | `CHECK` that commit states require a `dry_run_digest`; commit must quote the reviewed digest |
-| `app.import_row` | M2 | Per-row dry-run / commit outcome and errors | `job_id`, `phase`, `row_no`, `outcome` (create/update/skip/error), `entity_id`, `errors`, `warnings`, `source_data` | unique `(tenant_id, job_id, phase, row_no)` |
+| `app.import_job` | M2 | **CSV / XLSX import** with a mandatory dry run (API: `/v1/imports`; ADR 0010, ED-18) | `requested_by`, `source` (csv/xlsx/google_admin_csv), `entity_type` (asset/person/location/department), `preset_key`, `state` (draft, uploaded, analyzing, analyzed, mapped, dry_running, dry_run_done, committing, completed, failed, cancelled), `file_attachment_id`, `parse` (format, encoding, delimiter, sheet, header line), `headers`, `profile`, `samples`, `mapping`, `options`, `value_map`, `summary`, counters of both phases (`plan_*` = what the dry run says would happen, `done_*` = what the commit did), `rows_processed` / `cursor_row` (where the next worker step resumes), `dry_run_digest`, `cancel_requested` | `CHECK` that `committing` and `completed` need a `dry_run_digest`; at most 2 running per tenant (application quota); the file is an `attachment` (kind `import_file`, owner `import_job`) that went through the upload scan |
+| `app.import_row` | M2 | **One row of the file, both phases** (ED-18: the first design had a row per phase) | PK `(tenant_id, job_id, row_no)` (no surrogate id), `line_no`, `raw` (cells as read), `mapped` (typed record), `match_key` / `match_key2` + `dup_of` (de-duplication inside the file), `plan` + `errors` + `warnings` + `entity_id` + `entity_version` (dry run), `result` + `result_errors` + `created_id` + `before_image` + `processed_at` (commit) | `before_image` keeps what an update replaced, so import undo (v1.1) needs no migration; holds tenant data (may contain PII): readable with `import:run` only; `DELETE` is granted for re-analysis |
+| `app.import_template` | M2 | **Saved column mapping** per tenant and entity type (API: `/v1/import-templates`) | `name` + stored `name_key`, `entity_type`, `columns` (header text -> target field), `options` | unique name per entity type among live rows; applied to a file by header text, not position |
 
 ### 3.9 Views and functions
 
@@ -279,6 +280,7 @@ erDiagram
     VENDOR |o--o{ MAINTENANCE_RECORD : repairs
     PERSON |o--o{ MAINTENANCE_RECORD : performs
     IMPORT_JOB ||--o{ IMPORT_ROW : processes
+    TENANT ||--o{ IMPORT_TEMPLATE : saves
     ATTACHMENT |o--o{ IMPORT_JOB : "source file"
 
     TENANT {
@@ -603,19 +605,30 @@ erDiagram
     IMPORT_JOB {
         uuid id PK
         uuid tenant_id FK
+        uuid requested_by FK
         text source
         text entity_type
         text state
         text dry_run_digest
+        int cursor_row
         uuid file_attachment_id FK
     }
     IMPORT_ROW {
+        uuid tenant_id PK
+        uuid job_id PK
+        int row_no PK
+        jsonb raw
+        text plan
+        text result
+        uuid created_id
+        jsonb before_image
+    }
+    IMPORT_TEMPLATE {
         uuid id PK
         uuid tenant_id FK
-        uuid job_id FK
-        text phase
-        integer row_no
-        text outcome
+        text name
+        text entity_type
+        jsonb columns
     }
 ```
 
@@ -664,7 +677,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Audit log, asset history and stock ledger are append-only; partitions are not directly readable | DB: grants |
 | Accessory partial returns: `quantity_returned` never exceeds `quantity`, never decreases, and the period is closed exactly when everything is back; the stock check counts only outstanding units | DB: CHECKs + trigger |
 | Ids are generated by the application (no DB defaults; PostgreSQL 16/17/18) | App + `schema_lint()` |
-| Commit requires a dry run | DB CHECK on `import_job` + app compares `dry_run_digest` |
+| Commit requires a dry run | DB CHECK on `import_job` + app compares `dry_run_digest` (which also covers the file, mapping, options, value map and every row's plan) |
 | Custom field values validate against definitions; `custom_data` merge semantics | App (zod), definitions in DB |
 | Asset state transitions (only a deployable asset can be checked out; repair open/complete restores status) | App (`lifecycle` module), serialised with `SELECT ... FOR UPDATE` on the asset |
 | Location-scoped authorisation, permission checks | App (`PolicyService`, `TenantRepository`) |
@@ -700,7 +713,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Loaners (10) | app.loaner_pool, loaner_pool_member, assignment; v_overdue_checkouts |
 | Repairs (6) | app.maintenance_record, asset, asset_history |
 | Labels (2) | app.label_template, asset |
-| Imports (8) | app.import_job, import_row, attachment |
+| Imports (19) | app.import_job, import_row, import_template, attachment |
 | Attachments (5), Audit (1) | app.attachment, audit_log |
 
 The OpenAPI file has 132 operations on 82 paths (52 GET, 42 POST, 15 PATCH, 23 DELETE).

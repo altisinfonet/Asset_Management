@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AssetStatusBadge } from '@/components/registry/asset-details';
+import { LinkLoginDialog, UnlinkDialog } from '@/components/registry/login-link-dialogs';
 import { HistoryEventItem } from '@/components/registry/history-timeline';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
@@ -22,7 +23,7 @@ import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { availableActions, isOverdue } from '@/lib/custody/helpers';
-import { assetsApi, peopleApi } from '@/lib/registry/api';
+import { assetsApi, peopleApi, usersApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
 import type { Asset, Assignment, HistoryEvent, Person } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
@@ -72,6 +73,8 @@ function PersonById({ id }: { id: string }) {
   const lookups = useLookups();
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
   const tabParam = params.get('tab');
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? '')
     ? (tabParam as Tab)
@@ -82,6 +85,14 @@ function PersonById({ id }: { id: string }) {
     queryFn: () => peopleApi.get(id),
     retry: false,
   });
+  const loginUserId = person.data?.value.user_id ?? null;
+  const loginUser = useQuery({
+    queryKey: ['users', 'one', loginUserId],
+    queryFn: () => usersApi.get(loginUserId!),
+    enabled: loginUserId !== null && can('user:read'),
+    retry: false,
+  });
+  const loginEmail = loginUser.data?.value.email;
   const held = useQuery({
     queryKey: ['person-held', id],
     queryFn: () =>
@@ -149,6 +160,7 @@ function PersonById({ id }: { id: string }) {
     router.replace(`/people/view?${query.toString()}`);
   };
   const heldCount = held.data?.page.total ?? held.data?.data.length;
+  const manageLogins = can('user:manage') && !value.archived_at;
 
   return (
     <>
@@ -199,7 +211,13 @@ function PersonById({ id }: { id: string }) {
           <TabsTrigger value="history">{t('personView.tabs.history')}</TabsTrigger>
         </TabsList>
         <TabsContent value="overview">
-          <Overview person={value} locationLabel={lookups.locationLabel(value.location_id)} />
+          <Overview
+            person={value}
+            locationLabel={lookups.locationLabel(value.location_id)}
+            onLink={manageLogins ? () => setLinking(true) : undefined}
+            onUnlink={manageLogins ? () => setUnlinking(true) : undefined}
+            loginEmail={loginEmail}
+          />
         </TabsContent>
         <TabsContent value="assets">
           <HeldAssets
@@ -226,6 +244,31 @@ function PersonById({ id }: { id: string }) {
           toast({ variant: 'success', title: t('people.updated', { name: saved.display_name }) });
         }}
       />
+      <LinkLoginDialog
+        open={linking}
+        onOpenChange={setLinking}
+        person={{ id, display_name: value.display_name, etag }}
+        onDone={async (login) => {
+          await refresh();
+          toast({
+            variant: 'success',
+            title: t('loginLink.linked', { person: value.display_name, login: login.email }),
+          });
+        }}
+      />
+      <UnlinkDialog
+        open={unlinking}
+        onOpenChange={setUnlinking}
+        person={{ id, display_name: value.display_name, etag }}
+        loginLabel={loginEmail}
+        onDone={async () => {
+          await refresh();
+          toast({
+            variant: 'success',
+            title: t('loginLink.unlinked', { person: value.display_name }),
+          });
+        }}
+      />
       <PersonArchiveDialog
         open={archiving}
         onOpenChange={setArchiving}
@@ -245,7 +288,20 @@ function PersonById({ id }: { id: string }) {
   );
 }
 
-function Overview({ person, locationLabel }: { person: Person; locationLabel: string }) {
+function Overview({
+  person,
+  locationLabel,
+  onLink,
+  onUnlink,
+  loginEmail,
+}: {
+  person: Person;
+  locationLabel: string;
+  /** Administrators only (`user:manage`): undefined hides the buttons. */
+  onLink?: (() => void) | undefined;
+  onUnlink?: (() => void) | undefined;
+  loginEmail?: string | undefined;
+}) {
   const { t } = useI18n();
   const { can } = useAuth();
   const rows: Array<[string, ReactNode]> = [
@@ -273,6 +329,7 @@ function Overview({ person, locationLabel }: { person: Person; locationLabel: st
       person.user_id ? (
         <span className="flex flex-wrap items-center gap-2">
           {t('people.login.canSignIn')}
+          {loginEmail ? <span className="font-tag text-muted">{loginEmail}</span> : null}
           {can('user:read') ? (
             <Link
               href={routes.settings('users')}
@@ -281,9 +338,21 @@ function Overview({ person, locationLabel }: { person: Person; locationLabel: st
               {t('people.login.manage')}
             </Link>
           ) : null}
+          {onUnlink ? (
+            <Button size="sm" onClick={onUnlink}>
+              {t('loginLink.unlink')}
+            </Button>
+          ) : null}
         </span>
       ) : (
-        t('people.login.none')
+        <span className="flex flex-wrap items-center gap-2">
+          {t('people.login.none')}
+          {onLink ? (
+            <Button size="sm" onClick={onLink}>
+              {t('loginLink.link')}
+            </Button>
+          ) : null}
+        </span>
       ),
     ],
     [t('people.form.notes'), person.notes],

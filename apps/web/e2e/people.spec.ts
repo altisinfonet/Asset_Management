@@ -140,6 +140,66 @@ test.describe('a person', () => {
   });
 });
 
+/** M2-USR-03: link a person and a login account from the person page, with the consequence stated first. */
+test.describe('link a person to a login', () => {
+  test('links Jamie Okafor to a login, then unlinks; a login with a chosen person is refused', async ({
+    page,
+  }) => {
+    await page.goto('/people');
+    await page.getByRole('link', { name: 'Jamie Okafor' }).click();
+    await expect(page.getByTestId('person-name')).toHaveText('Jamie Okafor');
+    await expect(page.getByText('No login', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Link to a login' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Link Jamie Okafor to a login' });
+    await expect(dialog.getByRole('button', { name: 'Link login' })).toBeDisabled();
+    await pick(
+      page,
+      dialog.getByRole('combobox', { name: /Login account/ }),
+      'Vera',
+      /Vera Viewer/,
+    );
+    await expect(
+      dialog.getByText(/Jamie Okafor will sign in as viewer@example\.org/),
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: 'Link login' }).click();
+    await expect(
+      page.getByText('Jamie Okafor is now linked to viewer@example.org.').first(),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unlink login' })).toBeVisible();
+
+    // somebody else's person cannot take the same login: the refusal is shown in place
+    await page.goto('/people');
+    await page.getByRole('link', { name: 'Maria Reyes' }).click();
+    await page.getByRole('button', { name: 'Link to a login' }).click();
+    const second = page.getByRole('dialog', { name: 'Link Maria Reyes to a login' });
+    await pick(
+      page,
+      second.getByRole('combobox', { name: /Login account/ }),
+      'Vera',
+      /Vera Viewer/,
+    );
+    await second.getByRole('button', { name: 'Link login' }).click();
+    await expect(
+      second.getByText(
+        'The login account is already linked to Jamie Okafor. Unlink that person first.',
+      ),
+    ).toBeVisible();
+    await second.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.goto('/people');
+    await page.getByRole('link', { name: 'Jamie Okafor' }).click();
+    await page.getByRole('button', { name: 'Unlink login' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Unlink Jamie Okafor from their login?' });
+    await expect(confirm.getByText(/keeps everything they hold and their history/)).toBeVisible();
+    await confirm.getByRole('button', { name: 'Unlink' }).click();
+    await expect(
+      page.getByText('Jamie Okafor was unlinked from their login.').first(),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Link to a login' })).toBeVisible();
+  });
+});
+
 test.describe('people (read-only role)', () => {
   test.use({ session: MOCK_ACCOUNTS.viewer });
 

@@ -392,12 +392,15 @@ export class AuthService {
   // ------------------------------------------------------------------------------------------- me
 
   async me(auth: AuthContext) {
-    const { tenant, company, mfaPolicy } = await this.tenancy.withTenantTx(
+    const { tenant, company, mfaPolicy, personId } = await this.tenancy.withTenantTx(
       { tenantId: auth.tenantId, actorId: auth.principalId },
       async (trx) => ({
         tenant: await trx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } }),
         company: await trx.company.findFirst({ where: { is_default: true }, select: { id: true } }),
         mfaPolicy: await loadMfaPolicy(trx, auth.tenantId),
+        personId:
+          (await trx.person.findFirst({ where: { user_id: auth.userId }, select: { id: true } }))
+            ?.id ?? null,
       }),
     );
     return {
@@ -416,6 +419,7 @@ export class AuthService {
           archived_at: null,
         },
         auth.grants,
+        personId,
       ),
       tenant: {
         id: tenant.id,

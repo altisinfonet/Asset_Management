@@ -319,6 +319,21 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   removed. All automated runs used their own project names and ports; the cause was not determined. Only local demo data was
   affected; `docker compose up -d --build` recreates it.
 
+### B.17 Loaner pool backend - 2026-11-24 (branch from `f687c04`, unreleased)
+
+- **Scope:** M2-LOAN-01 and -03, the API of M2-LOAN-02 and -04, M2-LIFE-09 (migration `0120`, tables `loaner_pool`,
+  `loaner_pool_member`, `loan_alert`, the assignment -> pool foreign key, queue `loan.alerts`, ED-20, ED-21, ADR 0011).
+- **Method:** new API e2e (34 loaner tests plus a live contract walk of all 18 Loaners operations and the custody settings, with
+  response bodies validated against the contract schemas), role matrix, route rules and route replay extended (tenant B against
+  tenant A's pool, members, loans and settings), seed counts, the SQL design suite on `schema.sql` (`run_one.sh 18`), an own
+  Compose project on alternate ports with the demo seed run by the migrate service.
+- **Result:** clean-state build 21/21 (API unit 586, web 590, client 14); API e2e 627/627 through PgBouncer and direct, 0
+  skipped (one run of the 100k-asset performance budget missed its search p95 under load and passed alone); SQL suite
+  102/102; `schema:lint` 0 violations; drift check clean; Redocly lint 0 errors. The alert job was tested with an advancing
+  clock: exactly one notification per loan, recipient and day, none on a second run, the reminder re-armed by an extension.
+- **Follow-ups:** the tenant day is UTC (no tenant time zone); the demo tenants have 210 assets (web tests that count demo
+  assets may need the new number); web screens for pools, quick loan, bulk return, the dashboard and the dialog pre-fill.
+
 ---
 
 ## C. Open items

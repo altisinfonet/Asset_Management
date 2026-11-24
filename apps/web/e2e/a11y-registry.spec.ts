@@ -162,6 +162,32 @@ const SCENARIOS: Scenario[] = [
   page('settings: vendors', '/settings/vendors', async (p) => {
     await expect(p.getByRole('row', { name: /CDW/ })).toBeVisible();
   }),
+  page('settings: departments', '/settings/departments', async (p) => {
+    await expect(p.getByRole('row', { name: /Mathematics/ })).toBeVisible();
+  }),
+  {
+    name: 'settings: department edit dialog with the manager picker',
+    open: async (p) => {
+      await p.goto('/settings/departments');
+      await p.getByRole('button', { name: 'Edit Mathematics' }).click();
+      await expect(p.getByRole('dialog', { name: 'Edit Mathematics' })).toBeVisible();
+    },
+  },
+  {
+    name: 'settings: department archive turns into a merge when it is in use',
+    open: async (p) => {
+      await p.goto('/settings/departments');
+      await p.getByRole('button', { name: 'Archive Science' }).click();
+      await p
+        .getByRole('dialog', { name: 'Archive Science?' })
+        .getByRole('button', { name: 'Archive' })
+        .click();
+      // the dialog turns into "... is still in use": its name changes with it
+      await expect(
+        p.getByRole('dialog', { name: 'Science is still in use' }).getByText(/Still in use by/),
+      ).toBeVisible();
+    },
+  },
   page('settings: users', '/settings/users', async (p) => {
     await expect(p.getByRole('row', { name: /Alice Owner/ })).toBeVisible();
   }),

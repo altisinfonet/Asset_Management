@@ -23,6 +23,7 @@ let roomId = '';
 
 const tree = () => page.getByRole('tree', { name: 'Locations' });
 const dialog = (name: RegExp | string) => page.getByRole('dialog', { name });
+const dialogNamed = dialog;
 
 async function openLocation(name: string) {
   await page.goto('/locations');
@@ -292,6 +293,203 @@ test.describe('location edit (founder report 2026-11-24)', () => {
       { notes: 'x' },
       { 'if-match': 'W/"1"' },
     );
+    expect(denied.status).toBe(403);
+    await viewer.context().close();
+  });
+});
+
+/**
+ * Managed departments (ED-17, founder request 2026-11-24): the Settings page, the picker on the person
+ * and asset forms, the column and filters of the lists, the archive refusal with its counts and the
+ * merge. Shares the signed-in page of the file; every name carries the per-run suffix.
+ */
+test.describe('departments (founder request 2026-11-24)', () => {
+  const DEPT = `E2E Dept ${id}`;
+  const RENAMED = `E2E Dept renamed ${id}`;
+  const TARGET = `E2E Target ${id}`;
+  const PERSON = `E2E Dana ${id}`;
+  const SECOND = `E2E Evan ${id}`;
+  const DEMO = ['IT', 'Science', 'Mathematics', 'Administration', 'Library', 'Facilities'];
+  let deptId = '';
+  let targetId = '';
+  let assetTag = '';
+
+  const settingsRow = (name: string) => page.getByRole('row', { name: new RegExp(name) });
+
+  test('the demo tenant has the six demo departments, with people and assets linked', async () => {
+    const list = await api<{
+      data: Array<{ id: string; name: string; person_count: number; asset_count: number }>;
+    }>(page, 'GET', '/v1/departments?limit=200');
+    expect(list.status).toBe(200);
+    const byName = new Map(list.json.data.map((d) => [d.name, d]));
+    for (const name of DEMO) expect(byName.get(name), name).toBeTruthy();
+    expect(byName.get('IT')!.person_count).toBeGreaterThan(0);
+    const assets = await api<{ page: { total: number } }>(
+      page,
+      'GET',
+      '/v1/assets?limit=1&include_total=true',
+    );
+    const linked = DEMO.reduce((n, name) => n + byName.get(name)!.asset_count, 0);
+    expect(linked).toBeGreaterThan(0); // some assets belong to a department ...
+    expect(linked).toBeLessThan(assets.json.page.total); // ... and some do not
+
+    await page.goto('/settings/departments');
+    await expect(page.getByRole('heading', { name: 'Departments', level: 2 })).toBeVisible();
+    for (const name of DEMO) await expect(settingsRow(`^${name}`).first()).toBeVisible();
+  });
+
+  test('creates a department on the Settings page and refuses the same name in other capitals', async () => {
+    await page.goto('/settings/departments');
+    await page.getByRole('button', { name: 'Add department' }).click();
+    const dialog = dialogNamed('Add a department');
+    await dialog.getByLabel(/^Name/).fill(DEPT);
+    await dialog.getByLabel(/^Code/).fill(`E${id}`);
+    await dialog.getByRole('button', { name: 'Add department' }).click();
+    await expect(page.getByText(`Department "${DEPT}" added.`).first()).toBeVisible();
+    await expect(settingsRow(DEPT)).toBeVisible();
+    const made = await api<{ data: Array<{ id: string }> }>(
+      page,
+      'GET',
+      `/v1/departments?q=${encodeURIComponent(DEPT)}`,
+    );
+    deptId = made.json.data[0]!.id;
+
+    await page.getByRole('button', { name: 'Add department' }).click();
+    const again = dialogNamed('Add a department');
+    await again.getByLabel(/^Name/).fill(`  ${DEPT.toUpperCase()}  `);
+    await again.getByRole('button', { name: 'Add department' }).click();
+    await expect(again.getByText('This value is already in use.')).toBeVisible();
+    await again.getByRole('button', { name: 'Cancel' }).click();
+  });
+
+  test('renames it; the new name shows everywhere it is used', async () => {
+    await page.goto('/settings/departments');
+    await page.getByRole('button', { name: `Edit ${DEPT}` }).click();
+    const edit = dialogNamed(`Edit ${DEPT}`);
+    await edit.getByLabel(/^Name/).fill(RENAMED);
+    await edit.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText(`Department "${RENAMED}" saved.`).first()).toBeVisible();
+    await expect(settingsRow(RENAMED)).toBeVisible();
+  });
+
+  test('the person form picks the department from the list; the list shows it and filters by it', async () => {
+    await page.goto('/people');
+    await page.getByRole('button', { name: 'Add person' }).click();
+    const dialog = dialogNamed('Add a person');
+    await dialog.getByLabel(/^Name/).fill(PERSON);
+    await dialog.getByRole('combobox', { name: 'Department' }).fill('renamed');
+    await page.getByRole('option', { name: new RegExp(`^${RENAMED}`) }).click();
+    await dialog.getByRole('button', { name: 'Add person' }).click();
+    await expect(page.getByText(`${PERSON} added.`).first()).toBeVisible();
+
+    const saved = await api<{ data: Array<{ department_id: string; department: string }> }>(
+      page,
+      'GET',
+      `/v1/people?q=${encodeURIComponent(PERSON)}`,
+    );
+    expect(saved.json.data[0]).toMatchObject({ department_id: deptId, department: RENAMED });
+
+    await page.getByRole('combobox', { name: 'Department' }).fill('renamed');
+    await page.getByRole('option', { name: new RegExp(`^${RENAMED}`) }).click();
+    await expect(page.getByRole('row', { name: new RegExp(PERSON) })).toContainText(RENAMED);
+    await expect(page.getByTestId('people-range')).toHaveText('Showing 1-1 of 1');
+  });
+
+  test('the old free text is gone: the API refuses a department string', async () => {
+    const res = await api<{ errors: Array<{ code: string }> }>(page, 'POST', '/v1/people', {
+      display_name: `E2E Free ${id}`,
+      department: 'Maths',
+    });
+    expect(res.status).toBe(422);
+    expect(res.json.errors[0]).toMatchObject({ code: 'unrecognized_keys' });
+  });
+
+  test('the asset form picks the department; the asset list has the column and filters by it', async () => {
+    const cat = await api<{ id: string }>(page, 'POST', '/v1/categories', {
+      name: `E2E Dept category ${id}`,
+      tag_prefix: `D${id}-`,
+    });
+    expect(cat.status).toBe(201);
+    await page.goto('/assets/new');
+    await choose(page, /^Category/, `E2E Dept category ${id}`);
+    await expect(
+      page.getByText('Who owns or pays for it. Where it is stays Location.'),
+    ).toBeVisible();
+    await page.getByRole('combobox', { name: 'Department' }).fill('renamed');
+    await page.getByRole('option', { name: new RegExp(`^${RENAMED}`) }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByTestId('asset-tag')).toBeVisible();
+    assetTag = (await page.getByTestId('asset-tag').innerText()).trim();
+    await expect(page.getByText(RENAMED).first()).toBeVisible();
+
+    await page.goto(`/assets?department=${deptId}`);
+    await expect(page.getByTestId('assets-range')).toHaveText('Showing 1-1 of 1');
+    await page.getByRole('button', { name: 'Columns' }).click();
+    await dialogNamed('Columns').getByRole('checkbox', { name: 'Department' }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('row', { name: new RegExp(assetTag) })).toContainText(RENAMED);
+    await expect(page.getByRole('combobox', { name: 'Department' })).toHaveValue(RENAMED);
+  });
+
+  test('archiving a department that is in use is refused with the counts', async () => {
+    const second = await api(page, 'POST', '/v1/people', {
+      display_name: SECOND,
+      department_id: deptId,
+    });
+    expect(second.status).toBe(201);
+    // the merge target exists before the page loads its lists
+    const target = await api<{ id: string }>(page, 'POST', '/v1/departments', { name: TARGET });
+    expect(target.status).toBe(201);
+    targetId = target.json.id;
+    await page.goto('/settings/departments');
+    await expect(settingsRow(RENAMED)).toBeVisible();
+    await page.getByRole('button', { name: `Archive ${RENAMED}` }).click();
+    await dialogNamed(`Archive ${RENAMED}?`).getByRole('button', { name: 'Archive' }).click();
+    // the dialog turns into "... is still in use": its name changes with it
+    const dialog = dialogNamed(`${RENAMED} is still in use`);
+    await expect(dialog.getByText(/Still in use by/)).toContainText('2 people, 1 asset');
+    await expect(dialog.getByRole('button', { name: 'Merge and archive' })).toBeDisabled();
+    const still = await api<{
+      archived_at: string | null;
+      person_count: number;
+      asset_count: number;
+    }>(page, 'GET', `/v1/departments/${deptId}`);
+    expect(still.json).toMatchObject({ archived_at: null, person_count: 2, asset_count: 1 });
+  });
+
+  test('merges it into another department: the people and the asset move, the old one is archived', async () => {
+    const dialog = dialogNamed(`${RENAMED} is still in use`);
+    await dialog.getByRole('combobox', { name: /Move them to/ }).fill('target');
+    await page.getByRole('option', { name: new RegExp(`^${TARGET}`) }).click();
+    await dialog.getByRole('button', { name: 'Merge and archive' }).click();
+    await expect(page.getByText(`Merged into "${TARGET}".`).first()).toBeVisible();
+    await expect(settingsRow(RENAMED)).toHaveCount(0);
+
+    const moved = await api<{ person_count: number; asset_count: number }>(
+      page,
+      'GET',
+      `/v1/departments/${targetId}`,
+    );
+    expect(moved.json).toMatchObject({ person_count: 2, asset_count: 1 });
+    const old = await api<{ archived_at: string | null }>(page, 'GET', `/v1/departments/${deptId}`);
+    expect(old.json.archived_at).not.toBeNull();
+    const asset = await api<{ data: Array<{ department_id: string }> }>(
+      page,
+      'GET',
+      `/v1/assets?tag=${encodeURIComponent(assetTag)}`,
+    );
+    expect(asset.json.data[0]!.department_id).toBe(targetId);
+  });
+
+  test('a read-only role sees the page without write buttons; the API answers 403 to a write', async ({
+    browser,
+  }) => {
+    const viewer = await signInWithPassword(browser, 'viewer@acme.example');
+    await viewer.goto('/settings/departments');
+    await expect(viewer.getByRole('row', { name: new RegExp(TARGET) })).toBeVisible();
+    await expect(viewer.getByRole('button', { name: 'Add department' })).toHaveCount(0);
+    await expect(viewer.getByRole('button', { name: /^(Edit|Archive) / })).toHaveCount(0);
+    const denied = await api(viewer, 'POST', '/v1/departments', { name: `E2E Nope ${id}` });
     expect(denied.status).toBe(403);
     await viewer.context().close();
   });

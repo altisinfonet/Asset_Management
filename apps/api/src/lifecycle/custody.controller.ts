@@ -5,6 +5,7 @@ import {
   IdempotencyRequired,
   type IfMatch,
   OptionalIfMatch,
+  RequiredIfMatch,
   ZodValidationPipe,
   setEtag,
 } from '../platform/index.js';
@@ -16,6 +17,7 @@ import {
   personAssignmentsListSchema,
   personHistoryListSchema,
   transferSchema,
+  undoSchema,
   uuidParam,
   type AssetAssignmentsQuery,
   type CheckinBody,
@@ -23,6 +25,7 @@ import {
   type PersonAssignmentsQuery,
   type PersonHistoryQuery,
   type TransferBody,
+  type UndoBody,
 } from './schemas.js';
 
 const idParam = () => new ZodValidationPipe(uuidParam, 'params');
@@ -89,6 +92,27 @@ export class CustodyController {
     setEtag(reply, version);
     void reply.header('location', `/v1/assets/${id}/assignments`);
     return { asset, transfer, assignment };
+  }
+
+  /**
+   * M2-UX-02 (ED-23): reverses the last check-out, check-in or transfer of the asset as an inverse
+   * action. `If-Match` is required (the ETag the action answered with); the permission of the
+   * reversed action is checked in the service.
+   */
+  @Post('assets/:id/undo-custody')
+  @RequirePermission('asset:checkout')
+  @IdempotencyRequired()
+  @HttpCode(200)
+  async undo(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @RequiredIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(undoSchema)) body: UndoBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { asset, assignment, undone, version } = await this.custody.undo(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return { asset, assignment, undone };
   }
 
   @Get('assets/:id/assignments')

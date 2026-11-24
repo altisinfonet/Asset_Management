@@ -289,7 +289,43 @@ interface SortSpec {
   text: string;
   /** Cast of the cursor value back to the expression's type. */
   cast: string;
+  /** Tables the expression reads besides `app.asset` (joined only when the sort needs them). */
+  joins?: SortJoin[];
 }
+
+/**
+ * Left joins a sort key may need (M2-REG-03, ED-22). Every one yields at most one row per asset
+ * (the open custody period is unique per asset, the others are joined by primary key), so a join
+ * never duplicates or drops an asset and the keyset stays stable.
+ */
+type SortJoin = 'location' | 'custody' | 'assignee';
+
+// the asset target's tag is read by a scalar subquery: coalesce evaluates it only for the (few) assets
+// checked out to another asset, instead of hash-joining the tenant's whole asset table
+const ASSIGNEE_KEY = `coalesce(lower(coalesce(sort_person.display_name, sort_tloc.name,
+    (select ta.asset_tag from app.asset ta where ta.tenant_id = a.tenant_id and ta.id = sort_open.target_asset_id))), '')`;
+
+const SORT_JOIN_SQL: Record<SortJoin, string> = {
+  // One row holding every location's path as a jsonb map {id: path}, built ONCE per statement (an
+  // uncorrelated aggregate over the tenant's small location table, 125 rows in the measurement). A
+  // per-asset lookup is then a jsonb key access whatever join order the planner picks: a join to a
+  // derived table with a correlated path subquery was evaluated once per ASSET when the planner (misled
+  // by the unknown tenant under RLS) chose a nested loop, 450 ms instead of 40.
+  location: `cross join (
+      select coalesce(jsonb_object_agg(l.id::text,
+               (select string_agg(lower(n.name), ' > ' order by u.ord)
+                  from unnest(l.ancestor_ids) with ordinality as u(id, ord)
+                  join app.location n on n.tenant_id = l.tenant_id and n.id = u.id)), '{}'::jsonb) as paths
+        from app.location l
+    ) sort_loc`,
+  custody: `left join app.assignment sort_open on sort_open.tenant_id = a.tenant_id
+      and sort_open.asset_id = a.id and sort_open.checked_in_at is null`,
+  // `assignee` includes the `custody` join (same alias): never request both
+  assignee: `left join app.assignment sort_open on sort_open.tenant_id = a.tenant_id
+      and sort_open.asset_id = a.id and sort_open.checked_in_at is null
+    left join app.person sort_person on sort_person.tenant_id = a.tenant_id and sort_person.id = sort_open.person_id
+    left join app.location sort_tloc on sort_tloc.tenant_id = a.tenant_id and sort_tloc.id = sort_open.location_id`,
+};
 
 const PG_TS = `to_char(%s at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00"')`;
 /** Nullable columns sort with NULL as the smallest value (cursor values cannot compare NULL). */
@@ -317,7 +353,52 @@ const SORTS: Record<string, SortSpec> = {
     cast: 'date',
   },
   id: { expr: 'a.id', text: 'a.id::text', cast: 'uuid' },
+  // ---- M2-REG-03 (ED-22): sort by location, assignee and due date, empty values LAST in both
+  // directions. A nullable key is two terms: `<key>.null` (false = has a value; always ascending, so
+  // values come first) followed by the value with the direction the client asked for. The flag makes
+  // the cursor exact for NULL (a NULL cannot be compared with `>`); the value of an empty row is a
+  // constant filler, so empty rows are ordered by the unique `id` tiebreaker alone.
+  'location.null': {
+    expr: '((sort_loc.paths ->> a.location_id::text) is null)',
+    text: '((sort_loc.paths ->> a.location_id::text) is null)::text',
+    cast: 'boolean',
+    joins: ['location'],
+  },
+  // the full path as the table shows it ("hq > floor 2 > room 4"), lower-cased
+  location: {
+    expr: `coalesce(sort_loc.paths ->> a.location_id::text, '')`,
+    text: `coalesce(sort_loc.paths ->> a.location_id::text, '')`,
+    cast: 'text',
+    joins: ['location'],
+  },
+  'assignee.null': {
+    expr: '(sort_open.id is null)',
+    text: '(sort_open.id is null)::text',
+    cast: 'boolean',
+    joins: ['assignee'],
+  },
+  // the name of the open custody target (person, location, or asset tag), lower-cased
+  assignee: { expr: ASSIGNEE_KEY, text: ASSIGNEE_KEY, cast: 'text', joins: ['assignee'] },
+  'due.null': {
+    expr: '(sort_open.expected_return is null)',
+    text: '(sort_open.expected_return is null)::text',
+    cast: 'boolean',
+    joins: ['custody'],
+  },
+  due: {
+    expr: `coalesce(sort_open.expected_return, date '0001-01-01')`,
+    text: `coalesce(sort_open.expected_return, date '0001-01-01')::text`,
+    cast: 'date',
+    joins: ['custody'],
+  },
 };
+
+/** The left joins the sort terms read, as SQL (empty for the sorts of the asset row). */
+export function sortJoinsSql(terms: SortTerm[]): Prisma.Sql {
+  const need = new Set<SortJoin>(terms.flatMap((t) => sortSpecFor(t.key).joins ?? []));
+  if (need.has('assignee')) need.delete('custody');
+  return Prisma.raw([...need].map((j) => SORT_JOIN_SQL[j]).join('\n'));
+}
 
 export function sortSpecFor(key: string): SortSpec {
   const spec = SORTS[key];
@@ -352,6 +433,7 @@ function isRealDateTime(v: string, cast: string): boolean {
 const CURSOR_SHAPE: Record<string, RegExp> = {
   timestamptz: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00$/,
   date: /^\d{4}-\d{2}-\d{2}$/,
+  boolean: /^(true|false)$/,
   uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   text: /^[\s\S]{0,300}$/,
 };
@@ -368,7 +450,9 @@ export function assertCursorValues(terms: SortTerm[], values: Array<string | num
     const cast = sortSpecFor(term.key).cast;
     const parses =
       typeof v === 'string' &&
-      (cast === 'text' ? !v.includes('\u0000') : cast === 'uuid' || isRealDateTime(v, cast));
+      (cast === 'text'
+        ? !v.includes('\u0000')
+        : cast === 'uuid' || cast === 'boolean' || isRealDateTime(v, cast));
     if (typeof v !== 'string' || !shape.test(v) || !parses) {
       throw new ApiProblem({
         code: 'invalid-cursor',
@@ -509,6 +593,10 @@ export function assetSortTerms(sort: string | undefined): SortTerm[] {
       name: { kind: 'string' },
       purchase_date: { kind: 'string' },
       warranty_end: { kind: 'string' },
+      // M2-REG-03: empty values last in both directions (a leading `<key>.null` term, see SORTS)
+      location: { kind: 'string' },
+      assignee: { kind: 'string' },
+      due: { kind: 'string' },
     },
     defaultSort: '-created_at',
   });
@@ -519,8 +607,16 @@ export function assetSortTerms(sort: string | undefined): SortTerm[] {
   if (idTerm && idTerm.key === 'id' && !/(^|,)[-+]?id(,|$)/.test(sort ?? '')) {
     terms[terms.length - 1] = { ...idTerm, direction: terms[0]!.direction };
   }
-  return terms;
+  // A key that can be empty is preceded by its "is empty" flag term (always ascending): empty last.
+  return terms.flatMap((t) =>
+    NULLS_LAST_KEYS.has(t.key)
+      ? [{ ...t, key: `${t.key}.null`, column: `${t.key}.null`, direction: 'asc' as const }, t]
+      : [t],
+  );
 }
+
+/** Sort keys whose value can be empty and that put the empty ones last (M2-REG-03, ED-22). */
+const NULLS_LAST_KEYS = new Set(['location', 'assignee', 'due']);
 
 /** Sparse fieldset: `id` is always included. */
 export function pickFields<T extends Record<string, unknown>>(
@@ -547,10 +643,28 @@ export function assetListSql(
   const where = conditions.length > 0 ? Prisma.join(conditions, ' and ') : Prisma.sql`true`;
   const after = cursorValues ? keysetSql(terms, cursorValues) : Prisma.sql`true`;
   const take = q.limit + 1;
-  return Prisma.sql`select ${ASSET_COLUMNS} ${sortKeySelect(terms)} ${ASSET_FROM}
-    where ${where} and ${after}
-    order by ${orderBySql(terms)}
-    limit ${take}`;
+  if (!terms.some((t) => sortSpecFor(t.key).joins?.length)) {
+    return Prisma.sql`select ${ASSET_COLUMNS} ${sortKeySelect(terms)} ${ASSET_FROM}
+      where ${where} and ${after}
+      order by ${orderBySql(terms)}
+      limit ${take}`;
+  }
+  // A sort that reads other tables (M2-REG-03, ED-22) sorts NARROW rows: the inner statement only
+  // carries the asset id and the sort keys (the covering index asset_sort_cover_idx answers it with an
+  // index-only scan), then the page of at most `limit + 1` ids is joined back to the full rows. The
+  // text keys order exactly like the typed expressions (fixed-width ISO dates, 'false' < 'true').
+  const outerKeys = Prisma.raw(terms.map((_, i) => `, t.k${i}`).join(''));
+  const outerOrder = Prisma.raw(
+    terms.map((term, i) => `t.k${i} ${term.direction === 'desc' ? 'desc' : 'asc'}`).join(', '),
+  );
+  return Prisma.sql`select ${ASSET_COLUMNS} ${outerKeys}
+    from (
+      select a.id ${sortKeySelect(terms)} ${ASSET_FROM} ${sortJoinsSql(terms)}
+       where ${where} and ${after}
+       order by ${orderBySql(terms)}
+       limit ${take}
+    ) t join app.asset a on a.id = t.id
+    order by ${outerOrder}`;
 }
 
 /** `GET /v1/assets?include_total=true`: the same filters, no cursor. */

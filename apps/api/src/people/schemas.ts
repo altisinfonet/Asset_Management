@@ -66,6 +66,9 @@ export const personUpdateSchema = z.strictObject({
   force: z.boolean().optional(),
   reason: trimmed(1, 500).optional(),
 });
+/** `POST /v1/people/{id}/link-user` (M2-USR-03). */
+export const personLinkUserSchema = z.strictObject({ user_id: z.uuid() });
+export type PersonLinkUser = z.output<typeof personLinkUserSchema>;
 export type PersonCreate = z.output<typeof personCreateSchema>;
 export type PersonUpdate = z.output<typeof personUpdateSchema>;
 

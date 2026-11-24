@@ -10,7 +10,7 @@ import {
   type Rec,
   type RegistryData,
 } from './registry-fixtures';
-import { subtreeIds } from '@/lib/registry/locations';
+import { locationPathText, subtreeIds } from '@/lib/registry/locations';
 import { mutateRegistry, registry } from './registry-state';
 
 /**
@@ -26,8 +26,8 @@ type S = components['schemas'];
 export type FieldError = { pointer: string; message: string; code?: string };
 export type Body = Record<string, unknown>;
 
-export const strip = <T extends { _v: number }>(record: T): Omit<T, '_v'> => {
-  const { _v: _ignored, ...rest } = record;
+export const strip = <T extends { _v: number }>(record: T): Omit<T, '_v' | '_system'> => {
+  const { _v: _ignored, _system: _hidden, ...rest } = record as T & { _system?: unknown };
   return rest;
 };
 export const nowIso = () => new Date().toISOString();
@@ -60,6 +60,8 @@ export const text = (value: unknown): string | undefined =>
 export interface ListConfig<T> {
   sorts: Record<string, (item: T) => string | number | null | undefined>;
   defaultSort: string;
+  /** Sort keys whose empty values come LAST in both directions (the asset sorts of M2-REG-03). */
+  emptyLast?: string[];
   /** Free-text match for `q`. */
   haystack?: (item: T) => Array<string | null | undefined>;
   filter?: (item: T, params: URLSearchParams) => boolean;
@@ -117,10 +119,12 @@ export function paginate<T extends { id: string; archived_at?: string | null; _v
     .sort((a, b) => {
       for (const key of sortKeys) {
         const desc = key.startsWith('-');
-        const get = config.sorts[key.replace(/^-/, '')]!;
+        const name = key.replace(/^-/, '');
+        const get = config.sorts[name]!;
         const av = get(a) ?? '';
         const bv = get(b) ?? '';
         if (av === bv) continue;
+        if (config.emptyLast?.includes(name) && (av === '' || bv === '')) return av === '' ? 1 : -1;
         const cmp =
           typeof av === 'number' && typeof bv === 'number'
             ? av - bv
@@ -1192,6 +1196,10 @@ const ASSET_SORTS: ListConfig<MockAsset>['sorts'] = {
   name: (a) => a.name,
   purchase_date: (a) => a.purchase_date,
   warranty_end: (a) => a.warranty_end,
+  // M2-REG-03: the location path, the holder's name and the expected return; empty values last
+  location: (a) => locationPathText(registry().locations, a.location_id).toLowerCase(),
+  assignee: (a) => a.current_assignment?.target_name?.toLowerCase(),
+  due: (a) => a.current_assignment?.expected_return,
 };
 
 export function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
@@ -1334,6 +1342,7 @@ const assetHandlers: HttpHandler[] = [
       registry().assets,
       {
         sorts: ASSET_SORTS,
+        emptyLast: ['location', 'assignee', 'due'],
         defaultSort: '-created_at',
         haystack: (a) => [a.asset_tag, a.serial, a.name, a.order_number],
         filter: assetFilter,
@@ -1652,9 +1661,13 @@ function validateRoleAssignments(value: unknown): FieldError[] {
   );
 }
 
+/** `person_id`: the person record of the login (every login has exactly one, M2-USR-03). */
 const publicUser = (u: MockUserRecord) => {
   const { _v: _v1, invitation_expires_at: _expires, ...pub } = u;
-  return pub;
+  return {
+    ...pub,
+    person_id: registry().people.find((p) => p.user_id === u.id)?.id ?? null,
+  };
 };
 
 function oneUser(user: MockUserRecord, status = 200, extra: Record<string, string> = {}) {
@@ -1739,6 +1752,32 @@ const userHandlers: HttpHandler[] = [
         _v: 1,
       } as MockUserRecord;
       data.users.push(created);
+      // every login has the person the system makes for it (a database trigger in the API)
+      data.people.push({
+        id: newResourceId('person'),
+        created_at: stamp,
+        updated_at: stamp,
+        archived_at: null,
+        kind: 'employee',
+        display_name: created.display_name,
+        first_name: null,
+        last_name: null,
+        email: data.people.some((p) => !p.archived_at && p.email?.toLowerCase() === email)
+          ? null
+          : email!,
+        phone: null,
+        employee_ref: null,
+        department: null,
+        department_id: null,
+        job_title: null,
+        location_id: null,
+        company_id: data.people[0]?.company_id ?? '',
+        status: 'active',
+        notes: null,
+        user_id: created.id,
+        _system: true,
+        _v: 1,
+      });
       return created;
     });
     return oneUser(user, 201, { Location: `/v1/users/${user.id}` });

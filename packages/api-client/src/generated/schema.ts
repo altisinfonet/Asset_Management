@@ -186,6 +186,8 @@ export interface paths {
          * List and search assets
          * @description The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.
          *
+         *     [M2-REG-03, ED-22] `sort` also takes `location` (the full location path, `HQ > Floor 2 > Room 4`, case-insensitive), `assignee` (the name of whoever holds the asset: person, location or asset tag, case-insensitive) and `due` (the expected return date of the open custody). For these three keys an asset with no value (no location, not checked out, no expected return) is listed **last in both directions**, ordered by `id` among themselves, so a page boundary never splits or repeats rows. The other keys keep sorting an empty value as the smallest. Cursors are bound to the sort: a cursor of another sort is 400 `invalid-cursor`.
+         *
          *     Requires permission `asset:read`.
          */
         get: operations["listAssets"];
@@ -493,6 +495,30 @@ export interface paths {
          *     Requires permission `asset:transfer`.
          */
         post: operations["transferAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/undo-custody": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the last custody action of an asset
+         * @description Reverses the **last** check-out, check-in or transfer of the asset as an inverse action, in one transaction, never as a delete: a check-out is undone by closing its period and restoring the previous status; a check-in by re-opening custody for the same holder (a NEW assignment: a closed period is never re-opened) and restoring the previous status and location; a transfer by moving the asset back to the previous holder (or, for a transfer out of stock, like a check-out). The original event, assignment and audit row stay; the undo adds a `custody_undone` history event, an audit row `asset.custody_undone` and a new version of the asset.
+         *
+         *     Guards: `If-Match` is required and must be the ETag the action answered with (412 when the asset changed in any way since); `assignment_id` must belong to the newest history event of the asset (409 `undo-asset-changed` otherwise, 409 `undo-not-possible` when that event is already an undo); the action is at most five minutes old (409 `undo-expired`); the caller needs the permission of the action it reverses (`asset:checkout`, `asset:checkin` or `asset:transfer`; 403 otherwise); and the previous holder and status must still be valid (409 `undo-not-possible`, for example the person was deactivated meanwhile). Loaner custody is not undone here. Requires an `Idempotency-Key`: a retry replays the stored answer.
+         *
+         *     Requires permission `asset:checkout`.
+         */
+        post: operations["undoAssetCustody"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2574,6 +2600,34 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/people/{id}/link-user": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link a person to a login account
+         * @description Makes the person the person record of the login account (Administrators only, audited as `person.user_linked`). Every login account already has the person the database created for it, so linking **replaces** that placeholder: it is archived (never deleted; its history keeps pointing at it) and a department it headed is headed by the linked person. The linked person keeps all of its assignments and history. One person per login and one login per person: a person that already has a login is 409 `person-already-linked`, a login whose person was chosen by somebody (not the system-made placeholder, which has no `created_by`) is 409 `login-already-linked` (unlink it first), a placeholder that still holds assets is 409 `login-person-in-use` (`usage.open_assignments`). Linking the pair that is already linked changes nothing (200). 422 `/user_id` when the account does not exist in the tenant or is archived. The person's name and email are not changed, but a later rename of the login account renames the person again (ED-15).
+         *
+         *     Requires permission `user:manage`.
+         */
+        post: operations["linkPersonToUser"];
+        /**
+         * Unlink a person from its login account
+         * @description Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.
+         *
+         *     Requires permission `user:manage`.
+         */
+        delete: operations["unlinkPersonFromUser"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4886,7 +4940,7 @@ export interface components {
             /** Format: date-time */
             at: string;
             /** @enum {string} */
-            event_type: "created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported";
+            event_type: "created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported" | "custody_undone";
             /** @enum {string} */
             actor_type: "user" | "api_key" | "integration" | "system";
             /** Format: uuid */
@@ -4911,9 +4965,10 @@ export interface components {
              *     - `updated`: `{fields: string[]}`, the names of the fields that changed
              *     - `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`
              *     - `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)
-             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`
-             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
-             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to, from_id, to_id}, note?, attachment_ids?}`
+             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to, from_id, to_id}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
+             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, status?: {from, to, from_id, to_id} (only for a transfer out of stock), location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `custody_undone` ([M2-UX-02, ED-23]): written by `POST /v1/assets/{id}/undo-custody` next to (never instead of) the event it reverses: `{undone: "checkout"|"checkin"|"transfer", undone_event_type, undone_assignment_id, assignment_id?, target_type?, target_id?, target_name?, status: {from, to}, location?: {from, to}}`
              *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
              *     - `restored`: `{}` or `{was_disposed: true}`
              *     - `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch
@@ -5838,7 +5893,10 @@ export interface components {
             readonly mfa_enabled?: boolean;
             /** Format: date-time */
             readonly last_login_at?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description [M2-USR-03] The person record of this login account (every login has exactly one; see `POST /v1/people/{id}/link-user`). Filled by `/v1/users` and `/v1/me`; null in login responses.
+             */
             readonly person_id?: string | null;
         };
         UserCreate: {
@@ -5921,6 +5979,27 @@ export interface components {
         ApiKeyList: {
             data: components["schemas"]["ApiKey"][];
             page: components["schemas"]["PageInfo"];
+        };
+        PersonLinkUserRequest: {
+            /**
+             * Format: uuid
+             * @description The login account (`User.id`) to link: live, in this tenant.
+             */
+            user_id: string;
+        };
+        UndoCustodyRequest: {
+            /**
+             * Format: uuid
+             * @description The `assignment.id` the action answered with: the new assignment of a check-out or transfer, the closed one of a check-in.
+             */
+            assignment_id: string;
+        };
+        /** @description Result of an undo: the **updated asset** (new `ETag` also in the header), the assignment that is now in effect (the closed one after undoing a check-out or a transfer from stock, the re-opened one after undoing a check-in or a transfer between holders) and what was undone. */
+        UndoResult: {
+            asset: components["schemas"]["Asset"];
+            assignment: components["schemas"]["Assignment"];
+            /** @enum {string} */
+            undone: "checkout" | "checkin" | "transfer";
         };
         /** @description Moves an asset to a location. */
         MoveRequest: {
@@ -7394,8 +7473,8 @@ export interface operations {
                 expand?: ("model" | "category" | "location" | "vendor" | "department")[];
                 /** @description Sparse fieldset: return only these top-level properties (`id` is always included). */
                 fields?: string[];
-                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at, updated_at, asset_tag, name, purchase_date, warranty_end. A unique tiebreaker (`id`) is always appended. */
-                sort?: ("created_at" | "-created_at" | "updated_at" | "-updated_at" | "asset_tag" | "-asset_tag" | "name" | "-name" | "purchase_date" | "-purchase_date" | "warranty_end" | "-warranty_end")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at, updated_at, asset_tag, name, purchase_date, warranty_end, location, assignee, due. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("created_at" | "-created_at" | "updated_at" | "-updated_at" | "asset_tag" | "-asset_tag" | "name" | "-name" | "purchase_date" | "-purchase_date" | "warranty_end" | "-warranty_end" | "location" | "-location" | "assignee" | "-assignee" | "due" | "-due")[];
             };
             header?: never;
             path?: never;
@@ -7902,7 +7981,7 @@ export interface operations {
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
                 /** @description Filter by event type. */
-                event_type?: ("created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported")[];
+                event_type?: ("created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported" | "custody_undone")[];
                 /** @description Events at or after. */
                 from?: string;
                 /** @description Events before. */
@@ -8279,6 +8358,78 @@ export interface operations {
             };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    undoAssetCustody: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "assignment_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d93"
+                 *     }
+                 */
+                "application/json": components["schemas"]["UndoCustodyRequest"];
+            };
+        };
+        responses: {
+            /** @description Undone. Returns the updated asset and the assignment now in effect; `ETag` is the new version of the asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Too late, the asset changed meanwhile, already undone, or the previous holder / status is gone. Codes: `undo-expired`, `undo-asset-changed`, `undo-not-possible`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/undo-expired",
+                     *       "title": "undo expired",
+                     *       "status": 409,
+                     *       "code": "undo-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -14818,6 +14969,137 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    linkPersonToUser: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "user_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PersonLinkUserRequest"];
+            };
+        };
+        responses: {
+            /** @description Linked. The person (`user_id` set); `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The person already has a login, the login already has a chosen person, or the login's own placeholder person still holds assets. Codes: `person-already-linked`, `login-already-linked`, `login-person-in-use`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/person-already-linked",
+                     *       "title": "person already linked",
+                     *       "status": 409,
+                     *       "code": "person-already-linked",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    unlinkPersonFromUser: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked. The person (`user_id` null); `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The person has no login account to unlink. Codes: `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
             429: components["responses"]["TooManyRequests"];
         };
     };

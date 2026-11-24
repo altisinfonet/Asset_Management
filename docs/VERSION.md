@@ -42,7 +42,7 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-M2 wave 3, part 1: the import backend (M2-IMP-01..07) and the loaner pool backend (M2-LOAN-01, 03, the API of 02 and 04, M2-LIFE-09). Not released yet.
+M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (M2-LOAN-01, 03, the API of 02 and 04, M2-LIFE-09) and three deferred stories (M2-REG-03, M2-USR-03, M2-UX-02). Not released yet.
 
 ### Added
 
@@ -82,6 +82,18 @@ M2 wave 3, part 1: the import backend (M2-IMP-01..07) and the loaner pool backen
   210 assets).
 - Migration `0120` (pools, members, alert ledger, the loan foreign key), queue `loan.alerts`, problem codes
   `loan-limit-reached` and `loaner-pool-inactive`; the 10 loaner operations that were contract-only are implemented, 8 new ones and the 2 custody settings operations are added (189 operations in all).
+- **Sort the asset list by location, assignee and due date** (M2-REG-03, ED-22): the Location, Assigned to and Due back
+  columns of the Assets table sort through the server (`?sort=location|assignee|due`, also `-`). An asset with no value (no
+  location, in stock, no expected return) is listed last in both directions and paging never skips or repeats a row.
+- **Link and unlink a person and a login account** (M2-USR-03, ED-22): `POST` / `DELETE /v1/people/{id}/link-user`
+  (Administrators, audited), buttons on the person page and in Settings → Users (new Person column), confirmation dialogs
+  that say what happens. `User.person_id` is now filled (`/v1/users`, `/v1/auth/me`). Three new problem codes:
+  `person-already-linked`, `login-already-linked`, `login-person-in-use`.
+- **Undo toast after a custody action** (M2-UX-02, ED-23): the success toast of a check-out, check-in or transfer (single or
+  bulk) offers Undo for 10 seconds. `POST /v1/assets/{id}/undo-custody` performs the inverse action in one transaction
+  (never a delete), guarded by `If-Match`, the newest history event and a five-minute window; a new history event
+  `custody_undone` (migration `0130`). New problem codes `undo-expired`, `undo-asset-changed`, `undo-not-possible`.
+  F8 moves keyboard focus to the notifications (listed in the shortcuts help).
 
 ### Changed
 
@@ -94,6 +106,8 @@ M2 wave 3, part 1: the import backend (M2-IMP-01..07) and the loaner pool backen
 - `GET /v1/loans/overdue` lists the asset check-outs past due with the holder, asset tag and name and the pool name
   (new members `asset_tag`, `asset_name`, `holder_name`, `pool_name`).
 - The scan lookup of `GET /v1/scan/resolve` is shared with the loaner flows (no behaviour change).
+- The history payloads of check-out, check-in and a transfer out of stock now also carry the ids of the statuses
+  (`status.from_id` / `to_id`), what an undo restores.
 
 
 ---

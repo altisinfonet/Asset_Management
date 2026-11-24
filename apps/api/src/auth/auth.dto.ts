@@ -32,7 +32,12 @@ export interface UserRow {
   archived_at: Date | null;
 }
 
-export const userDto = (u: UserRow, grants: readonly GrantedRole[]) => ({
+/** `personId`: the person record of the login (M2-USR-03); null where the caller has no tenant transaction at hand (login responses). */
+export const userDto = (
+  u: UserRow,
+  grants: readonly GrantedRole[],
+  personId: string | null = null,
+) => ({
   id: u.id,
   created_at: u.created_at.toISOString(),
   updated_at: u.updated_at.toISOString(),
@@ -45,7 +50,7 @@ export const userDto = (u: UserRow, grants: readonly GrantedRole[]) => ({
   role_assignments: grants.map(roleAssignmentDto),
   mfa_enabled: u.mfa_enabled,
   last_login_at: u.last_login_at ? u.last_login_at.toISOString() : null,
-  person_id: null as string | null, // app.person arrives with M2
+  person_id: personId,
 });
 
 export type UserDto = ReturnType<typeof userDto>;

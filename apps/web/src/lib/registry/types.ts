@@ -36,6 +36,7 @@ export type CheckinRequest = S['CheckinRequest'];
 export type TransferRequest = S['TransferRequest'];
 export type CustodyResult = S['CustodyResult'];
 export type TransferResult = S['TransferResult'];
+export type UndoResult = S['UndoResult'];
 export type ScanResolveResult = S['ScanResolveResult'];
 export type ScanAction = ScanResolveResult['allowed_actions'][number];
 export type Attachment = S['Attachment'];

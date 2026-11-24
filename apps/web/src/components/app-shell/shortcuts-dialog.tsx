@@ -23,6 +23,7 @@ const GENERAL: Shortcut[] = [
   { labelKey: 'shortcuts.newAsset', keys: ['C'] },
   { labelKey: 'shortcuts.help', keys: ['?'] },
   { labelKey: 'shortcuts.close', keys: ['Esc'] },
+  { labelKey: 'shortcuts.notifications', keys: ['F8'] },
 ];
 
 const NAVIGATION: Shortcut[] = [

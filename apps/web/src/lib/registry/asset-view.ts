@@ -21,7 +21,15 @@ export const isStateTypeFilter = (value: unknown): value is (typeof STATE_TYPE_F
   typeof value === 'string' && (STATE_TYPE_FILTERS as readonly string[]).includes(value);
 
 export type AssetSortKey =
-  'asset_tag' | 'name' | 'purchase_date' | 'warranty_end' | 'created_at' | 'updated_at';
+  | 'asset_tag'
+  | 'name'
+  | 'purchase_date'
+  | 'warranty_end'
+  | 'created_at'
+  | 'updated_at'
+  | 'location'
+  | 'assignee'
+  | 'due';
 
 export interface AssetViewState {
   q: string;
@@ -84,6 +92,10 @@ export const SORT_KEY_BY_COLUMN: Record<string, AssetSortKey> = {
   purchase_date: 'purchase_date',
   warranty_end: 'warranty_end',
   created_at: 'created_at',
+  // M2-REG-03: empty values (in stock, no location, no expected return) are listed last either way
+  location: 'location',
+  assignee: 'assignee',
+  due: 'due',
 };
 
 export const COLUMN_BY_SORT_KEY: Record<string, string> = Object.fromEntries(

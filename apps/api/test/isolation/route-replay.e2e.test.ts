@@ -517,6 +517,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
           expect: [201],
         },
       ],
+      // ---- M2-USR-03: link and unlink a person and a login account (ED-22)
+      'post /v1/people/:id/link-user': [
+        notFound('POST', `/v1/people/${c.personId}/link-user`, { user_id: c.userId }),
+        // B's own person to A's login account: there is no such account in B
+        refused('POST', `/v1/people/${c.ownPersonId}/link-user`, { user_id: c.userId }),
+      ],
+      'delete /v1/people/:id/link-user': [notFound('DELETE', `/v1/people/${c.personId}/link-user`)],
       'get /v1/people/:id/assignments': [
         notFound('GET', `/v1/people/${c.personId}/assignments?state=all`),
       ],
@@ -633,6 +640,18 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       'post /v1/assets/:id/transfer': [
         custody(`/v1/assets/${c.assetId}/transfer`, { person_id: c.personId }),
         custody(`/v1/assets/${c.ownAssetId}/transfer`, { person_id: c.personId }, [422]),
+      ],
+      // M2-UX-02: undo of a custody action (ED-23): A's asset is a 404 for B whatever the headers
+      'post /v1/assets/:id/undo-custody': [
+        {
+          ...custody(`/v1/assets/${c.assetId}/undo-custody`, {
+            assignment_id: c.accessoryAssignmentId,
+          }),
+          headers: {
+            'idempotency-key': `replay-undo-${Date.now()}-${keyN++}`,
+            'if-match': 'W/"1"',
+          },
+        },
       ],
       'get /v1/assets/:id/assignments': [notFound('GET', `/v1/assets/${c.assetId}/assignments`)],
       'get /v1/assets/:id/history': [notFound('GET', `/v1/assets/${c.assetId}/history`)],

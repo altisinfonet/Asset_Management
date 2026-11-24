@@ -49,6 +49,29 @@ test.describe('assets list (M1-WEB-07)', () => {
     await expect(range(page)).toHaveText('Showing 1-50 of 195');
   });
 
+  test('sorts by Assigned to and Location (M2-REG-03): empty values stay last in both directions', async ({
+    page,
+  }) => {
+    await page.goto('/assets');
+    await expect(range(page)).toHaveText('Showing 1-50 of 195');
+    const assignee = page.getByRole('columnheader', { name: /Assigned to/ });
+    await assignee.getByRole('button').click();
+    await expect(assignee).toHaveAttribute('aria-sort', 'ascending');
+    // somebody holds the first asset of the list; the nobody-has-it dash is not up here
+    await expect(page.getByRole('row').nth(1).getByText('-', { exact: true })).toHaveCount(0);
+    await assignee.getByRole('button').click();
+    await expect(assignee).toHaveAttribute('aria-sort', 'descending');
+    await expect(page.getByRole('row').nth(1).getByText('-', { exact: true })).toHaveCount(0);
+    for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Next page' }).click();
+    await expect(range(page)).toHaveText('Showing 151-195 of 195');
+    await expect(page.getByRole('row').last().getByText('-', { exact: true })).toHaveCount(1);
+
+    const location = page.getByRole('columnheader', { name: /Location/ });
+    await location.getByRole('button').click();
+    await expect(location).toHaveAttribute('aria-sort', 'ascending');
+    await expect(range(page)).toHaveText('Showing 1-50 of 195');
+  });
+
   test('search and filters narrow the list; clear all restores it', async ({ page }) => {
     await page.goto('/assets');
     await expect(range(page)).toHaveText('Showing 1-50 of 195');

@@ -175,6 +175,14 @@ const PROBLEM_CODES = {
   'mfa-already-enrolled': [[409], 'The user already has an active TOTP factor; disable it first.'],
   'asset-already-checked-out': [[409], 'The asset is already checked out.'],
   'asset-not-checked-out': [[409], 'The asset has no open check-out to return.'],
+  // [M2-USR-03, ED-22] link a person and a login account
+  'person-already-linked': [[409], 'The person is already linked to a login account (the same or another one). Unlink it first.'],
+  'login-already-linked': [[409], 'The login account is already linked to a person that somebody chose (not the placeholder the system made for it). Unlink that person first.'],
+  'login-person-in-use': [[409], 'The login account\'s own person record still holds assets, so it cannot be replaced by the person being linked: check them in or transfer them first (`usage.open_assignments`).'],
+  // [M2-UX-02, ED-23] undo of a custody action
+  'undo-expired': [[409], 'More than five minutes have passed since the custody action, so it can no longer be undone.'],
+  'undo-asset-changed': [[409], 'The asset changed after the action (another custody action, an edit, a move...), so it can no longer be undone.'],
+  'undo-not-possible': [[409], 'The action cannot be undone: it was already undone, the previous holder or status is no longer available, or it is loaner custody.'],
   // [M2-W1 locations, people, custody]
   'asset-not-deployable': [[409], 'The asset\'s status does not allow this custody action: check-out (and a transfer out of stock) need a `deployable` state, so lost, archived, in-repair and pending assets cannot be checked out.'],
   'insufficient-stock': [[409], 'Not enough quantity on hand.'],
@@ -748,7 +756,7 @@ S_.HistoryEvent = obj({
   id: uuid(),
   asset_id: uuid(),
   at: dt(),
-  event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']),
+  event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported', 'custody_undone']),
   actor_type: en(['user', 'api_key', 'integration', 'system']),
   actor_id: nuuid(),
   actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists.' },
@@ -764,9 +772,10 @@ S_.HistoryEvent = obj({
     '- `updated`: `{fields: string[]}`, the names of the fields that changed',
     '- `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`',
     '- `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)',
-    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`',
-    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
-    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to, from_id, to_id}, note?, attachment_ids?}`',
+    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to, from_id, to_id}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
+    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, status?: {from, to, from_id, to_id} (only for a transfer out of stock), location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `custody_undone` ([M2-UX-02, ED-23]): written by `POST /v1/assets/{id}/undo-custody` next to (never instead of) the event it reverses: `{undone: "checkout"|"checkin"|"transfer", undone_event_type, undone_assignment_id, assignment_id?, target_type?, target_id?, target_name?, status: {from, to}, location?: {from, to}}`',
     '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
     '- `restored`: `{}` or `{was_disposed: true}`',
     '- `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch',
@@ -1251,7 +1260,7 @@ defineResource('User', {
   },
   required: ['email', 'display_name', 'role_assignments'],
   createOnly: { send_invite: bool({ default: true }) },
-  readOnly: { mfa_enabled: ro(bool()), last_login_at: ro(ndt()), person_id: ro(nuuid()) },
+  readOnly: { mfa_enabled: ro(bool()), last_login_at: ro(ndt()), person_id: ro(nuuid('[M2-USR-03] The person record of this login account (every login has exactly one; see `POST /v1/people/{id}/link-user`). Filled by `/v1/users` and `/v1/me`; null in login responses.')) },
 });
 S_.Role = obj({ id: uuid(), key: str(), name: str(), description: nstr(), permissions: arr(str()), is_builtin: bool() }, ['id', 'key', 'name', 'permissions', 'is_builtin']);
 S_.RoleList = obj({ data: arr(S('Role')) }, ['data']);
@@ -1622,6 +1631,22 @@ crud({
 doc.paths['/v1/people'].post.description = 'Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].patch.description = 'Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.';
+// [M2-USR-03] BEGIN - link and unlink a person and a login account (ED-22)
+S_.PersonLinkUserRequest = obj({ user_id: uuid('The login account (`User.id`) to link: live, in this tenant.') }, ['user_id'], { additionalProperties: false });
+addOp('/v1/people/{id}/link-user', 'post', {
+  tag: 'People', id: 'linkPersonToUser', summary: 'Link a person to a login account', perm: 'user:manage', params: [ID], ifMatchOptional: true,
+  description: 'Makes the person the person record of the login account (Administrators only, audited as `person.user_linked`). Every login account already has the person the database created for it, so linking **replaces** that placeholder: it is archived (never deleted; its history keeps pointing at it) and a department it headed is headed by the linked person. The linked person keeps all of its assignments and history. One person per login and one login per person: a person that already has a login is 409 `person-already-linked`, a login whose person was chosen by somebody (not the system-made placeholder, which has no `created_by`) is 409 `login-already-linked` (unlink it first), a placeholder that still holds assets is 409 `login-person-in-use` (`usage.open_assignments`). Linking the pair that is already linked changes nothing (200). 422 `/user_id` when the account does not exist in the tenant or is archived. The person\'s name and email are not changed, but a later rename of the login account renames the person again (ED-15).',
+  body: jsonBody(S('PersonLinkUserRequest'), true, { user_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92' }),
+  problems: { 409: { codes: ['person-already-linked', 'login-already-linked', 'login-person-in-use', 'conflict', 'idempotency-key-in-flight'], text: 'The person already has a login, the login already has a chosen person, or the login\'s own placeholder person still holds assets.' } },
+  success: { 200: okResp(200, 'Linked. The person (`user_id` set); `ETag` is its new version.', S('Person'), { etag: true }) },
+});
+addOp('/v1/people/{id}/link-user', 'delete', {
+  tag: 'People', id: 'unlinkPersonFromUser', summary: 'Unlink a person from its login account', perm: 'user:manage', params: [ID], ifMatchOptional: true,
+  description: 'Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.',
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The person has no login account to unlink.' } },
+  success: { 200: okResp(200, 'Unlinked. The person (`user_id` null); `ETag` is its new version.', S('Person'), { etag: true }) },
+});
+// [M2-USR-03] END
 // [DEPT] BEGIN - departments (ED-17)
 crud({
   tag: 'Departments', base: 'departments', name: 'Department', plural: 'Departments', singular: 'department', readPerm: 'department:read', writePerm: 'department:manage',
@@ -1674,8 +1699,8 @@ const assetFilters = [
 ];
 addOp('/v1/assets', 'get', {
   tag: 'Assets', id: 'listAssets', summary: 'List and search assets', perm: 'asset:read',
-  description: 'The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.',
-  params: listParams([...assetFilters, sortParam(['created_at', 'updated_at', 'asset_tag', 'name', 'purchase_date', 'warranty_end'], ['-created_at'])]),
+  description: 'The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.\n\n[M2-REG-03, ED-22] `sort` also takes `location` (the full location path, `HQ > Floor 2 > Room 4`, case-insensitive), `assignee` (the name of whoever holds the asset: person, location or asset tag, case-insensitive) and `due` (the expected return date of the open custody). For these three keys an asset with no value (no location, not checked out, no expected return) is listed **last in both directions**, ordered by `id` among themselves, so a page boundary never splits or repeats rows. The other keys keep sorting an empty value as the smallest. Cursors are bound to the sort: a cursor of another sort is 400 `invalid-cursor`.',
+  params: listParams([...assetFilters, sortParam(['created_at', 'updated_at', 'asset_tag', 'name', 'purchase_date', 'warranty_end', 'location', 'assignee', 'due'], ['-created_at'])]),
   success: { 200: okResp(200, 'A page of assets.', S('AssetList'), { replay: false }) },
 });
 addOp('/v1/assets', 'post', {
@@ -1759,7 +1784,7 @@ addOp('/v1/settings/asset-tag-template', 'put', {
 addOp('/v1/assets/{id}/history', 'get', {
   tag: 'Assets', id: 'listAssetHistory', summary: 'Chain of custody and lifecycle events', perm: 'asset:read',
   description: 'Newest first. Includes custody changes, status/location changes, repairs and imports.',
-  params: [ID, P('Cursor'), P('Limit'), arrQ('event_type', en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']), 'Filter by event type.'), qp('from', dt(), 'Events at or after.'), qp('to', dt(), 'Events before.')],
+  params: [ID, P('Cursor'), P('Limit'), arrQ('event_type', en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported', 'custody_undone']), 'Filter by event type.'), qp('from', dt(), 'Events at or after.'), qp('to', dt(), 'Events before.')],
   success: { 200: okResp(200, 'A page of events.', S('HistoryEventList'), { replay: false }) },
 });
 addOp('/v1/assets/{id}/assignments', 'get', {
@@ -1799,6 +1824,22 @@ addOp('/v1/assets/{id}/transfer', 'post', {
   problems: { 409: { codes: ['asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running.' } },
   success: { 201: okResp(201, 'Transferred. Returns the updated asset, the transfer record and the new assignment; `ETag` is the new version of the asset.', S('TransferResult'), { etag: true, location: true }) },
 });
+
+// [M2-UX-02] BEGIN - undo of a custody action (ED-23)
+S_.UndoCustodyRequest = obj({ assignment_id: uuid('The `assignment.id` the action answered with: the new assignment of a check-out or transfer, the closed one of a check-in.') }, ['assignment_id'], { additionalProperties: false });
+S_.UndoResult = obj({
+  asset: S('Asset'),
+  assignment: S('Assignment'),
+  undone: en(['checkout', 'checkin', 'transfer']),
+}, ['asset', 'assignment', 'undone'], { description: 'Result of an undo: the **updated asset** (new `ETag` also in the header), the assignment that is now in effect (the closed one after undoing a check-out or a transfer from stock, the re-opened one after undoing a check-in or a transfer between holders) and what was undone.' });
+addOp('/v1/assets/{id}/undo-custody', 'post', {
+  tag: 'Custody', id: 'undoAssetCustody', summary: 'Undo the last custody action of an asset', perm: 'asset:checkout', params: [ID], ifMatch: true, idem: 'required',
+  description: 'Reverses the **last** check-out, check-in or transfer of the asset as an inverse action, in one transaction, never as a delete: a check-out is undone by closing its period and restoring the previous status; a check-in by re-opening custody for the same holder (a NEW assignment: a closed period is never re-opened) and restoring the previous status and location; a transfer by moving the asset back to the previous holder (or, for a transfer out of stock, like a check-out). The original event, assignment and audit row stay; the undo adds a `custody_undone` history event, an audit row `asset.custody_undone` and a new version of the asset.\n\nGuards: `If-Match` is required and must be the ETag the action answered with (412 when the asset changed in any way since); `assignment_id` must belong to the newest history event of the asset (409 `undo-asset-changed` otherwise, 409 `undo-not-possible` when that event is already an undo); the action is at most five minutes old (409 `undo-expired`); the caller needs the permission of the action it reverses (`asset:checkout`, `asset:checkin` or `asset:transfer`; 403 otherwise); and the previous holder and status must still be valid (409 `undo-not-possible`, for example the person was deactivated meanwhile). Loaner custody is not undone here. Requires an `Idempotency-Key`: a retry replays the stored answer.',
+  body: jsonBody(S('UndoCustodyRequest'), true, { assignment_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d93' }),
+  problems: { 409: { codes: ['undo-expired', 'undo-asset-changed', 'undo-not-possible', 'conflict', 'idempotency-key-in-flight'], text: 'Too late, the asset changed meanwhile, already undone, or the previous holder / status is gone.' } },
+  success: { 200: okResp(200, 'Undone. Returns the updated asset and the assignment now in effect; `ETag` is the new version of the asset.', S('UndoResult'), { etag: true }) },
+});
+// [M2-UX-02] END
 
 // ---------------------------------------------------------------- [M2-W1] moves, disposal, lost and found, person history
 // Added by the wave-1 backend (M2-LOC-02, M2-LIFE-05, M2-LIFE-06): not part of the first contract draft.

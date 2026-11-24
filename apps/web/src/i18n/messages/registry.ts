@@ -169,6 +169,7 @@ export const registryMessages = {
       restored: 'Restored',
       label_printed: 'Label printed',
       imported: 'Imported',
+      custody_undone: 'Custody undone',
     },
   },
   assetForm: {

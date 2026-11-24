@@ -251,6 +251,52 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'custody: success toast with Undo (M2-UX-02)',
+    open: async (p) => {
+      const asset = await readyAsset(p);
+      await p.goto(`/assets/view?id=${asset.id}`);
+      await p.getByRole('button', { name: 'Check out', exact: true }).click();
+      const dialog = p.getByRole('dialog', { name: `Check out ${asset.asset_tag}` });
+      await pick(p, dialog.getByRole('combobox', { name: /Person/ }), 'Maria', /Maria Reyes/);
+      await dialog.getByRole('button', { name: 'Check out', exact: true }).click();
+      await expect(p.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: 'people: link to a login dialog with the consequence (M2-USR-03)',
+    open: async (p) => {
+      await p.goto('/people');
+      await p.getByRole('link', { name: 'Jamie Okafor' }).click();
+      await p.getByRole('button', { name: 'Link to a login' }).click();
+      const dialog = p.getByRole('dialog', { name: 'Link Jamie Okafor to a login' });
+      await pick(p, dialog.getByRole('combobox', { name: /Login account/ }), 'Vera', /Vera Viewer/);
+      await expect(dialog.getByText(/will sign in as viewer@example\.org/)).toBeVisible();
+    },
+  },
+  {
+    name: 'people: unlink confirmation (M2-USR-03)',
+    open: async (p) => {
+      await p.goto('/people');
+      await p.getByRole('link', { name: 'Vera Viewer' }).click();
+      await p.getByRole('button', { name: 'Unlink login' }).click();
+      await expect(
+        p.getByRole('dialog', { name: 'Unlink Vera Viewer from their login?' }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: 'users: link a login to a person dialog (M2-USR-03)',
+    open: async (p) => {
+      await p.goto('/settings/users');
+      await p
+        .getByRole('row', { name: /Marco Secure/ })
+        .getByRole('button', { name: /Actions for/ })
+        .click();
+      await p.getByRole('menuitem', { name: 'Link to a person' }).click();
+      await expect(p.getByRole('dialog', { name: 'Link Marco Secure to a person' })).toBeVisible();
+    },
+  },
+  {
     name: 'custody: check-in dialog with the photo slot',
     open: async (p) => {
       const asset = await heldAsset(p);

@@ -689,7 +689,7 @@ Assignable-only people share the user model with login users (decision to be rec
 
 #### M2-USR-02 - People UI
 Size: M - Owner: Both - Deps: M2-USR-01, M1-WEB-02
-Status: partial (M2 wave 1) - people list and detail with assets held and a server-side history tab, create / edit, archive with the force + reason path, person picker; the link-to-login action is deferred to M2-USR-03.
+Status: partial (M2 wave 1) - people list and detail with assets held and a server-side history tab, create / edit, archive with the force + reason path, person picker; the link-to-login action was added by M2-USR-03 (2026-11-24, ED-22).
 - [ ] People list/detail with "assets currently held" and a history tab; create/edit; link-to-login action for Admins.
 - [ ] Person picker component (type-ahead, used by check-out dialogs) with keyboard selection.
 
@@ -1026,20 +1026,23 @@ Status: API done (2026-11-24, ED-21): `GET/PUT /v1/settings/custody` with `defau
 #### M2-REG-03 - Sort the asset list by location, assignee and due date
 Size: M - Owner: Both - Deps: M2-LOC-02, M2-LIFE-01 - Priority: Should
 Deferred from wave 1 integration. The list sorts by columns of the asset row only.
-- [ ] `sort` accepts `location`, `assignee` and `due` with keyset paging (stable ordering, indexes that serve them under RLS, see ADR 0005); documented in the contract.
-- [ ] The asset table headers for the three columns become sortable; perf budget on 100k assets unchanged.
+Status: done (2026-11-24, ED-22) - the three keys sort with empty values last in both directions through an extra leading `<key>.null` cursor term; the sort is computed on narrow rows (index-only scan of the existing partial indexes, then a top-N heapsort, then the page of ids is joined back), p95 between 40 and 85 ms on 50,000 assets with about 20,000 open assignments, budget 500 ms (numbers in ED-22).
+- [x] `sort` accepts `location`, `assignee` and `due` with keyset paging (stable ordering, NULLs last, see ADR 0005 and ED-22); documented in the contract.
+- [x] The asset table headers for the three columns become sortable; perf budget unchanged (measured on 50,000 assets per tenant, two tenants; 100k in one tenant is about double: the sorts are linear in the tenant's assets).
 
 #### M2-USR-03 - Link and unlink a person and a login account
 Size: M - Owner: Both - Deps: M2-USR-01, M2-USR-02 - Priority: Should
 Deferred from wave 1 integration. People are linked to a login by e-mail when the account is created; an Admin cannot link or unlink by hand.
-- [ ] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
-- [ ] The person page offers "Link to a login" and "Unlink"; mock, unit and real-stack tests.
+Status: done (2026-11-24, ED-22) - linking replaces the system-made placeholder person of the login (archived, history kept); unlinking leaves the person as it is and gives the login a new placeholder; the Users page got a Person column and the same actions.
+- [x] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
+- [x] The person page offers "Link to a login" and "Unlink" (and Settings -> Users "Link to a person" / "Unlink person"); mock, unit and real-stack tests.
 
 #### M2-UX-02 - Undo toast after a custody action
 Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Could
 Deferred from wave 1 integration. A mistaken check-out needs a second dialog today.
-- [ ] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
-- [ ] Keyboard reachable, announced to screen readers, and absent when the inverse is no longer valid (the asset changed meanwhile).
+Status: done (2026-11-24, ED-23) - one server operation `POST /v1/assets/{id}/undo-custody` performs the inverse action atomically, guarded by the ETag of the action; single and bulk actions of the custody dialog.
+- [x] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
+- [x] Keyboard reachable (F8, then Tab), announced to screen readers, and refused with a clear message when the inverse is no longer valid (the asset changed meanwhile; the API answers 412 / 409 and the toast says so).
 
 ### E2.12 Founder requests 2026-11-24
 

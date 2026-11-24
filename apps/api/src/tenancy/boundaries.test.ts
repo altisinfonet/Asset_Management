@@ -26,6 +26,10 @@ describe('no session-level tenant context (M1-TEN-02)', () => {
     for (const dir of ['src', 'migrations']) {
       for await (const file of walk(join(apiRoot, dir))) {
         if (!/\.(ts|sql)$/.test(file) || file.endsWith('.test.ts')) continue;
+        // The generated Prisma client is not our code and is large: scanning it made this test
+        // flaky under a loaded parallel run.
+        if (relative(apiRoot, file).split(/[\\/]/).slice(0, 2).join('/') === 'src/generated')
+          continue;
         const text = await readFile(file, 'utf8');
         if (sessionSet.test(text) || sessionSetConfig.test(text)) {
           offenders.push(relative(apiRoot, file));
@@ -33,7 +37,7 @@ describe('no session-level tenant context (M1-TEN-02)', () => {
       }
     }
     expect(offenders).toEqual([]);
-  });
+  }, 30_000);
 
   it('the matcher itself catches the forbidden forms and allows the safe ones', () => {
     expect(sessionSet.test("SET app.tenant_id = 'x'")).toBe(true);

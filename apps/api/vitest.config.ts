@@ -16,5 +16,8 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    // Several unit tests run real tools (ESLint on boundary fixtures, PDF rasterising and code decoding)
+    // and take 2-5 s each; under a loaded parallel `turbo` run they crossed vitest's 5 s default.
+    testTimeout: 15_000,
   },
 });

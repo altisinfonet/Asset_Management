@@ -25,7 +25,10 @@ How every change to this repository is made, whoever (or whatever) makes it. Rea
 Edit `docs/engineering/tools/gen.mjs` only (never the yaml by hand), in a clearly commented block for your area,
 then regenerate `openapi.yaml`, lint it (`npx -y @redocly/cli@2.79.0 lint docs/engineering/openapi.yaml`,
 0 errors) and regenerate the client (`pnpm --filter @assettracker/api-client generate`; its `generate:check`
-runs in the tests). Add new problem codes to both `PROBLEM_CATALOG` (`apps/api/src/platform`) and the contract.
+runs in the tests). Both generators run from a plain checkout after `pnpm install` (`yaml` is a pinned root
+devDependency): `node docs/engineering/tools/gen.mjs docs/engineering/openapi.yaml` (the output path is required) and
+`node docs/engineering/tools/gen-api-md.mjs` (add `--check` to verify `docs/API.md`; `YAML_DIR` is only a fallback
+when `yaml` is not installed). Add new problem codes to both `PROBLEM_CATALOG` (`apps/api/src/platform`) and the contract.
 
 ## Database migrations (`apps/api/migrations`)
 

@@ -108,9 +108,21 @@ SAML/SCIM tables are out of scope (SAML is a Should at MVP, SCIM is v2).
 | Entity | M | Purpose | Key columns | Relationships | Notable indexes |
 |---|---|---|---|---|---|
 | `app.location` | M2 | **Hierarchical** location | `parent_id`, `name`, `kind` (site/building/floor/room/storage/vehicle/other), `company_id`, `ancestor_ids uuid[]` (root..self), `depth`, address jsonb, lat/lng | self-ref parent; company | unique siblings `(tenant_id, parent_id, lower(name))` NULLS NOT DISTINCT; GIN `(tenant_id, ancestor_ids)` for subtree filters (`ancestor_ids @> ARRAY[x]`) |
-| `app.person` | M2 | **Assignee** (ED-01): employees/students/contractors, with or without a login | `kind`, `display_name`, `email`, `employee_ref`, `department`, `location_id`, `status`, `user_id` (nullable link), `company_id` | optional 1:1 user_account | unique `(tenant_id, user_id)`; partial unique `employee_ref`, `lower(email)`; trigram on name |
+| `app.person` | M2 | **Assignee** (ED-01): employees/students/contractors, with or without a login | `kind`, `display_name`, `email`, `employee_ref`, **`department_id`** (ED-17; the old free-text `department` column is deprecated, see 3.5.1), `location_id`, `status`, `user_id` (nullable link), `company_id` | optional 1:1 user_account; department | unique `(tenant_id, user_id)`; partial unique `employee_ref`, `lower(email)`; trigram on name |
+| `app.department` | M2 | **Managed department** (ED-17): the list people and assets are assigned to, so a department is chosen, never typed | `name`, `code`, `description`, `manager_person_id`, stored keys `name_key` / `code_key` (`lower(btrim(..))`), standard stamps and `version` | person (manager) | partial unique `(tenant_id, name_key)` and `(tenant_id, code_key)` among live rows; `person_department_idx`, `asset_department_idx` (partial, not null) |
 
 `ancestor_ids` and `depth` are maintained by triggers: `BEFORE INSERT OR UPDATE OF parent_id` derives them from the parent and rejects cycles (23514); `AFTER UPDATE OF parent_id` rewrites the whole subtree when a location moves (tests T8n-T8p). Location **scoping of access** (role assignments with `scope_type = location`) is applied by the repository layer using this column; RLS stays tenant-only and `ltree` is not used (ED-07, architecture 5.1).
+
+#### 3.5.1 Managed departments (ED-17, migration 0100; founder request 2026-11-24)
+
+Free text caused mistakes ("Maths", "maths ", "Mathematics" as three departments), so a department is now a tenant table that people and assets reference.
+
+- **`app.department`** follows the tenant conventions: unique `(tenant_id, id)`, FORCE RLS with the NULLIF policy, `version` / `updated_at` trigger, grants `select, insert, update` (no delete: archive only), composite FK `(tenant_id, manager_person_id) -> person`. The name is unique among **live** departments through the stored key `name_key = lower(btrim(name))` (plain btree equality through RLS, ADR 0005); the code likewise (`code_key`, only when set). Archiving frees the name.
+- **`person.department_id`** (nullable, composite FK `person_department_fk`) replaces the free text. **`asset.department_id`** (nullable, composite FK `asset_department_fk`) is a new optional **owning / cost-centre department** next to `location_id` (the product plan lists CostCenter / Department as an allocation dimension of Asset): the location says where the asset is, the department who owns or pays for it; the two are independent. Both columns have partial indexes (`WHERE department_id IS NOT NULL`).
+- **Migration of the existing text** (same migration, per tenant): one department per distinct, trimmed, case-insensitively deduplicated value of `person.department` (the most used spelling names it, ties go to the alphabetically first; text over 200 characters is cut), then every person with that text is linked. The people rows are updated with the touch trigger switched off, so their `version` and `updated_at` (and therefore their ETags) do not change. The data step is re-runnable (an existing department of that name is reused, a person that already has a department is left alone); `test/lifecycle/departments.e2e.test.ts` runs that very block twice against a database with messy text.
+- **The old column is kept for one release and no longer used**: `person.department` (text) is commented `DEPRECATED`, **nothing writes it** (the API rejects a `department` key on person create / update with a 422) and **nothing reads it** (the person read model derives `Person.department` as the NAME of the linked department, read-only; search, exports and the list filter use the join / `department_id`). A later migration drops the column once a release has shipped without it.
+- **Deleting**: a department is never deleted, only archived (`archived_at`). Archiving a department that live people or assets still reference is a `409` with `usage` unless `reassign_to` names another live department, in which case every person and asset (archived ones too, so nothing points at an archived department) moves there in the same transaction: this is also how two departments are merged. The audit row records `meta.reassigned_to` and the counts.
+- **Permissions**: `department:read` is part of the read set of every built-in role; `department:manage` belongs to the Asset manager (the Administrator holds `*`). Migration 0100 updates the built-in roles of existing tenants and replaces `app.provision_tenant` from its definition in 0094.
 
 ### 3.6 Custody (M2)
 
@@ -239,6 +251,9 @@ erDiagram
     ASSET |o--o{ ASSET : parent_of
     LOCATION |o--o{ LOCATION : parent_of
     LOCATION |o--o{ PERSON : "home of"
+    DEPARTMENT |o--o{ PERSON : "employs"
+    DEPARTMENT |o--o{ ASSET : "owns"
+    PERSON |o--o{ DEPARTMENT : "manages"
     LOCATION |o--o{ ACCESSORY : stocked_at
     LOCATION |o--o{ CONSUMABLE : stocked_at
 
@@ -424,6 +439,7 @@ erDiagram
         uuid model_id FK
         uuid status_id FK
         uuid location_id FK
+        uuid department_id FK
         uuid vendor_id FK
         uuid parent_asset_id FK
         bigint purchase_cost_minor
@@ -478,9 +494,18 @@ erDiagram
         uuid tenant_id FK
         uuid user_id FK
         uuid location_id FK
+        uuid department_id FK
         text kind
         text display_name
         text employee_ref
+    }
+    DEPARTMENT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid manager_person_id FK
+        text name
+        text name_key
+        text code
     }
     ASSIGNMENT {
         uuid id PK
@@ -605,6 +630,7 @@ Permission strings are `resource:action` (plan 6.12). Roles store them in `role.
 | `asset:label` | label templates and PDF rendering |
 | `catalog:read` / `catalog:manage` | categories, manufacturers, vendors, models, status labels, custom fields |
 | `location:read` / `manage`, `person:read` / `manage`, `company:read` | locations, people, companies |
+| `department:read` / `department:manage` | departments (ED-17): every built-in role reads, the Asset manager (and the Administrator) writes |
 | `accessory:read` / `manage` / `checkout`, `consumable:read` / `manage` / `adjust` | accessories and consumables (`adjust` = stock movements) |
 | `loaner:read` / `manage` / `checkout` | loaner pools, members, loans, overdue list |
 | `repair:read` / `manage` | repair log |
@@ -669,6 +695,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Custody (3): checkout, checkin, transfer | app.assignment, transfer, asset, asset_history, audit_log, outbox_event, idempotency_key. Responses carry the updated asset and the assignment (ED-13) |
 | Categories, Manufacturers, Vendors, Models, Status labels, Custom fields (5 each) | app.category, manufacturer, vendor, asset_model, status_label, custom_field_def |
 | Locations (5), People (6) | app.location, person, assignment |
+| Departments (5) | app.department (counts read person and asset); `department_id` on person and asset |
 | Accessories (8), Consumables (7) | app.accessory, consumable, stock_movement, assignment (partial returns raise `quantity_returned`); views |
 | Loaners (10) | app.loaner_pool, loaner_pool_member, assignment; v_overdue_checkouts |
 | Repairs (6) | app.maintenance_record, asset, asset_history |

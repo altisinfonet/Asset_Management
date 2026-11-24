@@ -35,6 +35,7 @@ export {
   type HistoryEventType,
   historyActor,
   listHistory,
+  flushHistoryRows,
   writeAssetHistory,
 } from './asset-history.js';
 export { type DepartmentCounts, type LocationCounts, departmentDto, locationDto } from './dto.js';

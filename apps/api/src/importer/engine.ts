@@ -3,6 +3,10 @@ import type { AuthContext } from '../auth/index.js';
 import type { JobContextBase } from '../jobs/index.js';
 import type { AuditWriter, JobQueue, OutboxPublisher, StorageAdapter } from '../ports/index.js';
 import type { Tx } from '../tenancy/index.js';
+import { flushAuditRows } from '../audit/index.js';
+import { withBulkSink } from '../context/bulk-writes.js';
+import { flushOutboxRows } from '../outbox/index.js';
+import { flushHistoryRows } from '../registry/index.js';
 import { analyseFile } from './analysis.js';
 import { FileFormatError } from './csv-reader.js';
 import { CUSTOM_PREFIX, type CustomTarget, type EntityType } from './fields.js';
@@ -345,8 +349,18 @@ export class ImportEngine {
     const issues = await this.mappingIssues(tx, job);
     if (issues.length > 0)
       return this.fail(tx, job, `The mapping is not valid: ${issues[0]!.message}`, ctx);
+    const started = performance.now();
     if (job.state === 'dry_running') await this.dryRunStep(env, tenantId, ctx);
     else await this.commitStep(env, tenantId, ctx);
+    ctx.logger.info(
+      {
+        import_id: job.id,
+        phase: job.state,
+        from_row: job.cursor_row + 1,
+        ms: Math.round(performance.now() - started),
+      },
+      'import step',
+    );
   }
 
   private async nextRows(
@@ -607,13 +621,24 @@ export class ImportEngine {
       try {
         outcomes = await inNamedSavepoint(tx, 'import_batch', async () => {
           if (handler.begin) await handler.begin(env, works);
-          const fast: Outcome[] = [];
-          for (const work of works) {
-            const o = await handler.apply(env, work);
-            if (o.result === 'error') throw new BatchNeedsRowSavepoints();
-            fast.push(o);
-          }
-          return fast;
+          const run = async (): Promise<Outcome[]> => {
+            const fast: Outcome[] = [];
+            for (const work of works) {
+              const o = await handler.apply(env, work);
+              if (o.result === 'error') throw new BatchNeedsRowSavepoints();
+              fast.push(o);
+            }
+            return fast;
+          };
+          if (!handler.bulkWrites) return run();
+          // audit rows, events and history rows of the batch are inserted together, before the savepoint is released
+          return withBulkSink(async (sink) => {
+            const fast = await run();
+            await flushAuditRows(tx, sink.audit);
+            await flushOutboxRows(tx, sink.outbox);
+            await flushHistoryRows(tx, sink.history);
+            return fast;
+          });
         });
       } catch (err) {
         if (!(err instanceof BatchNeedsRowSavepoints)) {

@@ -48,6 +48,8 @@ export interface EntityHandler {
   ): { k1: string | null; k2: string | null };
   /** Dry run of a batch: one verdict per row, in order; writes nothing to the registry. */
   plan(env: HandlerEnv, rows: WorkRow[]): Promise<Verdict[]>;
+  /** Rows of a commit batch may defer their audit, event and history inserts to one multi-row INSERT each. */
+  readonly bulkWrites?: boolean;
   /** Called once with the rows of a commit batch, before the first `apply`: preload what they will look up. */
   begin?(env: HandlerEnv, rows: WorkRow[]): Promise<void>;
   /** Commit of ONE row, inside the engine's savepoint (an exception rolls the row back). */

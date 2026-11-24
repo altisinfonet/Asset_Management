@@ -30,7 +30,7 @@ import {
  * Results are printed and written to `test-results/import-perf.json`.
  */
 const ROWS = Number(process.env.IMPORT_PERF_ROWS ?? 3_000);
-const BATCH = process.env.IMPORT_BATCH_ROWS ?? '500';
+const BATCH = process.env.IMPORT_BATCH_ROWS ?? '1000';
 const GATE = { commitRowsPerMinute: 10_000, dryRunMinutesPer100k: 10 } as const;
 
 describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {

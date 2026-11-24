@@ -129,7 +129,7 @@ The catalogue of codes (generated from the contract):
 
 <!-- problem-codes:start -->
 
-Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch on `code`, not on the title; the set grows over time.
+Generated from the root `x-problem-codes` of the contract: **43 codes**. Branch on `code`, not on the title; the set grows over time.
 
 | Status    | Code                        | Meaning                                                                                                                                                                                                           |
 | --------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -157,7 +157,8 @@ Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch 
 | 409       | `cannot-revoke-current`     | The current session cannot be revoked here; use sign out.                                                                                                                                                         |
 | 409       | `conflict`                  | State conflict: uniqueness violation, or the resource is in the wrong state for this action.                                                                                                                      |
 | 409       | `idempotency-key-in-flight` | A request with the same Idempotency-Key is still running.                                                                                                                                                         |
-| 409       | `import-stale-dry-run`      | The dry run being committed is not the one reviewed. _(emitted once the feature ships)_                                                                                                                           |
+| 409       | `import-stale-dry-run`      | The dry run being committed is not the one reviewed: the file, mapping, options or value mapping changed after it, or a newer dry run exists. _(emitted once the feature ships)_                                  |
+| 409       | `import-wrong-state`        | The import is not in a state that allows this action (for example a commit before a dry run, or editing a running import). `state` and `allowed` say which.                                                       |
 | 409       | `insufficient-stock`        | Not enough quantity on hand.                                                                                                                                                                                      |
 | 409       | `mfa-already-enrolled`      | The user already has an active TOTP factor; disable it first.                                                                                                                                                     |
 | 409       | `no-loaner-available`       | The loaner pool has no available member. _(emitted once the feature ships)_                                                                                                                                       |
@@ -171,6 +172,7 @@ Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch 
 | 422       | `validation`                | Validation failed; see errors[] (JSON pointer + message + field code).                                                                                                                                            |
 | 428       | `precondition-required`     | `If-Match` is required for this operation.                                                                                                                                                                        |
 | 429       | `account-locked`            | Too many failed sign-in or re-authentication attempts; locked until Retry-After elapses.                                                                                                                          |
+| 429       | `import-quota-exceeded`     | The organisation already runs the maximum number of imports at once; retry after the time in `Retry-After`.                                                                                                       |
 | 429       | `too-many-requests`         | Rate limit exceeded; wait for Retry-After.                                                                                                                                                                        |
 | 500       | `internal`                  | Unexpected server error; quote request_id.                                                                                                                                                                        |
 | 503       | `unavailable`               | A dependency is down or the service is starting.                                                                                                                                                                  |
@@ -321,7 +323,7 @@ Grouped by contract tag. Tags marked "contract only" are specified but have no r
 
 <!-- api-catalogue:start -->
 
-Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **179 operations on 117 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
+Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **190 operations on 125 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
 
 "Requires" lists headers that are mandatory for that operation beyond the credential: `If-Match` (stale or missing gives `412` / `428`) and `Idempotency-Key` (missing gives `400 idempotency-key-required`).
 
@@ -614,18 +616,29 @@ Fixed label templates and PDF label sheets.
 
 > **Contract only (planned for M2 wave 3, stories IMP-01..09).** These operations are specified in the contract but have no routes in the running API yet.
 
-CSV/XLSX/Snipe-IT/Google Admin imports with a mandatory dry run.
+CSV/XLSX imports (assets, people, locations, departments; Google Admin ChromeOS preset) with a mandatory dry run.
 
-| Method | Path                       | Permission    | Requires        | Purpose                        |
-| ------ | -------------------------- | ------------- | --------------- | ------------------------------ |
-| GET    | `/v1/imports`              | `import:read` | -               | List import jobs               |
-| POST   | `/v1/imports`              | `import:run`  | -               | Create an import job           |
-| GET    | `/v1/imports/{id}`         | `import:read` | -               | Get an import job              |
-| PATCH  | `/v1/imports/{id}`         | `import:run`  | If-Match        | Edit mapping and options       |
-| POST   | `/v1/imports/{id}/cancel`  | `import:run`  | -               | Cancel an import job           |
-| POST   | `/v1/imports/{id}/commit`  | `import:run`  | Idempotency-Key | Commit a reviewed dry run      |
-| POST   | `/v1/imports/{id}/dry-run` | `import:run`  | -               | Run the import without writing |
-| GET    | `/v1/imports/{id}/rows`    | `import:read` | -               | Per-row results                |
+| Method | Path                                 | Permission    | Requires        | Purpose                                 |
+| ------ | ------------------------------------ | ------------- | --------------- | --------------------------------------- |
+| GET    | `/v1/import-templates`               | `import:read` | -               | Saved mapping templates                 |
+| POST   | `/v1/import-templates`               | `import:run`  | -               | Save a mapping as a template            |
+| GET    | `/v1/import-templates/{id}`          | `import:read` | -               | Get a mapping template                  |
+| PATCH  | `/v1/import-templates/{id}`          | `import:run`  | If-Match        | Edit a mapping template                 |
+| DELETE | `/v1/import-templates/{id}`          | `import:run`  | If-Match        | Delete a mapping template               |
+| GET    | `/v1/imports`                        | `import:read` | -               | List imports                            |
+| POST   | `/v1/imports`                        | `import:run`  | -               | Create an import                        |
+| GET    | `/v1/imports/{id}`                   | `import:read` | -               | Get an import                           |
+| PATCH  | `/v1/imports/{id}`                   | `import:run`  | If-Match        | Edit mapping, options and value mapping |
+| POST   | `/v1/imports/{id}/analyze`           | `import:run`  | -               | Read and profile the uploaded file      |
+| POST   | `/v1/imports/{id}/apply-template`    | `import:run`  | -               | Apply a saved mapping template          |
+| POST   | `/v1/imports/{id}/cancel`            | `import:run`  | -               | Cancel an import                        |
+| POST   | `/v1/imports/{id}/commit`            | `import:run`  | Idempotency-Key | Commit a reviewed dry run               |
+| POST   | `/v1/imports/{id}/dry-run`           | `import:run`  | -               | Run the import without writing          |
+| GET    | `/v1/imports/{id}/errors.csv`        | `import:run`  | -               | Download the error report               |
+| GET    | `/v1/imports/{id}/rows`              | `import:run`  | -               | Per-row results                         |
+| GET    | `/v1/imports/{id}/values`            | `import:run`  | -               | Distinct values of a reference column   |
+| GET    | `/v1/imports/presets`                | `import:read` | -               | Built-in import presets                 |
+| GET    | `/v1/imports/presets/{key}/template` | `import:read` | -               | Download a template file                |
 
 ### Attachments
 

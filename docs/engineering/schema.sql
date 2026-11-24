@@ -1280,55 +1280,104 @@ CREATE INDEX label_batch_requester_idx ON app.label_batch (tenant_id, created_by
 CREATE INDEX label_batch_open_idx      ON app.label_batch (tenant_id, created_at) WHERE status = 'queued';
 CREATE INDEX label_batch_expiry_idx    ON app.label_batch (tenant_id, expires_at) WHERE status = 'ready';
 
-CREATE TABLE app.import_job (
+CREATE TABLE app.import_job (                          -- one CSV / XLSX import: a mandatory dry run, then a commit in batches (ED-18, migration 0110)
   id                   uuid PRIMARY KEY,
   tenant_id            uuid NOT NULL REFERENCES app.tenant (id),
-  source               text NOT NULL CHECK (source IN ('csv','xlsx','snipe_it','google_admin_csv')),
-  entity_type          text NOT NULL
-                       CHECK (entity_type IN ('asset','accessory','consumable','location','person','manufacturer','asset_model','category')),
+  requested_by         uuid NOT NULL,
+  source               text NOT NULL CHECK (source IN ('csv','xlsx','google_admin_csv')),
+  entity_type          text NOT NULL CHECK (entity_type IN ('asset','person','location','department')),
+  preset_key           text CHECK (preset_key IS NULL OR length(preset_key) <= 64),
   state                text NOT NULL DEFAULT 'draft'
-                       CHECK (state IN ('draft','dry_run_queued','dry_run_running','dry_run_complete',
-                                        'commit_queued','committing','committed','failed','cancelled')),
+                       CHECK (state IN ('draft','uploaded','analyzing','analyzed','mapped','dry_running',
+                                        'dry_run_done','committing','completed','failed','cancelled')),
   file_attachment_id   uuid,
-  original_filename    text,
-  mapping              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(mapping) = 'object'),
-  options              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object'),
+  filename             text CHECK (filename IS NULL OR length(filename) <= 255),
+  parse                jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(parse) = 'object'),   -- format, encoding, delimiter, sheet, header line
+  headers              jsonb CHECK (headers IS NULL OR jsonb_typeof(headers) = 'array'),
+  profile              jsonb CHECK (profile IS NULL OR jsonb_typeof(profile) = 'array'),             -- per column: distinct, blanks, duplicates, type, samples
+  samples              jsonb CHECK (samples IS NULL OR jsonb_typeof(samples) = 'array'),             -- the first 50 data rows
+  mapping              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(mapping) = 'object' AND pg_column_size(mapping) <= 262144),
+  options              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object' AND pg_column_size(options) <= 65536),
+  value_map            jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(value_map) = 'object' AND pg_column_size(value_map) <= 1048576),
+  summary              jsonb CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'),
   rows_total           integer NOT NULL DEFAULT 0 CHECK (rows_total >= 0),
-  rows_create          integer NOT NULL DEFAULT 0 CHECK (rows_create >= 0),
-  rows_update          integer NOT NULL DEFAULT 0 CHECK (rows_update >= 0),
-  rows_skip            integer NOT NULL DEFAULT 0 CHECK (rows_skip >= 0),
-  rows_error           integer NOT NULL DEFAULT 0 CHECK (rows_error >= 0),
-  dry_run_digest       text,                                 -- hash(file, mapping, options) at dry-run time
-  dry_run_completed_at timestamptz,
+  plan_create          integer NOT NULL DEFAULT 0 CHECK (plan_create >= 0),   -- dry run: what WOULD happen
+  plan_update          integer NOT NULL DEFAULT 0 CHECK (plan_update >= 0),
+  plan_skip            integer NOT NULL DEFAULT 0 CHECK (plan_skip >= 0),
+  plan_error           integer NOT NULL DEFAULT 0 CHECK (plan_error >= 0),
+  done_create          integer NOT NULL DEFAULT 0 CHECK (done_create >= 0),   -- commit: what happened
+  done_update          integer NOT NULL DEFAULT 0 CHECK (done_update >= 0),
+  done_skip            integer NOT NULL DEFAULT 0 CHECK (done_skip >= 0),
+  done_error           integer NOT NULL DEFAULT 0 CHECK (done_error >= 0),
+  rows_processed       integer NOT NULL DEFAULT 0 CHECK (rows_processed >= 0),   -- progress of the running phase
+  cursor_row           integer NOT NULL DEFAULT 0 CHECK (cursor_row >= 0),       -- last row number handled: where a step resumes
+  dry_run_digest       text CHECK (dry_run_digest IS NULL OR dry_run_digest ~ '^[0-9a-f]{64}$'),   -- file, parse, mapping, options, value map and every row's plan
+  dry_run_at           timestamptz,
   committed_at         timestamptz,
-  error                text,
+  started_at           timestamptz,
+  finished_at          timestamptz,
+  cancel_requested     boolean NOT NULL DEFAULT false,
+  error                text CHECK (error IS NULL OR length(error) <= 1000),
   created_at           timestamptz NOT NULL DEFAULT now(),
   updated_at           timestamptz NOT NULL DEFAULT now(),
   created_by           uuid,
   updated_by           uuid,
+  archived_at          timestamptz,
   version              integer NOT NULL DEFAULT 1,
   UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, requested_by)       REFERENCES app.user_account (tenant_id, id),
   FOREIGN KEY (tenant_id, file_attachment_id) REFERENCES app.attachment (tenant_id, id),
-  CHECK (state NOT IN ('commit_queued','committing','committed') OR dry_run_digest IS NOT NULL)  -- commit only after a dry run
+  CONSTRAINT import_job_commit_needs_digest CHECK (state NOT IN ('committing','completed') OR dry_run_digest IS NOT NULL)  -- commit only after a reviewed dry run
 );
-CREATE INDEX import_job_state_idx ON app.import_job (tenant_id, created_at DESC, id DESC);
+CREATE INDEX import_job_state_idx     ON app.import_job (tenant_id, state, updated_at) WHERE state IN ('analyzing','dry_running','committing');
+CREATE INDEX import_job_requester_idx ON app.import_job (tenant_id, requested_by, created_at DESC, id DESC);
 
-CREATE TABLE app.import_row (
-  id          uuid PRIMARY KEY,
-  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
-  job_id      uuid NOT NULL,
-  phase       text NOT NULL CHECK (phase IN ('dry_run','commit')),
-  row_no      integer NOT NULL CHECK (row_no > 0),
-  outcome     text NOT NULL CHECK (outcome IN ('create','update','skip','error')),
-  entity_id   uuid,                                          -- resulting / matched record
-  errors      jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(errors) = 'array'),
-  warnings    jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(warnings) = 'array'),
-  source_data jsonb,                                         -- raw mapped row (tenant data, may contain PII)
-  UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, job_id, phase, row_no),
+CREATE TABLE app.import_row (                          -- one row of the file, BOTH phases (ED-18); no surrogate id: nothing refers to a row
+  tenant_id      uuid NOT NULL REFERENCES app.tenant (id),
+  job_id         uuid NOT NULL,
+  row_no         integer NOT NULL CHECK (row_no >= 1),    -- position among the data rows
+  line_no        integer NOT NULL CHECK (line_no >= 1),   -- line (CSV) or row (XLSX) of the file, for messages
+  raw            jsonb NOT NULL CHECK (jsonb_typeof(raw) = 'array'),      -- the cells as read (tenant data, may contain PII)
+  mapped         jsonb CHECK (mapped IS NULL OR jsonb_typeof(mapped) = 'object'),   -- the typed record the mapping produced
+  match_key      text,                                    -- normalised primary de-duplication key (tag, email, path, name)
+  match_key2     text,                                    -- secondary key (serial, employee number, code)
+  dup_of         integer,                                 -- row_no of the first row with the same key
+  plan           text CHECK (plan IN ('create','update','skip','error')),            -- dry-run verdict
+  errors         jsonb CHECK (errors IS NULL OR jsonb_typeof(errors) = 'array'),
+  warnings       jsonb CHECK (warnings IS NULL OR jsonb_typeof(warnings) = 'array'),
+  entity_id      uuid,                                    -- the existing record an update will change
+  entity_version integer,                                 -- its version when the dry run looked (ETag check at commit)
+  result         text CHECK (result IN ('created','updated','skipped','error')),    -- commit verdict
+  result_errors  jsonb CHECK (result_errors IS NULL OR jsonb_typeof(result_errors) = 'array'),
+  created_id     uuid,
+  before_image   jsonb CHECK (before_image IS NULL OR jsonb_typeof(before_image) = 'object'),   -- values an update replaced (import undo, v1.1)
+  processed_at   timestamptz,
+  PRIMARY KEY (tenant_id, job_id, row_no),
   FOREIGN KEY (tenant_id, job_id) REFERENCES app.import_job (tenant_id, id)
 );
-CREATE INDEX import_row_outcome_idx ON app.import_row (tenant_id, job_id, phase, outcome, row_no);
+CREATE INDEX import_row_plan_idx    ON app.import_row (tenant_id, job_id, plan, row_no);
+CREATE INDEX import_row_pending_idx ON app.import_row (tenant_id, job_id, row_no) WHERE result IS NULL AND plan IN ('create','update');
+CREATE INDEX import_row_key_idx     ON app.import_row (tenant_id, job_id, match_key)  WHERE match_key IS NOT NULL;
+CREATE INDEX import_row_key2_idx    ON app.import_row (tenant_id, job_id, match_key2) WHERE match_key2 IS NOT NULL;
+
+CREATE TABLE app.import_template (                     -- a saved column mapping, matched to a file by header text (M2-IMP-03)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  name        text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+  name_key    text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
+  entity_type text NOT NULL CHECK (entity_type IN ('asset','person','location','department')),
+  description text CHECK (description IS NULL OR length(description) <= 1000),
+  columns     jsonb NOT NULL CHECK (jsonb_typeof(columns) = 'array' AND jsonb_array_length(columns) <= 500),
+  options     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object' AND pg_column_size(options) <= 65536),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX import_template_name_uq ON app.import_template (tenant_id, entity_type, name_key) WHERE archived_at IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- B11. [M1] Technical tables: idempotency, outbox
@@ -1742,7 +1791,7 @@ GRANT SELECT, INSERT, UPDATE ON
   app.location, app.person, app.category, app.manufacturer, app.vendor, app.asset_model,
   app.status_label, app.custom_field_def, app.asset_tag_counter, app.asset, app.attachment,
   app.accessory, app.consumable, app.loaner_pool, app.assignment, app.transfer,
-  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.outbox_event
+  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.import_template, app.outbox_event
   TO app_user;
 -- app: limited deletes
 GRANT DELETE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key, app.outbox_event TO app_user;

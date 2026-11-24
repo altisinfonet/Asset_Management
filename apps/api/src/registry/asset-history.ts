@@ -1,4 +1,5 @@
 import type { AuthContext } from '../auth/index.js';
+import { currentBulkSink } from '../context/bulk-writes.js';
 import { currentRequestId } from '../context/request-context.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import { type Page, nextTsIdCursor, readTsIdCursor, tsText } from '../platform/index.js';
@@ -55,6 +56,23 @@ export async function writeAssetHistory(
   const id = uuidv7();
   const actor = historyActor(auth);
   const payload = JSON.stringify(entry.payload ?? {});
+  const sink = currentBulkSink();
+  if (sink) {
+    sink.history.push({
+      id,
+      tenant_id: auth.tenantId,
+      asset_id: entry.assetId,
+      event_type: entry.eventType,
+      actor_type: actor.type,
+      actor_id: actor.id,
+      assignment_id: entry.assignmentId ?? null,
+      transfer_id: entry.transferId ?? null,
+      summary: entry.summary ?? null,
+      payload,
+      request_id: currentRequestId() ?? null,
+    });
+    return id;
+  }
   await trx.$executeRaw`
     insert into app.asset_history
       (id, tenant_id, asset_id, at, event_type, actor_type, actor_id, assignment_id, transfer_id,
@@ -197,4 +215,24 @@ async function resolveActors(
     }
   }
   return out;
+}
+
+/** One multi-row INSERT of the history rows a bulk job collected. */
+export async function flushHistoryRows(
+  trx: Tx,
+  rows: Array<Record<string, unknown>>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const col = (key: string) => rows.map((r) => (r[key] ?? null) as string | null);
+  await trx.$executeRaw`
+    insert into app.asset_history
+      (id, tenant_id, asset_id, at, event_type, actor_type, actor_id, assignment_id, transfer_id,
+       summary, payload, request_id)
+    select t.id::uuid, t.tenant_id::uuid, t.asset_id::uuid, clock_timestamp(), t.event_type, t.actor_type,
+           t.actor_id::uuid, t.assignment_id::uuid, t.transfer_id::uuid, t.summary, t.payload::jsonb, t.request_id
+      from unnest(${col('id')}::text[], ${col('tenant_id')}::text[], ${col('asset_id')}::text[],
+                  ${col('event_type')}::text[], ${col('actor_type')}::text[], ${col('actor_id')}::text[],
+                  ${col('assignment_id')}::text[], ${col('transfer_id')}::text[], ${col('summary')}::text[],
+                  ${col('payload')}::text[], ${col('request_id')}::text[])
+           as t(id, tenant_id, asset_id, event_type, actor_type, actor_id, assignment_id, transfer_id, summary, payload, request_id)`;
 }

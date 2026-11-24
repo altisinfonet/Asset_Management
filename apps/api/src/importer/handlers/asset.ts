@@ -101,6 +101,9 @@ const day = (d: Date | null): string | null => (d ? d.toISOString().slice(0, 10)
  * the services of the API); `assigned_to` checks the asset out through `CustodyService`.
  */
 export class AssetHandler implements EntityHandler {
+  /** Nothing in an asset batch reads back the audit, event or history rows it writes. */
+  readonly bulkWrites = true;
+
   constructor(
     private readonly assets: AssetsFacade,
     private readonly custody: CustodyService,

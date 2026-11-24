@@ -1,3 +1,4 @@
+import { currentBulkSink } from '../context/bulk-writes.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import { assertIdsOnlyPayload } from '../ids/ids-only.js';
 import type { OutboxEvent, OutboxPublisher } from '../ports/index.js';
@@ -32,6 +33,18 @@ export class PgOutboxPublisher implements OutboxPublisher {
     if (!UUID.test(event.aggregateId)) throw new Error('outbox aggregateId must be a UUID');
     assertIdsOnlyPayload(event.payload, `outbox event ${event.type}`);
 
+    const sink = currentBulkSink();
+    if (sink) {
+      sink.outbox.push({
+        id: uuidv7(),
+        event_type: event.type,
+        aggregate_type: event.aggregateType,
+        aggregate_id: event.aggregateId,
+        payload: JSON.stringify(event.payload),
+      });
+      return;
+    }
+
     await tx.$executeRaw`
       insert into app.outbox_event (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
       values (${uuidv7()}::uuid,
@@ -39,4 +52,17 @@ export class PgOutboxPublisher implements OutboxPublisher {
               ${event.type}::text, ${event.aggregateType}::text, ${event.aggregateId}::uuid,
               ${JSON.stringify(event.payload)}::jsonb)`;
   }
+}
+
+/** One multi-row INSERT of the events a bulk job collected. */
+export async function flushOutboxRows(tx: Tx, rows: Array<Record<string, unknown>>): Promise<void> {
+  if (rows.length === 0) return;
+  const col = (key: string) => rows.map((r) => r[key] as string);
+  await tx.$executeRaw`
+    insert into app.outbox_event (id, tenant_id, event_type, aggregate_type, aggregate_id, payload)
+    select t.id::uuid, (select nullif(current_setting('app.tenant_id', true), '')::uuid),
+           t.event_type, t.aggregate_type, t.aggregate_id::uuid, t.payload::jsonb
+      from unnest(${col('id')}::text[], ${col('event_type')}::text[], ${col('aggregate_type')}::text[],
+                  ${col('aggregate_id')}::text[], ${col('payload')}::text[])
+           as t(id, event_type, aggregate_type, aggregate_id, payload)`;
 }

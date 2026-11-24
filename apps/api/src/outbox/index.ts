@@ -1,6 +1,6 @@
 // Public facade of the outbox module (M1-PLAT-05). Publishing goes through the OUTBOX_PUBLISHER port
 // (src/ports); subscribers register with OutboxSubscribers; the relay runs in the worker role.
-export { PgOutboxPublisher } from './outbox-publisher.js';
+export { PgOutboxPublisher, flushOutboxRows } from './outbox-publisher.js';
 export {
   DEFAULT_RELAY_OPTIONS,
   OutboxRelay,

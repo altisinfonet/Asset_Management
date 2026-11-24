@@ -64,12 +64,17 @@ test('the Repairs page counts as many open repairs as there are assets in "In re
   categoryId = (await api<Paged<{ id: string }>>(page, 'GET', '/v1/categories?kind=asset&limit=1'))
     .json.data[0]!.id;
 
-  const inRepair = await api<Paged<{ id: string }>>(
+  // Assets an import made (the Google Admin run of import-wizard.spec.ts maps disabled devices to this
+  // label and, like any import, writes no repair records) are not the demo data this test is about.
+  const inRepairAll = await api<Paged<{ id: string; external_source?: string | null }>>(
     page,
     'GET',
     `/v1/assets?status_id=${inRepairId}&limit=200&include_total=true`,
   );
-  const labelled = inRepair.json.page.total!;
+  const inRepair = {
+    json: { data: inRepairAll.json.data.filter((a) => a.external_source !== 'google_admin') },
+  };
+  const labelled = inRepair.json.data.length;
   expect(labelled).toBeGreaterThan(0);
 
   const open = await api<Paged<{ asset_id: string; set_status_id: string | null }>>(

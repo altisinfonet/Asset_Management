@@ -132,13 +132,13 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
 
   // the Chromebooks are in the registry (created now, or updated when an earlier run made them)
   expect(await total()).toBeGreaterThanOrEqual(40);
-  const one = await api<{ data: Array<{ serial: string }> }>(
+  const one = await api<{ data: Array<{ asset_tag: string }> }>(
     page,
     'GET',
     '/v1/assets?q=5CD00000&limit=1',
   );
-  const serial = one.json.data[0]!.serial;
+  const tag = one.json.data[0]!.asset_tag;
   await page.getByRole('link', { name: 'View assets' }).click();
-  await page.getByPlaceholder('Tag, serial or name').fill(serial);
-  await expect(page.getByRole('row', { name: new RegExp(serial) })).toBeVisible();
+  await page.getByPlaceholder('Tag, serial or name').fill(tag);
+  await expect(page.getByRole('row', { name: new RegExp(tag) })).toBeVisible();
 });

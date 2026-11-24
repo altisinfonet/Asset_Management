@@ -176,7 +176,7 @@ test.describe('loaner desk', () => {
     await expect(page.getByRole('row', { name: /Staff trips/ })).toContainText('3 days');
     await page.getByLabel('Return date offered at check-out (days from today)').fill('10');
     await page.getByRole('button', { name: 'Save defaults' }).click();
-    await expect(page.getByText('Loan defaults saved.')).toBeVisible();
+    await expect(page.getByText('Loan defaults saved.', { exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByLabel('Return date offered at check-out (days from today)')).toHaveValue(
       '10',

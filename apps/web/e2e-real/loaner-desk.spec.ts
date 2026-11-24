@@ -106,11 +106,9 @@ test('lends the three devices to one borrower from the desk', async () => {
   );
 
   // the real API agrees: three open loans of the pool, due inside the pool's maximum
-  const loans = await api<{ data: Array<{ asset_id: string; state: string; expected_return: string }> }>(
-    page,
-    'GET',
-    `/v1/loans?loaner_pool_id=${poolId}`,
-  );
+  const loans = await api<{
+    data: Array<{ asset_id: string; state: string; expected_return: string }>;
+  }>(page, 'GET', `/v1/loans?loaner_pool_id=${poolId}`);
   expect(loans.json.data.map((l) => l.asset_id).sort()).toEqual(devices.map((d) => d.id).sort());
   const latest = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
   for (const loan of loans.json.data) expect(loan.expected_return <= latest).toBe(true);

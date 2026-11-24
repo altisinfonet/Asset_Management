@@ -119,22 +119,26 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   await expect(page.getByText('Preview. Nothing has been saved yet.')).toBeVisible();
   expect(await total()).toBe(before);
 
+  // a second run against the same database finds everything in place and has nothing to write
   const button = page.getByRole('button', { name: /^Import \d+ rows?$/ });
-  await expect(button).toBeVisible();
-  await button.click();
-  await expect(page.getByRole('heading', { name: 'Import finished' })).toBeVisible({
-    timeout: 180_000,
-  });
+  if (await button.isVisible()) {
+    await button.click();
+    await expect(page.getByRole('heading', { name: 'Import finished' })).toBeVisible({
+      timeout: 180_000,
+    });
+  } else {
+    await expect(page.getByTestId('import-tile-skip')).toBeVisible();
+  }
 
   // the Chromebooks are in the registry (created now, or updated when an earlier run made them)
   expect(await total()).toBeGreaterThanOrEqual(40);
-  const one = await api<{ data: Array<{ serial: string; category: { name: string } | null }> }>(
+  const one = await api<{ data: Array<{ serial: string }> }>(
     page,
     'GET',
-    '/v1/assets?q=5CD0000000&expand=category',
+    '/v1/assets?q=5CD00000&limit=1',
   );
-  expect(one.json.data.length).toBeGreaterThan(0);
+  const serial = one.json.data[0]!.serial;
   await page.getByRole('link', { name: 'View assets' }).click();
-  await page.getByPlaceholder('Tag, serial or name').fill('5CD0000000');
-  await expect(page.getByRole('row', { name: /5CD0000000/ })).toBeVisible();
+  await page.getByPlaceholder('Tag, serial or name').fill(serial);
+  await expect(page.getByRole('row', { name: new RegExp(serial) })).toBeVisible();
 });

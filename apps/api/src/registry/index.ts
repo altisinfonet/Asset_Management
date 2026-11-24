@@ -58,3 +58,20 @@ export {
   validateProvided,
   type FieldDef,
 } from './custom-fields.js';
+// M2-IMP: reference data the importer creates through the services of the API
+export {
+  CategoriesService,
+  CustomFieldsService,
+  ManufacturersService,
+  ModelsService,
+  StatusLabelsService,
+  VendorsService,
+} from './catalog-services.js';
+export {
+  assetCreateSchema,
+  assetUpdateSchema,
+  type AssetCreate,
+  type AssetUpdate,
+} from './schemas.js';
+export { toFieldDef } from './asset-refs.js';
+export { missingRequired, mergeCustomData } from './custom-fields.js';

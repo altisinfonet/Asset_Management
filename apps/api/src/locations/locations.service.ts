@@ -186,6 +186,7 @@ export class LocationsService extends RegistryBase {
   async create(
     auth: AuthContext,
     body: LocationCreate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -225,6 +226,7 @@ export class LocationsService extends RegistryBase {
         await this.record(trx, {
           entity: 'location',
           verb: 'created',
+          ...(meta ? { meta } : {}),
           id: row.id,
           version: row.version,
           before: null,
@@ -243,6 +245,7 @@ export class LocationsService extends RegistryBase {
     id: string,
     ifMatch: IfMatch,
     body: LocationUpdate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -328,7 +331,9 @@ export class LocationsService extends RegistryBase {
           version: updated.version,
           before: auditView(locationDto(row)),
           after: auditView(locationDto(updated)),
-          ...(moved ? { meta: { moved_descendants: descendants } } : {}),
+          ...(moved || meta
+            ? { meta: { ...meta, ...(moved ? { moved_descendants: descendants } : {}) } }
+            : {}),
           refs: { parentId: updated.parent_id },
         });
         const counts = await this.counts(trx);

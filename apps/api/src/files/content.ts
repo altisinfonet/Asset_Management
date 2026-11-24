@@ -131,7 +131,11 @@ const MARKUP = /^\s*(?:<\?xml|<!doctype|<html|<svg|<script|<head|<body|<iframe|<
 const EMBEDDED_MARKUP = /<\s*(?:script|svg|html|iframe|object|embed)\b/i;
 
 /** First `SNIFF_BYTES` of an object versus its declared type. */
-export async function sniffContent(head: Buffer, type: AllowedType): Promise<TypeCheck> {
+export async function sniffContent(
+  head: Buffer,
+  type: AllowedType,
+  opts: { importFile?: boolean } = {},
+): Promise<TypeCheck> {
   if (head.length === 0) return { ok: false, reason: 'The file is empty.' };
   const detected = await fileTypeFromBuffer(head);
 
@@ -142,8 +146,13 @@ export async function sniffContent(head: Buffer, type: AllowedType): Promise<Typ
         reason: `The content is ${detected.mime}, not CSV text.`,
       };
     }
-    if (head.includes(0)) return { ok: false, reason: 'The content is binary, not CSV text.' };
-    const text = decodeUtf8Prefix(head);
+    // A file for the importer (M2-IMP-02) may also be UTF-16 (a byte order mark) or Windows-1252 (Excel on
+    // Windows saves "CSV" in the system code page): decoded here for the markup check only, parsed later.
+    const alt = opts.importFile ? decodeLegacyCsv(head) : null;
+    if (alt === null && head.includes(0)) {
+      return { ok: false, reason: 'The content is binary, not CSV text.' };
+    }
+    const text = alt ?? decodeUtf8Prefix(head);
     if (text === null) return { ok: false, reason: 'The CSV file is not valid UTF-8.' };
     const probe = text.startsWith(BOM) ? text.slice(1) : text;
     if (MARKUP.test(probe) || EMBEDDED_MARKUP.test(probe.slice(0, 8192))) {
@@ -165,6 +174,23 @@ export async function sniffContent(head: Buffer, type: AllowedType): Promise<Typ
     };
   }
   return { ok: true, type };
+}
+
+/**
+ * UTF-16 (byte order mark) or Windows-1252 text for the importer: the decoded prefix, or `null` when the
+ * bytes are valid UTF-8 (the normal path) or are not text (control characters, NUL bytes).
+ */
+function decodeLegacyCsv(buf: Buffer): string | null {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buf.subarray(2, buf.length - (buf.length % 2)));
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buf.subarray(2, buf.length - (buf.length % 2)));
+  }
+  if (buf.includes(0) || decodeUtf8Prefix(buf) !== null) return null;
+  const text = new TextDecoder('windows-1252').decode(buf);
+  // eslint-disable-next-line no-control-regex
+  return /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text) ? null : text;
 }
 
 /** UTF-8 decode that tolerates a multi-byte sequence cut off at the end of the sampled prefix. */

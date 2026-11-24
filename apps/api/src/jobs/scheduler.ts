@@ -40,6 +40,8 @@ export const PRODUCERS: readonly Producer[] = [
     perTenant: true,
   },
   { name: 'export-sweep', queue: 'export.sweep', everySeconds: 3600, perTenant: true },
+  // M2-IMP-01: imports whose worker job was lost are picked up again.
+  { name: 'import-sweep', queue: 'import.sweep', everySeconds: 300, perTenant: true },
 ];
 
 export interface SchedulerDeps {

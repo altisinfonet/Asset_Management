@@ -1377,6 +1377,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/import-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved mapping templates
+         * @description Requires permission `import:read`.
+         */
+        get: operations["listImportTemplates"];
+        put?: never;
+        /**
+         * Save a mapping as a template
+         * @description From an import (`from_import_id`: its mapped columns by header, and its options) or from explicit `columns`. Names are unique per entity type (ignoring case).
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["createImportTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a mapping template
+         * @description Requires permission `import:read`.
+         */
+        get: operations["getImportTemplate"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a mapping template
+         * @description Requires permission `import:run`.
+         */
+        delete: operations["deleteImportTemplate"];
+        options?: never;
+        head?: never;
+        /**
+         * Edit a mapping template
+         * @description Requires permission `import:run`.
+         */
+        patch: operations["updateImportTemplate"];
+        trace?: never;
+    };
     "/v1/imports": {
         parameters: {
             query?: never;
@@ -1385,14 +1439,20 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List import jobs
-         * @description Requires permission `import:read`.
+         * List imports
+         * @description Newest first. Without the heavy members (`profile`, `samples`, `value_map`, `confidence`): fetch one import for those.
+         *
+         *     Requires permission `import:read`.
          */
         get: operations["listImports"];
         put?: never;
         /**
-         * Create an import job
-         * @description Creates a `draft` job. Upload the file first (`POST /v1/attachments` with kind `import_file`), then reference it here. Nothing is written to the registry until a dry run has completed and the job is committed.
+         * Create an import
+         * @description Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252), complete the upload, and call `POST /v1/imports/{id}/analyze`.
+         *
+         *     The caller needs the write permission of the entity type (`asset:create`, `person:manage`, `location:manage`, `department:manage`). `preset_key: google_admin_chromeos` also creates the Chromebook category and its custom fields when missing.
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
@@ -1411,7 +1471,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get an import job
+         * Get an import
          * @description Requires permission `import:read`.
          */
         get: operations["getImport"];
@@ -1421,10 +1481,58 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Edit mapping and options
-         * @description Requires permission `import:run`.
+         * Edit mapping, options and value mapping
+         * @description Unknown or repeated targets are `422`. Missing essentials (no category column and no default category, ...) are reported when the dry run is requested.
+         *
+         *     Requires permission `import:run`.
          */
         patch: operations["updateImport"];
+        trace?: never;
+    };
+    "/v1/imports/{id}/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read and profile the uploaded file
+         * @description Queues the analysis: the file (which must have passed the upload scan) is read once as a stream; its format, encoding, delimiter and header row are detected, every data row is stored, each column is profiled (distinct values, blanks, duplicates, detected type, date order), 50 rows are kept as a sample and a mapping is suggested (or the preset's applied). A malformed file ends the analysis as `failed` with `error` naming the line. At most 100,000 data rows.
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["analyzeImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/apply-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a saved mapping template
+         * @description Maps the columns of the analysed file by header text and takes the template's options. Returns the import in state `mapped`.
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["applyImportTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/imports/{id}/cancel": {
@@ -1437,8 +1545,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel an import job
-         * @description Allowed before commit starts; a running commit finishes its current batch and stops (rows already written stay).
+         * Cancel an import
+         * @description Before a dry run or commit starts: `cancelled` at once. While one runs: `cancel_requested` is set and the job stops after its current batch (rows already written stay). A completed or cancelled import is `409`.
          *
          *     Requires permission `import:run`.
          */
@@ -1460,7 +1568,9 @@ export interface paths {
         put?: never;
         /**
          * Commit a reviewed dry run
-         * @description Only valid in state `dry_run_complete`, and only with the `dry_run_digest` the caller reviewed (409 `import-stale-dry-run` otherwise). Writes through the normal registry services, so validation, history and audit are not bypassed. Rollback of a committed import is v1.1.
+         * @description Only valid in `dry_run_done`, and only with the `dry_run_digest` the user reviewed (`409 import-stale-dry-run` otherwise). The rows classified `create` and `update` are written in batches, one short transaction per batch, through the same services as the API, so validation, history, audit rows and events are never bypassed; every audit entry carries the `import_job_id`. A row that fails is recorded (`result: error`) and does not stop the import; a record edited after the dry run is left alone (`changed-since-dry-run`). The commit can be cancelled between batches and survives a worker restart without creating duplicates. On completion the requester is notified (`import.completed`). Rolling a commit back is v1.1 (the before-image of every update is stored already).
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
@@ -1482,11 +1592,37 @@ export interface paths {
         put?: never;
         /**
          * Run the import without writing
-         * @description Queues a dry run that validates every row, matches existing records and reports per-row outcomes (`create` / `update` / `skip` / `error`) without touching the registry. Poll `GET /v1/imports/{id}` until `state=dry_run_complete`.
+         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
+         *
+         *     The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
         post: operations["startImportDryRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/errors.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the error report
+         * @description A CSV (UTF-8 with byte order mark) with one line per row that has errors: `Row`, `Line`, `Fields`, `Problems`, `Warnings`, then the original cells under their headers, so it can be corrected and uploaded again. After a commit it lists the rows that failed; before, the rows the dry run rejected. Cells that could be read as formulas get a leading apostrophe (the importer removes it again).
+         *
+         *     Requires permission `import:run`.
+         */
+        get: operations["downloadImportErrors"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1502,9 +1638,77 @@ export interface paths {
         };
         /**
          * Per-row results
-         * @description Requires permission `import:read`.
+         * @description Rows in file order with their errors and warnings (field + message) and the non-empty source cells. Raw file content: needs `import:run`, not just `import:read`.
+         *
+         *     Requires permission `import:run`.
          */
         get: operations["listImportRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Distinct values of a reference column
+         * @description For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry.
+         *
+         *     Requires permission `import:run`.
+         */
+        get: operations["listImportValues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Built-in import presets
+         * @description The templates for assets, people, locations and departments and the Google Admin ChromeOS preset, each with its data dictionary (column, target field, description, example). Pass `preset_key` when creating an import to apply one. Recommended order of imports: locations, departments, people, assets.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["listImportPresets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/presets/{key}/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a template file
+         * @description A CSV (UTF-8 with byte order mark) or XLSX template with the header row of the preset and example rows; the XLSX has the data dictionary on a second sheet. The asset templates also carry one `cf:<key>` column per custom field of the organisation.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["downloadImportTemplate"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4846,119 +5050,6 @@ export interface components {
             strip_exif_original: boolean;
             max_upload_bytes: number | null;
         };
-        ImportJob: {
-            /** Format: uuid */
-            readonly id: string;
-            /** @enum {string} */
-            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
-            /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
-            /** @enum {string} */
-            readonly state: "draft" | "dry_run_queued" | "dry_run_running" | "dry_run_complete" | "commit_queued" | "committing" | "committed" | "failed" | "cancelled";
-            /**
-             * Format: uuid
-             * @description Uploaded file (kind `import_file`).
-             */
-            file_attachment_id?: string | null;
-            original_filename?: string | null;
-            /** @description Source column -> target field key (use `custom_data.<key>` for custom fields). */
-            mapping: {
-                [key: string]: string;
-            };
-            options: {
-                /**
-                 * @default asset_tag
-                 * @enum {string}
-                 */
-                match_on?: "asset_tag" | "serial" | "external_id";
-                /**
-                 * @default skip
-                 * @enum {string}
-                 */
-                on_duplicate?: "skip" | "update" | "error";
-                /**
-                 * @description Create missing categories, manufacturers, models, locations referenced by name.
-                 * @default true
-                 */
-                create_missing_references?: boolean;
-                /** @default , */
-                delimiter?: string;
-                /** @default YYYY-MM-DD */
-                date_format?: string;
-            } & {
-                [key: string]: unknown;
-            };
-            readonly rows_total?: number;
-            readonly rows_create?: number;
-            readonly rows_update?: number;
-            readonly rows_skip?: number;
-            readonly rows_error?: number;
-            /** @description Hash of file + mapping + options at dry-run time; quote it in the commit request. */
-            readonly dry_run_digest?: string | null;
-            /** Format: date-time */
-            readonly dry_run_completed_at?: string | null;
-            /** Format: date-time */
-            readonly committed_at?: string | null;
-            readonly error?: string | null;
-            /** Format: date-time */
-            readonly created_at?: string;
-            /** Format: date-time */
-            readonly updated_at?: string;
-            /** Format: uuid */
-            readonly created_by?: string | null;
-        };
-        ImportJobCreate: {
-            /** @enum {string} */
-            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
-            /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
-            /**
-             * Format: uuid
-             * @description Required for file sources; omit for `snipe_it` (credentials are passed in `options.snipe_it`).
-             */
-            file_attachment_id?: string;
-            mapping?: {
-                [key: string]: string;
-            };
-            options?: {
-                [key: string]: unknown;
-            };
-        };
-        /** @description Editing mapping/options is allowed in `draft` and `dry_run_complete` (the latter returns the job to `draft` and invalidates the digest). */
-        ImportJobUpdate: {
-            mapping?: {
-                [key: string]: string;
-            };
-            options?: {
-                [key: string]: unknown;
-            };
-        };
-        ImportJobList: {
-            data: components["schemas"]["ImportJob"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        ImportCommitRequest: {
-            /** @description Digest of the reviewed dry run; if the file, mapping or options changed since, commit fails with 409. */
-            dry_run_digest: string;
-        };
-        ImportRow: {
-            row_no: number;
-            /** @enum {string} */
-            phase: "dry_run" | "commit";
-            /** @enum {string} */
-            outcome: "create" | "update" | "skip" | "error";
-            /** Format: uuid */
-            entity_id?: string | null;
-            errors: components["schemas"]["FieldError"][];
-            warnings: components["schemas"]["FieldError"][];
-            source_data?: {
-                [key: string]: unknown;
-            } | null;
-        };
-        ImportRowList: {
-            data: components["schemas"]["ImportRow"][];
-            page: components["schemas"]["PageInfo"];
-        };
         AuditEntry: {
             /** Format: uuid */
             id: string;
@@ -5617,6 +5708,414 @@ export interface components {
         ExportList: {
             data: components["schemas"]["Export"][];
             page: components["schemas"]["PageInfo"];
+        };
+        ImportOptions: {
+            /**
+             * @description Assets: how an existing asset is found. `auto` = the tag when the row has one, else the serial number (a tag and a serial that name different assets is a row error).
+             * @default auto
+             * @enum {string}
+             */
+            match_on?: "auto" | "asset_tag" | "serial" | "external_id";
+            /**
+             * @description What to do with a row whose record exists already, and with a row that repeats an earlier row of the file (same tag, serial, email, path or name): leave it, update it with the cells of the file, or report an error.
+             * @default skip
+             * @enum {string}
+             */
+            on_match?: "skip" | "update" | "error";
+            /**
+             * @description Update only: an empty cell leaves the field alone, or empties it.
+             * @default ignore
+             * @enum {string}
+             */
+            blank_cells?: "ignore" | "clear";
+            /**
+             * @description `auto` reads ISO dates, month names and unambiguous day/month dates; `03/04/2024` needs `dmy` or `mdy`.
+             * @default auto
+             * @enum {string}
+             */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+            /**
+             * @description The decimal separator of numbers in the file; `auto` decides where the text is unambiguous (`1.234,50`, `1,234.50`) and reads `1,234` as a thousand.
+             * @default auto
+             * @enum {string}
+             */
+            number_format?: "auto" | "dot" | "comma";
+            /** @description Currency of costs that name none; else the organisation's base currency. */
+            default_currency?: string;
+            /** @description Source recorded with a mapped external id (default `import`; the Google preset uses `google_admin`). */
+            external_source?: string;
+            /** @description Per reference kind (`category`, `manufacturer`, `model`, `status`, `location`, `department`, `vendor`, `person`): create what is missing, or require it to exist. Defaults: `create`, except `status` and `person` (`must_exist`; a status label is never created). */
+            references?: {
+                [key: string]: "create" | "must_exist";
+            };
+            /** @description Ids used when a row's own cell is empty. */
+            defaults?: {
+                /** Format: uuid */
+                category?: string;
+                /** Format: uuid */
+                status?: string;
+                /** Format: uuid */
+                location?: string;
+                /** Format: uuid */
+                department?: string;
+                /** Format: uuid */
+                vendor?: string;
+            };
+            /**
+             * @description Kind of the locations the import creates.
+             * @default other
+             * @enum {string}
+             */
+            location_kind?: "site" | "building" | "floor" | "room" | "storage" | "vehicle" | "other";
+            /**
+             * @description Assets: check an asset out to the person in `assigned_to` (only when it can be checked out; otherwise a warning).
+             * @default true
+             */
+            assign?: boolean;
+            /**
+             * @description Update only: a record edited after the dry run is not touched (row error `changed-since-dry-run`).
+             * @default true
+             */
+            detect_changes?: boolean;
+        };
+        ImportMappingColumn: {
+            /** @description 0-based column of the file. */
+            index: number;
+            /** @description A field of the entity (`GET /v1/imports/presets` lists them), `cf:<custom field key>` for an asset custom field, or null to ignore the column. */
+            target: string | null;
+            /**
+             * @description Overrides the job's date format for this column.
+             * @enum {string}
+             */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+        };
+        ImportMapping: {
+            columns: components["schemas"]["ImportMappingColumn"][];
+            /** @description Text for a target that has no column (`{"category": "Chromebook"}`), used for every row whose own cell is empty. */
+            constants?: {
+                [key: string]: string;
+            };
+        };
+        ImportValueEntry: {
+            /** Format: uuid */
+            id: string;
+        } | {
+            /** @constant */
+            create: true;
+            name?: string;
+        } | {
+            /** @constant */
+            skip: true;
+        };
+        /** @description By reference kind, then by the NORMALISED source value (trimmed, spaces collapsed, lower case): what that value of the file means. */
+        ImportValueMap: {
+            [key: string]: {
+                [key: string]: components["schemas"]["ImportValueEntry"];
+            };
+        };
+        ImportParse: {
+            /** @description `csv` or `xlsx`. */
+            format: string | null;
+            /** @description CSV: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252` (detected). */
+            encoding: string | null;
+            /** @description CSV: `,` `;` tab or `|` (detected). */
+            delimiter: string | null;
+            /** @description XLSX: the sheet that is read (default: the first visible one). */
+            sheet: string | null;
+            /** @description XLSX: the visible sheets. */
+            sheets: string[] | null;
+            /** @description Row (XLSX) or line (CSV) number of the header row. */
+            header_line: number | null;
+        };
+        ImportColumnProfile: {
+            index: number;
+            header: string;
+            non_blank: number;
+            blank: number;
+            distinct: number;
+            /** @description More than 10,000 distinct values: `distinct` is a lower bound. */
+            distinct_capped: boolean;
+            /** @description Non-blank cells that repeat an earlier value. */
+            duplicates: number;
+            /** @enum {string} */
+            type: "empty" | "integer" | "number" | "date" | "boolean" | "email" | "text";
+            /**
+             * @description Date columns: the order the data allows; `ambiguous` needs an explicit date format.
+             * @enum {string|null}
+             */
+            date_order: "iso" | "dmy" | "mdy" | "ambiguous" | "mixed" | null;
+            max_length: number;
+            /** @description Up to five distinct values. */
+            samples: string[];
+        };
+        RowIssue: {
+            /** @description The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole. */
+            field: string | null;
+            message: string;
+            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`... */
+            code: string;
+        };
+        ImportJob: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @enum {string} */
+            source: "csv" | "xlsx" | "google_admin_csv";
+            /** @description The built-in preset the import was created from (`GET /v1/imports/presets`). */
+            preset_key: string | null;
+            /**
+             * @description draft (no file yet) -> uploaded -> analyzing -> analyzed -> mapped -> dry_running -> dry_run_done -> committing -> completed; `failed` and `cancelled` end it. Editing the mapping or options returns `dry_run_done` to `mapped`.
+             * @enum {string}
+             */
+            state: "draft" | "uploaded" | "analyzing" | "analyzed" | "mapped" | "dry_running" | "dry_run_done" | "committing" | "completed" | "failed" | "cancelled";
+            filename: string | null;
+            /**
+             * Format: uuid
+             * @description The uploaded file: an attachment of kind `import_file` owned by this import.
+             */
+            file_attachment_id: string | null;
+            parse: components["schemas"]["ImportParse"];
+            /** @description Header names of the file, after analysis. */
+            headers: string[] | null;
+            mapping: components["schemas"]["ImportMapping"];
+            options: components["schemas"]["ImportOptions"];
+            /** @description Data rows of the file. */
+            rows_total: number;
+            counts: {
+                dry_run: {
+                    create: number;
+                    update: number;
+                    skip: number;
+                    error: number;
+                };
+                commit: {
+                    created: number;
+                    updated: number;
+                    skipped: number;
+                    error: number;
+                };
+            };
+            progress: {
+                /** @enum {string|null} */
+                phase: "analyze" | "dry_run" | "commit" | null;
+                processed: number;
+                total: number;
+                percent: number;
+            };
+            /** @description Digest of the reviewed dry run (file, parse settings, mapping, options, value map and every row's outcome). Quote it in the commit request. */
+            dry_run_digest: string | null;
+            /** Format: date-time */
+            dry_run_at: string | null;
+            /** Format: date-time */
+            committed_at: string | null;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            cancel_requested: boolean;
+            /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
+            error: string | null;
+            /** @description After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created). */
+            summary: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: uuid */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Per-column statistics (only on a single import, not in lists). */
+            profile?: components["schemas"]["ImportColumnProfile"][] | null;
+            /** @description The first 50 data rows (only on a single import). */
+            samples?: string[][] | null;
+            /** @description How sure the suggested mapping is per column index (1 = exact header match). */
+            confidence?: {
+                [key: string]: number;
+            } | null;
+            value_map?: components["schemas"]["ImportValueMap"];
+        };
+        ImportList: {
+            data: components["schemas"]["ImportJob"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        ImportCreate: {
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then). */
+            preset_key?: string;
+            options?: components["schemas"]["ImportOptions"];
+        };
+        /** @description Any change returns a `dry_run_done` import to `mapped` and invalidates the digest. Allowed in `draft`, `uploaded`, `analyzed`, `mapped` and `dry_run_done`. */
+        ImportUpdate: {
+            mapping?: components["schemas"]["ImportMapping"];
+            /** @description Only the options to change; `references` and `defaults` are merged by key. */
+            options?: components["schemas"]["ImportOptions"];
+            /** @description Replaces the entries of each reference kind given (send `{}` for a kind to clear it). */
+            value_map?: components["schemas"]["ImportValueMap"];
+        };
+        ImportAnalyze: {
+            /**
+             * Format: uuid
+             * @description Attachment of kind `import_file` owned by this import, uploaded and completed. Omit to analyse the file again.
+             */
+            file_attachment_id?: string;
+            /** @description Overrides of what the analysis detects. */
+            parse?: {
+                /** @enum {string} */
+                encoding?: "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
+                /** @enum {string} */
+                delimiter?: "," | ";" | "\t" | "|";
+                sheet?: string;
+                header_line?: number;
+            };
+        };
+        ImportCommit: {
+            /** @description The `dry_run_digest` of the dry run the user reviewed. */
+            dry_run_digest: string;
+        };
+        ImportRow: {
+            /** @description Position among the data rows. */
+            row_no: number;
+            /** @description Line (CSV) or row (XLSX) of the file; shown in error messages. */
+            line_no: number;
+            /** @enum {string} */
+            phase: "dry_run" | "commit";
+            /** @description Dry run: `create` / `update` / `skip` / `error`. Commit: `created` / `updated` / `skipped` / `error`. */
+            outcome: string | null;
+            /** @enum {string|null} */
+            plan: "create" | "update" | "skip" | "error" | null;
+            /** @enum {string|null} */
+            result: "created" | "updated" | "skipped" | "error" | null;
+            /**
+             * Format: uuid
+             * @description The existing record an update changes.
+             */
+            entity_id: string | null;
+            /**
+             * Format: uuid
+             * @description The record the commit created.
+             */
+            created_id: string | null;
+            /** @description Row number of the first row of the file with the same key. */
+            duplicate_of: number | null;
+            errors: components["schemas"]["RowIssue"][];
+            warnings: components["schemas"]["RowIssue"][];
+            /** @description The non-empty cells of the row by header. */
+            source: {
+                [key: string]: string;
+            };
+            /** @description The typed record the mapping produced (`f` fields, `r` references, `c` custom fields). */
+            mapped: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Commit of an update: the values it replaced (kept for import undo, v1.1). */
+            before_image: {
+                [key: string]: unknown;
+            } | null;
+        };
+        ImportRowList: {
+            data: components["schemas"]["ImportRow"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        ImportValue: {
+            /** @description A distinct value of the column (trimmed). */
+            value: string;
+            count: number;
+            /** @description The existing record with that name, if exactly one. */
+            suggestion: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            } | null;
+            /** @description What the value map says now. */
+            entry: components["schemas"]["ImportValueEntry"] | null;
+        };
+        ImportValues: {
+            /** @enum {string} */
+            field: "category" | "manufacturer" | "model" | "status" | "location" | "department" | "vendor" | "person";
+            column: string | null;
+            /** @description Distinct values in the column (`data` is capped by `limit`). */
+            distinct: number;
+            data: components["schemas"]["ImportValue"][];
+        };
+        ImportPresetColumn: {
+            column: string;
+            target: string;
+            description: string;
+            required: string;
+            example: string;
+        };
+        ImportPreset: {
+            key: string;
+            label: string;
+            description: string;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @enum {string} */
+            source: "csv" | "google_admin_csv";
+            notes: string[];
+            /** @description Reference data creating an import from this preset creates when it is missing. */
+            sets_up: {
+                category: string;
+                custom_fields: string[];
+            } | null;
+            /** @description The columns of the template with their data dictionary. */
+            columns: components["schemas"]["ImportPresetColumn"][];
+        };
+        ImportPresetList: {
+            data: components["schemas"]["ImportPreset"][];
+        };
+        ImportTemplateColumn: {
+            header: string;
+            target: string | null;
+            /** @enum {string} */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+        };
+        ImportTemplate: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string | null;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            columns: components["schemas"]["ImportTemplateColumn"][];
+            options: components["schemas"]["ImportOptions"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+        };
+        ImportTemplateList: {
+            data: components["schemas"]["ImportTemplate"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description Either `from_import_id`, or `entity_type` and `columns`. */
+        ImportTemplateCreate: {
+            name: string;
+            description?: string | null;
+            /** @enum {string} */
+            entity_type?: "asset" | "person" | "location" | "department";
+            columns?: components["schemas"]["ImportTemplateColumn"][];
+            options?: components["schemas"]["ImportOptions"];
+            /**
+             * Format: uuid
+             * @description Copy the mapping (by header) and the options of this import instead of `entity_type` and `columns`.
+             */
+            from_import_id?: string;
+        };
+        ImportTemplateUpdate: {
+            name?: string;
+            description?: string | null;
+            columns?: components["schemas"]["ImportTemplateColumn"][];
+            options?: components["schemas"]["ImportOptions"];
+        };
+        ImportTemplateApply: {
+            /** Format: uuid */
+            template_id: string;
         };
     };
     responses: {
@@ -10421,17 +10920,15 @@ export interface operations {
             };
         };
     };
-    listImports: {
+    listImportTemplates: {
         parameters: {
             query?: {
                 /** @description Opaque cursor from `page.next_cursor` of the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description Filter by state. */
-                state?: ("draft" | "dry_run_queued" | "dry_run_running" | "dry_run_complete" | "commit_queued" | "committing" | "committed" | "failed" | "cancelled")[];
                 /** @description Filter by entity type. */
-                entity_type?: string;
+                entity_type?: "asset" | "person" | "location" | "department";
             };
             header?: never;
             path?: never;
@@ -10439,7 +10936,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A page of import jobs, newest first. */
+            /** @description A page of templates, by name. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10449,7 +10946,205 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportJobList"];
+                    "application/json": components["schemas"]["ImportTemplateList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description The template. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteImportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateImportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImports: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Filter by state. */
+                state?: ("draft" | "uploaded" | "analyzing" | "analyzed" | "mapped" | "dry_running" | "dry_run_done" | "committing" | "completed" | "failed" | "cancelled")[];
+                /** @description Filter by entity type. */
+                entity_type?: "asset" | "person" | "location" | "department";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of imports. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportList"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -10472,11 +11167,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportJobCreate"];
+                "application/json": components["schemas"]["ImportCreate"];
             };
         };
         responses: {
-            /** @description Job created. */
+            /** @description The import. */
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10485,7 +11180,6 @@ export interface operations {
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
                     ETag: components["headers"]["ETag"];
                     Location: components["headers"]["Location"];
-                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10512,7 +11206,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The job. */
+            /** @description The import, with column profile, sample rows, mapping and value map. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10551,11 +11245,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportJobUpdate"];
+                "application/json": components["schemas"]["ImportUpdate"];
             };
         };
         responses: {
-            /** @description Updated job. */
+            /** @description The import. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10574,10 +11268,169 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    analyzeImport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ImportAnalyze"];
+            };
+        };
+        responses: {
+            /** @description Analysis queued. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    Location: components["headers"]["Location"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    applyImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateApply"];
+            };
+        };
+        responses: {
+            /** @description The import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10587,8 +11440,6 @@ export interface operations {
             header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
-                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -10598,14 +11449,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cancelled job. */
+            /** @description The import. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
                     "RateLimit-Limit": components["headers"]["RateLimitLimit"];
                     "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10615,7 +11465,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10636,7 +11504,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportCommitRequest"];
+                "application/json": components["schemas"]["ImportCommit"];
             };
         };
         responses: {
@@ -10655,11 +11523,69 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description The import needs permissions the caller does not hold. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
-            429: components["responses"]["TooManyRequests"];
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     startImportDryRun: {
@@ -10668,8 +11594,6 @@ export interface operations {
             header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
-                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -10692,23 +11616,113 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            /** @description The import needs permissions the caller does not hold. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downloadImportErrors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description attachment */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
         };
     };
     listImportRows: {
         parameters: {
             query?: {
-                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
-                cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
                 /** @description Defaults to the latest phase. */
                 phase?: "dry_run" | "commit";
-                /** @description Filter by outcome. */
-                outcome?: ("create" | "update" | "skip" | "error")[];
+                /** @description Filter by outcome (dry run: create/update/skip/error; commit: created/updated/skipped/error). */
+                outcome?: ("create" | "update" | "skip" | "error" | "created" | "updated" | "skipped")[];
+                /** @description Only rows with (or without) warnings. */
+                has_warnings?: boolean;
             };
             header?: never;
             path: {
@@ -10730,6 +11744,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportRowList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportValues: {
+        parameters: {
+            query: {
+                /** @description The reference kind (the column mapped to it, or the preset constant). */
+                field: "category" | "manufacturer" | "model" | "status" | "location" | "department" | "vendor" | "person";
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Free-text search (trigram / prefix match). */
+                q?: components["parameters"]["Q"];
+            };
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The values. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportValues"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The presets. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPresetList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    downloadImportTemplate: {
+        parameters: {
+            query?: {
+                /** @description File format. */
+                format?: "csv" | "xlsx";
+            };
+            header?: never;
+            path: {
+                /** @description Preset key. */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template file. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description attachment */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
                 };
             };
             400: components["responses"]["BadRequest"];

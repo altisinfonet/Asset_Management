@@ -80,6 +80,8 @@ type Expandable = 'model' | 'category' | 'vendor' | 'location' | 'department';
 export interface AssetWithVersion {
   asset: AssetDto;
   version: number;
+  /** Dry runs of an update only (M2-IMP-04): the columns the update would change. */
+  changed?: string[];
 }
 
 const toDate = (v: string | null | undefined): Date | null | undefined =>
@@ -409,6 +411,7 @@ export class AssetsFacade extends RegistryBase {
     body: AssetCreate,
     meta?: Record<string, unknown>,
     pointerBase = '',
+    options: { dryRun?: boolean } = {},
   ): Promise<AssetWithVersion> {
     const refs = AssetRefs.for(trx);
     const errors: FieldError[] = [];
@@ -445,13 +448,15 @@ export class AssetsFacade extends RegistryBase {
     if (errors.length > 0) throw problem.validation(errors);
 
     const manual = body.asset_tag !== undefined;
-    let tag: string;
+    let tag = '';
     if (manual) {
       tag = body.asset_tag!;
       if (await tagExists(trx, tag)) throw this.tagTaken(tag, pointerBase);
-    } else {
-      tag = await this.tags.allocate(trx, category!.tag_prefix);
     }
+    // M2-IMP-04: a dry run stops here, after every check and before the first write (an automatic tag is
+    // only allocated on the real path: there is nothing to number).
+    if (options.dryRun) return { asset: undefined as never, version: 0 };
+    if (!manual) tag = await this.tags.allocate(trx, category!.tag_prefix);
 
     const id = uuidv7();
     try {
@@ -536,6 +541,7 @@ export class AssetsFacade extends RegistryBase {
     current: AssetRow,
     body: AssetUpdate,
     meta?: Record<string, unknown>,
+    options: { dryRun?: boolean } = {},
   ): Promise<AssetWithVersion> {
     if (current.archived_at) {
       throw problem.conflict('The asset is archived. Restore it before changing it.');
@@ -681,8 +687,13 @@ export class AssetsFacade extends RegistryBase {
     if (body.external_id !== undefined) set('external_id', body.external_id);
     if (body.custom_data !== undefined || categoryChanged) set('custom_data', nextCustom);
 
-    if (Object.keys(data).length === 0)
-      return { asset: assetDto(current), version: current.version };
+    if (Object.keys(data).length === 0) {
+      return { asset: assetDto(current), version: current.version, changed: [] };
+    }
+    // M2-IMP-04: a dry run reports what would change and writes nothing.
+    if (options.dryRun) {
+      return { asset: assetDto(current), version: current.version, changed: Object.keys(data) };
+    }
 
     const result = await trx.asset.updateMany({
       where: { id: current.id, version: current.version },

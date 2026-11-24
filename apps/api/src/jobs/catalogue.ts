@@ -183,6 +183,52 @@ export const QUEUES = {
     expireInSeconds: 5 * MINUTE,
     dedupeSeconds: 30 * MINUTE,
   },
+  // ---- M2 wave 3 (imports, M2-IMP) -------------------------------------------------------------
+  /**
+   * Reads the uploaded file, stores its rows and the column profile (M2-IMP-02). Ids only:
+   * { tenantId, importId }. Waits (re-queues itself) while the upload is still being scanned.
+   */
+  'import.analyze': {
+    name: 'import.analyze',
+    tenantScoped: true,
+    priorityClass: 'bulk',
+    runsIn: 'worker',
+    retryLimit: 3,
+    retryDelay: 30,
+    retryDelayMax: 5 * MINUTE,
+    expireInSeconds: 15 * MINUTE,
+    dedupeSeconds: 4 * MINUTE,
+    transactionTimeoutSeconds: 10 * MINUTE,
+  },
+  /**
+   * ONE batch of a dry run or a commit (M2-IMP-04/05): one short transaction, which queues the next step
+   * itself in the same transaction (so a crash loses nothing and repeats nothing). The payload is
+   * { tenantId, importId }; the phase is the job's state. A step lost with its worker is retried by the
+   * queue (expiry) and, failing that, re-queued by `import.sweep`.
+   */
+  'import.step': {
+    name: 'import.step',
+    tenantScoped: true,
+    priorityClass: 'bulk',
+    runsIn: 'worker',
+    retryLimit: 5,
+    retryDelay: 10,
+    retryDelayMax: 5 * MINUTE,
+    expireInSeconds: 3 * MINUTE,
+    dedupeSeconds: 4 * MINUTE,
+    transactionTimeoutSeconds: 3 * MINUTE,
+  },
+  /** Re-queues the step of imports whose job was lost, and expires old drafts (per tenant, every 5 minutes). */
+  'import.sweep': {
+    name: 'import.sweep',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 1,
+    retryDelay: 30,
+    expireInSeconds: 5 * MINUTE,
+    dedupeSeconds: 4 * MINUTE,
+  },
 } as const satisfies Record<string, QueueDefinition>;
 
 export type QueueName = keyof typeof QUEUES;

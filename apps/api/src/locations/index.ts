@@ -3,3 +3,4 @@ export { LocationsModule } from './locations.module.js';
 export { LocationsService } from './locations.service.js';
 export { LOCATION_KINDS, MAX_LOCATION_DEPTH } from './schemas.js';
 export { locationListSchema, type LocationListQuery } from './schemas.js';
+export { locationCreateSchema, locationUpdateSchema } from './schemas.js';

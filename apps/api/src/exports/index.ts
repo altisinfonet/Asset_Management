@@ -1,5 +1,12 @@
 // Public facade of the exports module (M2-REG-02). Other modules import from here only.
-export { cell, CsvWriter, decimalOf, guardFormula, stripFormulaGuard } from './csv.js';
+export {
+  cell,
+  CsvWriter,
+  decimalOf,
+  guardFormula,
+  row as csvRow,
+  stripFormulaGuard,
+} from './csv.js';
 export {
   EXPORT_JOB,
   EXPORT_MAX_ROWS,

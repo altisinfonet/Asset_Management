@@ -1,9 +1,11 @@
 import { departmentsMessages } from './departments';
 import { labelsMessages } from './labels';
+import { loginLinkMessages } from './loginlink';
 import { m2Messages } from './m2';
 import { notificationsMessages } from './notifications';
 import { repairsMessages } from './repairs';
 import { stockMessages } from './stock';
+import { undoMessages } from './undo';
 import { viewsMessages } from './views';
 import { registryMessages } from './registry';
 
@@ -453,6 +455,7 @@ export const en = {
     help: 'Show this help',
     newAsset: 'Create a new asset',
     close: 'Close a dialog or menu',
+    notifications: 'Jump to notifications (the Undo of a check-out)',
     goDashboard: 'Dashboard',
     goAssets: 'Assets',
     goSettings: 'Settings',
@@ -470,6 +473,8 @@ export const en = {
   ...registryMessages,
   ...m2Messages,
   ...departmentsMessages,
+  ...loginLinkMessages,
+  ...undoMessages,
   ...labelsMessages,
   ...stockMessages,
   ...repairsMessages,

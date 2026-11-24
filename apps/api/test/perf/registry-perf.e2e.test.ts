@@ -206,7 +206,7 @@ describe.skipIf(!dbEnabled)(
             )
             .join('\n'),
       );
-    });
+    }, 300_000);
 
     const get = async (url: string) => {
       const res = await A.admin.get(url);
@@ -359,6 +359,153 @@ describe.skipIf(!dbEnabled)(
         expect(s.p95, s.name).toBeLessThan(BUDGET.custody);
       }
     }, 300_000);
+
+    it(`sorts by location, assignee and due date p95 < ${BUDGET.list} ms with locations and open custody on the 50k tenant (M2-REG-03, ED-22)`, async () => {
+      // 5 sites x 4 floors x 5 rooms = 125 locations, 40 people; 90% of the assets sit in a room, 40% are
+      // checked out (3 in 4 to a person, the rest to a location), 70% of those with an expected return
+      const leaves: string[] = [];
+      for (let s = 0; s < 5; s++) {
+        const site = (await A.admin.post('/v1/locations', { name: `Site ${s}`, kind: 'site' }))
+          .body;
+        for (let f = 0; f < 4; f++) {
+          const floor = (
+            await A.admin.post('/v1/locations', {
+              name: `Floor ${f}`,
+              kind: 'floor',
+              parent_id: site.id,
+            })
+          ).body;
+          for (let r = 0; r < 5; r++) {
+            const room = await A.admin.post('/v1/locations', {
+              name: `Room ${s}.${f}.${r}`,
+              kind: 'room',
+              parent_id: floor.id,
+            });
+            leaves.push(room.body.id);
+          }
+        }
+      }
+      const people: string[] = [];
+      for (let p = 0; p < 40; p++) {
+        people.push(
+          (
+            await A.admin.post('/v1/people', {
+              display_name: `Holder ${String(p).padStart(2, '0')}`,
+            })
+          ).body.id,
+        );
+      }
+      await ownerTenantSql(
+        A.tenantId,
+        `update app.asset a set location_id = ($1::uuid[])[1 + x.n % $2::int]
+           from (select id, row_number() over (order by id)::int as n from app.asset) x
+          where x.id = a.id and x.n % 10 <> 0`,
+        [`{${leaves.join(',')}}`, leaves.length],
+      );
+      await ownerTenantSql(
+        A.tenantId,
+        `insert into app.assignment (id, tenant_id, asset_id, person_id, location_id, checked_out_at, expected_return)
+         select gen_random_uuid(), $1::uuid, x.id,
+                case when x.n % 4 <> 0 then ($2::uuid[])[1 + x.n % $4::int] end,
+                case when x.n % 4 = 0 then ($3::uuid[])[1 + x.n % $5::int] end,
+                now() - interval '1 day',
+                case when x.n % 10 < 7 then current_date + (x.n % 400 - 30) end
+           from (select id, row_number() over (order by id)::int as n from app.asset where archived_at is null) x
+          where x.n % 5 < 2`,
+        [
+          A.tenantId,
+          `{${people.join(',')}}`,
+          `{${leaves.join(',')}}`,
+          people.length,
+          leaves.length,
+        ],
+      );
+      await withClient(env.migratorUrl!, async (c) => {
+        for (const t of ['asset', 'assignment', 'location', 'person'])
+          await c.query(`vacuum (analyze) app.${t}`);
+      });
+      const open = await ownerTenantSql(
+        A.tenantId,
+        `select count(*)::int as n from app.assignment where checked_in_at is null`,
+      );
+      expect(open.rows[0].n).toBeGreaterThan(PER_TENANT * 0.3);
+
+      const sorts = ['location', '-location', 'assignee', '-assignee', 'due', '-due'];
+      const deep: Record<string, string> = {};
+      const sortStats: Stat[] = [];
+      for (const sort of sorts) {
+        // a cursor from page 20 of the same sort (deep keyset page)
+        let cursor = (await get(`/v1/assets?limit=50&sort=${sort}`)).body.page
+          .next_cursor as string;
+        for (let i = 0; i < 18; i++) {
+          cursor = (await get(`/v1/assets?limit=50&sort=${sort}&cursor=${cursor}`)).body.page
+            .next_cursor;
+        }
+        deep[sort] = cursor;
+        sortStats.push(
+          await measure(`list sort=${sort} (first page)`, SAMPLES, async () => {
+            const res = await get(`/v1/assets?limit=50&sort=${sort}`);
+            if (res.body.data.length !== 50) throw new Error('short page');
+          }),
+          await measure(`list sort=${sort} (page 20 cursor)`, SAMPLES, async () => {
+            await get(`/v1/assets?limit=50&sort=${sort}&cursor=${deep[sort]}`);
+          }),
+        );
+      }
+      sortStats.push(
+        await measure('list sort=due, limit 200', SAMPLES, async () => {
+          await get('/v1/assets?limit=200&sort=due');
+        }),
+        await measure('list sort=-assignee + category filter', SAMPLES, async () => {
+          await get(`/v1/assets?limit=50&sort=-assignee&category_id=${categoryIds[2]}`);
+        }),
+        await measure('list sort=location + assigned=true', SAMPLES, async () => {
+          await get('/v1/assets?limit=50&sort=location&assigned=true');
+        }),
+      );
+      for (const s of sortStats) expect(s.p95, s.name).toBeLessThan(BUDGET.list);
+
+      // correctness on the big dataset: the first pages equal the SQL order, empty values last
+      const check = async (sort: string, order: string) => {
+        const got = (await get(`/v1/assets?limit=200&sort=${sort}`)).body.data.map(
+          (r: { id: string }) => r.id,
+        );
+        const want = await ownerTenantSql(
+          A.tenantId,
+          `select a.id from app.asset a
+             left join app.assignment s on s.asset_id = a.id and s.checked_in_at is null
+            where a.archived_at is null order by ${order} limit 200`,
+        );
+        expect(got).toEqual(want.rows.map((r: { id: string }) => r.id));
+      };
+      await check('due', 's.expected_return asc nulls last, a.id asc');
+      await check('-due', 's.expected_return desc nulls last, a.id desc');
+
+      const plans: string[] = [];
+      for (const sort of ['location', 'assignee', 'due']) {
+        const q = assetListSchema.parse({ sort, limit: '50' });
+        const stmt = assetListSql(q, [], assetSortTerms(q.sort), undefined);
+        const plan = await withClient(env.migratorUrl!, async (c) => {
+          await c.query('begin');
+          try {
+            await c.query(`select set_config('app.tenant_id', $1, true)`, [A.tenantId]);
+            const res = await c.query(`explain (costs off) ${stmt.text}`, stmt.values);
+            return res.rows.map((r: { 'QUERY PLAN': string }) => r['QUERY PLAN']).join('\n');
+          } finally {
+            await c.query('rollback');
+          }
+        });
+        plans.push(`== sort=${sort}\n${plan}\n`);
+        // the narrow part of the statement is an index-only scan of an existing partial index (no heap access)
+        expect(plan, `sort=${sort}\n${plan}`).toMatch(
+          /Index Only Scan using asset_[a-z_]+_idx on asset/,
+        );
+        expect(plan, `sort=${sort}\n${plan}`).toMatch(/top-N heapsort|Sort Key/);
+      }
+      const dir = join(process.cwd(), 'test-results');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'registry-plans-sorts.txt'), plans.join('\n'));
+    }, 600_000);
 
     it(`global search p95 < ${BUDGET.search} ms`, async () => {
       const exact = await measure('search exact tag', SAMPLES, async (i) => {

@@ -61,6 +61,13 @@ export const PROBLEM_CATALOG = {
   'asset-already-checked-out': { status: 409, title: 'Asset already checked out' },
   'asset-not-checked-out': { status: 409, title: 'Asset is not checked out' },
   'asset-not-deployable': { status: 409, title: 'Asset cannot be checked out in its state' },
+  // Login link and custody undo (M2-USR-03, M2-UX-02; ED-22, ED-23)
+  'person-already-linked': { status: 409, title: 'Person already has a login account' },
+  'login-already-linked': { status: 409, title: 'Login account already has a person' },
+  'login-person-in-use': { status: 409, title: "The login's own person still holds assets" },
+  'undo-expired': { status: 409, title: 'Too late to undo' },
+  'undo-asset-changed': { status: 409, title: 'The asset changed since the action' },
+  'undo-not-possible': { status: 409, title: 'This action cannot be undone' },
   // Accessories and consumables (M2 wave 2; openapi x-problem-codes)
   'insufficient-stock': { status: 409, title: 'Not enough stock' },
   'idempotency-key-in-flight': {

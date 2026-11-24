@@ -1,6 +1,12 @@
 import type { FieldError } from '../platform/index.js';
 import { Prisma, type Tx } from '../tenancy/index.js';
-import { ASSET_FROM, assetConditions, assetSortTerms, orderBySql } from './asset-queries.js';
+import {
+  ASSET_FROM,
+  assetConditions,
+  assetSortTerms,
+  orderBySql,
+  sortJoinsSql,
+} from './asset-queries.js';
 import { type AssetListQuery, assetListSchema } from './schemas.js';
 
 /**
@@ -87,9 +93,10 @@ export async function selectAssetIds(
 ): Promise<{ ids: string[]; more: boolean }> {
   const conditions = assetConditions(query, []);
   const where = conditions.length > 0 ? Prisma.join(conditions, ' and ') : Prisma.sql`true`;
+  const terms = assetSortTerms(query.sort);
   const rows = await trx.$queryRaw<Array<{ id: string }>>(
-    Prisma.sql`select a.id ${ASSET_FROM} where ${where}
-      order by ${orderBySql(assetSortTerms(query.sort))} limit ${max + 1}`,
+    Prisma.sql`select a.id ${ASSET_FROM} ${sortJoinsSql(terms)} where ${where}
+      order by ${orderBySql(terms)} limit ${max + 1}`,
   );
   return { ids: rows.slice(0, max).map((r) => r.id), more: rows.length > max };
 }

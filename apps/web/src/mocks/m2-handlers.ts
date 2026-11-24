@@ -531,7 +531,7 @@ const assetsHeld = (personId: string) =>
     .length;
 
 /** All open custody periods of the person (assets and accessories): what blocks a deactivation. */
-const openAssignmentsOf = (personId: string) =>
+export const openAssignmentsOf = (personId: string) =>
   registry().assignments.filter((a) => a.person_id === personId && !a.checked_in_at).length;
 
 /** `Person.department` is the NAME of the linked department (read-only); `department_id` is what is written. */
@@ -546,7 +546,7 @@ function personView(person: MockPerson) {
   };
 }
 
-function onePerson(person: MockPerson, status = 200, headers: Record<string, string> = {}) {
+export function onePerson(person: MockPerson, status = 200, headers: Record<string, string> = {}) {
   return HttpResponse.json(personView(person), {
     status,
     headers: { ETag: etagOf(person._v), ...headers },
@@ -1590,6 +1590,7 @@ const custodyHandlers: HttpHandler[] = [
       if (photoErrors.length > 0) return validation(photoErrors);
 
       const from = statusName(asset.status_id);
+      const fromId = asset.status_id;
       const result = mutateRegistry((data) => {
         const live = data.assets.find((a) => a.id === asset.id)!;
         const assignment = openAssignment(data, live, target, body, guard.user.id);
@@ -1609,7 +1610,7 @@ const custodyHandlers: HttpHandler[] = [
             target_id: target.id,
             target_name: target.name,
             expected_return: assignment.expected_return ?? null,
-            status: { from, to: deployed!.name },
+            status: { from, to: deployed!.name, from_id: fromId, to_id: deployed!.id },
             ...(assignment.note ? { note: assignment.note } : {}),
             ...(photoIds(body).length > 0 ? { attachment_ids: photoIds(body) } : {}),
           },
@@ -1704,6 +1705,7 @@ const custodyHandlers: HttpHandler[] = [
           condition,
         });
         const fromStatus = statusName(live.status_id);
+        const fromStatusId = live.status_id;
         const fromLocation = live.location_id;
         const newLocation =
           body.checkin_location_id && body.checkin_location_id !== live.location_id
@@ -1726,7 +1728,12 @@ const custodyHandlers: HttpHandler[] = [
             target_type: holder.target_type,
             target_id: holder.target_id,
             target_name: holder.target_name ?? null,
-            status: { from: fromStatus, to: status.name },
+            status: {
+              from: fromStatus,
+              to: status.name,
+              from_id: fromStatusId,
+              to_id: status.id,
+            },
             ...(newLocation ? { location: { from: fromLocation ?? null, to: newLocation } } : {}),
             ...(condition ? { condition } : {}),
             ...(note ? { note } : {}),
@@ -1814,6 +1821,7 @@ const custodyHandlers: HttpHandler[] = [
           );
         }
         const assignment = openAssignment(d, live, target, body, guard.user.id);
+        const fromStatus = { name: statusName(live.status_id), id: live.status_id };
         if (deployed) live.status_id = deployed.id;
         const fromLocation = live.location_id ?? null;
         const newLocation =
@@ -1849,6 +1857,16 @@ const custodyHandlers: HttpHandler[] = [
             to: { type: target.type, id: target.id, name: target.name },
             from_assignment_id: open?.id ?? null,
             to_assignment_id: assignment.id,
+            ...(deployed
+              ? {
+                  status: {
+                    from: fromStatus.name,
+                    to: deployed.name,
+                    from_id: fromStatus.id,
+                    to_id: deployed.id,
+                  },
+                }
+              : {}),
             ...(newLocation ? { location: { from: fromLocation, to: newLocation } } : {}),
             ...(reason ? { reason } : {}),
             ...(note ? { note } : {}),
@@ -1862,6 +1880,224 @@ const custodyHandlers: HttpHandler[] = [
         { transfer: result.transfer, assignment: assignmentView(result.assignment, false) },
         201,
         `/v1/assets/${asset.id}/assignments`,
+      );
+    });
+  }),
+];
+
+// ---- undo of a custody action (M2-UX-02, ED-23) ---------------------------------------------------
+
+/** How long after a custody action it can still be undone (the API's UNDO_WINDOW_SECONDS). */
+const UNDO_WINDOW_MS = 300_000;
+const UNDO_KINDS: Record<
+  string,
+  { undone: 'checkout' | 'checkin' | 'transfer'; permission: string; label: string }
+> = {
+  checked_out: { undone: 'checkout', permission: 'asset:checkout', label: 'check-out' },
+  checked_in: { undone: 'checkin', permission: 'asset:checkin', label: 'check-in' },
+  transferred: { undone: 'transfer', permission: 'asset:transfer', label: 'transfer' },
+};
+const undoProblem = (code: string, title: string, detail: string) =>
+  problem(409, code, title, { detail });
+
+const undoHandlers: HttpHandler[] = [
+  http.post('/v1/assets/:id/undo-custody', async ({ request, params }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'asset:checkout' });
+    if (!guard.ok) return guard.response;
+    const body = await readBody(request);
+    return idempotent(request, guard.user.id, body, () => {
+      const ifMatch = request.headers.get('if-match');
+      if (!ifMatch || ifMatch === '*') {
+        return problem(428, 'precondition-required', 'If-Match is required');
+      }
+      if (
+        !body ||
+        typeof body.assignment_id !== 'string' ||
+        Object.keys(body).length !== 1 ||
+        checkUuids(body, ['assignment_id']).length > 0
+      ) {
+        return validation([
+          { pointer: '/assignment_id', message: 'must be a uuid', code: 'invalid' },
+        ]);
+      }
+      const locked = lockAsset(request, String(params.id));
+      if ('response' in locked) return locked.response;
+      const { asset } = locked;
+      const data = registry();
+      const last = [...data.history].reverse().find((h) => h.asset_id === asset.id);
+      if (last?.event_type === 'custody_undone') {
+        return undoProblem(
+          'undo-not-possible',
+          'This action cannot be undone',
+          'This action was already undone.',
+        );
+      }
+      const kind = last ? UNDO_KINDS[last.event_type] : undefined;
+      if (!last || !kind || last.assignment_id !== body.assignment_id) {
+        return undoProblem(
+          'undo-asset-changed',
+          'The asset changed since the action',
+          'The asset changed after this action, so it can no longer be undone.',
+        );
+      }
+      if (Date.now() - Date.parse(last.at) > UNDO_WINDOW_MS) {
+        return undoProblem(
+          'undo-expired',
+          'Too late to undo',
+          'The time to undo this action has passed.',
+        );
+      }
+      const allowed = requireSession(request, { mutation: true, permission: kind.permission });
+      if (!allowed.ok) return allowed.response;
+
+      const payload = (last.payload ?? {}) as Record<string, unknown>;
+      const status = payload.status as { from_id?: string } | undefined;
+      const wantedStatus = typeof status?.from_id === 'string' ? status.from_id : null;
+      const original = data.assignments.find((a) => a.id === last.assignment_id);
+      if (!original || original.loaner_pool_id) {
+        return undoProblem(
+          'undo-not-possible',
+          'This action cannot be undone',
+          'Loaner custody cannot be undone here. Use the loaner screens.',
+        );
+      }
+      let reopenFrom: MockAssignment | null = null;
+      if (kind.undone === 'checkin') {
+        if (asset.current_assignment || !original.checked_in_at) {
+          return undoProblem(
+            'undo-asset-changed',
+            'The asset changed since the action',
+            'The asset is checked out again.',
+          );
+        }
+        reopenFrom = original;
+      } else {
+        if (asset.current_assignment?.assignment_id !== original.id || original.checked_in_at) {
+          return undoProblem(
+            'undo-asset-changed',
+            'The asset changed since the action',
+            'The asset is no longer held as it was.',
+          );
+        }
+        if (kind.undone === 'transfer' && typeof payload.from_assignment_id === 'string') {
+          reopenFrom = data.assignments.find((a) => a.id === payload.from_assignment_id) ?? null;
+          if (!reopenFrom || reopenFrom.loaner_pool_id) {
+            return undoProblem(
+              'undo-not-possible',
+              'This action cannot be undone',
+              'The previous holder cannot be restored.',
+            );
+          }
+        }
+      }
+      const restore =
+        kind.undone !== 'transfer' || !reopenFrom
+          ? data.statusLabels.find((s) => s.id === wantedStatus)
+          : undefined;
+      if ((kind.undone !== 'transfer' || !reopenFrom) && !restore) {
+        return undoProblem(
+          'undo-not-possible',
+          'This action cannot be undone',
+          'The previous status of the asset is not known any more.',
+        );
+      }
+      let holder: Target | null = null;
+      if (reopenFrom) {
+        const resolved = resolveTarget(
+          {
+            ...(reopenFrom.person_id ? { person_id: reopenFrom.person_id } : {}),
+            ...(reopenFrom.location_id ? { location_id: reopenFrom.location_id } : {}),
+            ...(reopenFrom.target_asset_id ? { target_asset_id: reopenFrom.target_asset_id } : {}),
+          },
+          asset.id,
+        );
+        if (Array.isArray(resolved)) {
+          return undoProblem(
+            'undo-not-possible',
+            'This action cannot be undone',
+            'The previous holder can no longer receive the asset, so the action cannot be undone.',
+          );
+        }
+        holder = resolved;
+      }
+
+      const note = `Undo of ${kind.label}`;
+      const locationFrom = (payload.location as { from?: string | null } | undefined) ?? undefined;
+      const result = mutateRegistry((d) => {
+        const live = d.assets.find((a) => a.id === asset.id)!;
+        const fromStatus = { id: live.status_id, name: statusName(live.status_id) };
+        const fromLocation = live.location_id ?? null;
+        const closed =
+          kind.undone === 'checkin' ? null : d.assignments.find((a) => a.id === original.id)!;
+        if (closed) {
+          closeAssignment(closed, guard.user.id, {
+            locationId: null,
+            note,
+            attachmentIds: [],
+            condition: null,
+          });
+        }
+        let reopened: MockAssignment | null = null;
+        if (reopenFrom && holder) {
+          reopened = openAssignment(
+            d,
+            live,
+            holder,
+            {
+              expected_return: reopenFrom.expected_return ?? undefined,
+              note: reopenFrom.note ?? note,
+            },
+            guard.user.id,
+          );
+        } else {
+          live.current_assignment = null;
+        }
+        if (restore) live.status_id = restore.id;
+        if (locationFrom && 'from' in locationFrom) live.location_id = locationFrom.from ?? null;
+        live.updated_at = nowIso();
+        live._v += 1;
+        let transferId: string | null = null;
+        if (kind.undone === 'transfer' && closed && reopened) {
+          transferId = newResourceId('assignment');
+        }
+        const inEffect = (reopened ?? closed)!;
+        const who = holder ?? {
+          type: original.person_id ? 'person' : original.location_id ? 'location' : 'asset',
+          id: (original.person_id ?? original.location_id ?? original.target_asset_id)!,
+          name: asset.current_assignment?.target_name ?? '',
+        };
+        pushEvent(
+          d,
+          live,
+          'custody_undone',
+          `Undid ${kind.label}${who.name ? ` (${who.name})` : ''}`,
+          guard.user.id,
+          { assignmentId: inEffect.id, transferId },
+          {
+            undone: kind.undone,
+            undone_event_type: last.event_type,
+            undone_assignment_id: original.id,
+            assignment_id: inEffect.id,
+            target_type: who.type,
+            target_id: who.id,
+            target_name: who.name,
+            status: {
+              from: fromStatus.name,
+              to: statusName(live.status_id),
+              from_id: fromStatus.id,
+              to_id: live.status_id,
+            },
+            ...(live.location_id !== fromLocation
+              ? { location: { from: fromLocation, to: live.location_id ?? null } }
+              : {}),
+          },
+        );
+        return { live, inEffect };
+      });
+      return custodyResponse(
+        result.live,
+        { assignment: assignmentView(result.inEffect, false), undone: kind.undone },
+        200,
       );
     });
   }),
@@ -2318,6 +2554,7 @@ export const m2Handlers: HttpHandler[] = [
   ...personHandlers,
   ...readHandlers,
   ...custodyHandlers,
+  ...undoHandlers,
   ...settingsHandlers,
   ...attachmentHandlers,
 ];

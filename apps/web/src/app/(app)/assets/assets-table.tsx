@@ -215,6 +215,7 @@ export function AssetsTable() {
       },
       assignee: {
         id: 'assignee',
+        sortable: true,
         header: t('assets.columns.assignee'),
         cell: (row) => {
           const assignment = row.current_assignment;
@@ -239,6 +240,7 @@ export function AssetsTable() {
       },
       due: {
         id: 'due',
+        sortable: true,
         header: t('assets.columns.due'),
         cell: (row) => {
           const due = row.current_assignment?.expected_return;
@@ -247,6 +249,7 @@ export function AssetsTable() {
       },
       location: {
         id: 'location',
+        sortable: true,
         header: t('assets.columns.location'),
         cell: (row) => lookups.locationLabel(row.location_id),
       },

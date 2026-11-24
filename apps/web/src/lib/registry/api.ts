@@ -38,6 +38,7 @@ import type {
   StatusLabel,
   TransferRequest,
   TransferResult,
+  UndoResult,
   Vendor,
   Versioned,
 } from './types';
@@ -182,7 +183,32 @@ function outcome<T>(result: T, response: Response): CustodyOutcome<T> {
   };
 }
 
+/** What undoing a custody action needs: the retry key and the ETag the action answered with. */
+export interface UndoCallOptions {
+  idempotencyKey: string;
+  etag: string;
+}
+
 export const custodyApi = {
+  /**
+   * Undo the last check-out, check-in or transfer of an asset (M2-UX-02, ED-23): an inverse action,
+   * not a delete. `assignment_id` is the one the action answered with and `etag` the asset's ETag
+   * after it: any later change is `412` / `409 undo-asset-changed`, a late one `409 undo-expired`.
+   */
+  async undo(
+    id: string,
+    body: { assignment_id: string },
+    options: UndoCallOptions,
+  ): Promise<CustodyOutcome<UndoResult>> {
+    const { data, response } = await http().POST('/v1/assets/{id}/undo-custody', {
+      params: {
+        path: { id },
+        header: { 'Idempotency-Key': options.idempotencyKey, 'If-Match': options.etag },
+      },
+      body,
+    });
+    return outcome(data as UndoResult, response);
+  },
   async checkout(
     id: string,
     body: CheckoutRequest,
@@ -550,6 +576,26 @@ export const peopleApi = {
     await http().DELETE('/v1/people/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
     });
+  },
+  /**
+   * Link a login account to the person (M2-USR-03, Administrators only). The login's own empty
+   * person record is archived; the person keeps everything it holds. `409`: the person has a login
+   * (`person-already-linked`), the login has a chosen person (`login-already-linked`), or its
+   * placeholder still holds assets (`login-person-in-use`).
+   */
+  async linkUser(id: string, userId: string, etag?: string): Promise<Versioned<Person>> {
+    const { data } = await http().POST('/v1/people/{id}/link-user', {
+      params: { path: { id }, ...(etag ? { header: { 'If-Match': etag } } : {}) },
+      body: { user_id: userId },
+    });
+    return versioned(data as Person, `/v1/people/${id}`);
+  },
+  /** Remove the login from the person; the login gets a new empty person record. */
+  async unlinkUser(id: string, etag?: string): Promise<Versioned<Person>> {
+    const { data } = await http().DELETE('/v1/people/{id}/link-user', {
+      params: { path: { id }, ...(etag ? { header: { 'If-Match': etag } } : {}) },
+    });
+    return versioned(data as Person, `/v1/people/${id}`);
   },
   /**
    * Deactivate a person (`PATCH status: inactive`). One who still holds assets answers `409` with

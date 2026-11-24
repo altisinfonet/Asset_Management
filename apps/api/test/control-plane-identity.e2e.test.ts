@@ -434,6 +434,60 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
             select count(*)::int as n from app.asset_history where event_type = 'checked_out'`;
           expect(out!.n).toBe(open);
         });
+        // Repairs of the demo: every active asset labelled "In repair" has exactly one open repair that
+        // moved it there (the Repairs page, the dashboard and the asset's tab agree); "Broken" has none.
+        await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
+          const inRepair = await trx.status_label.findFirstOrThrow({
+            where: { name: 'In repair' },
+          });
+          const ready = await trx.status_label.findFirstOrThrow({
+            where: { name: 'Ready to deploy' },
+          });
+          const broken = await trx.status_label.findFirstOrThrow({ where: { name: 'Broken' } });
+          const assets = await trx.asset.findMany({
+            where: { status_id: inRepair.id, archived_at: null },
+            select: { id: true },
+          });
+          expect(assets.length).toBeGreaterThan(0);
+          const records = await trx.maintenance_record.findMany();
+          expect(records).toHaveLength(assets.length);
+          expect(new Set(records.map((r) => r.asset_id))).toEqual(new Set(assets.map((a) => a.id)));
+          const now = Date.now();
+          for (const r of records) {
+            expect(['open', 'in_progress']).toContain(r.status);
+            expect(r.kind).toBe('repair');
+            expect(r.set_status_id).toBe(inRepair.id);
+            expect(r.restore_status_id).toBe(ready.id);
+            expect(r.title.length).toBeGreaterThan(0);
+            expect(r.description).toBeTruthy();
+            const age = (now - r.reported_at.getTime()) / 86_400_000;
+            expect(age).toBeGreaterThanOrEqual(0.9);
+            expect(age).toBeLessThanOrEqual(31);
+            expect(r.completed_at).toBeNull();
+            expect(r.status === 'in_progress').toBe(r.started_at !== null);
+            expect((r.cost_minor === null) === (r.currency === null)).toBe(true);
+          }
+          // a mix: open and in progress, supplier and in-house, quoted and not
+          expect(new Set(records.map((r) => r.status)).size).toBe(2);
+          expect(records.some((r) => r.vendor_id !== null)).toBe(true);
+          expect(
+            records.some((r) => r.vendor_id === null && r.performed_by_person_id !== null),
+          ).toBe(true);
+          expect(records.some((r) => r.cost_minor !== null)).toBe(true);
+          expect(records.some((r) => r.cost_minor === null)).toBe(true);
+          // one repair_opened history entry per record, and none for the Broken assets
+          const [opened] = await trx.$queryRaw<Array<{ n: number }>>`
+            select count(*)::int as n from app.asset_history
+             where event_type = 'repair_opened' and (payload->>'repair_id')::uuid in
+                   (select id from app.maintenance_record)`;
+          expect(opened!.n).toBe(records.length);
+          expect(await trx.asset.count({ where: { status_id: broken.id } })).toBeGreaterThan(0);
+          expect(
+            await trx.maintenance_record.count({
+              where: { asset: { status_id: broken.id } },
+            }),
+          ).toBe(0);
+        });
         // [M2-W2 ACC] demo accessories (some out, one with a partial return, some low) and consumables with a ledger
         await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
           expect(await trx.accessory.count()).toBe(6);

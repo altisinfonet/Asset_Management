@@ -443,6 +443,17 @@ describe('mock repairs', () => {
     });
   });
 
+  it('seeds one open repair, moving the status, for every asset in the not-deployable status (like the demo seed)', async () => {
+    const statuses = (await statusApi.list({ limit: 100 })).data;
+    const inRepair = statuses.find((s) => s.state_type === 'undeployable')!;
+    const assets = (await assetsApi.list({ status_id: [inRepair.id], limit: 200 })).data;
+    expect(assets.length).toBeGreaterThan(3);
+    const open = (await repairsApi.list({ status: ['open', 'in_progress'], limit: 200 })).data;
+    expect(open.map((r) => r.asset_id).sort()).toEqual(assets.map((a) => a.id).sort());
+    expect(open.every((r) => r.set_status_id === inRepair.id)).toBe(true);
+    expect(open.some((r) => r.status === 'in_progress')).toBe(true);
+  });
+
   it('totals the repair cost of an asset per currency, without the cancelled ones', async () => {
     const asset = await readyAsset();
     const empty = await repairsApi.summary(asset.id);

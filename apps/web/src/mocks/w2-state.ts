@@ -448,8 +448,9 @@ function buildSeed(): W2Data {
 }
 
 /**
- * Seeded repairs refer to registry assets (`Out for fix` ones are open repairs, a few ready laptops
- * have finished ones), so they are made from the registry the first time the repair data is read.
+ * Seeded repairs refer to registry assets (every `Out for fix` asset has an open repair, as in the
+ * real demo seed; a few ready laptops have finished ones), so they are made from the registry the
+ * first time the repair data is read.
  */
 function seedRepairs(data: W2Data): void {
   const assets = registry().assets.filter((a) => !a.archived_at);
@@ -458,8 +459,7 @@ function seedRepairs(data: W2Data): void {
   const ready = statuses.find((s) => s.name === 'Ready');
   const inRepair = assets
     .filter((a) => a.status_id === outForFix?.id)
-    .sort((a, b) => a.asset_tag.localeCompare(b.asset_tag))
-    .slice(0, 3);
+    .sort((a, b) => a.asset_tag.localeCompare(b.asset_tag));
   const finished = assets
     .filter(
       (a) => a.asset_tag.startsWith('LAP-') && a.status_id === ready?.id && !a.current_assignment,
@@ -486,6 +486,7 @@ function seedRepairs(data: W2Data): void {
       ticket_ref: null,
       cost: null,
       restore_status_id: ready?.id ?? null,
+      set_status_id: null,
       status: 'open',
       completed_at: null,
       resolution_notes: null,
@@ -493,14 +494,23 @@ function seedRepairs(data: W2Data): void {
       ...extra,
     };
   };
-  const titles = ['Cracked screen, replace', 'Battery swap', 'Keyboard not responding'];
+  const titles = [
+    'Cracked screen, replace',
+    'Battery swap',
+    'Keyboard not responding',
+    'Charging port loose',
+    'Screen flickers',
+    'Fan noise, overheating',
+    'Does not power on',
+  ];
   inRepair.forEach((asset, index) => {
     data.repairs.push(
       base(asset, {
-        title: titles[index] ?? 'Repair',
-        status: index === 1 ? 'in_progress' : 'open',
-        started_at: index === 1 ? iso(NOW - 2 * DAY) : null,
-        cost: { amount_minor: [6400, 2200, 0][index] ?? 0, currency: 'USD' },
+        title: titles[index] ?? `Repair ${index + 1}`,
+        status: index % 3 === 1 ? 'in_progress' : 'open',
+        started_at: index % 3 === 1 ? iso(NOW - 2 * DAY) : null,
+        cost: index < 3 ? { amount_minor: [6400, 2200, 0][index] ?? 0, currency: 'USD' } : null,
+        set_status_id: outForFix?.id ?? null,
       }),
     );
   });

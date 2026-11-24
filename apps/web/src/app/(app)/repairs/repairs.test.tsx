@@ -28,7 +28,7 @@ describe('RepairsScreen', () => {
     expect(first).toHaveTextContent('$64.00');
     expect(screen.getByRole('row', { name: /Battery swap/ })).toHaveTextContent('In progress');
     expect(screen.queryByRole('row', { name: /Replace screen/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Open/ })).toHaveTextContent('3');
+    expect(screen.getByRole('tab', { name: /Open/ })).toHaveTextContent('16');
     await waitFor(() => expect(screen.getByRole('tab', { name: /Closed/ })).toHaveTextContent('2'));
     expect(screen.getByTestId('repairs-total')).toHaveTextContent(
       'Cost of the repairs shown: $86.00',

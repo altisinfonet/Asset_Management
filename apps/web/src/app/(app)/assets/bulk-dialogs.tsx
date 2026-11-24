@@ -14,6 +14,7 @@ import {
 import { Field } from '@/components/ui/field';
 import { Select } from '@/components/ui/select';
 import { useT } from '@/i18n';
+import { useAuth } from '@/lib/auth/auth-context';
 import type { BulkItem, BulkResult } from '@/lib/registry/bulk';
 import type { Lookups } from '@/lib/registry/queries';
 import { uiErrorText } from '@/lib/error-text';
@@ -39,6 +40,7 @@ export function BulkEditDialog({
   onApply: (patch: BulkEditPatch) => void;
 }) {
   const t = useT();
+  const { can } = useAuth();
   const [field, setField] = useState<BulkField>('status_id');
   const [value, setValue] = useState('');
   const active = <T extends { id: string; name: string; archived_at?: string | null }>(list: T[]) =>
@@ -89,6 +91,13 @@ export function BulkEditDialog({
             />
           )}
         </Field>
+        {can('repair:manage') &&
+        field === 'status_id' &&
+        lookups.statusById.get(value)?.state_type === 'undeployable' ? (
+          <p className="text-sm text-muted" data-testid="bulk-no-repair-note">
+            {t('repairs.noRepair.bulk')}
+          </p>
+        ) : null}
         <Banner tone="info" title={t('assets.bulk.previewTitle')}>
           {t('assets.bulk.preview', {
             tags: items.length > 5 ? `${preview}, ...` : preview,

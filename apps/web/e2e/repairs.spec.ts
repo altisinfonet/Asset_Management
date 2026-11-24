@@ -12,7 +12,7 @@ test.describe('Repairs page', () => {
     await page.goto('/repairs');
     await expect(page.getByRole('row', { name: /Cracked screen, replace/ })).toContainText('Open');
     await expect(page.getByRole('row', { name: /Battery swap/ })).toContainText('In progress');
-    await expect(page.getByRole('tab', { name: /Open/ })).toContainText('3');
+    await expect(page.getByRole('tab', { name: /Open/ })).toContainText('16');
     await expect(page.getByRole('tab', { name: /Closed/ })).toContainText('2');
     await expect(page.getByTestId('repairs-total')).toHaveText('Cost of the repairs shown: $86.00');
 

@@ -144,7 +144,9 @@ describe.skipIf(!dbEnabled)(`loaner pools (${mode})`, () => {
       // the defaults of a pool created with just a name
       const plain = await newPool();
       expect(plain.body).toMatchObject({
-        default_loan_days: 7,
+        default_loan_days: null,
+        effective_default_loan_days: 7,
+        email_borrowers_without_login: null,
         max_loan_days: null,
         max_loans_per_person: null,
         eligible_person_kinds: null,

@@ -1,9 +1,11 @@
 import type { OutboxDelivery } from '../outbox/index.js';
 import type { Tx } from '../tenancy/index.js';
 import {
+  type EmailRecipientResolver,
   type RecipientResolver,
   anyOf,
   holdersOf,
+  loanBorrowerWithoutLogin,
   loginOfPerson,
   payloadUser,
   poolManagers,
@@ -45,6 +47,8 @@ export interface Subscription {
   event: string;
   type: NotificationType;
   recipients: RecipientResolver;
+  /** Addresses that are not login accounts and still get the mail (ED-24); no in-app row. */
+  emailRecipients?: EmailRecipientResolver;
   /** Return null to send nothing for this event (the subject vanished, nothing to say). */
   describe: (event: OutboxDelivery, tx: Tx) => Promise<Described | null>;
   /** What makes two events "the same" for a recipient. Default: the event id. */
@@ -244,6 +248,7 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
     event: 'loan.overdue',
     type: 'loan.overdue',
     recipients: anyOf(loginOfPerson('personId'), poolManagers('poolId')),
+    emailRecipients: loanBorrowerWithoutLogin(),
     async describe(event, tx) {
       const loan = await loanOf(tx, idFrom(event, 'assignmentId'));
       if (!loan) return null;
@@ -275,6 +280,7 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
     event: 'loan.due_soon',
     type: 'loan.due_soon',
     recipients: loginOfPerson('personId'),
+    emailRecipients: loanBorrowerWithoutLogin(),
     async describe(event, tx) {
       const loan = await loanOf(tx, idFrom(event, 'assignmentId'));
       if (!loan) return null;

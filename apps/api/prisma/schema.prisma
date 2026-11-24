@@ -811,29 +811,30 @@ model loan_alert {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model loaner_pool {
-  id                    String               @id @db.Uuid
-  tenant_id             String               @db.Uuid
-  name                  String
-  description           String?
-  home_location_id      String?              @db.Uuid
-  default_loan_days     Int                  @default(7)
-  max_loan_days         Int?
-  max_loans_per_person  Int?
-  eligible_person_kinds String[]             @default([])
-  owner_user_id         String?              @db.Uuid
-  is_active             Boolean              @default(true)
-  created_at            DateTime             @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime             @default(now()) @db.Timestamptz(6)
-  created_by            String?              @db.Uuid
-  updated_by            String?              @db.Uuid
-  archived_at           DateTime?            @db.Timestamptz(6)
-  version               Int                  @default(1)
-  name_key              String?              @default(dbgenerated("lower(btrim(name))"))
-  assignment            assignment[]
-  tenant                tenant               @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  location              location?            @relation(fields: [tenant_id, home_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
-  user_account          user_account?        @relation(fields: [tenant_id, owner_user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
-  loaner_pool_member    loaner_pool_member[]
+  id                            String               @id @db.Uuid
+  tenant_id                     String               @db.Uuid
+  name                          String
+  description                   String?
+  home_location_id              String?              @db.Uuid
+  default_loan_days             Int?
+  max_loan_days                 Int?
+  max_loans_per_person          Int?
+  eligible_person_kinds         String[]             @default([])
+  owner_user_id                 String?              @db.Uuid
+  is_active                     Boolean              @default(true)
+  created_at                    DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime             @default(now()) @db.Timestamptz(6)
+  created_by                    String?              @db.Uuid
+  updated_by                    String?              @db.Uuid
+  archived_at                   DateTime?            @db.Timestamptz(6)
+  version                       Int                  @default(1)
+  name_key                      String?              @default(dbgenerated("lower(btrim(name))"))
+  email_borrowers_without_login Boolean?
+  assignment                    assignment[]
+  tenant                        tenant               @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location                      location?            @relation(fields: [tenant_id, home_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  user_account                  user_account?        @relation(fields: [tenant_id, owner_user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  loaner_pool_member            loaner_pool_member[]
 
   @@unique([tenant_id, name_key], map: "loaner_pool_name_uq", where: raw("(archived_at IS NULL)"))
   @@unique([tenant_id, id])

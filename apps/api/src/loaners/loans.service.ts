@@ -35,7 +35,7 @@ import {
   type TxScope,
 } from '../registry/index.js';
 import { Prisma, TenancyService, type Tx } from '../tenancy/index.js';
-import { type LoanRow, type PoolRow, addDays, isoDay, loanDto } from './dto.js';
+import { type LoanRow, type PoolRow, addDays, effectiveLoanDays, isoDay, loanDto } from './dto.js';
 import { PoolsService } from './pools.service.js';
 import {
   OPEN_LOAN_STATES,
@@ -218,7 +218,7 @@ export class LoansService extends RegistryBase {
       const pool = await this.livePool(trx, poolId);
       const person = await this.borrowerById(trx, body.person_id, '/person_id');
       this.assertEligible(pool, person, '/person_id');
-      const expected = this.dueDate(pool, body.expected_return);
+      const expected = await this.dueDate(trx, pool, body.expected_return);
       await this.lockPerson(trx, person.id);
       await this.assertUnderLimit(trx, pool, person.id, 0);
 
@@ -251,7 +251,11 @@ export class LoansService extends RegistryBase {
     });
   }
 
-  /** The member to lend next: the lowest asset tag that is lendable, rows locked `skip locked`. */
+  /**
+   * The member to lend next (ED-24): the lendable member that has been idle the longest (the earliest
+   * return of its last custody period; a device never lent comes first), ties by the lowest asset tag.
+   * Rows are locked `skip locked`, so parallel requests get different devices.
+   */
   private async nextAvailable(trx: Tx, poolId: string): Promise<string> {
     const [row] = await trx.$queryRaw<Array<{ id: string }>>`
       select a.id
@@ -261,7 +265,9 @@ export class LoansService extends RegistryBase {
        where m.loaner_pool_id = ${poolId}::uuid and a.archived_at is null and sl.state_type = 'deployable'
          and not exists (select 1 from app.assignment s
                           where s.tenant_id = a.tenant_id and s.asset_id = a.id and s.checked_in_at is null)
-       order by a.asset_tag_key, a.id
+       order by (select max(h.checked_in_at) from app.assignment h
+                  where h.tenant_id = a.tenant_id and h.asset_id = a.id) asc nulls first,
+                a.asset_tag_key, a.id
        limit 1
          for update of a skip locked`;
     if (!row) {
@@ -283,7 +289,7 @@ export class LoansService extends RegistryBase {
         : await this.borrowerByText(trx, body.borrower!);
       const pointer = body.person_id ? '/person_id' : '/borrower';
       this.assertEligible(pool, person, pointer);
-      const expected = this.dueDate(pool, body.expected_return);
+      const expected = await this.dueDate(trx, pool, body.expected_return);
       await this.lockPerson(trx, person.id);
       const [open] = await trx.$queryRaw<Array<{ n: bigint }>>`
         select count(*) as n from app.assignment
@@ -798,10 +804,17 @@ export class LoansService extends RegistryBase {
     }
   }
 
-  /** The due date of a new loan: the request's, else today + the pool's default; bounded by the pool. */
-  private dueDate(pool: PoolRow, requested: string | undefined): string {
+  /**
+   * The due date of a new loan (ED-24): the request's `expected_return`, else today + the pool's
+   * `default_loan_days`, else today + the organisation's `default_expected_return_days`, else today +
+   * 7; an explicit date beyond the pool's maximum is refused, a derived one is cut to it.
+   */
+  private async dueDate(trx: Tx, pool: PoolRow, requested: string | undefined): Promise<string> {
     const today = todayUtc();
-    const due = requested ?? addDays(today, pool.default_loan_days);
+    const tenantDays = requested
+      ? null
+      : (await this.settings.read(trx)).default_expected_return_days;
+    const due = requested ?? addDays(today, effectiveLoanDays(pool, tenantDays));
     const errors: FieldError[] = [];
     if (due < dayBefore()) {
       errors.push({

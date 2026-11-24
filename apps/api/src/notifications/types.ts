@@ -81,14 +81,16 @@ export const NOTIFICATION_TYPES = {
   'loan.overdue': {
     label: 'Loan overdue',
     description: 'A loaned asset was not returned by its due date.',
-    recipients: 'The borrower (when they have a login) and users who manage loaner pools.',
+    recipients:
+      'The borrower (with a login: in-app and e-mail; without one: e-mail only, when the pool allows it) and the pool owner or users who manage loaner pools.',
     roleConfigurable: true,
     defaults: { inApp: true, email: 'immediate' },
   },
   'loan.due_soon': {
     label: 'Loan due soon',
     description: 'A loaned asset is due back shortly.',
-    recipients: 'The borrower, when they have a login.',
+    recipients:
+      'The borrower (with a login: in-app and e-mail; without one: e-mail only, when the pool allows it).',
     roleConfigurable: false,
     defaults: { inApp: true, email: 'immediate' },
   },

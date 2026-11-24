@@ -822,7 +822,7 @@ CREATE TABLE app.loaner_pool (
   name             text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 200),
   description      text,
   home_location_id uuid,                          -- where returned devices go back to
-  default_loan_days integer NOT NULL DEFAULT 7 CHECK (default_loan_days > 0),
+  default_loan_days integer CHECK (default_loan_days IS NULL OR default_loan_days > 0),  -- null = the tenant default (custody settings), else 7
   max_loan_days    integer CHECK (max_loan_days IS NULL OR max_loan_days >= default_loan_days),
   max_loans_per_person integer CHECK (max_loans_per_person IS NULL OR max_loans_per_person >= 1),
   -- empty = every kind of person may borrow (the API shows null); otherwise only the listed kinds
@@ -831,6 +831,7 @@ CREATE TABLE app.loaner_pool (
                           AND eligible_person_kinds <@ array['employee','student','contractor','external']::text[]),
   owner_user_id    uuid,                          -- told about overdue loans instead of every manager
   is_active        boolean NOT NULL DEFAULT true, -- an inactive pool lends nothing but keeps its members
+  email_borrowers_without_login boolean,          -- null = automatic (all kinds except students), true = all with an address, false = none (ED-24)
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   created_by       uuid,

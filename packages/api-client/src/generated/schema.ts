@@ -1904,7 +1904,7 @@ export interface paths {
         put?: never;
         /**
          * Quick loan from the pool
-         * @description Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool's `default_loan_days`. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool's limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool's `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.
+         * @description Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24; never beyond the pool's `max_loan_days`). Without `asset_id` the device is the member that has been idle the longest (earliest return of its last custody period, a device never lent first), ties by the lowest asset tag. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool's limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool's `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.
          *
          *     Requires permission `loaner:checkout`.
          */
@@ -2020,7 +2020,7 @@ export interface paths {
         put?: never;
         /**
          * Quick loan by scanning: one borrower, many devices
-         * @description The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool's `default_loan_days`. The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower's limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.
+         * @description The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24). The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower's limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.
          *
          *     Requires permission `loaner:checkout`.
          */
@@ -2920,7 +2920,7 @@ export interface paths {
         };
         /**
          * Get the custody settings
-         * @description Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API itself never applies it) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).
+         * @description Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API never applies it to an ordinary check-out, but a loaner loan whose pool has no `default_loan_days` takes it, ED-24) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).
          *
          *     Requires permission `catalog:read`.
          */
@@ -4305,12 +4305,9 @@ export interface components {
              * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
              */
             home_location_id?: string | null;
-            /**
-             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
-             * @default 7
-             */
-            default_loan_days?: number;
-            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
             /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
@@ -4326,6 +4323,10 @@ export interface components {
              * @default true
              */
             is_active?: boolean;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login: boolean | null;
+            /** @description The loan length a request without `expected_return` gets right now: `default_loan_days`, else the organisation's `default_expected_return_days`, else 7, cut to `max_loan_days` (ED-24). What the loaner desk pre-fills. */
+            readonly effective_default_loan_days: number;
             /** @description Live (not archived) assets in the pool. */
             readonly member_count: number;
             /** @description Members that can be lent right now: not archived, in a `deployable` state and not checked out. */
@@ -4346,12 +4347,9 @@ export interface components {
              * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
              */
             home_location_id?: string | null;
-            /**
-             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
-             * @default 7
-             */
-            default_loan_days?: number;
-            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
             /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
@@ -4367,6 +4365,8 @@ export interface components {
              * @default true
              */
             is_active?: boolean;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login?: boolean | null;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         LoanerPoolUpdate: {
@@ -4378,12 +4378,9 @@ export interface components {
              * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
              */
             home_location_id?: string | null;
-            /**
-             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
-             * @default 7
-             */
-            default_loan_days?: number;
-            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
             /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
@@ -4399,6 +4396,8 @@ export interface components {
              * @default true
              */
             is_active?: boolean;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login?: boolean | null;
         };
         LoanerPoolList: {
             data: components["schemas"]["LoanerPool"][];
@@ -5085,7 +5084,7 @@ export interface components {
             asset_id?: string;
             /**
              * Format: date
-             * @description Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.
+             * @description Defaults to today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24), cut to `max_loan_days`; an explicit date must not exceed the start day + pool.max_loan_days.
              */
             expected_return?: string;
             note?: string;
@@ -5113,7 +5112,7 @@ export interface components {
             codes: string[];
             /**
              * Format: date
-             * @description One due date for every device. Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.
+             * @description One due date for every device. Defaults like `LoanerCheckoutRequest.expected_return` (pool default, organisation default, 7 days); must not exceed the start day + pool.max_loan_days.
              */
             expected_return?: string;
             note?: string;
@@ -5317,7 +5316,7 @@ export interface components {
             recent: components["schemas"]["LoanerActivity"][];
         };
         CustodySettings: {
-            /** @description Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API itself never applies it (a check-out without `expected_return` stays open-ended). */
+            /** @description Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API never applies it to an ordinary check-out (one without `expected_return` stays open-ended); a loaner loan whose pool has no `default_loan_days` takes it (ED-24). */
             default_expected_return_days: number | null;
             /**
              * @description How many days before the due date a borrower of a loaner pool gets the "due soon" reminder; 0 = no reminder.

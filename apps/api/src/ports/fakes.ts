@@ -5,6 +5,7 @@ import {
   StorageNotFoundError,
   type AuditEntry,
   type AuditWriter,
+  type EmailNotificationRequest,
   type JobQueue,
   type MailMessage,
   type MailSender,
@@ -57,6 +58,11 @@ export class FakeNotifier implements Notifier {
   async notify(_tx: unknown, request: NotificationRequest): Promise<NotifyResult> {
     this.requests.push(request);
     return { created: new Set(request.recipients).size, skipped: 0 };
+  }
+  readonly emailRequests: EmailNotificationRequest[] = [];
+  async notifyEmail(_tx: unknown, request: EmailNotificationRequest): Promise<NotifyResult> {
+    this.emailRequests.push(request);
+    return { created: request.recipients.length, skipped: 0 };
   }
 }
 

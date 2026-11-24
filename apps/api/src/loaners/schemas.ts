@@ -51,12 +51,13 @@ const poolShape = {
   name: trimmed(1, 200),
   description: nullableText(2000),
   home_location_id: z.uuid().nullable(),
-  default_loan_days: z.number().int().min(1).max(3660),
+  default_loan_days: z.number().int().min(1).max(3660).nullable(),
   max_loan_days: z.number().int().min(1).max(3660).nullable(),
   max_loans_per_person: z.number().int().min(1).max(1000).nullable(),
   eligible_person_kinds: eligibleKinds,
   owner_user_id: z.uuid().nullable(),
   is_active: z.boolean(),
+  email_borrowers_without_login: z.boolean().nullable(),
 };
 
 export const poolCreateSchema = z.strictObject({
@@ -69,6 +70,7 @@ export const poolCreateSchema = z.strictObject({
   eligible_person_kinds: poolShape.eligible_person_kinds.optional(),
   owner_user_id: poolShape.owner_user_id.optional(),
   is_active: poolShape.is_active.optional(),
+  email_borrowers_without_login: poolShape.email_borrowers_without_login.optional(),
 });
 export type PoolCreate = z.output<typeof poolCreateSchema>;
 
@@ -82,6 +84,7 @@ export const poolUpdateSchema = z.strictObject({
   eligible_person_kinds: poolShape.eligible_person_kinds.optional(),
   owner_user_id: poolShape.owner_user_id.optional(),
   is_active: poolShape.is_active.optional(),
+  email_borrowers_without_login: poolShape.email_borrowers_without_login.optional(),
 });
 export type PoolUpdate = z.output<typeof poolUpdateSchema>;
 

@@ -23,8 +23,27 @@ export const EMPTY_COUNTS: PoolCounts = {
   due_soon_count: 0,
 };
 
+/** The loan length when neither the pool nor the organisation says (ED-24). */
+export const FALLBACK_LOAN_DAYS = 7;
+
+/**
+ * The default length of a loan of `pool` in days (ED-24): the pool's own `default_loan_days`, else the
+ * organisation's `default_expected_return_days`, else 7; never beyond the pool's `max_loan_days`.
+ */
+export function effectiveLoanDays(
+  pool: { default_loan_days: number | null; max_loan_days: number | null },
+  tenantDays: number | null,
+): number {
+  const days = pool.default_loan_days ?? tenantDays ?? FALLBACK_LOAN_DAYS;
+  return pool.max_loan_days !== null ? Math.min(days, pool.max_loan_days) : days;
+}
+
 /** Schema `LoanerPool`. An empty `eligible_person_kinds` column (= every kind) is shown as null. */
-export const poolDto = (r: PoolRow, counts: PoolCounts = EMPTY_COUNTS) => ({
+export const poolDto = (
+  r: PoolRow,
+  counts: PoolCounts = EMPTY_COUNTS,
+  tenantDays: number | null = null,
+) => ({
   id: r.id,
   created_at: r.created_at.toISOString(),
   updated_at: r.updated_at.toISOString(),
@@ -33,11 +52,13 @@ export const poolDto = (r: PoolRow, counts: PoolCounts = EMPTY_COUNTS) => ({
   description: r.description,
   home_location_id: r.home_location_id,
   default_loan_days: r.default_loan_days,
+  effective_default_loan_days: effectiveLoanDays(r, tenantDays),
   max_loan_days: r.max_loan_days,
   max_loans_per_person: r.max_loans_per_person,
   eligible_person_kinds: r.eligible_person_kinds.length > 0 ? r.eligible_person_kinds : null,
   owner_user_id: r.owner_user_id,
   is_active: r.is_active,
+  email_borrowers_without_login: r.email_borrowers_without_login,
   member_count: counts.member_count,
   available_count: counts.available_count,
   checked_out_count: counts.checked_out_count,
@@ -53,6 +74,7 @@ export const poolAuditView = (r: PoolRow) => {
     checked_out_count: _c,
     overdue_count: _o,
     due_today_count: _d,
+    effective_default_loan_days: _e,
     created_at: _ca,
     updated_at: _ua,
     ...rest

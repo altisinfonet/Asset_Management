@@ -161,6 +161,27 @@ until it is `healthy`. The signatures live in the `clamdata` volume, so later st
 Departments that existed as free text on people before this change were turned into departments by migration `0100`
 (one per distinct spelling, ignoring case and spaces) and the people were linked to them.
 
+### Loaner pools in a school (M2 wave 3; Loaners menu)
+
+A loaner pool is a cart of spare devices. Nothing in the schema is school-specific: map what you have like this.
+
+| In the school                    | In the Asset tracker                                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Student ID (the scanned badge)   | The person's **Employee ref** (People > Add person). Scanning or typing it at the loaner desk finds the person; the e-mail address works too. Set the person's **Kind** to `student`. |
+| Homeroom / class                 | The person's **Department** (one department per homeroom, or per grade) or the person's **Location** (the room). |
+| Device number, cart number       | The asset's **Asset tag** (for example `CB-014`; the tag is what the label and the desk scan). A cart number can be a custom field on the category, or simply the pool's name. |
+| The cart                         | A loaner pool, with the cart's room as its **Home location**: a returned device goes back there.         |
+
+How long a loan runs, in this order: the date typed at the desk, the pool's **Default loan length**, the organisation's
+**Default expected return** (Loaners > Pools > Loan defaults; Settings > Custody), else 7 days; never longer than the pool's
+**Maximum loan length**. "Lend the next device" gives the device that has been in the cart the longest (the one never lent
+first; ties by tag), so the devices wear evenly.
+
+Reminders: a borrower with a login gets the due-soon and overdue messages in the bell and by e-mail (as set in Account >
+Notifications). A borrower **without** a login gets the e-mail only, when the pool's **E-mail borrowers without a login**
+option allows it: by default employees, contractors and external people yes, **students no**; choose "always" or "never" per
+pool. Overdue loans always also go to the pool's owner (or, without one, to everybody who may manage loaners).
+
 **Notification emails** are caught by Mailpit like every other mail: open http://localhost:8025 (port
 `MAILPIT_UI_PORT`). Immediate notifications arrive as soon as the worker has processed the event (a second or two);
 digest mails are sent once a day by the scheduler. If nothing arrives, check `docker compose logs worker`: the

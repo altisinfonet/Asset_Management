@@ -126,8 +126,9 @@ export class PoolsService extends RegistryBase {
         trx,
         page.data.map((p) => p.id),
       );
+      const tenantDays = (await this.settings.read(trx)).default_expected_return_days;
       return {
-        data: page.data.map((r) => poolDto(r, counts.get(r.id) ?? EMPTY_COUNTS)),
+        data: page.data.map((r) => poolDto(r, counts.get(r.id) ?? EMPTY_COUNTS, tenantDays)),
         page: page.page,
       };
     });
@@ -195,7 +196,8 @@ export class PoolsService extends RegistryBase {
 
   private async view(trx: Tx, row: PoolRow): Promise<Record<string, unknown>> {
     const counts = await this.counts(trx, [row.id]);
-    return poolDto(row, counts.get(row.id) ?? EMPTY_COUNTS);
+    const tenantDays = (await this.settings.read(trx)).default_expected_return_days;
+    return poolDto(row, counts.get(row.id) ?? EMPTY_COUNTS, tenantDays);
   }
 
   // ----------------------------------------------------------------------------------- writes
@@ -207,7 +209,7 @@ export class PoolsService extends RegistryBase {
     try {
       return await this.tx(auth, async (trx) => {
         const merged = {
-          default_loan_days: body.default_loan_days ?? 7,
+          default_loan_days: body.default_loan_days ?? null,
           max_loan_days: body.max_loan_days ?? null,
         };
         await this.validate(trx, body, merged);
@@ -220,6 +222,7 @@ export class PoolsService extends RegistryBase {
             description: body.description ?? null,
             home_location_id: body.home_location_id ?? null,
             default_loan_days: merged.default_loan_days,
+            email_borrowers_without_login: body.email_borrowers_without_login ?? null,
             max_loan_days: merged.max_loan_days,
             max_loans_per_person: body.max_loans_per_person ?? null,
             eligible_person_kinds: body.eligible_person_kinds ?? [],
@@ -256,7 +259,8 @@ export class PoolsService extends RegistryBase {
         assertIfMatch(ifMatch, row.version);
 
         const merged = {
-          default_loan_days: body.default_loan_days ?? row.default_loan_days,
+          default_loan_days:
+            body.default_loan_days !== undefined ? body.default_loan_days : row.default_loan_days,
           max_loan_days: body.max_loan_days !== undefined ? body.max_loan_days : row.max_loan_days,
         };
         await this.validate(
@@ -279,6 +283,7 @@ export class PoolsService extends RegistryBase {
           'description',
           'home_location_id',
           'default_loan_days',
+          'email_borrowers_without_login',
           'max_loan_days',
           'max_loans_per_person',
           'owner_user_id',
@@ -598,7 +603,7 @@ export class PoolsService extends RegistryBase {
       home_location_id?: string | null | undefined;
       owner_user_id?: string | null | undefined;
     },
-    days: { default_loan_days: number; max_loan_days: number | null },
+    days: { default_loan_days: number | null; max_loan_days: number | null },
   ): Promise<void> {
     const errors: FieldError[] = [];
     if (body.home_location_id) {
@@ -619,7 +624,11 @@ export class PoolsService extends RegistryBase {
         errors.push(invalidRef('/owner_user_id', 'No such active user.'));
       }
     }
-    if (days.max_loan_days !== null && days.max_loan_days < days.default_loan_days) {
+    if (
+      days.max_loan_days !== null &&
+      days.default_loan_days !== null &&
+      days.max_loan_days < days.default_loan_days
+    ) {
       errors.push({
         pointer: '/max_loan_days',
         message: 'must not be less than default_loan_days',

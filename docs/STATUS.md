@@ -3,6 +3,9 @@
 _Last updated: 2026-11-24. Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
+Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
+[VERSION.md](VERSION.md) (version history, current 0.2.3) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
 ## 1. Overall
@@ -64,6 +67,13 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | "In repair" state renamed "Not deployable" (it covers every undeployable status, e.g. Broken) | ✅ |
 | Demo data: every asset labelled "In repair" now has an open repair (the Repairs page, dashboard and status labels agree); "Broken" assets have none | ✅ |
 | Asset form, asset page and bulk edit say so when an asset is not deployable but has no open repair, with a "Log a repair" shortcut (never blocks); a repair logged for an asset already "In repair" takes the status over and returns it to ready when closed | ✅ |
+
+### In progress 🟡 (founder requests, not merged yet)
+
+| Item                                                              | Status |
+| ----------------------------------------------------------------- | ------ |
+| Managed departments (today a department is free text on a person) | 🟡     |
+| Location edit fix                                                 | 🟡     |
 
 ### Wave 3 — not started ⏳
 

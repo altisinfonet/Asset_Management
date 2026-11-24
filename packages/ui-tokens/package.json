@@ -1,6 +1,6 @@
 {
   "name": "@assettracker/ui-tokens",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "Design tokens shared by web and mobile, generated from docs/design/tokens.json (CSS variables, Tailwind v4 theme, typed object, WCAG contrast checks)",
   "type": "module",

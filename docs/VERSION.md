@@ -4,8 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.3** (milestone M2, after the founder review of 2026-11-24). Last released commit on `main`: `2d9a14b`
-(`1c0a543`, which only adds the contributing rules, follows it).
+**Current version: 0.2.5** (milestone M2, wave 3 part 1). Tag `v0.2.5`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -42,7 +41,9 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (M2-LOAN-01, 03, the API of 02 and 04, M2-LIFE-09) and three deferred stories (M2-REG-03, M2-USR-03, M2-UX-02). Not released yet.
+## 0.2.5 - 2026-11-24 - M2 wave 3 part 1: imports, loaners, deferred items
+
+M2 wave 3, part 1: the import backend and wizard (M2-IMP-01..08), loaner pools, desk and dashboard (M2-LOAN-01..04, M2-LIFE-09) and three deferred stories (M2-REG-03, M2-USR-03, M2-UX-02).
 
 ### Added
 
@@ -132,6 +133,23 @@ M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (
 - The history payloads of check-out, check-in and a transfer out of stock now also carry the ids of the statuses
   (`status.from_id` / `to_id`), what an undo restores.
 
+
+### Fixed
+
+- The Google Admin ChromeOS import committed only 22 of 48 rows: a row undone by its savepoint left the model it had created
+  in the reference cache and the following rows hit a foreign key error. The resolvers are now dropped after an undone row.
+- The dry run reported "create" for a row whose asset tag another asset already had (matching on serial); it is now an error
+  in the dry run.
+- Test-only: the isolation tests' schema lint check no longer fails when the schema-lint test's temporary far-future
+  partitions exist at that moment in a parallel file.
+- Tooling: `docs/engineering/tools/gen.mjs` and `gen-api-md.mjs` run from a plain checkout (`yaml` is a pinned root
+  devDependency); the commands are in contributing.md.
+
+### Verification
+
+Independent verification of the merged code: 21/21 turbo tasks, API unit 635, API e2e direct 699/699 and pooled 699/699 on
+the rerun (one flake in the first pooled run, fixed in this release), real-stack browser suite 64 passed, contract and
+drift checks clean. See [AUDIT.md](AUDIT.md) B.21.
 
 ---
 

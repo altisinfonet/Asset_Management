@@ -323,7 +323,7 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   removed. All automated runs used their own project names and ports; the cause was not determined. Only local demo data was
   affected; `docker compose up -d --build` recreates it.
 
-### B.17 Loaner pool backend - 2026-11-24 (branch from `f687c04`, unreleased)
+### B.17 Loaner pool backend - 2026-11-24 (branch from `f687c04`, released in 0.2.5)
 
 - **Scope:** M2-LOAN-01 and -03, the API of M2-LOAN-02 and -04, M2-LIFE-09 (migration `0120`, tables `loaner_pool`,
   `loaner_pool_member`, `loan_alert`, the assignment -> pool foreign key, queue `loan.alerts`, ED-20, ED-21, ADR 0011).
@@ -338,7 +338,7 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Follow-ups:** the tenant day is UTC (no tenant time zone); the demo tenants have 210 assets (web tests that count demo
   assets may need the new number); web screens for pools, quick loan, bulk return, the dashboard and the dialog pre-fill.
 
-### B.18 Sort by location / assignee / due, link a person and a login, undo toast - 2026-11-24 (Unreleased)
+### B.18 Sort by location / assignee / due, link a person and a login, undo toast - 2026-11-24 (0.2.5)
 
 - **Scope:** M2-REG-03, M2-USR-03 and M2-UX-02 (ED-22, ED-23): keyset paging with empty values last, `link-user` / `undo-custody`
   operations, migration `0130` (history event type), three new groups of problem codes.
@@ -374,7 +374,7 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   already has when matching on the serial).
 - **Follow-ups:** imports do not undo (v1.1); the founder's real files (F-09) are still missing.
 
-### B.20 Wave 3 part 1 integration - 2026-11-24 (version 0.2.4 plus four merges, Unreleased)
+### B.20 Wave 3 part 1 integration - 2026-11-24 (version 0.2.4 plus four merges, released as 0.2.5)
 
 - **Scope:** merged import backend (B.19), loaner backend (B.17), deferred items (B.18) and the web of wave 3 in that order;
   regenerated the contract (203 operations), the client and API.md; then the follow-ups: the import wizard against the real
@@ -399,6 +399,12 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   `PERF` is set; the nightly job sets it and runs them.
 - **Follow-ups:** API details the web works around are listed in STATUS.md section 5; `a11y-w3` axe scenarios for the import
   wizard were edited by the web agent and run in the mock suite.
+
+### B.21 Release 0.2.5 independent verification - 2026-11-24 (version 0.2.5)
+
+- **Method:** a second pass on the merged code by a separate verifier, then the release checks on `main`.
+- **Result:** 21/21 turbo tasks; API e2e direct 699/699; pooled 699/699 on the rerun; real-stack browser suite 64 passed; contract and drift checks clean.
+- **Findings:** (1) one pooled run saw 5 schema-lint violations for temporary far-future partitions (for example `app.asset_history_2044_01`) that `schema-lint.e2e.test.ts` creates while a parallel file's lint ran: test-only flake, fixed by a shared helper that the six isolation files use (the product lint function is unchanged); (2) `docs/engineering/tools/gen.mjs` failed from a plain checkout (`yaml` not installed): `yaml` is now a pinned root devDependency and contributing.md names the commands.
 
 ---
 

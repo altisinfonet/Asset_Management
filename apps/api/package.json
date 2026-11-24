@@ -1,6 +1,6 @@
 {
   "name": "@assettracker/api",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "NestJS modular monolith (Fastify adapter). One image, many roles: api | worker | scheduler | migrate",
   "type": "module",

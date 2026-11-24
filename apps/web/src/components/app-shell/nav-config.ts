@@ -7,7 +7,6 @@ import {
   Printer,
   Repeat,
   Settings,
-  Upload,
   Users,
   Wrench,
   type LucideIcon,
@@ -90,10 +89,11 @@ export const NAV_ITEMS: NavItem[] = [
   {
     id: 'loaner',
     labelKey: 'nav.loanerPool',
-    href: '/loaner',
+    href: routes.loaners,
     icon: Repeat,
-    isActive: prefix('/loaner'),
-    available: false,
+    isActive: prefix('/loaners'),
+    available: true,
+    permission: 'loaner:read',
   },
   {
     id: 'repairs',
@@ -120,14 +120,9 @@ export const NAV_ITEMS: NavItem[] = [
     isActive: prefix('/labels'),
     available: false,
   },
-  {
-    id: 'import',
-    labelKey: 'nav.import',
-    href: '/import',
-    icon: Upload,
-    isActive: prefix('/import'),
-    available: false,
-  },
+  // Import is not a sidebar item: it is an occasional admin task (onboarding, a new batch), so it lives
+  // where its data does: the "Import" button of the Assets page, an "Imports" link in the Settings
+  // navigation (history, resume) and the command palette. See `routes.imports`.
   {
     id: 'settings',
     labelKey: 'nav.settings',

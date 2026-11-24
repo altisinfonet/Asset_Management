@@ -42,7 +42,36 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-Nothing yet. M2 wave 3 (import wizard, loaner pool, location scoping) is next.
+M2 wave 3, first part: the loaner pool backend (API only; the screens are web work). The import wizard and location scoping are
+still to come. No version bump yet.
+
+### Added
+
+- **Loaner pools** (M2-LOAN-01, ED-20, ADR 0011): pools of spare devices with a default and a maximum loan length, a limit of
+  loans per person, eligible kinds of people, a home location (returned devices go back there) and an owner; membership of
+  assets (one pool per asset, single and bulk add and remove); live counts per pool (members, available, out, overdue, due
+  today). Asset list filters `loaner_pool_id` and `in_loaner_pool` (the first used to answer `400`).
+- **Quick loans by scanning** (API of M2-LOAN-02): `POST /v1/loaner-pools/{id}/quick-checkout` lends several devices to one
+  borrower found by email or badge (`employee_ref`), `POST /v1/loans/return` takes many devices back, both with a result per
+  scan; `POST /v1/loaner-pools/{id}/checkout` lends one device (a given one, or the next available). Loan lists
+  (`GET /v1/loans`, `GET /v1/loans/{id}`), the overdue list (`GET /v1/loans/overdue`, now implemented) and extending a loan
+  (`POST /v1/loans/{id}/extend`, logged in audit and history).
+- **Loaner dashboard** (API of M2-LOAN-04): `GET /v1/loaners/dashboard`, per-pool and total counts and the latest activity.
+- **Overdue and due-soon alerts** (M2-LOAN-03, ED-21): a daily job per tenant raises each alert once per loan and state
+  (a ledger table makes a second run silent); the borrower (when they have a login) and the pool owner or managers are
+  notified in-app and by e-mail, with a text that escalates; per-user opt-out through the notification preferences.
+- **Custody settings** (M2-LIFE-09): `GET` / `PUT /v1/settings/custody` with the default number of days for the expected return
+  (a pre-fill for the dialogs; the API never applies it) and the reminder lead time of due-soon alerts.
+- Demo data: a Chromebook cart per demo tenant with ten devices, five on loan, two of them overdue (the demo tenants now have
+  210 assets).
+- Migration `0120` (pools, members, alert ledger, the loan foreign key), queue `loan.alerts`, problem codes
+  `loan-limit-reached` and `loaner-pool-inactive`; the 10 loaner operations that were contract-only are implemented, 8 new ones and the 2 custody settings operations are added (189 operations in all).
+
+### Changed
+
+- `GET /v1/loans/overdue` lists the asset check-outs past due with the holder, asset tag and name and the pool name
+  (new members `asset_tag`, `asset_name`, `holder_name`, `pool_name`).
+- The scan lookup of `GET /v1/scan/resolve` is shared with the loaner flows (no behaviour change).
 
 ---
 

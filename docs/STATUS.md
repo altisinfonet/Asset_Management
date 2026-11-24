@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 started (loaner pool backend done; import wizard, location scoping and the web screens to come) |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 integrated and unreleased (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping, isolation harness extension and user guides to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -83,15 +83,14 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Link and unlink a person and a login account from the person page and Settings → Users (ED-22) | USR-03 ✅ |
 | Undo toast after a check-out, check-in or transfer, single and bulk (ED-23) | UX-02 ✅ |
 
-### Wave 3 — in progress 🟡 (loaner pool backend done, 2026-11-24)
+### Wave 3 — part 1 integrated 🟡 (2026-11-24, unreleased)
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
-| CSV import wizard with dry run, Google Admin ChromeOS template   | IMP-01…09 |
-| Loaner pool backend: pools, quick loan and return by scanning, overdue alerts, dashboard API, custody settings ✅ (ADR 0011); the loaner screens and the dialog pre-fill are web work ⏳ | LOAN-01, LOAN-03 done; LOAN-02, LOAN-04, LIFE-09 API done |
+| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 open |
+| Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 | Location scoping for roles                                       | LOC-03 |
 | Isolation-harness extension, performance harness, user guides    | SEC-01, OPS-01, DOC-01 |
-| Deferred small items still open: default return date pre-fill in the dialogs (REG-03, USR-03 and UX-02 are done, see above) | LIFE-09 |
 | M2 founder acceptance walk-through 👤                            | UX-01 |
 
 ## 4. Waiting on the founder 👤
@@ -126,7 +125,9 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 ## 5. Known gaps carried forward
 
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
-- Loan notifications (overdue, due soon) are wired; the import notification is wired when imports land (wave 3). The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
+- Loan and import notifications are wired. The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
+- Finished imports lose their rows, samples and file after 30 days (ED-25): download the error report first. The before-images for a v1.1 rollback go with them.
+- API details the web works around (found while integrating the wizard): a draft import's `mapping` is `{}` although the contract lists `columns` as required; `import-wrong-state` / `import-stale-dry-run` / `import-quota-exceeded` carry `state`, `allowed`, `current_digest` as top-level members that the `Problem` schema does not list; a commit's `progress.total` counts every row but `processed` only the rows to write; `.csv` files that Windows reports as `application/vnd.ms-excel` are refused by the attachment type check (the web declares `text/csv`); a saved default of a mapping cannot be cleared; the values endpoint has no entries for location imports.
 - Some API-only options have no UI yet: label copies/outlines/logo, force check-in when opening a repair,
   notification delivery log.
 - Timeline: will be re-estimated now that M1 and most of M2 show the real pace (decision 22).

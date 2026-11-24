@@ -1092,9 +1092,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     ).body;
     // M2 wave 2: a repair (with A's vendor and status), two saved views (one shared with all of A),
     // a notification of A's administrator, and an export request
-    const repairAsset = (
-      await a.post('/v1/assets', { category_id: category.id, name: `${marker} repairable` })
-    ).body;
+    const repairAssetRes = await a.post('/v1/assets', {
+      category_id: category.id,
+      name: `${marker} repairable`,
+    });
+    expect(repairAssetRes.status, repairAssetRes.raw).toBe(201);
+    const repairAsset = repairAssetRes.body;
     const repair = await a.post('/v1/repairs', {
       asset_id: repairAsset.id,
       title: `${marker} repair`,

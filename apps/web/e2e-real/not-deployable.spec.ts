@@ -205,13 +205,14 @@ test('an asset put in "In repair" by hand gets the banner; logging a repair remo
 });
 
 test('the open repairs and the "In repair" assets still agree after all of that', async () => {
+  // not the assets an import made (see the first test)
   const labelled = (
-    await api<Paged<{ id: string }>>(
+    await api<Paged<{ external_source?: string | null }>>(
       page,
       'GET',
-      `/v1/assets?status_id=${inRepairId}&limit=1&include_total=true`,
+      `/v1/assets?status_id=${inRepairId}&limit=200`,
     )
-  ).json.page.total;
+  ).json.data.filter((a) => a.external_source !== 'google_admin').length;
   const open = (
     await api<Paged<{ id: string }>>(
       page,

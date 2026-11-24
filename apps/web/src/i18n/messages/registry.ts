@@ -39,6 +39,8 @@ export const registryMessages = {
     filters: {
       status: 'Status',
       allStatuses: 'All statuses',
+      stateType: 'State',
+      anyStateType: 'Any state',
       category: 'Category',
       allCategories: 'All categories',
       location: 'Location',
@@ -48,6 +50,7 @@ export const registryMessages = {
       anyAssigned: 'Any custody status',
       checkedOut: 'Checked out',
       inStock: 'In stock',
+      overdueOnly: 'Overdue only',
       heldBy: 'Held by',
       anyPerson: 'Anyone',
       archived: 'Show',

@@ -89,7 +89,7 @@ test.describe('responsive layout (375, 768, 1440)', () => {
         await page.goto(url);
         await page.waitForLoadState('networkidle');
         await expect(page.locator('main')).toBeVisible();
-        if (url !== '/') await settled(page);
+        await settled(page);
         const overflow = await page.evaluate(
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
         );

@@ -92,4 +92,34 @@ describe('AssetsTable: custody columns, filters and bulk actions (M2)', () => {
     );
     await waitFor(() => expect(screen.getByTestId('assets-range')).toHaveTextContent('of 195'));
   });
+
+  it('starts filtered by the dashboard tiles: state type, checked out and overdue', async () => {
+    const total = async (query: Parameters<typeof assetsApi.list>[0]) =>
+      (await assetsApi.list({ ...query, limit: 1, include_total: true })).page.total!;
+    const repair = await total({ state_type: ['undeployable'] });
+    window.history.pushState({}, '', '/assets/?state_type=undeployable');
+    const first = renderApp(<AssetsTable />, { workflows: true });
+    await waitFor(() =>
+      expect(screen.getByTestId('assets-range')).toHaveTextContent(`of ${repair}`),
+    );
+    expect(screen.getByRole('combobox', { name: 'State' })).toHaveTextContent('In repair');
+    first.unmount();
+
+    const overdue = await total({ overdue: true });
+    window.history.pushState({}, '', '/assets/?overdue=1');
+    const second = renderApp(<AssetsTable />, { workflows: true });
+    await waitFor(() =>
+      expect(screen.getByTestId('assets-range')).toHaveTextContent(`of ${overdue}`),
+    );
+    expect(screen.getByRole('checkbox', { name: 'Overdue only' })).toBeChecked();
+    second.unmount();
+
+    const assigned = await total({ assigned: true });
+    window.history.pushState({}, '', '/assets/?assigned=yes');
+    renderApp(<AssetsTable />, { workflows: true });
+    await waitFor(() =>
+      expect(screen.getByTestId('assets-range')).toHaveTextContent(`of ${assigned}`),
+    );
+    expect(screen.getByRole('combobox', { name: 'Custody' })).toHaveTextContent('Checked out');
+  });
 });

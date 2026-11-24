@@ -21,8 +21,7 @@ for (const scheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto(url);
       await expect(page.locator('main')).toBeVisible();
-      // the dashboard's counters are permanent placeholders until the registry reports on it
-      if (url !== '/') await settled(page);
+      await settled(page);
       expect(await violations(page)).toEqual([]);
     });
   }

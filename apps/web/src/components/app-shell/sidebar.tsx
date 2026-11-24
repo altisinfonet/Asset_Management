@@ -3,6 +3,7 @@
 import { PanelLeftClose, PanelLeftOpen, Package } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { IconButton } from '@/components/ui/button';
@@ -54,6 +55,30 @@ export function Brand({
   );
 }
 
+/**
+ * A nav label that shortens itself with an ellipsis when the sidebar is too narrow for it gets its
+ * full text as a `title` tooltip (a label that fits needs none).
+ */
+function NavLabel({ label }: { label: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    // the observer reports once when it starts watching, then on every size change
+    const observer = new ResizeObserver(() =>
+      setTruncated(element.scrollWidth > element.clientWidth),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [label]);
+  return (
+    <span ref={ref} title={truncated ? label : undefined} className="truncate">
+      {label}
+    </span>
+  );
+}
+
 /** Primary navigation. The active item gets `aria-current="page"`, a tint and a 3px leading bar. */
 export function SidebarNav({ collapsed = false, onNavigate, items = NAV_ITEMS }: SidebarNavProps) {
   const t = useT();
@@ -86,7 +111,7 @@ export function SidebarNav({ collapsed = false, onNavigate, items = NAV_ITEMS }:
                 />
               ) : null}
               <item.icon aria-hidden className="size-5 shrink-0" />
-              {collapsed ? null : <span className="truncate">{label}</span>}
+              {collapsed ? null : <NavLabel label={label} />}
             </Link>
           );
           return collapsed ? (

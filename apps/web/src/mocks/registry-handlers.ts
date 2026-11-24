@@ -1213,6 +1213,13 @@ export function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
   const assigned = p.get('assigned');
   if (assigned === 'true' && !a.current_assignment) return false;
   if (assigned === 'false' && a.current_assignment) return false;
+  // `overdue` is the server's: checked out with an expected return before today (UTC)
+  const overdue = p.get('overdue');
+  if (overdue === 'true' || overdue === 'false') {
+    const due = a.current_assignment?.expected_return;
+    const isOverdue = !!due && due < nowIso().slice(0, 10);
+    if (isOverdue !== (overdue === 'true')) return false;
+  }
   const holder = p.get('assigned_person_id');
   if (holder) {
     const current = a.current_assignment;

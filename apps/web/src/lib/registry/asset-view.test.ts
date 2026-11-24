@@ -6,6 +6,7 @@ import {
   hasActiveFilters,
   readSavedViews,
   sanitiseState,
+  stateFromLink,
   toAssetQuery,
 } from './asset-view';
 
@@ -68,6 +69,40 @@ describe('assets list state', () => {
   it('custody filters count as active filters', () => {
     expect(hasActiveFilters({ ...defaultViewState(), assigned: 'no' })).toBe(true);
     expect(hasActiveFilters({ ...defaultViewState(), person_id: 'p' })).toBe(true);
+  });
+
+  it('sends the state type and overdue filters the dashboard tiles link to', () => {
+    const query = toAssetQuery({
+      ...defaultViewState(),
+      state_type: 'undeployable',
+      overdue: true,
+    });
+    expect(query).toMatchObject({ state_type: ['undeployable'], overdue: true });
+    expect(toAssetQuery(defaultViewState())).not.toHaveProperty('overdue');
+    expect(toAssetQuery(defaultViewState())).not.toHaveProperty('state_type');
+    expect(hasActiveFilters({ ...defaultViewState(), state_type: 'deployable' })).toBe(true);
+    expect(hasActiveFilters({ ...defaultViewState(), overdue: true })).toBe(true);
+  });
+
+  it('reads the dashboard deep links and ignores a made-up state type', () => {
+    expect(stateFromLink(new URLSearchParams('state_type=deployable'))).toMatchObject({
+      state_type: 'deployable',
+      assigned: '',
+      overdue: false,
+    });
+    expect(stateFromLink(new URLSearchParams('assigned=yes'))).toMatchObject({ assigned: 'yes' });
+    expect(stateFromLink(new URLSearchParams('overdue=1'))).toMatchObject({ overdue: true });
+    expect(stateFromLink(new URLSearchParams('state_type=nope&assigned=maybe'))).toEqual(
+      defaultViewState(),
+    );
+    expect(sanitiseState({ state_type: 'lost', overdue: true })).toMatchObject({
+      state_type: 'lost',
+      overdue: true,
+    });
+    expect(sanitiseState({ state_type: 'nope', overdue: 'yes' })).toMatchObject({
+      state_type: '',
+      overdue: false,
+    });
   });
 
   it('a custom field filter without a value is not sent', () => {

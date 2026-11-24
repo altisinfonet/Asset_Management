@@ -56,10 +56,7 @@ describe('AppShell navigation', () => {
   it('offers accessories and repairs by permission, with the notification bell in the top bar', async () => {
     const owner = await renderShell(MOCK_ACCOUNTS.owner);
     const nav = screen.getAllByRole('navigation', { name: 'Primary' })[0]!;
-    expect(within(nav).getByRole('link', { name: 'Accessories and consumables' })).toHaveAttribute(
-      'href',
-      '/stock',
-    );
+    expect(within(nav).getByRole('link', { name: 'Stock' })).toHaveAttribute('href', '/stock');
     expect(within(nav).getByRole('link', { name: 'Repairs' })).toHaveAttribute('href', '/repairs');
     expect(await screen.findByRole('button', { name: 'Notifications, 3 unread' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'User menu' }));

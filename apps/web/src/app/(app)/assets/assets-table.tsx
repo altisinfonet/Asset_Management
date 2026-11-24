@@ -59,7 +59,9 @@ import {
   PAGE_SIZE,
   SORT_KEY_BY_COLUMN,
   defaultViewState,
+  STATE_TYPE_FILTERS,
   hasActiveFilters,
+  stateFromLink,
   toAssetQuery,
   type AssetViewState,
 } from '@/lib/registry/asset-view';
@@ -93,12 +95,9 @@ export function AssetsTable() {
   const labels = useLabels();
   const params = useSearchParams();
 
-  // Deep links from the locations tree (`?location=`) and a person's page (`?person=`) start filtered.
-  const [state, setState] = useState<AssetViewState>(() => ({
-    ...defaultViewState(),
-    location_id: params.get('location') ?? '',
-    person_id: params.get('person') ?? '',
-  }));
+  // Deep links start filtered: the locations tree (`?location=`), a person's page (`?person=`) and the
+  // dashboard tiles (`?state_type=`, `?assigned=yes`, `?overdue=1`).
+  const [state, setState] = useState<AssetViewState>(() => stateFromLink(params));
   const personFromLink = useQuery({
     queryKey: ['person', state.person_id],
     queryFn: () => peopleApi.get(state.person_id),
@@ -404,6 +403,20 @@ export function AssetsTable() {
             .map((s) => ({ value: s.id, label: s.name }))}
           onChange={(v) => update({ status_id: v })}
         />
+        <label className="flex min-w-44 flex-col gap-1.5 text-sm font-medium">
+          {t('assets.filters.stateType')}
+          <Select
+            aria-label={t('assets.filters.stateType')}
+            value={state.state_type || ALL}
+            onValueChange={(v) =>
+              update({ state_type: v === ALL ? '' : (v as AssetViewState['state_type']) })
+            }
+            options={[
+              { value: ALL, label: t('assets.filters.anyStateType') },
+              ...STATE_TYPE_FILTERS.map((type) => ({ value: type, label: t(`status.${type}`) })),
+            ]}
+          />
+        </label>
         <FilterSelect
           label={t('assets.filters.category')}
           value={state.category_id}
@@ -428,24 +441,36 @@ export function AssetsTable() {
             />
           ) : null}
         </div>
-        <label className="flex min-w-44 flex-col gap-1.5 text-sm font-medium">
-          {t('assets.filters.assigned')}
-          <Select
-            aria-label={t('assets.filters.assigned')}
-            value={state.assigned || ALL}
-            onValueChange={(v) =>
+        <div className="flex min-w-44 flex-col gap-1.5 text-sm font-medium">
+          <label className="flex flex-col gap-1.5">
+            {t('assets.filters.assigned')}
+            <Select
+              aria-label={t('assets.filters.assigned')}
+              value={state.assigned || ALL}
+              onValueChange={(v) =>
+                update({
+                  assigned: v === ALL ? '' : (v as AssetViewState['assigned']),
+                  ...(v === 'no' ? { person_id: '', person_name: '', overdue: false } : {}),
+                })
+              }
+              options={[
+                { value: ALL, label: t('assets.filters.anyAssigned') },
+                { value: 'yes', label: t('assets.filters.checkedOut') },
+                { value: 'no', label: t('assets.filters.inStock') },
+              ]}
+            />
+          </label>
+          <Checkbox
+            label={t('assets.filters.overdueOnly')}
+            checked={state.overdue}
+            onCheckedChange={(v) =>
               update({
-                assigned: v === ALL ? '' : (v as AssetViewState['assigned']),
-                ...(v === 'no' ? { person_id: '', person_name: '' } : {}),
+                overdue: v === true,
+                ...(v === true && state.assigned === 'no' ? { assigned: '' as const } : {}),
               })
             }
-            options={[
-              { value: ALL, label: t('assets.filters.anyAssigned') },
-              { value: 'yes', label: t('assets.filters.checkedOut') },
-              { value: 'no', label: t('assets.filters.inStock') },
-            ]}
           />
-        </label>
+        </div>
         <div className="flex min-w-56 flex-col gap-1.5 text-sm font-medium">
           <label htmlFor="filter-person">{t('assets.filters.heldBy')}</label>
           <PersonPicker

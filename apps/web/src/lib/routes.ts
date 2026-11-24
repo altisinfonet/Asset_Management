@@ -34,11 +34,29 @@ export const routes = {
   assetEdit: (id: string) => `/assets/edit?id=${encodeURIComponent(id)}`,
   /** Resolve a scanned tag or QR code to an asset (`/s/<code>` redirects here). */
   assetByCode: (code: string) => `/assets/view?code=${encodeURIComponent(code)}`,
-  /** The asset list opened with a filter: a location (with its sublocations) or a holder. */
-  assetsFiltered: ({ location, person }: { location?: string; person?: string }) => {
+  /**
+   * The asset list opened with a filter: a location (with its sublocations), a holder, a state
+   * type (`state_type`), checked-out assets (`assigned=yes`) or the overdue ones (`overdue=1`).
+   */
+  assetsFiltered: ({
+    location,
+    person,
+    stateType,
+    assigned,
+    overdue,
+  }: {
+    location?: string;
+    person?: string;
+    stateType?: string;
+    assigned?: boolean;
+    overdue?: boolean;
+  }) => {
     const params = new URLSearchParams();
     if (location) params.set('location', location);
     if (person) params.set('person', person);
+    if (stateType) params.set('state_type', stateType);
+    if (assigned) params.set('assigned', 'yes');
+    if (overdue) params.set('overdue', '1');
     const query = params.toString();
     return query ? `/assets?${query}` : '/assets';
   },

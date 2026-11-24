@@ -81,8 +81,11 @@ test.afterAll(async () => {
 test('signs in with password and TOTP and lands on the dashboard of the Acme tenant', async () => {
   await signInAsOwner(page);
   await expect(page.getByTestId('tenant-name').first()).toHaveText('Acme');
-  // the API status tile reads GET /v1/health through the typed client
-  await expect(page.getByText('API status')).toBeVisible();
+  // the dashboard tiles read the asset list totals through the typed client: numbers, not skeletons
+  for (const tile of ['ready', 'assigned', 'inRepair', 'overdue']) {
+    await expect(page.getByTestId(`tile-${tile}`)).toContainText(/^d[d,]*s*S/);
+    await expect(page.getByTestId(`tile-${tile}`)).toHaveAttribute('aria-busy', 'false');
+  }
 });
 
 test('creates a category and a custom field for it', async () => {

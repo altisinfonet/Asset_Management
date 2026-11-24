@@ -51,6 +51,9 @@ export interface EngineDeps {
   config: EngineConfig;
 }
 
+/** Step memo entries that hold a reference resolver (handlers/asset.ts `asset:<mode>`, service-handler.ts `service:<mode>`). */
+const RESOLVER_MEMO_KEYS = ['asset:commit', 'asset:dry', 'service:commit', 'service:dry'] as const;
+
 /** The fast path of a batch met a row it cannot settle without a savepoint of its own. */
 class BatchNeedsRowSavepoints extends Error {
   constructor() {
@@ -675,6 +678,10 @@ export class ImportEngine {
             }),
           );
         } catch (err) {
+          // The row's savepoint undid whatever the row created, a model or a location it had to make. The
+          // reference resolvers remember what they created, so a later row would point at a record that no
+          // longer exists (a foreign key error): drop them, they are rebuilt from the database on first use.
+          for (const key of RESOLVER_MEMO_KEYS) env.memo.delete(key);
           if (err instanceof RowRolledBack) outcomes.push(err.outcome);
           else {
             ctx.logger.error(

@@ -12,7 +12,7 @@ import { signInAsOwner } from './support';
  * UPDATES the assets it created the first time: the test accepts both.
  */
 const SAMPLE = join(
-  import.meta.dirname,
+  __dirname,
   '..',
   '..',
   'api',
@@ -115,7 +115,7 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   // dry run: the numbers appear, nothing is written yet
   const created = page.getByTestId('import-tile-create');
   const updated = page.getByTestId('import-tile-update');
-  await expect(created.or(updated)).toBeVisible({ timeout: 120_000 });
+  await expect(created.or(updated).first()).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText('Preview. Nothing has been saved yet.')).toBeVisible();
   expect(await total()).toBe(before);
 

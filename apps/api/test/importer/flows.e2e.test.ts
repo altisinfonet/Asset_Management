@@ -167,6 +167,43 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
     expect((await admin().post(`/v1/imports/${idle.id}/cancel`, {})).body.state).toBe('cancelled');
   });
 
+  it('a row that fails at commit takes the model it had to create with it: the next rows create it again (found by the real-stack run)', async () => {
+    const tag = (i: number) => `RB-${String(i).padStart(3, '0')}`;
+    const body = csv([
+      ['Serial', 'Asset tag', 'Category', 'Model'],
+      ...[1, 2, 3, 4].map((i) => [`RB-SN-${i}`, tag(i), 'Laptops', 'Rollback Model X']),
+    ]);
+    const job = await analyzed(
+      ih,
+      admin(),
+      t.tenantId,
+      'asset',
+      { filename: 'rb.csv', body },
+      { options: { match_on: 'serial' } },
+    );
+    expect(job.state, job.error ?? '').toBe('analyzed');
+    const dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry.counts.dry_run).toEqual({ create: 4, update: 0, skip: 0, error: 0 });
+    // after the dry run somebody takes the tag of the FIRST row: it fails at commit, after it created the model
+    const cat = (await admin().get('/v1/categories?limit=1')).body.data[0].id as string;
+    expect((await admin().post('/v1/assets', { category_id: cat, asset_tag: tag(1) })).status).toBe(
+      201,
+    );
+    const fin = await commit(ih, admin(), t.tenantId, job.id, dry.dry_run_digest);
+    expect(fin.counts.commit).toEqual({ created: 3, updated: 0, skipped: 0, error: 1 });
+    const rows = await allRows(admin(), job.id);
+    expect((rows[0]!.errors ?? rows[0]!.result_errors)[0]).toMatchObject({
+      code: 'duplicate',
+      field: 'asset_tag',
+    });
+    expect(rows.slice(1).map((r) => r.result)).toEqual(['created', 'created', 'created']);
+    const models = await ownerTenantSql(
+      t.tenantId,
+      "select count(*)::int as n from app.asset_model where name = 'Rollback Model X'",
+    );
+    expect((models.rows[0] as Json).n).toBe(1);
+  });
+
   it('leaves a record that was edited after the dry run alone, and says so', async () => {
     const first = await analyzed(ih, admin(), t.tenantId, 'asset', {
       filename: 'u1.csv',

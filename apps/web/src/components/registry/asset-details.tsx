@@ -101,6 +101,9 @@ export function AssetDetails({ asset, lookups }: { asset: Asset; lookups: Lookup
           {asset.serial ? <span className="font-tag">{asset.serial}</span> : ''}
         </Row>
         <Row label={t('assets.columns.location')}>{lookups.locationLabel(asset.location_id)}</Row>
+        <Row label={t('assets.columns.department')}>
+          {lookups.departmentById.get(asset.department_id ?? '')?.name}
+        </Row>
         <Row label={t('assetForm.notes')}>{asset.notes}</Row>
       </Section>
       <Section title={t('assetView.sections.purchase')}>

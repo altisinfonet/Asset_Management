@@ -73,6 +73,21 @@ describe('AssetFormScreen (create)', () => {
     });
   });
 
+  it('chooses the department from the list; where the asset is stays the location', async () => {
+    const user = userEvent.setup();
+    renderApp(<AssetFormScreen kind="new" />);
+    await pick(/^Category/, 'Projector');
+    await user.type(await screen.findByRole('spinbutton', { name: 'Lamp hours' }), '10');
+    expect(screen.getByText('Who owns or pays for it. Where it is stays Location.')).toBeVisible();
+    await pick(/^Department/, /^Mathematics/);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(router.push).toHaveBeenCalled());
+    const id = new URL(String(router.push.mock.calls[0]![0]), 'http://x').searchParams.get('id')!;
+    const created = (await assetsApi.get(id)).value;
+    expect(created.department_id).toBe(uid('department', 3));
+    expect(created.location_id).toBeNull();
+  });
+
   it('shows the server tag conflict on the tag field', async () => {
     const user = userEvent.setup();
     renderApp(<AssetFormScreen kind="new" />);

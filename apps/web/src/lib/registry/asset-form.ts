@@ -23,6 +23,8 @@ export interface AssetFormState {
   serial: string;
   status_id: string;
   location_id: string;
+  /** The owning / cost-centre department (ED-17); where the asset is stays `location_id`. */
+  department_id: string;
   purchase_date: string;
   /** Major units as typed ("289.00"); converted to minor units on save. */
   cost: string;
@@ -42,6 +44,7 @@ export const emptyAssetForm = (defaultStatusId = ''): AssetFormState => ({
   serial: '',
   status_id: defaultStatusId,
   location_id: '',
+  department_id: '',
   purchase_date: '',
   cost: '',
   vendor_id: '',
@@ -68,6 +71,7 @@ export function formFromAsset(
     serial: options.clone ? '' : (asset.serial ?? ''),
     status_id: asset.status_id,
     location_id: asset.location_id ?? '',
+    department_id: asset.department_id ?? '',
     purchase_date: asset.purchase_date ?? '',
     cost: asset.purchase_cost ? (asset.purchase_cost.amount_minor / 100).toFixed(2) : '',
     vendor_id: asset.vendor_id ?? '',
@@ -147,6 +151,7 @@ export function toCreateBody(
     ...(state.serial.trim() ? { serial: state.serial.trim() } : {}),
     ...(state.status_id ? { status_id: state.status_id } : {}),
     ...(state.location_id ? { location_id: state.location_id } : {}),
+    ...(state.department_id ? { department_id: state.department_id } : {}),
     ...(state.vendor_id ? { vendor_id: state.vendor_id } : {}),
     ...(state.purchase_date ? { purchase_date: state.purchase_date } : {}),
     ...(state.warranty_end ? { warranty_end: state.warranty_end } : {}),
@@ -181,6 +186,7 @@ export function toUpdateBody(
     serial: state.serial.trim() || null,
     status_id: state.status_id || undefined,
     location_id: state.location_id || null,
+    department_id: state.department_id || null,
     vendor_id: state.vendor_id || null,
     purchase_date: state.purchase_date || null,
     warranty_end: state.warranty_end || null,
@@ -203,6 +209,7 @@ const SIMPLE_KEYS = [
   'serial',
   'status_id',
   'location_id',
+  'department_id',
   'purchase_date',
   'cost',
   'vendor_id',

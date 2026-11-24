@@ -44,6 +44,7 @@ const ASSET = {
   model_id: 'm1',
   status_id: 's1',
   location_id: 'l1',
+  department_id: 'd1',
   vendor_id: 'v1',
   purchase_date: '2026-01-02',
   purchase_cost: { amount_minor: 28900, currency: 'USD' },
@@ -74,6 +75,7 @@ describe('asset form state', () => {
       category_id: 'cat1',
       model_id: 'm1',
       location_id: 'l1',
+      department_id: 'd1',
       vendor_id: 'v1',
       notes: 'cart 3',
       custom: { os_version: 'ChromeOS 126' },
@@ -134,6 +136,20 @@ describe('request bodies', () => {
       currency: 'USD',
     });
     expect(manual.asset_tag).toBe('X-1');
+  });
+
+  it('the department goes on create when chosen, and is cleared with null on update', () => {
+    const state = { ...emptyAssetForm('s1'), category_id: 'cat1', department_id: 'd1' };
+    expect(toCreateBody(state, FIELDS, { currency: 'USD' }).department_id).toBe('d1');
+    expect(
+      toCreateBody({ ...state, department_id: '' }, FIELDS, { currency: 'USD' }),
+    ).not.toHaveProperty('department_id');
+    const edit = formFromAsset(ASSET, FIELDS);
+    expect(toUpdateBody(edit, FIELDS, ASSET, { currency: 'USD' }).department_id).toBe('d1');
+    expect(
+      toUpdateBody({ ...edit, department_id: '' }, FIELDS, ASSET, { currency: 'USD' })
+        .department_id,
+    ).toBeNull();
   });
 
   it('update: clears emptied fields with null and removes custom keys that are gone', () => {

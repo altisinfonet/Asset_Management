@@ -30,6 +30,8 @@ export interface AssetViewState {
   state_type: StateTypeFilter;
   category_id: string;
   location_id: string;
+  /** Owned by this department (ED-17). */
+  department_id: string;
   /** With a location: include its sublocations (the API default). */
   include_sublocations: boolean;
   /** Checked out (`yes`), in stock (`no`) or either (``). */
@@ -57,6 +59,7 @@ export const STANDARD_COLUMNS = [
   'assignee',
   'due',
   'location',
+  'department',
   'serial',
   'vendor',
   'purchase_date',
@@ -96,6 +99,7 @@ export function defaultViewState(): AssetViewState {
     state_type: '',
     category_id: '',
     location_id: '',
+    department_id: '',
     include_sublocations: true,
     assigned: '',
     overdue: false,
@@ -118,6 +122,7 @@ export function stateFromLink(params: { get(name: string): string | null }): Ass
   return {
     ...defaultViewState(),
     location_id: params.get('location') ?? '',
+    department_id: params.get('department') ?? '',
     person_id: params.get('person') ?? '',
     state_type: isStateTypeFilter(stateType) ? stateType : '',
     assigned: params.get('assigned') === 'yes' ? 'yes' : '',
@@ -132,6 +137,7 @@ export function hasActiveFilters(state: AssetViewState): boolean {
     state.state_type ||
     state.category_id ||
     state.location_id ||
+    state.department_id ||
     state.assigned ||
     state.overdue ||
     state.person_id ||
@@ -145,7 +151,7 @@ export function toAssetQuery(state: AssetViewState, cursor?: string): AssetListQ
   const query: AssetListQuery = {
     limit: PAGE_SIZE,
     include_total: true,
-    expand: ['model', 'category', 'location', 'vendor'],
+    expand: ['model', 'category', 'location', 'vendor', 'department'],
     archived: state.archived,
   };
   if (cursor) query.cursor = cursor;
@@ -157,6 +163,7 @@ export function toAssetQuery(state: AssetViewState, cursor?: string): AssetListQ
     query.location_id = state.location_id;
     query.include_sublocations = state.include_sublocations;
   }
+  if (state.department_id) query.department_id = state.department_id;
   if (state.assigned) query.assigned = state.assigned === 'yes';
   if (state.overdue) query.overdue = true;
   if (state.person_id) query.assigned_person_id = state.person_id;
@@ -198,6 +205,7 @@ export function sanitiseState(value: unknown): AssetViewState {
     state_type: isStateTypeFilter(raw.state_type) ? raw.state_type : '',
     category_id: str(raw.category_id),
     location_id: str(raw.location_id),
+    department_id: str(raw.department_id),
     include_sublocations: raw.include_sublocations !== false,
     assigned: raw.assigned === 'yes' || raw.assigned === 'no' ? raw.assigned : '',
     overdue: raw.overdue === true,

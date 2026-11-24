@@ -237,8 +237,25 @@ export const repairHandlers: HttpHandler[] = [
       });
     }
     const setStatus = body.set_status_id as string | undefined;
-    // the asset's status only moves (and is restored later) when the repair names another one
-    const moves = setStatus !== undefined && setStatus !== asset.status_id;
+    // the asset's status only moves (and is restored later) when the repair names another one, or when it
+    // names the undeployable status the asset already has and no open record holds it (the repair adopts
+    // it and puts the default deployable label back when it closes, like the API)
+    const heldByOpen = w2().repairs.some(
+      (r) =>
+        r.asset_id === asset.id &&
+        r.set_status_id &&
+        (r.status === 'open' || r.status === 'in_progress') &&
+        !r.archived_at,
+    );
+    const adopts =
+      setStatus !== undefined &&
+      setStatus === asset.status_id &&
+      stateType === 'undeployable' &&
+      !heldByOpen;
+    const moves = setStatus !== undefined && (setStatus !== asset.status_id || adopts);
+    const defaultDeployable = registry().statusLabels.find(
+      (s) => s.state_type === 'deployable' && s.is_default && !s.archived_at,
+    );
     const created = mutateW2((data) => {
       const stamp = nowIso();
       const repair: MockRepair = {
@@ -258,7 +275,8 @@ export const repairHandlers: HttpHandler[] = [
         cost: (body.cost as MockRepair['cost']) ?? null,
         // the status the asset had before, unless the caller said where it goes afterwards
         restore_status_id: moves
-          ? ((body.restore_status_id as string | null | undefined) ?? asset.status_id)
+          ? ((body.restore_status_id as string | null | undefined) ??
+            (adopts ? (defaultDeployable?.id ?? asset.status_id) : asset.status_id))
           : null,
         set_status_id: moves ? setStatus : null,
         status: (body.status as MockRepair['status']) ?? 'open',
@@ -269,7 +287,7 @@ export const repairHandlers: HttpHandler[] = [
       data.repairs.push(repair);
       return repair;
     });
-    if (moves) setAssetStatus(asset.id, setStatus);
+    if (moves && !adopts) setAssetStatus(asset.id, setStatus);
     repairHistory(asset.id, 'repair_opened', `Repair opened: ${created.title}`, guard.user.id, {
       repair_id: created.id,
     });

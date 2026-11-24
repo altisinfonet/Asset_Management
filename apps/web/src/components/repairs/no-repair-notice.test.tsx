@@ -84,6 +84,10 @@ describe('asset page: not deployable without a repair', () => {
     const repairs = (await repairsApi.list({ asset_id: asset.id })).data;
     expect(repairs).toHaveLength(1);
     expect(repairs[0]).toMatchObject({ title: 'Dead battery', status: 'open' });
+    // the repair holds the status the asset was given by hand, and gives the asset back as ready
+    expect(repairs[0]!.set_status_id).toBe(outForFix);
+    await repairsApi.complete(repairs[0]!.id, {});
+    expect((await assetsApi.get(asset.id)).value.status_id).toBe(asset.status_id);
   });
 
   it('shows nothing for a ready asset or one that already has an open repair', async () => {

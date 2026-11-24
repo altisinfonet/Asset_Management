@@ -8251,7 +8251,7 @@ paths:
       description: |-
         Opens a repair or maintenance record for an asset.
 
-        `set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant's default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset's status (`409 conflict` otherwise).
+        `set_status_id` (typically an `undeployable` label such as "In repair") moves the asset to that status and so blocks its check-out; the status the asset had before (or the tenant's default deployable one, when it was checked out) is remembered as `restore_status_id` and put back when the record is completed or cancelled. Only one open record at a time may move an asset's status (`409 conflict` otherwise). An asset whose status is already `undeployable` and that no open record holds (the status was set by hand) is asked to take the same status: the new record adopts it (`set_status_id` = that label) and puts the tenant's default deployable label back when it is completed or cancelled.
 
         A checked-out asset goes to repair through check-in first; with `force_checkin` and `force_note` (and the `asset:checkin` permission) the custody period is closed in the same transaction. A lost or retired asset, or an archived one, cannot be repaired (`409`).
 

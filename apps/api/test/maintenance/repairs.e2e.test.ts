@@ -155,6 +155,49 @@ describe.skipIf(!dbEnabled)(`repairs (${mode})`, () => {
       expect(await status(asset.id)).toBe('Ready to deploy');
     });
 
+    it('adopts an undeployable status nobody holds: the repair takes it over and gives the asset back as ready', async () => {
+      // the status was set by hand (no repair holds it), then a repair is logged with that same status
+      const asset = await newAsset(a(), b.categoryId, { status_id: b.status['In repair'] });
+      expect(await status(asset.id)).toBe('In repair');
+      const rec = await open(asset.id, { set_status_id: b.status['In repair'] });
+      expect(rec.body).toMatchObject({
+        set_status_id: b.status['In repair'],
+        restore_status_id: b.status['Ready to deploy'],
+      });
+      expect(await status(asset.id)).toBe('In repair');
+      const summary = await a().get(`/v1/assets/${asset.id}/repair-summary`);
+      expect(summary.body).toMatchObject({ open_count: 1 });
+      // the history says the repair opened, without pretending the status changed
+      const opened = (await historyOf(a(), asset.id)).filter(
+        (h) => h.event_type === 'repair_opened',
+      );
+      expect(opened).toHaveLength(1);
+      expect(opened[0]!.payload).not.toHaveProperty('status');
+      // a second record cannot take the status over while the first holds it, but a note-only one can
+      const second = await a().post('/v1/repairs', {
+        asset_id: asset.id,
+        title: 'Second',
+        set_status_id: b.status['In repair'],
+      });
+      expect(second.status).toBe(201);
+      expect(second.body).toMatchObject({ set_status_id: null, restore_status_id: null });
+      const done = await a().post(`/v1/repairs/${rec.id}/complete`, {}, ifMatch(rec.etag));
+      expect(done.status).toBe(200);
+      expect(await status(asset.id)).toBe('Ready to deploy');
+
+      // an asset that is only broken can be repaired with another in-repair status and goes back to Broken
+      const broken = await newAsset(a(), b.categoryId, { status_id: b.status['Broken'] });
+      const viaOther = await open(broken.id, { set_status_id: b.status['In repair'] });
+      expect(viaOther.body.restore_status_id).toBe(b.status['Broken']);
+      // ... and one logged with the status it already has adopts it too
+      const stuck = await newAsset(a(), b.categoryId, { status_id: b.status['Broken'] });
+      const adopted = await open(stuck.id, { set_status_id: b.status['Broken'] });
+      expect(adopted.body).toMatchObject({
+        set_status_id: b.status['Broken'],
+        restore_status_id: b.status['Ready to deploy'],
+      });
+    });
+
     it('does not override a status somebody chose meanwhile, unless the completion names one', async () => {
       const asset = await newAsset(a(), b.categoryId);
       const rec = await open(asset.id, { set_status_id: b.status['In repair'] });

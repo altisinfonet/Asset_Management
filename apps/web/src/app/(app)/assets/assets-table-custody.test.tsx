@@ -102,7 +102,7 @@ describe('AssetsTable: custody columns, filters and bulk actions (M2)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('assets-range')).toHaveTextContent(`of ${repair}`),
     );
-    expect(screen.getByRole('combobox', { name: 'State' })).toHaveTextContent('In repair');
+    expect(screen.getByRole('combobox', { name: 'State' })).toHaveTextContent('Not deployable');
     first.unmount();
 
     const overdue = await total({ overdue: true });

@@ -1,6 +1,6 @@
 # Project status
 
-_Last updated: 2026-11-19. Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-24. Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
@@ -13,7 +13,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; wave 3 not started |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged and pushed; dashboard fix done; wave 3 not started |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -54,6 +54,14 @@ jobs, encrypted secrets, email), CI and security scanning.
 | Test-suite stability fix (connection pool, parallelism)    | ✅     | — |
 
 Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBouncer), real-stack browser tests 30/30. One unidentified intermittent API test failure was seen in 1 of 5 runs under extra load; watch the first CI runs.
+
+### Fixes after founder review (2026-11-24) ✅
+
+| Fix                                                                                  | Status |
+| ------------------------------------------------------------------------------------ | ------ |
+| Dashboard: real counts (Ready, Assigned, Not deployable, Overdue) + "Needs attention" panels (overdue check-outs, low stock, open repairs); tiles link to the filtered asset list | ✅ |
+| Sidebar: "Accessories and consumables" shortened to "Stock"; tooltips for truncated / collapsed items | ✅ |
+| "In repair" state renamed "Not deployable" (it covers every undeployable status, e.g. Broken) | ✅ |
 
 ### Wave 3 — not started ⏳
 

@@ -10,9 +10,9 @@ import { accessoriesApi, consumablesApi } from '@/lib/stock/api';
  * Tile definitions (the same filters open the asset list when a tile is clicked):
  * - Ready: `state_type=deployable`, assets that can be checked out.
  * - Assigned: `assigned=true`, assets with an open check-out (whoever holds them).
- * - In repair: `state_type=undeployable`. A repair moves the asset to an `undeployable` status
+ * - Not deployable (key inRepair): `state_type=undeployable`. A repair moves the asset to an `undeployable` status
  *   label (`set_status_id`, see RepairsService), which is what blocks its check-out, and the status
- *   catalogue names that state type "In repair" (`status.undeployable`). Other undeployable
+ *   catalogue names that state type "Not deployable" (`status.undeployable`). Other undeployable
  *   labels, for example "Broken", count too: they are equally unavailable.
  * - Overdue: `overdue=true`, checked out with an expected return before today (UTC, server side).
  */

@@ -6,7 +6,7 @@ import { expect, settled, test } from './fixtures';
 const TILES = [
   { id: 'ready', label: 'Ready', href: '/assets?state_type=deployable' },
   { id: 'assigned', label: 'Assigned', href: '/assets?assigned=yes' },
-  { id: 'inRepair', label: 'In repair', href: '/assets?state_type=undeployable' },
+  { id: 'inRepair', label: 'Not deployable', href: '/assets?state_type=undeployable' },
   { id: 'overdue', label: 'Overdue', href: '/assets?overdue=1' },
 ] as const;
 
@@ -57,7 +57,7 @@ test.describe('dashboard', () => {
     await openDashboard(page);
     const repair = await tileCount(page, 'inRepair');
     await page.getByTestId('tile-inRepair').click();
-    await expect(page.getByRole('combobox', { name: 'State' })).toContainText('In repair');
+    await expect(page.getByRole('combobox', { name: 'State' })).toContainText('Not deployable');
     await expect(page.getByTestId('assets-range')).toContainText(`of ${repair}`);
   });
 

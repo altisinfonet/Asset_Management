@@ -57,7 +57,7 @@ describe('Dashboard', () => {
     await waitFor(() => expect(tile('ready')).toHaveTextContent(String(ready.page.total)));
     expect(tile('ready')).toHaveTextContent('Ready');
     expect(tile('assigned')).toHaveTextContent(`${assigned.page.total}Assigned`);
-    expect(tile('inRepair')).toHaveTextContent(`${inRepair.page.total}In repair`);
+    expect(tile('inRepair')).toHaveTextContent(`${inRepair.page.total}Not deployable`);
     expect(tile('overdue')).toHaveTextContent(`${overdue.page.total}Overdue`);
     expect(tile('ready')).toHaveAttribute('href', '/assets?state_type=deployable');
     expect(tile('assigned')).toHaveAttribute('href', '/assets?assigned=yes');

@@ -142,6 +142,8 @@ export const REGISTRY_TAGS = new Set([
  * the registry tag and are walked there.
  */
 export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
+/** [LOAN] Loaner pools (ED-20): every operation is implemented by the loaners module. */
+export const LOANER_TAGS = new Set(['Loaners']);
 /** [DEPT] Managed departments (ED-17): every operation is implemented by the departments module. */
 export const DEPT_TAGS = new Set(['Departments']);
 /**

@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 not started |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 started (loaner pool backend done; import wizard, location scoping and the web screens to come) |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -75,15 +75,15 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | "Location edit for a site: an error at edit time, none later" (LOC-05, ED-16): the error was an address value over its limit (typically a country name instead of the two-letter code) that the dialog could not place on a field. Now named on its field with the fix, limits checked before saving, a "Reload latest" action after a stale save, the address kept when the type changes, address line 2 no longer dropped. The type of a location stays freely editable | ✅ |
 | "Free text causes mistakes": managed departments (ORG-01, ORG-02, ED-17): Settings → Departments (create, rename, archive, merge), a department picker on people and assets (also in bulk edit), department column and filter on both lists, optional owning department on assets, existing free text migrated to departments, demo departments seeded | ✅ |
 
-### Wave 3 — not started ⏳
+### Wave 3 — in progress 🟡 (loaner pool backend done, 2026-11-24)
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
 | CSV import wizard with dry run, Google Admin ChromeOS template   | IMP-01…09 |
-| Loaner pool, quick loaner flows, overdue alerts, loaner dashboard | LOAN-01…04 |
+| Loaner pool backend: pools, quick loan and return by scanning, overdue alerts, dashboard API, custody settings ✅ (ADR 0011); the loaner screens and the dialog pre-fill are web work ⏳ | LOAN-01, LOAN-03 done; LOAN-02, LOAN-04, LIFE-09 API done |
 | Location scoping for roles                                       | LOC-03 |
 | Isolation-harness extension, performance harness, user guides    | SEC-01, OPS-01, DOC-01 |
-| Deferred small items: default return date, sort by location/assignee/due, link person ↔ login, undo toast | LIFE-09, REG-03, USR-03, UX-02 |
+| Deferred small items: default return date (API done, dialog pre-fill open), sort by location/assignee/due, link person ↔ login, undo toast | LIFE-09, REG-03, USR-03, UX-02 |
 | M2 founder acceptance walk-through 👤                            | UX-01 |
 
 ## 4. Waiting on the founder 👤
@@ -92,7 +92,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 
 - [ ] ADRs still marked PROPOSED: 0003 (module boundaries & API conventions), 0004 (platform services),
       0005 (asset registry), 0006 (files & scanning), 0007 (labels), 0008 (accessories & consumables),
-      0009 (repairs, notifications, views, export). ADR 0001 and 0002 are accepted.
+      0009 (repairs, notifications, views, export), 0011 (loaner pools). ADR 0001 and 0002 are accepted.
 - [ ] Product name and primary colour (placeholders "Asset Tracker", blue) — before M3 store testing (F-30).
 
 **Hardware / data for M2 acceptance**
@@ -118,7 +118,7 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 ## 5. Known gaps carried forward
 
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
-- Notification types for loans and imports exist but are wired only when those features land (wave 3).
+- Loan notifications (overdue, due soon) are wired; the import notification is wired when imports land (wave 3). The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
 - Some API-only options have no UI yet: label copies/outlines/logo, force check-in when opening a repair,
   notification delivery log.
 - Timeline: will be re-estimated now that M1 and most of M2 show the real pace (decision 22).

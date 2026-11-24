@@ -23,6 +23,7 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import { findAssetByCode, scanCandidates } from './asset-codes.js';
 import { AssetRefs } from './asset-refs.js';
 import { type AssetAction, assertAssetAction, refuseAssetAction } from './asset-actions.js';
 import { listHistory, writeAssetHistory, type HistoryEventDto } from './asset-history.js';
@@ -37,7 +38,6 @@ import {
   assetListSql,
   assetSortTerms,
   loadAsset,
-  loadAssetRows,
   lockAsset,
   pickFields,
   withStatus,
@@ -155,7 +155,7 @@ export class AssetsFacade extends RegistryBase {
     for (const name of M2_ONLY_ASSET_FILTERS) {
       if (rest[name] !== undefined) {
         throw problem.badRequest(
-          `Query parameter "${name}" needs the loaner pools (a later M2 story) and is not available yet.`,
+          `Query parameter "${name}" needs a table a later M2 story builds and is not available yet.`,
           [{ pointer: `query:${name}`, message: 'not available yet', code: 'not-supported' }],
         );
       }
@@ -329,42 +329,15 @@ export class AssetsFacade extends RegistryBase {
 
   /** `GET /v1/scan/resolve`: the opaque QR `label_code` or a Code128 `asset_tag`. */
   async resolveScan(auth: AuthContext, rawCode: string) {
-    // The whole code first (a tag may contain "/"); a label URL then yields its last path segment.
-    const whole = rawCode.trim();
-    const candidates = [whole];
-    if (/^(https?:\/\/|\/)/i.test(whole)) {
-      const last = whole.split(/[?#]/)[0]!.split('/').filter(Boolean).pop();
-      if (last && last !== whole) candidates.push(last);
-    }
+    const candidates = scanCandidates(rawCode);
     await this.scanThrottle.assertAllowed(auth);
     const found = await this.tx(auth, async (trx) => {
-      let matchType: 'label_code' | 'asset_tag' | 'serial' = 'label_code';
-      let row: AssetRow | undefined;
-      for (const code of candidates) {
-        matchType = 'label_code';
-        [row] = await loadAssetRows(trx, Prisma.sql`a.label_code = ${code}`, 1);
-        if (!row) {
-          matchType = 'asset_tag';
-          [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
-        }
-        if (!row) {
-          // The serial number printed on the device. Not unique per tenant: an ambiguous one is
-          // refused rather than guessed (a wrong asset must never be checked out by a scan).
-          matchType = 'serial';
-          const bySerial = await loadAssetRows(trx, Prisma.sql`a.serial_key = lower(${code})`, 2);
-          if (bySerial.length > 1) {
-            throw problem.conflict(
-              'Several assets share this serial number. Scan the label or enter the asset tag instead.',
-            );
-          }
-          row = bySerial[0];
-        }
-        if (row) break;
-      }
-      if (!row) {
+      const hit = await findAssetByCode(trx, candidates);
+      if (!hit) {
         // [M2-W2 ACC] labelled records of other modules (accessories, consumables)
         return this.scanResolvers.resolve(auth, trx, candidates);
       }
+      const { row, matchType } = hit;
       // Actions valid in the asset's current state AND for the caller (contract order).
       const allowed: string[] = [];
       const state = {

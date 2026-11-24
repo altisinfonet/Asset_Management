@@ -814,27 +814,39 @@ $$;
 CREATE TRIGGER stock_movement_apply BEFORE INSERT ON app.stock_movement
   FOR EACH ROW EXECUTE FUNCTION app.stock_movement_apply();
 
+-- Loaner pool (ED-20, ADR 0011; migration 0120): a named set of spare devices with loan rules. A loan is an
+-- assignment with loaner_pool_id (B9): it needs an asset and a due date (assignment_loan_due).
 CREATE TABLE app.loaner_pool (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL REFERENCES app.tenant (id),
   name             text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 200),
   description      text,
-  home_location_id uuid,
+  home_location_id uuid,                          -- where returned devices go back to
   default_loan_days integer NOT NULL DEFAULT 7 CHECK (default_loan_days > 0),
   max_loan_days    integer CHECK (max_loan_days IS NULL OR max_loan_days >= default_loan_days),
-  is_active        boolean NOT NULL DEFAULT true,
+  max_loans_per_person integer CHECK (max_loans_per_person IS NULL OR max_loans_per_person >= 1),
+  -- empty = every kind of person may borrow (the API shows null); otherwise only the listed kinds
+  eligible_person_kinds text[] NOT NULL DEFAULT '{}'
+                   CHECK (cardinality(eligible_person_kinds) <= 4
+                          AND eligible_person_kinds <@ array['employee','student','contractor','external']::text[]),
+  owner_user_id    uuid,                          -- told about overdue loans instead of every manager
+  is_active        boolean NOT NULL DEFAULT true, -- an inactive pool lends nothing but keeps its members
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   created_by       uuid,
   updated_by       uuid,
   archived_at      timestamptz,
   version          integer NOT NULL DEFAULT 1,
+  -- stored lower-cased key: btree equality under RLS (ADR 0005)
+  name_key         text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
   UNIQUE (tenant_id, id),
-  FOREIGN KEY (tenant_id, home_location_id) REFERENCES app.location (tenant_id, id)
+  FOREIGN KEY (tenant_id, home_location_id) REFERENCES app.location (tenant_id, id),
+  FOREIGN KEY (tenant_id, owner_user_id)    REFERENCES app.user_account (tenant_id, id)
 );
-CREATE UNIQUE INDEX loaner_pool_name_uq ON app.loaner_pool (tenant_id, lower(name)) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX loaner_pool_name_uq ON app.loaner_pool (tenant_id, name_key) WHERE archived_at IS NULL;
+CREATE INDEX loaner_pool_location_idx ON app.loaner_pool (tenant_id, home_location_id) WHERE home_location_id IS NOT NULL;
 
--- An asset belongs to at most one pool.
+-- An asset belongs to at most one pool (the primary key). Plain rows, removed with a DELETE.
 CREATE TABLE app.loaner_pool_member (
   tenant_id      uuid NOT NULL REFERENCES app.tenant (id),
   asset_id       uuid NOT NULL,
@@ -846,6 +858,25 @@ CREATE TABLE app.loaner_pool_member (
   FOREIGN KEY (tenant_id, loaner_pool_id) REFERENCES app.loaner_pool (tenant_id, id)
 );
 CREATE INDEX loaner_pool_member_pool_idx ON app.loaner_pool_member (tenant_id, loaner_pool_id);
+-- grants: SELECT, INSERT, DELETE (membership is a fact about now; the audit log keeps who joined and left)
+
+-- Alert ledger of the daily loan job (M2-LOAN-03, ED-21): one row per alert raised, so an alert is raised once
+-- per loan and state. due_soon: once per loan and due date (an extension re-arms it); overdue: once per loan
+-- and day. Append-only (SELECT, INSERT).
+CREATE TABLE app.loan_alert (
+  id              uuid PRIMARY KEY,
+  tenant_id       uuid NOT NULL REFERENCES app.tenant (id),
+  assignment_id   uuid NOT NULL,
+  kind            text NOT NULL CHECK (kind IN ('due_soon','overdue')),
+  alert_date      date NOT NULL,                  -- the tenant day (UTC) the job ran for
+  expected_return date NOT NULL,                  -- the due date the alert was about
+  days_overdue    integer NOT NULL DEFAULT 0 CHECK (days_overdue >= 0),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, id)
+  -- the foreign key to app.assignment is added below, after B9 creates that table
+);
+CREATE UNIQUE INDEX loan_alert_due_soon_uq ON app.loan_alert (tenant_id, assignment_id, expected_return) WHERE kind = 'due_soon';
+CREATE UNIQUE INDEX loan_alert_overdue_uq ON app.loan_alert (tenant_id, assignment_id, alert_date) WHERE kind = 'overdue';
 
 -- -----------------------------------------------------------------------------
 -- B9. [M2] Assignment (check-out / check-in), transfer, asset history
@@ -917,6 +948,13 @@ CREATE INDEX assignment_due_idx ON app.assignment (tenant_id, expected_return)
   WHERE checked_in_at IS NULL AND expected_return IS NOT NULL;
 CREATE INDEX assignment_pool_open_idx ON app.assignment (tenant_id, loaner_pool_id)
   WHERE loaner_pool_id IS NOT NULL AND checked_in_at IS NULL;
+-- loan lists and the dashboard's recent activity, newest first (migration 0120)
+CREATE INDEX assignment_loan_out_idx ON app.assignment (tenant_id, checked_out_at DESC, id DESC)
+  WHERE loaner_pool_id IS NOT NULL;
+CREATE INDEX assignment_loan_in_idx ON app.assignment (tenant_id, checked_in_at DESC, id DESC)
+  WHERE loaner_pool_id IS NOT NULL AND checked_in_at IS NOT NULL;
+ALTER TABLE app.loan_alert
+  ADD FOREIGN KEY (tenant_id, assignment_id) REFERENCES app.assignment (tenant_id, id);
 
 -- Accessories are quantity-tracked: refuse a check-out that would exceed qty_total.
 CREATE FUNCTION app.assignment_check_accessory_stock() RETURNS trigger
@@ -1795,9 +1833,10 @@ GRANT SELECT, INSERT, UPDATE ON
   TO app_user;
 -- app: limited deletes
 GRANT DELETE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key, app.outbox_event TO app_user;
-GRANT SELECT, INSERT, UPDATE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key TO app_user;
--- app: append-only (no UPDATE / DELETE): audit trail, custody history, stock ledger
-GRANT SELECT, INSERT ON app.audit_log, app.asset_history, app.stock_movement TO app_user;   -- partitioned tables: PARENT only
+GRANT SELECT, INSERT, UPDATE ON app.role_assignment, app.import_row, app.idempotency_key TO app_user;
+GRANT SELECT, INSERT ON app.loaner_pool_member TO app_user;                                  -- membership: insert and delete only
+-- app: append-only (no UPDATE / DELETE): audit trail, custody history, stock ledger, loan alert ledger
+GRANT SELECT, INSERT ON app.audit_log, app.asset_history, app.stock_movement, app.loan_alert TO app_user;   -- partitioned tables: PARENT only
 GRANT SELECT ON app.v_accessory_availability, app.v_overdue_checkouts, app.v_low_stock TO app_user;
 GRANT EXECUTE ON FUNCTION app.provision_tenant(uuid, text, text, text, text), app.next_asset_tag(text) TO app_user;
 

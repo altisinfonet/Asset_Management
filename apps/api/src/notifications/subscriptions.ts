@@ -1,6 +1,13 @@
 import type { OutboxDelivery } from '../outbox/index.js';
 import type { Tx } from '../tenancy/index.js';
-import { type RecipientResolver, holdersOf, loginOfPerson, payloadUser } from './recipients.js';
+import {
+  type RecipientResolver,
+  anyOf,
+  holdersOf,
+  loginOfPerson,
+  payloadUser,
+  poolManagers,
+} from './recipients.js';
 import type { NotificationType } from './types.js';
 
 /**
@@ -18,9 +25,8 @@ import type { NotificationType } from './types.js';
  * redelivers a failed event, so an entry must be idempotent: the `dedupe` key (default: the event id)
  * is unique per recipient, which makes a second delivery a no-op.
  *
- * Events that other M2 stories emit and that are NOT mapped yet (types and texts already exist):
- *   `loan.overdue`, `loan.due_soon` (M2-LOAN-03). Add their entry when
- *   the producer exists; `loan.overdue` should use `anyOf(loginOfPerson('personId'), holdersOf('loaner:manage'))`.
+ * Every M2 notification event is mapped below (`import.completed` since M2-IMP, `loan.overdue` and
+ * `loan.due_soon` since M2-LOAN-03).
  *
  * PAYLOADS ARE IDS ONLY (ids/ids-only.ts): a `describe` function never expects a name in the event; it
  * loads the record by `event.aggregateId` (or an id in the payload) under the tenant context.
@@ -55,6 +61,30 @@ const idFrom = (event: OutboxDelivery, key: string): string => {
   const value = event.payload[key];
   return typeof value === 'string' ? value : event.aggregateId;
 };
+
+/** The open loan an alert event is about; null when it was returned (or vanished) since the alert. */
+async function loanOf(tx: Tx, assignmentId: string) {
+  const loan = await tx.assignment.findUnique({
+    where: { id: assignmentId },
+    select: { asset_id: true, person_id: true, expected_return: true, checked_in_at: true },
+  });
+  if (!loan || loan.checked_in_at || !loan.asset_id) return null;
+  const [asset, person] = await Promise.all([
+    tx.asset.findUnique({
+      where: { id: loan.asset_id },
+      select: { id: true, asset_tag: true, name: true },
+    }),
+    loan.person_id
+      ? tx.person.findUnique({ where: { id: loan.person_id }, select: { display_name: true } })
+      : null,
+  ]);
+  if (!asset) return null;
+  return {
+    asset,
+    borrower: person?.display_name ?? 'unknown',
+    dueDate: loan.expected_return ? loan.expected_return.toISOString().slice(0, 10) : '',
+  };
+}
 
 /** Where a stock item opens in the web app. */
 const stockLink = (kind: 'accessory' | 'consumable', id: string): string =>
@@ -204,6 +234,58 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
       };
     },
     dedupe: (event) => `accessory.low_stock:${String(event.payload.assignmentId ?? event.id)}`,
+  },
+
+  // Loaner loans (M2-LOAN-03, ED-21): the daily `loan.alerts` job raised an overdue alert. Payload
+  // { assignmentId, assetId, personId, poolId, daysOverdue, alertDate }; the job's ledger makes it once
+  // per loan and day, and the dedupe key says so again for a redelivered event. The borrower (when they
+  // have a login) and the pool's owner or managers are told; the copy escalates with the days.
+  {
+    event: 'loan.overdue',
+    type: 'loan.overdue',
+    recipients: anyOf(loginOfPerson('personId'), poolManagers('poolId')),
+    async describe(event, tx) {
+      const loan = await loanOf(tx, idFrom(event, 'assignmentId'));
+      if (!loan) return null;
+      const days = typeof event.payload.daysOverdue === 'number' ? event.payload.daysOverdue : 1;
+      return {
+        vars: {
+          asset: assetLabel(loan.asset),
+          due_date: loan.dueDate,
+          days_overdue: days,
+          borrower: loan.borrower,
+          escalation:
+            days >= 14
+              ? 'It is more than two weeks overdue: please return it now.'
+              : days >= 7
+                ? 'It is more than a week overdue: please return it as soon as you can.'
+                : '',
+        },
+        entity: { type: 'asset', id: loan.asset.id },
+        link: `/assets/view?id=${encodeURIComponent(loan.asset.id)}`,
+      };
+    },
+    dedupe: (event) =>
+      `loan.overdue:${String(event.payload.assignmentId ?? event.id)}:${String(event.payload.alertDate ?? '')}`,
+  },
+
+  // Loaner loans: the due date is within the tenant's reminder lead time. Payload
+  // { assignmentId, assetId, personId, poolId, dueOn, alertDate }; only the borrower is told.
+  {
+    event: 'loan.due_soon',
+    type: 'loan.due_soon',
+    recipients: loginOfPerson('personId'),
+    async describe(event, tx) {
+      const loan = await loanOf(tx, idFrom(event, 'assignmentId'));
+      if (!loan) return null;
+      return {
+        vars: { asset: assetLabel(loan.asset), due_date: loan.dueDate },
+        entity: { type: 'asset', id: loan.asset.id },
+        link: `/assets/view?id=${encodeURIComponent(loan.asset.id)}`,
+      };
+    },
+    dedupe: (event) =>
+      `loan.due_soon:${String(event.payload.assignmentId ?? event.id)}:${String(event.payload.dueOn ?? '')}`,
   },
 
   // Labels (ADR 0007): a batch finished rendering. Payload { batch_id, requested_by, version }; the

@@ -65,6 +65,14 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     ownDepartmentId: string;
     /** an asset of tenant B (so B can try to hand it to A's person / A's location) */
     ownAssetId: string;
+    // [LOAN] A's loaner pool with a device on loan to A's person; a pool, a device and a person of B
+    loanerPoolId: string;
+    loanerPoolName: string;
+    loanerAssetId: string;
+    loanId: string;
+    ownPoolId: string;
+    ownPersonId: string;
+    ownLoanerAssetId: string;
     // [M2-W2 ACC]
     accessoryId: string;
     accessoryName: string;
@@ -382,6 +390,114 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         // A's person as manager: refused, nothing created in A
         refused('POST', '/v1/departments', { name: unique('X'), manager_person_id: c.personId }),
         { method: 'POST', url: '/v1/departments', body: { name: unique('B-own') }, expect: [201] },
+      ],
+      // ---- [LOAN] loaner pools, loans and the custody settings (ED-20, ED-21)
+      ...crud('loaner-pools', c.loanerPoolId, { description: 'b was here' }),
+      'get /v1/loaner-pools': [
+        list(`/v1/loaner-pools?q=${c.loanerPoolName}`),
+        list(`/v1/loaner-pools?home_location_id=${c.locationId}`),
+        list('/v1/loaner-pools?limit=200&archived=include'),
+      ],
+      'post /v1/loaner-pools': [
+        // A's location as home, A's user as owner: refused, nothing created in A
+        refused('POST', '/v1/loaner-pools', { name: unique('X'), home_location_id: c.locationId }),
+        refused('POST', '/v1/loaner-pools', { name: unique('X'), owner_user_id: c.userId }),
+        { method: 'POST', url: '/v1/loaner-pools', body: { name: unique('B-own') }, expect: [201] },
+      ],
+      'get /v1/loaner-pools/:id/members': [
+        notFound('GET', `/v1/loaner-pools/${c.loanerPoolId}/members`),
+        list(`/v1/assets?loaner_pool_id=${c.loanerPoolId}`),
+        list('/v1/assets?in_loaner_pool=true&limit=200'),
+      ],
+      'post /v1/loaner-pools/:id/members': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members`, { asset_id: c.ownAssetId }),
+        refused('POST', `/v1/loaner-pools/${c.ownPoolId}/members`, { asset_id: c.loanerAssetId }),
+      ],
+      'post /v1/loaner-pools/:id/members/bulk-add': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members/bulk-add`, {
+          ids: [c.ownAssetId],
+        }),
+        // A's device in B's own pool: that item fails, the request itself is fine
+        {
+          method: 'POST',
+          url: `/v1/loaner-pools/${c.ownPoolId}/members/bulk-add`,
+          body: { ids: [c.loanerAssetId] },
+          expect: [200],
+        },
+      ],
+      'post /v1/loaner-pools/:id/members/bulk-remove': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members/bulk-remove`, {
+          ids: [c.ownAssetId],
+        }),
+        {
+          method: 'POST',
+          url: `/v1/loaner-pools/${c.ownPoolId}/members/bulk-remove`,
+          body: { ids: [c.loanerAssetId] },
+          expect: [200],
+        },
+      ],
+      'delete /v1/loaner-pools/:id/members/:asset_id': [
+        notFound('DELETE', `/v1/loaner-pools/${c.loanerPoolId}/members/${c.loanerAssetId}`),
+        notFound('DELETE', `/v1/loaner-pools/${c.ownPoolId}/members/${c.loanerAssetId}`),
+      ],
+      'post /v1/loaner-pools/:id/checkout': [
+        custody(`/v1/loaner-pools/${c.loanerPoolId}/checkout`, { person_id: c.ownPersonId }),
+        // B's own pool to A's person: refused
+        custody(`/v1/loaner-pools/${c.ownPoolId}/checkout`, { person_id: c.personId }, [422]),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/checkout`,
+          { person_id: c.ownPersonId, asset_id: c.loanerAssetId },
+          [422],
+        ),
+      ],
+      'post /v1/loaner-pools/:id/quick-checkout': [
+        custody(`/v1/loaner-pools/${c.loanerPoolId}/quick-checkout`, {
+          person_id: c.ownPersonId,
+          codes: ['no-such-code'],
+        }),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { person_id: c.personId, codes: ['no-such-code'] },
+          [422],
+        ),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { borrower: c.personEmail, codes: ['no-such-code'] },
+          [422],
+        ),
+        // B scans a code that does not exist in B: the item is a 404, the request is fine
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { person_id: c.ownPersonId, codes: ['no-such-code'] },
+          [200],
+        ),
+      ],
+      'get /v1/loans': [
+        list(`/v1/loans?loaner_pool_id=${c.loanerPoolId}`),
+        list(`/v1/loans?person_id=${c.personId}&state=on_loan,due_today,overdue,returned`),
+        list(`/v1/loans?asset_id=${c.loanerAssetId}&state=returned`),
+        list('/v1/loans?limit=200&include_total=true&state=on_loan,due_today,overdue,returned'),
+      ],
+      'get /v1/loans/overdue': [
+        list('/v1/loans/overdue?limit=200'),
+        list(`/v1/loans/overdue?person_id=${c.personId}`),
+        list(`/v1/loans/overdue?loaner_pool_id=${c.loanerPoolId}`),
+      ],
+      'post /v1/loans/return': [custody('/v1/loans/return', { codes: ['no-such-code'] }, [200])],
+      'get /v1/loans/:id': [notFound('GET', `/v1/loans/${c.loanId}`)],
+      'post /v1/loans/:id/extend': [
+        notFound('POST', `/v1/loans/${c.loanId}/extend`, { expected_return: '2099-01-01' }),
+      ],
+      'get /v1/loaners/dashboard': [list('/v1/loaners/dashboard')],
+      'get /v1/settings/custody': [list('/v1/settings/custody')],
+      'put /v1/settings/custody': [
+        // B changes ITS settings; A's are checked untouched at the end
+        {
+          method: 'PUT',
+          url: '/v1/settings/custody',
+          body: { default_expected_return_days: 30, loan_reminder_days: 7 },
+          expect: [200],
+        },
       ],
       // ---- M2 wave 1: people
       ...crud('people', c.personId, { notes: 'b was here' }),
@@ -841,6 +957,31 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     // [DEPT] END
     const bCategory = (await b().post('/v1/categories', { name: unique('B-cat') })).body;
     const bAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
+    // [LOAN] BEGIN A's pool with a device on loan to A's person; a pool, a person and a device of B
+    const loanerPoolName = `${marker} pool`;
+    const loanerPool = (
+      await a.post('/v1/loaner-pools', { name: loanerPoolName, home_location_id: location.id })
+    ).body;
+    const loanerAsset = (
+      await a.post('/v1/assets', {
+        category_id: category.id,
+        asset_tag: `${marker}-LOAN`,
+        serial: `${marker}-loan-sn`,
+      })
+    ).body;
+    await a.post(`/v1/loaner-pools/${loanerPool.id}/members`, { asset_id: loanerAsset.id });
+    const loan = (
+      await a.post(
+        `/v1/loaner-pools/${loanerPool.id}/checkout`,
+        { person_id: person.id, asset_id: loanerAsset.id },
+        { headers: { 'idempotency-key': `seed-loan-${marker}` } },
+      )
+    ).body;
+    const bPool = (await b().post('/v1/loaner-pools', { name: unique('B-pool') })).body;
+    const bPerson = (await b().post('/v1/people', { display_name: unique('B-kid') })).body;
+    const bLoanerAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
+    await b().post(`/v1/loaner-pools/${bPool.id}/members`, { asset_id: bLoanerAsset.id });
+    // [LOAN] END
     await a.post(
       `/v1/assets/${asset.id}/checkout`,
       { person_id: person.id, note: `${marker} note` },
@@ -1008,6 +1149,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       departmentName,
       ownDepartmentId: ownDepartment.id,
       ownAssetId: bAsset.id,
+      loanerPoolId: loanerPool.id,
+      loanerPoolName,
+      loanerAssetId: loanerAsset.id,
+      loanId: loan.assignment.id,
+      ownPoolId: bPool.id,
+      ownPersonId: bPerson.id,
+      ownLoanerAssetId: bLoanerAsset.id,
       // [M2-W2 ACC]
       accessoryId: accessory.id,
       accessoryName: accessory.name,
@@ -1061,6 +1209,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         exportJob.body.id,
         importJob.body.id,
         importTemplate.body.id,
+        loanerPool.id,
+        loanerPoolName,
+        loanerAsset.id,
+        loanerAsset.asset_tag,
+        loanerAsset.label_code,
+        loan.assignment.id,
       ],
     };
   });
@@ -1085,6 +1239,24 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       person: await etag(`/v1/people/${fx.personId}`),
       department: await etag(`/v1/departments/${fx.departmentId}`),
       departments: String((await A.admin.get('/v1/departments?limit=200')).body.data.length),
+      // [LOAN] A's pool, its members and its loan are untouched
+      loanerPool: await etag(`/v1/loaner-pools/${fx.loanerPoolId}`),
+      loanerPools: String((await A.admin.get('/v1/loaner-pools?limit=200')).body.data.length),
+      loanerMembers: JSON.stringify(
+        (await A.admin.get(`/v1/loaner-pools/${fx.loanerPoolId}/members`)).body.data.map(
+          (m: { asset_id: string; available: boolean }) => [m.asset_id, m.available],
+        ),
+      ),
+      loans: JSON.stringify(
+        (await A.admin.get('/v1/loans?state=on_loan,due_today,overdue,returned')).body.data.map(
+          (l: { id: string; expected_return: string; state: string }) => [
+            l.id,
+            l.expected_return,
+            l.state,
+          ],
+        ),
+      ),
+      custodySettings: await etag('/v1/settings/custody'),
       // custody of A's asset is untouched: the same open assignment and the same history
       assignments: JSON.stringify(
         (await A.admin.get(`/v1/assets/${fx.assetId}/assignments`)).body.data.map(

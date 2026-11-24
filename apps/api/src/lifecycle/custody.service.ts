@@ -117,11 +117,17 @@ export class CustodyService extends RegistryBase {
   // =========================================================================================
   // Check-out
 
+  /**
+   * `loan` marks the check-out as a loan from a loaner pool (ED-20): the assignment carries the pool
+   * (`loaner_pool_id`, which the database only accepts together with a due date), and the history
+   * entry says "Loaned". The pool's own rules (eligibility, limits, due date) are the caller's.
+   */
   async checkout(
     auth: AuthContext,
     assetId: string,
     ifMatch: IfMatch,
     body: CheckoutBody,
+    loan?: { poolId: string },
   ): Promise<CustodyResult> {
     return this.tx(auth, async (trx) => {
       const current = await this.lock(trx, assetId, ifMatch);
@@ -137,6 +143,7 @@ export class CustodyService extends RegistryBase {
           tenant_id: auth.tenantId,
           asset_id: current.id,
           ...targetColumns(target),
+          ...(loan ? { loaner_pool_id: loan.poolId } : {}),
           expected_return: dateOrNull(body.expected_return),
           checked_out_by: auth.userId,
           acceptance_state: body.acceptance_required ? 'pending' : 'not_required',
@@ -155,6 +162,7 @@ export class CustodyService extends RegistryBase {
         target_id: target.id,
         target_name: target.name,
         expected_return: body.expected_return ?? null,
+        ...(loan ? { loaner_pool_id: loan.poolId } : {}),
       };
       await this.record(trx, {
         entity: 'asset',
@@ -164,13 +172,17 @@ export class CustodyService extends RegistryBase {
         before: { status_id: current.status_id, holder: null },
         after: { status_id: row.status_id, holder: `${target.type}:${target.id}` },
         meta: { ...detail, ...(body.note ? { note: body.note } : {}) },
-        refs: { assignmentId, [`${target.type}Id`]: target.id },
+        refs: {
+          assignmentId,
+          [`${target.type}Id`]: target.id,
+          ...(loan ? { loanerPoolId: loan.poolId } : {}),
+        },
       });
       await writeAssetHistory(trx, auth, {
         assetId: current.id,
         eventType: 'checked_out',
         assignmentId,
-        summary: `Checked out to ${target.name}`,
+        summary: loan ? `Loaned to ${target.name}` : `Checked out to ${target.name}`,
         payload: {
           ...detail,
           status: { from: current.status_name, to: deployed.name },
@@ -394,6 +406,85 @@ export class CustodyService extends RegistryBase {
         transfer: transferDto(transfer),
         version: row.version,
       };
+    });
+  }
+
+  // =========================================================================================
+  // Extending a loan (M2-LOAN-01: "extending a loan is a logged action")
+
+  /**
+   * Moves the due date of an open LOAN (an assignment with a pool) to a later day. The asset row is
+   * locked and touched like in every custody change, so its ETag changes; the audit record
+   * (`loan.extended`), the outbox event and an `updated` history entry carrying `loan_extended` are
+   * written in the same transaction. `latest` is the last day the pool allows (its `max_loan_days`
+   * from the day the loan started), or null for no limit; the caller computed it from the pool.
+   */
+  async extendLoan(
+    auth: AuthContext,
+    assignmentId: string,
+    expectedReturn: string,
+    opts: { note?: string | undefined; latest: string | null },
+  ): Promise<{ assignment: AssignmentRow; previous: string | null }> {
+    return this.tx(auth, async (trx) => {
+      const found = await loadAssignment(trx, assignmentId);
+      if (!found || !found.asset_id || !found.loaner_pool_id) {
+        throw problem.notFound('Loan not found.');
+      }
+      const current = await this.lock(trx, found.asset_id, { kind: 'absent' });
+      // read again under the asset lock: a return may have closed it a moment ago
+      const open = (await loadAssignment(trx, assignmentId))!;
+      if (open.checked_in_at) throw problem.conflict('The loan is already closed.');
+      const previous = open.expected_return
+        ? open.expected_return.toISOString().slice(0, 10)
+        : null;
+
+      const errors: FieldError[] = [];
+      if (expectedReturn < dayBefore()) {
+        errors.push({
+          pointer: '/expected_return',
+          message: `must not be in the past (today is ${todayUtc()} UTC)`,
+          code: 'in-the-past',
+        });
+      } else if (previous !== null && expectedReturn <= previous) {
+        errors.push({
+          pointer: '/expected_return',
+          message: `must be later than the current due date ${previous}`,
+          code: 'not-an-extension',
+        });
+      } else if (opts.latest !== null && expectedReturn > opts.latest) {
+        errors.push({
+          pointer: '/expected_return',
+          message: `the pool allows a loan to run until ${opts.latest} at most`,
+          code: 'exceeds-max-loan',
+        });
+      }
+      if (errors.length > 0) throw problem.validation(errors);
+
+      await trx.$executeRaw`
+        update app.assignment set expected_return = ${expectedReturn}::date
+         where id = ${assignmentId}::uuid and checked_in_at is null`;
+      await this.touchAsset(trx, auth, current, {});
+      const assignment = (await loadAssignment(trx, assignmentId))!;
+
+      const detail = { assignment_id: assignmentId, from: previous, to: expectedReturn };
+      await this.record(trx, {
+        entity: 'loan',
+        verb: 'extended',
+        id: assignmentId,
+        version: assignment.version,
+        before: { expected_return: previous },
+        after: { expected_return: expectedReturn },
+        meta: { asset_id: current.id, ...(opts.note ? { note: opts.note } : {}) },
+        refs: { assetId: current.id, loanerPoolId: open.loaner_pool_id, personId: open.person_id },
+      });
+      await writeAssetHistory(trx, auth, {
+        assetId: current.id,
+        eventType: 'updated',
+        assignmentId,
+        summary: `Loan extended to ${expectedReturn}`,
+        payload: { loan_extended: { ...detail, ...(opts.note ? { note: opts.note } : {}) } },
+      });
+      return { assignment, previous };
     });
   }
 

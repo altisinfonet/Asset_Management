@@ -67,6 +67,30 @@ export async function usersWithRoles(tx: Tx, roleKeys: readonly string[]): Promi
   return rows.map((r) => r.id);
 }
 
+/**
+ * The users to tell about a loaner pool's loans (ED-21): the pool's owner when it has an active one,
+ * otherwise everybody who holds `loaner:manage`. The pool is named by a payload key.
+ */
+export const poolManagers =
+  (key = 'poolId'): RecipientResolver =>
+  async (event, tx) => {
+    const poolId = idOf(event.payload[key]);
+    if (poolId) {
+      const pool = await tx.loaner_pool.findUnique({
+        where: { id: poolId },
+        select: { owner_user_id: true },
+      });
+      if (pool?.owner_user_id) {
+        const owner = await tx.user_account.findUnique({
+          where: { id: pool.owner_user_id },
+          select: { id: true, status: true, archived_at: true },
+        });
+        if (owner && owner.status === 'active' && !owner.archived_at) return [owner.id];
+      }
+    }
+    return usersWithPermission(tx, 'loaner:manage');
+  };
+
 /** A recipient list that is the union of several resolvers (duplicates folded). */
 export const anyOf =
   (...resolvers: RecipientResolver[]): RecipientResolver =>

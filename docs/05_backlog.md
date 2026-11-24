@@ -815,24 +815,28 @@ Modelled with the existing asset and assignment tables; no new entity (plan 5.3)
 
 #### M2-LOAN-01 - Loaner pool model and defaults
 Size: M - Owner: Both - Deps: M2-LIFE-02
-- [ ] An asset can belong to the loaner pool (flag or pool membership defined by ADR; filterable and bulk-assignable); tenant settings: default loan length, maximum loan length, reminder lead time.
-- [ ] Loaner check-out applies the default due date automatically; extending a loan is a logged action.
+Status: API done (2026-11-24, ADR 0011, ED-20, ED-21, migration 0120, contract tag Loaners): pools with rules, membership (single and bulk), the `loaner_pool_id` / `in_loaner_pool` asset filters, extension, the tenant custody settings. The pool admin screens are web work, not done. Default and maximum loan length are per pool (`default_loan_days`, `max_loan_days`), the reminder lead time is the tenant setting `loan_reminder_days`.
+- [x] An asset can belong to the loaner pool (flag or pool membership defined by ADR; filterable and bulk-assignable); tenant settings: default loan length, maximum loan length, reminder lead time.
+- [x] Loaner check-out applies the default due date automatically; extending a loan is a logged action.
 - [ ] Founder confirms the K-12 workflow vocabulary (borrower, homeroom, device number) so UI labels match.
 
 #### M2-LOAN-02 - Quick loaner flows (web)
 Size: M - Owner: Both - Deps: M2-LOAN-01, M2-LIFE-08
+Status: API done (2026-11-24, ADR 0011): `POST /v1/loaner-pools/{id}/quick-checkout` (one borrower found by email or badge, many devices, per-item results, due date from the pool), `POST /v1/loans/return` (scan many, per-scan results, summary), both idempotent; covered by an API test that checks 10 devices out and in. The screens and the Playwright script are web work, not done.
 - [ ] Quick check-out screen: scan/type person, scan device(s), confirm; due date defaults; multiple devices per borrower supported.
 - [ ] Bulk check-in screen: scan many devices in a row with per-scan success/failure feedback and a summary.
 - [ ] Covered by a Playwright script that checks 10 devices out and in.
 
 #### M2-LOAN-03 - Overdue alerts
 Size: M - Owner: Claude - Deps: M2-LOAN-01, M2-NOT-01, M1-PLAT-07
-- [ ] Scheduler job (per tenant, daily, singleton-keyed) detects overdue loans and emits `loan.overdue` once per loan per day with escalating copy; due-soon reminder before expiry.
-- [ ] Recipients configurable (borrower if they have an email, manager, pool owner); in-app plus email; opt-out per user preference.
-- [ ] Test advances the clock and asserts exactly one notification per overdue loan per day.
+Status: done (2026-11-24, ADR 0011, ED-21): queue `loan.alerts` (daily per tenant), ledger `app.loan_alert`, subscriptions for `loan.overdue` and `loan.due_soon`; the tenant day is UTC (no tenant time zone yet). Recipients are the borrower when they have a login (a person without a login cannot be notified) and the pool owner or the `loaner:manage` holders; only loans of loaner pools are alerted.
+- [x] Scheduler job (per tenant, daily, singleton-keyed) detects overdue loans and emits `loan.overdue` once per loan per day with escalating copy; due-soon reminder before expiry.
+- [x] Recipients configurable (borrower if they have an email, manager, pool owner); in-app plus email; opt-out per user preference.
+- [x] Test advances the clock and asserts exactly one notification per overdue loan per day.
 
 #### M2-LOAN-04 - Loaner dashboard page
 Size: S - Owner: Both - Deps: M2-LOAN-02
+Status: API done (2026-11-24, ADR 0011): `GET /v1/loaners/dashboard` (per-pool and total counts, recent activity) and the lists behind each count (`GET /v1/loans`, `GET /v1/loaner-pools/{id}/members?available=true`). The page is web work, not done.
 - [ ] Page showing pool size, available, out, overdue and due today, with click-through lists.
 
 ### E2.6 Repair log
@@ -1015,8 +1019,9 @@ Found while integrating locations, people, custody and files; each was judged bi
 #### M2-LIFE-09 - Tenant default for the expected return
 Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Should
 Deferred from wave 1 integration. The check-out dialog leaves the expected return empty; schools want "end of term" or "+14 days" pre-filled.
-- [ ] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:write` to change it; ETag and audit like the other settings.
-- [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently.
+Status: API done (2026-11-24, ED-21): `GET/PUT /v1/settings/custody` with `default_expected_return_days` and `loan_reminder_days`; the dialogs' pre-fill is web work, not done.
+- [x] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:manage` (the catalogue permission; `catalog:write` does not exist) to change it; ETag and audit like the other settings.
+- [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently (it does not: a check-out without a date stays open-ended, tested).
 
 #### M2-REG-03 - Sort the asset list by location, assignee and due date
 Size: M - Owner: Both - Deps: M2-LOC-02, M2-LIFE-01 - Priority: Should

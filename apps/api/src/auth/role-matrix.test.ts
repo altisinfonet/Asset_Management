@@ -238,6 +238,29 @@ describe('role x operation matrix', () => {
     archiveConsumable: ['tenant_admin', 'asset_manager'],
     createStockMovement: ['tenant_admin', 'asset_manager', 'technician'],
     // [M2-W2 ACC]: END
+    // [LOAN] loaner pools (ED-20): everybody reads; the pool rules need loaner:manage (asset manager);
+    // lending and returning by scanning needs loaner:checkout (technician too)
+    listLoanerPools: ALL,
+    getLoanerPool: ALL,
+    listLoanerPoolMembers: ALL,
+    listLoans: ALL,
+    getLoan: ALL,
+    listOverdueCheckouts: ALL,
+    getLoanerDashboard: ALL,
+    createLoanerPool: ['tenant_admin', 'asset_manager'],
+    updateLoanerPool: ['tenant_admin', 'asset_manager'],
+    archiveLoanerPool: ['tenant_admin', 'asset_manager'],
+    addLoanerPoolMember: ['tenant_admin', 'asset_manager'],
+    removeLoanerPoolMember: ['tenant_admin', 'asset_manager'],
+    bulkAddLoanerPoolMembers: ['tenant_admin', 'asset_manager'],
+    bulkRemoveLoanerPoolMembers: ['tenant_admin', 'asset_manager'],
+    checkoutLoaner: ['tenant_admin', 'asset_manager', 'technician'],
+    quickCheckoutLoaners: ['tenant_admin', 'asset_manager', 'technician'],
+    returnLoans: ['tenant_admin', 'asset_manager', 'technician'],
+    extendLoan: ['tenant_admin', 'asset_manager', 'technician'],
+    // [LOAN] the organisation's custody settings are catalogue-level like the file settings (LIFE-09)
+    getCustodySettings: ALL,
+    putCustodySettings: ['tenant_admin', 'asset_manager'],
     // files (M2-FILE): everyone reads attachments; uploading needs attachment:write; settings are catalogue-level
     listAttachments: ALL,
     getAttachment: ALL,

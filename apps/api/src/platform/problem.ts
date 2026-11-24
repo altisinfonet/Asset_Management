@@ -61,6 +61,10 @@ export const PROBLEM_CATALOG = {
   'asset-already-checked-out': { status: 409, title: 'Asset already checked out' },
   'asset-not-checked-out': { status: 409, title: 'Asset is not checked out' },
   'asset-not-deployable': { status: 409, title: 'Asset cannot be checked out in its state' },
+  // Loaner pools (ED-20; openapi x-problem-codes)
+  'no-loaner-available': { status: 409, title: 'No loaner available' },
+  'loan-limit-reached': { status: 409, title: 'Loan limit reached' },
+  'loaner-pool-inactive': { status: 409, title: 'Loaner pool is switched off' },
   // Accessories and consumables (M2 wave 2; openapi x-problem-codes)
   'insufficient-stock': { status: 409, title: 'Not enough stock' },
   // Imports (M2 wave 3; openapi x-problem-codes)

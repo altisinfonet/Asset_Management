@@ -42,6 +42,8 @@ export const PRODUCERS: readonly Producer[] = [
   { name: 'export-sweep', queue: 'export.sweep', everySeconds: 3600, perTenant: true },
   // M2-IMP-01: imports whose worker job was lost are picked up again.
   { name: 'import-sweep', queue: 'import.sweep', everySeconds: 300, perTenant: true },
+  // M2-LOAN-03: overdue and due-soon alerts of loaner loans, once a day per tenant (tenant day = UTC, ED-21).
+  { name: 'loan-alerts', queue: 'loan.alerts', everySeconds: 86_400, perTenant: true },
 ];
 
 export interface SchedulerDeps {

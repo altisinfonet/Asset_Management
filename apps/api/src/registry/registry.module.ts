@@ -62,6 +62,7 @@ import { SearchService } from './search.service.js';
     AssetsFacade,
     AssetTagService,
     ScanResolverRegistry,
+    ScanResolveThrottle,
     // M2-IMP: the importer creates missing reference data through the same services as the API
     CategoriesService,
     ManufacturersService,

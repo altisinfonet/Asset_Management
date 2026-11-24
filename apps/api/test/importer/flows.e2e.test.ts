@@ -167,6 +167,36 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
     expect((await admin().post(`/v1/imports/${idle.id}/cancel`, {})).body.state).toBe('cancelled');
   });
 
+  it('the dry run reports a tag that another asset already has, also when matching on the serial (found by the real-stack run)', async () => {
+    const cat = (await admin().get('/v1/categories?limit=1')).body.data[0].id as string;
+    expect(
+      (
+        await admin().post('/v1/assets', {
+          category_id: cat,
+          asset_tag: 'DT-001',
+          serial: 'DT-OLD',
+        })
+      ).status,
+    ).toBe(201);
+    const body = csv([
+      ['Serial', 'Asset tag', 'Category'],
+      ['DT-SN-1', 'DT-001', 'Laptops'],
+      ['DT-SN-2', 'DT-002', 'Laptops'],
+    ]);
+    const job = await analyzed(
+      ih,
+      admin(),
+      t.tenantId,
+      'asset',
+      { filename: 'dt.csv', body },
+      { options: { match_on: 'serial' } },
+    );
+    const dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry.counts.dry_run).toEqual({ create: 1, update: 0, skip: 0, error: 1 });
+    const rows = await allRows(admin(), job.id);
+    expect(rows[0]!.errors[0]).toMatchObject({ field: 'asset_tag', code: 'duplicate' });
+  });
+
   it('a row that fails at commit takes the model it had to create with it: the next rows create it again (found by the real-stack run)', async () => {
     const tag = (i: number) => `RB-${String(i).padStart(3, '0')}`;
     const body = csv([

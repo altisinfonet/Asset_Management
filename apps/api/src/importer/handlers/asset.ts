@@ -440,13 +440,26 @@ export class AssetHandler implements EntityHandler {
       code: 'ambiguous',
       message: `Several assets have the serial number "${String(rec.f.serial).slice(0, 60)}". Match on the asset tag instead.`,
     });
+    // Matching on the serial or the external id says "new asset" for a row whose TAG is already taken by another
+    // asset: the API refuses that (duplicate), so the dry run must too, not the commit.
+    const tagClash = <R extends { hit: unknown; issue?: RowIssue }>(
+      r: R,
+    ): R | { hit: null; issue: RowIssue } =>
+      !r.hit && !r.issue && tagHit
+        ? {
+            hit: null,
+            issue: { field: 'asset_tag', code: 'duplicate', message: 'is already in use' },
+          }
+        : r;
     switch (env.options.match_on) {
       case 'asset_tag':
         return { hit: tagHit };
       case 'serial':
-        return serialAmbiguous ? { hit: null, issue: ambiguous() } : { hit: serialHits[0] ?? null };
+        return tagClash(
+          serialAmbiguous ? { hit: null, issue: ambiguous() } : { hit: serialHits[0] ?? null },
+        );
       case 'external_id':
-        return { hit: extHit };
+        return tagClash({ hit: extHit });
       default: {
         if (tagHit) {
           if (serialHits.length === 1 && serialHits[0]!.id !== tagHit.id) {

@@ -278,9 +278,9 @@ const SCENARIOS: Scenario[] = [
       const { id } = await importAt(p, 'uploaded');
       await job(p, id);
       const columns = p.getByRole('table', { name: 'Columns of your file' });
-      await columns.getByRole('combobox', { name: 'Field for column Asset ID' }).click();
+      await columns.getByRole('combobox', { name: 'Field for column Category' }).click();
       await p.getByRole('option', { name: '(Do not import)' }).click();
-      await expect(p.getByText(/A column for "Asset tag" is needed/)).toBeVisible();
+      await expect(p.getByText(/Choose a column for the category/)).toBeVisible();
     },
   },
   {
@@ -292,7 +292,7 @@ const SCENARIOS: Scenario[] = [
         filename: 'broken.csv',
       });
       await job(p, id);
-      await expect(p.getByText('We could not read the file.')).toBeVisible();
+      await expect(p.getByRole('heading', { name: 'The import failed' })).toBeVisible();
     },
   },
   {
@@ -301,8 +301,7 @@ const SCENARIOS: Scenario[] = [
       await loadApp(p);
       const { id } = await importAt(p, 'mapped');
       await job(p, id, 'values');
-      await expect(p.getByRole('table', { name: 'Values to decide for Location' })).toBeVisible();
-      await p.getByRole('button', { name: 'Create all that are missing' }).click();
+      await expect(p.getByRole('table', { name: 'Values of Location' })).toBeVisible();
       await settled(p);
     },
   },
@@ -336,7 +335,7 @@ const SCENARIOS: Scenario[] = [
       const { id } = await importAt(p, 'reviewed');
       await job(p, id);
       await p.getByRole('button', { name: 'Errors' }).click();
-      await expect(p.getByTestId('import-range')).toContainText('of 3');
+      await expect(p.getByTestId('import-range')).toContainText('of 1');
       await settled(p);
     },
   },
@@ -371,26 +370,20 @@ const SCENARIOS: Scenario[] = [
       const { id } = await importAt(p, 'committed');
       await job(p, id);
       await expect(p.getByRole('heading', { name: 'Import finished' })).toBeVisible();
-      await expect(p.getByText(/rows could not be imported/)).toBeVisible();
+      await expect(p.getByText(/could not be imported/).first()).toBeVisible();
     },
   },
   {
     name: 'imports: failed',
     open: async (p) => {
       await loadApp(p);
-      const { id } = await importAt(p, 'mapped', {
+      const { id } = await importAt(p, 'uploaded', {
         csv: 'Serial,Name\n"5CG1,Broken',
-        mapping: { Serial: 'serial' },
+        filename: 'broken.csv',
       });
-      await api(p, 'POST', `/v1/imports/${id}/dry-run`);
-      await expect
-        .poll(
-          async () => (await api<{ state: string }>(p, 'GET', `/v1/imports/${id}`)).json.state,
-          { timeout: 10_000 },
-        )
-        .toBe('failed');
       await job(p, id);
       await expect(p.getByRole('heading', { name: 'The import failed' })).toBeVisible();
+      await expect(p.getByRole('button', { name: 'Read the file again' })).toBeVisible();
     },
   },
   {

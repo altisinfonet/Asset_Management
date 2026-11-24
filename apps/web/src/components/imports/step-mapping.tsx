@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { FormError } from '@/components/auth/form-error';
 import { Badge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
@@ -17,179 +17,344 @@ import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
-import { getApi, type UiError } from '@/lib/api';
-import { uiErrorText } from '@/lib/error-text';
 import {
+  importKeys,
   importsApi,
-  type ImportColumn,
+  importTemplatesApi,
+  type ImportColumnProfile,
+  type ImportDateFormat,
   type ImportJob,
-  type ImportTargetField,
+  type ImportMapping,
+  type ImportOptions,
+  type ImportTemplate,
 } from '@/lib/imports/api';
+import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
 import {
-  applicableMapping,
-  mappedReferences,
+  columnsOf,
+  hasDateTarget,
+  hasNumberTarget,
+  mappedCount,
+  mappedRefKinds,
   mappingProblems,
-  suggestedMapping,
-  unmatchedValues,
+  needsDecision,
+  needsDateFormat,
+  targetOfColumn,
+  targetOptionsFor,
+  withDateFormat,
+  withTarget,
+  type MappingProblem,
 } from '@/lib/imports/helpers';
+import { useCustomFields, useLookups } from '@/lib/registry/queries';
 import { routes } from '@/lib/routes';
 
 const NONE = '__none__';
+const JOB_FORMAT = '__job__';
 const SAVED_NONE = '__none_saved__';
-const POLL_MS = 1500;
+const PREVIEW_ROWS = 5;
+
+type Defaults = NonNullable<ImportOptions['defaults']>;
+type DefaultKey = keyof Defaults;
+
+/** The options this step edits (the rest of the job's options, such as the reference policies, are left alone). */
+interface EditableOptions {
+  match_on: NonNullable<ImportOptions['match_on']>;
+  on_match: NonNullable<ImportOptions['on_match']>;
+  blank_cells: NonNullable<ImportOptions['blank_cells']>;
+  date_format: NonNullable<ImportOptions['date_format']>;
+  number_format: NonNullable<ImportOptions['number_format']>;
+  default_currency: string;
+  assign: boolean;
+  detect_changes: boolean;
+  location_kind: NonNullable<ImportOptions['location_kind']>;
+  defaults: Defaults;
+}
+
+const editableOf = (options: ImportOptions): EditableOptions => ({
+  match_on: options.match_on ?? 'auto',
+  on_match: options.on_match ?? 'skip',
+  blank_cells: options.blank_cells ?? 'ignore',
+  date_format: options.date_format ?? 'auto',
+  number_format: options.number_format ?? 'auto',
+  default_currency: options.default_currency ?? '',
+  assign: options.assign ?? true,
+  detect_changes: options.detect_changes ?? true,
+  location_kind: options.location_kind ?? 'other',
+  defaults: { ...options.defaults },
+});
+
+/** The request body of the options: only what is valid (a currency is three capital letters). */
+function optionsPatch(edit: EditableOptions, entity: ImportJob['entity_type']): ImportOptions {
+  const currency = edit.default_currency.trim().toUpperCase();
+  return {
+    on_match: edit.on_match,
+    ...(entity === 'asset'
+      ? { match_on: edit.match_on, assign: edit.assign, number_format: edit.number_format }
+      : {}),
+    ...(entity === 'location' ? { location_kind: edit.location_kind } : {}),
+    blank_cells: edit.blank_cells,
+    detect_changes: edit.detect_changes,
+    date_format: edit.date_format,
+    ...(/^[A-Z]{3}$/.test(currency) ? { default_currency: currency } : {}),
+    defaults: edit.defaults,
+  };
+}
+
+/** The reference defaults offered per entity (the ids the API checks: category, status, location, department, vendor). */
+const DEFAULT_FIELDS: Record<ImportJob['entity_type'], readonly DefaultKey[]> = {
+  asset: ['category', 'status', 'location', 'department', 'vendor'],
+  person: ['department', 'location'],
+  location: [],
+  department: [],
+};
+
+interface ColumnRow {
+  index: number;
+  header: string;
+  profile: ImportColumnProfile | undefined;
+}
 
 /**
- * Step "Match columns" (WEB-14 step 2): what the file contains (headers, examples, what each column
- * looks like), the field every column goes to with the heuristics' suggestion filled in, the
- * options for duplicates and missing records, and saved mappings to reuse. A dry run needs the
- * required fields and the column the duplicate check uses.
+ * Step "Match columns" (WEB-14 step 2): the file as the analysis read it (the profile of every column:
+ * what it looks like, how full it is, examples), the field every column goes to with the suggestion
+ * filled in, the options for existing records, dates, numbers and defaults, and saved mappings to
+ * reuse. The dry run needs the essentials the API checks (a category, something that tells rows
+ * apart, a name). While the worker is still reading the file, a progress message stands in.
  */
-export function StepMapping({ job }: { job: ImportJob }) {
+export function StepMapping({
+  job,
+  etag,
+  canRun,
+}: {
+  job: ImportJob;
+  etag: string | undefined;
+  canRun: boolean;
+}) {
   const { t, formatNumber } = useI18n();
   const router = useRouter();
   const client = useQueryClient();
   const { toast } = useToast();
-
-  const analysis = useQuery({
-    queryKey: ['import', job.id, 'analysis'],
-    queryFn: () => importsApi.analysis(job.id),
-    refetchInterval: (query) => (query.state.data?.status === 'pending' ? POLL_MS : false),
-    retry: false,
-  });
-  const fields = useQuery({
-    queryKey: ['import-fields', job.entity_type],
-    queryFn: () => importsApi.targetFields(job.entity_type),
-    staleTime: 60_000,
+  const lookups = useLookups();
+  const customFields = useCustomFields();
+  const presets = useQuery({
+    queryKey: importKeys.presets(),
+    queryFn: () => importsApi.presets(),
+    staleTime: 5 * 60_000,
   });
   const saved = useQuery({
-    queryKey: ['import-mappings', job.entity_type],
-    queryFn: () => importsApi.mappingTemplates(job.entity_type),
+    queryKey: importKeys.templates(job.entity_type),
+    queryFn: () => importTemplatesApi.list(job.entity_type),
+    enabled: canRun,
   });
 
-  const [mapping, setMapping] = useState<Record<string, string>>(job.mapping ?? {});
-  const [initialised, setInitialised] = useState(Object.keys(job.mapping ?? {}).length > 0);
-  const [suggestedCount, setSuggestedCount] = useState<number | null>(null);
-  const [options, setOptions] = useState(() => ({
-    match_on: String(job.options?.match_on ?? 'asset_tag'),
-    on_duplicate: String(job.options?.on_duplicate ?? 'skip'),
-    create_missing_references: job.options?.create_missing_references !== false,
-    date_format: String(job.options?.date_format ?? 'YYYY-MM-DD'),
+  const headers = useMemo(() => job.headers ?? [], [job.headers]);
+  const [mapping, setMapping] = useState<ImportMapping>(() => ({
+    ...job.mapping,
+    columns: headers.map((_, index) => ({
+      index,
+      target: targetOfColumn(job.mapping, index),
+      ...(columnsOf(job.mapping).find((c) => c.index === index)?.date_format
+        ? { date_format: columnsOf(job.mapping).find((c) => c.index === index)!.date_format }
+        : {}),
+    })),
   }));
+  const [edit, setEdit] = useState<EditableOptions>(() => editableOf(job.options));
+  const [chosen, setChosen] = useState<ReadonlySet<number>>(new Set());
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  const [error, setError] = useState<ImportErrorText | null>(null);
   const [mappingName, setMappingName] = useState('');
   const [nameError, setNameError] = useState('');
   const [chosenSaved, setChosenSaved] = useState('');
+  const latestEtag = useRef(etag);
 
-  const ready = analysis.data?.status === 'ready' ? analysis.data : null;
-  const columns = ready?.columns ?? [];
-
-  // The first time the analysis is there, start from the heuristics' suggestions.
-  useEffect(() => {
-    if (!ready || initialised) return;
-    const suggestion = suggestedMapping(ready);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time start from the suggestions
-    setMapping(suggestion);
-    setSuggestedCount(Object.keys(suggestion).length);
-    setInitialised(true);
-  }, [ready, initialised]);
-
-  const fieldList = useMemo(() => fields.data ?? [], [fields.data]);
+  const entity = job.entity_type;
+  const used = useMemo(
+    () => columnsOf(mapping).flatMap((c) => (c.target ? [c.target] : [])),
+    [mapping],
+  );
+  const targets = useMemo(
+    () =>
+      targetOptionsFor(
+        entity,
+        presets.data ?? [],
+        (customFields.data ?? []).map((field) => ({
+          key: field.key,
+          label: field.label,
+          category: field.category_id
+            ? (lookups.categoryById.get(field.category_id)?.name ?? null)
+            : null,
+        })),
+        used,
+      ),
+    [entity, presets.data, customFields.data, lookups.categoryById, used],
+  );
   const problems = useMemo(
-    () => mappingProblems(mapping, fieldList, job.entity_type, options.match_on),
-    [mapping, fieldList, job.entity_type, options.match_on],
+    () => mappingProblems(entity, mapping, edit.defaults),
+    [entity, mapping, edit.defaults],
   );
-  const labelOf = (key: string) => fieldList.find((f) => f.key === key)?.label ?? key;
-  const isAsset = job.entity_type === 'asset';
-  const hasDates = fieldList.some(
-    (f) => f.type === 'date' && Object.values(mapping).includes(f.key),
-  );
+  const labelOf = (key: string) => targets.find((target) => target.key === key)?.label ?? key;
+  const profileOf = (index: number) => job.profile?.find((p) => p.index === index);
+  const hasContent = (job.profile ?? []).some((p) => p.samples.length > 0);
+  const showDates = hasDateTarget(mapping, job.profile);
 
-  const targetOptions = useMemo(
+  const setTarget = (index: number, target: string | null) => {
+    setMapping((current) => withTarget(current, headers.length, index, target));
+    setChosen((current) => new Set(current).add(index));
+  };
+
+  const rows: ColumnRow[] = headers.map((header, index) => ({
+    index,
+    header,
+    profile: profileOf(index),
+  }));
+
+  const targetSelectOptions = useMemo(
     () => [
       { value: NONE, label: t('importMapping.doNotImport') },
-      ...fieldList.map((f: ImportTargetField) => ({
-        value: f.key,
-        label: f.required ? `${f.label} ${t('common.required')}` : f.label,
+      ...targets.map((target) => ({
+        value: target.key,
+        label: target.required ? `${target.label} ${t('common.required')}` : target.label,
       })),
     ],
-    [fieldList, t],
+    [targets, t],
   );
 
-  const columnDefs: DataTableColumn<ImportColumn>[] = [
+  const columnDefs: DataTableColumn<ColumnRow>[] = [
     {
       id: 'column',
       header: t('importMapping.columns.yours'),
       sticky: true,
-      cell: (column) => <span className="font-medium text-text">{column.name}</span>,
+      cell: (row) => (
+        <span className="flex flex-col">
+          <span className="font-medium text-text">{row.header}</span>
+          {row.profile ? (
+            <span className="text-xs text-muted">
+              {t('importMapping.detectedCounts', {
+                filled: formatNumber(row.profile.non_blank),
+                blank: formatNumber(row.profile.blank),
+                distinct: `${formatNumber(row.profile.distinct)}${row.profile.distinct_capped ? '+' : ''}`,
+              })}
+            </span>
+          ) : null}
+        </span>
+      ),
     },
     {
       id: 'field',
       header: t('importMapping.columns.field'),
-      cell: (column) => (
+      cell: (row) => (
         <Select
           size="sm"
           variant="ghost"
           className="-ml-2 min-w-48"
-          aria-label={t('importMapping.chooseFor', { name: column.name })}
-          value={mapping[column.name] || NONE}
-          options={targetOptions}
-          onValueChange={(value) =>
-            setMapping((current) => {
-              const next = { ...current };
-              if (value === NONE) delete next[column.name];
-              else next[column.name] = value;
-              return next;
-            })
-          }
+          aria-label={t('importMapping.chooseFor', { name: row.header })}
+          value={targetOfColumn(mapping, row.index) || NONE}
+          options={targetSelectOptions}
+          onValueChange={(value) => setTarget(row.index, value === NONE ? null : value)}
         />
       ),
     },
     {
+      id: 'match',
+      header: t('importMapping.columns.match'),
+      cell: (row) => {
+        if (!targetOfColumn(mapping, row.index)) return null;
+        const confidence = job.confidence?.[String(row.index)] ?? 0;
+        if (chosen.has(row.index)) return <Badge>{t('importMapping.match.chosen')}</Badge>;
+        return (
+          <Badge tone={confidence >= 1 ? 'success' : 'info'}>
+            {confidence >= 1 ? t('importMapping.match.exact') : t('importMapping.match.suggested')}
+          </Badge>
+        );
+      },
+    },
+    {
       id: 'samples',
       header: t('importMapping.columns.samples'),
-      cell: (column) =>
-        column.sample_values.length > 0 ? (
-          <span className="block max-w-72 truncate" title={column.sample_values.join(', ')}>
-            {column.sample_values.slice(0, 3).join(', ')}
+      cell: (row) =>
+        row.profile && row.profile.samples.length > 0 ? (
+          <span className="block max-w-72 truncate" title={row.profile.samples.join(', ')}>
+            {row.profile.samples.slice(0, 3).join(', ')}
           </span>
         ) : (
-          <span className="text-muted">{t('importMapping.empty')}</span>
+          <span className="text-muted">
+            {hasContent || !canRun ? t('importMapping.empty') : t('importMapping.noExamples')}
+          </span>
         ),
     },
     {
       id: 'kind',
       header: t('importMapping.columns.kind'),
-      cell: (column) => <Badge>{t(`importMapping.detected.${column.detected_type}`)}</Badge>,
+      cell: (row) => {
+        const target = targetOfColumn(mapping, row.index);
+        const askDate = !!target && (needsDateFormat(row.profile) || row.profile?.type === 'date');
+        const column = columnsOf(mapping).find((c) => c.index === row.index);
+        return (
+          <span className="flex flex-wrap items-center gap-2">
+            {row.profile ? <Badge>{t(`importMapping.detected.${row.profile.type}`)}</Badge> : null}
+            {askDate ? (
+              <Select
+                size="sm"
+                variant="ghost"
+                aria-label={t('importMapping.dateFormatFor', { name: row.header })}
+                value={column?.date_format ?? JOB_FORMAT}
+                options={[
+                  { value: JOB_FORMAT, label: t('importMapping.dateOptions.job') },
+                  ...(['auto', 'iso', 'dmy', 'mdy'] as const).map((value) => ({
+                    value,
+                    label: t(`importMapping.dateOptions.${value}`),
+                  })),
+                ]}
+                onValueChange={(value) =>
+                  setMapping((current) =>
+                    withDateFormat(
+                      current,
+                      row.index,
+                      value === JOB_FORMAT ? null : (value as ImportDateFormat),
+                    ),
+                  )
+                }
+              />
+            ) : null}
+          </span>
+        );
+      },
     },
   ];
 
-  const save = async () => {
+  /** Saves the mapping and the options; the response is the job as it stands (its ETag for the next write). */
+  const persist = async () => {
+    const updated = await importsApi.update(
+      job.id,
+      { mapping, options: optionsPatch(edit, entity) },
+      latestEtag.current,
+    );
+    latestEtag.current = updated.etag;
+    return updated.value;
+  };
+
+  const next = async () => {
     setSaving(true);
     setError(null);
     try {
-      const clean = ready ? applicableMapping(mapping, ready) : mapping;
-      await importsApi.update(job.id, {
-        mapping: clean,
-        options: {
-          ...(isAsset ? { match_on: options.match_on, on_duplicate: options.on_duplicate } : {}),
-          create_missing_references: options.create_missing_references,
-          ...(hasDates ? { date_format: options.date_format } : {}),
-        },
-      });
-      const lookups = mappedReferences(clean, fieldList).length
-        ? await importsApi.lookups(job.id)
-        : [];
-      if (unmatchedValues(lookups).length > 0) {
-        await client.invalidateQueries({ queryKey: ['import', job.id] });
+      const updated = await persist();
+      // values that match no record, and that the dry run would reject, are decided in the next step
+      const kinds = mappedRefKinds(entity, mapping);
+      const lists = await Promise.all(kinds.map((kind) => importsApi.values(job.id, kind)));
+      const open = lists.some((list, i) =>
+        list.data.some((value) =>
+          needsDecision(value, kinds[i]!, updated.options, updated.value_map ?? {}),
+        ),
+      );
+      if (open) {
+        await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
         router.push(routes.importJob(job.id, 'values'));
         return;
       }
       await importsApi.startDryRun(job.id);
-      await client.invalidateQueries({ queryKey: ['import', job.id] });
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
       router.replace(routes.importJob(job.id));
     } catch (err) {
-      setError(getApi().toUiError(err));
+      setError(importErrorText(t, err, t('importMapping.saveFailed')));
     } finally {
       setSaving(false);
     }
@@ -203,105 +368,120 @@ export function StepMapping({ job }: { job: ImportJob }) {
     }
     setNameError('');
     try {
-      await importsApi.saveMappingTemplate({
-        name,
-        entity_type: job.entity_type,
-        source: job.source,
-        mapping,
-        options: { match_on: options.match_on, on_duplicate: options.on_duplicate },
-      });
+      // a template copies the saved mapping of the import, so the current one is saved first
+      await persist();
+      await importTemplatesApi.createFromImport(name, job.id);
       setMappingName('');
-      await saved.refetch();
+      await Promise.all([
+        saved.refetch(),
+        client.invalidateQueries({ queryKey: importKeys.job(job.id) }),
+      ]);
       toast({ variant: 'success', title: t('importMapping.saved.savedOk', { name }) });
     } catch (err) {
-      const ui = getApi().toUiError(err);
-      setNameError(ui.fieldErrors[0]?.message ?? ui.detail ?? t('importMapping.saved.saveFailed'));
+      const text = importErrorText(t, err, t('importMapping.saved.saveFailed'));
+      setNameError(
+        text.code === 'conflict'
+          ? t('importMapping.saved.nameTaken')
+          : (text.details[0] ?? text.message),
+      );
     }
   };
 
-  const applyTemplate = (id: string) => {
-    setChosenSaved(id);
-    const template = saved.data?.find((candidate) => candidate.id === id);
-    if (!template || !ready) return;
-    setMapping(applicableMapping(template.mapping, ready));
-    const opts = (template.options ?? {}) as Record<string, unknown>;
-    setOptions((current) => ({
-      ...current,
-      match_on: typeof opts.match_on === 'string' ? opts.match_on : current.match_on,
-      on_duplicate:
-        typeof opts.on_duplicate === 'string' ? opts.on_duplicate : current.on_duplicate,
-    }));
-    toast({ variant: 'success', title: t('importMapping.saved.applied', { name: template.name }) });
+  const applyTemplate = async (template: ImportTemplate) => {
+    setError(null);
+    try {
+      await importsApi.applyTemplate(job.id, template.id);
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
+      toast({
+        variant: 'success',
+        title: t('importMapping.saved.applied', { name: template.name }),
+      });
+    } catch (err) {
+      setError(importErrorText(t, err, t('importMapping.saved.applyFailed')));
+    }
   };
 
   const removeTemplate = async () => {
     const template = saved.data?.find((candidate) => candidate.id === chosenSaved);
     if (!template) return;
-    await importsApi.deleteMappingTemplate(template.id);
-    setChosenSaved('');
-    await saved.refetch();
-    toast({ variant: 'success', title: t('importMapping.saved.deleted', { name: template.name }) });
+    try {
+      await importTemplatesApi.remove(template.id);
+      setChosenSaved('');
+      await saved.refetch();
+      toast({
+        variant: 'success',
+        title: t('importMapping.saved.deleted', { name: template.name }),
+      });
+    } catch (err) {
+      setError(importErrorText(t, err, t('importMapping.saved.deleteFailed')));
+    }
   };
 
-  // ---- the file is not readable yet -------------------------------------------------------------
+  // ---- the file is not read yet ---------------------------------------------------------------------------
 
-  if (analysis.isError) {
-    return (
-      <Banner
-        tone="danger"
-        action={<Button onClick={() => void analysis.refetch()}>{t('importMapping.retry')}</Button>}
-      >
-        {t('imports.loadJobFailed')}
-      </Banner>
-    );
-  }
-  if (analysis.isPending || analysis.data?.status === 'pending') {
+  if (job.state === 'analyzing' || !job.headers) {
     return (
       <section aria-labelledby="import-mapping-heading" aria-busy className="flex flex-col gap-3">
         <h2 id="import-mapping-heading" className="text-lg font-semibold text-text">
           {t('importMapping.heading')}
         </h2>
         <p role="status" className="text-base text-muted">
-          {analysis.isPending ? t('importMapping.analysing') : t('importMapping.scanWait')}
+          {t('importMapping.analysing')}
         </p>
+        <p className="text-sm text-muted">{t('importMapping.scanWait')}</p>
+        <progress className="h-2 w-full max-w-xl" aria-label={t('importMapping.analysingLabel')} />
         <Skeleton className="h-40 w-full" />
       </section>
     );
   }
-  if (analysis.data?.status === 'failed') {
-    return (
-      <section aria-labelledby="import-mapping-heading" className="flex max-w-2xl flex-col gap-3">
-        <h2 id="import-mapping-heading" className="text-lg font-semibold text-text">
-          {t('importMapping.heading')}
-        </h2>
-        <Banner tone="danger" title={t('importMapping.analysisFailed')}>
-          {analysis.data.error}
-        </Banner>
-        <div>
-          <Button asChild variant="primary">
-            <Link href={routes.importJob(job.id, 'file')}>{t('importMapping.uploadOther')}</Link>
-          </Button>
-        </div>
-      </section>
-    );
-  }
 
-  const problemLines: string[] = [];
-  if (problems.missingRequired.length > 0) {
-    problemLines.push(
-      t('importMapping.problems.required', {
-        fields: problems.missingRequired.map((f) => f.label).join(', '),
-      }),
-    );
-  }
-  for (const duplicate of problems.duplicates) {
-    problemLines.push(t('importMapping.problems.duplicate', { field: labelOf(duplicate) }));
-  }
-  if (problems.missingKey) {
-    problemLines.push(
-      t('importMapping.problems.missingKey', { field: labelOf(problems.missingKey) }),
-    );
-  }
+  const problemLine = (problem: MappingProblem): string => {
+    switch (problem.kind) {
+      case 'category':
+        return t('importMapping.problems.category');
+      case 'identity':
+        return t('importMapping.problems.identity');
+      case 'duplicate':
+        return t('importMapping.problems.duplicate', { field: labelOf(problem.field) });
+      case 'name':
+        return entity === 'person'
+          ? t('importMapping.problems.personName')
+          : entity === 'location'
+            ? t('importMapping.problems.locationName')
+            : t('importMapping.problems.departmentName');
+    }
+  };
+
+  const constants = Object.entries(job.mapping.constants ?? {});
+  const defaultFields = DEFAULT_FIELDS[entity];
+  const updating = edit.on_match === 'update';
+  const previewRows = (job.samples ?? [])
+    .slice(0, PREVIEW_ROWS)
+    .map((cells, position) => ({ position, cells }));
+  const previewColumns: DataTableColumn<{ position: number; cells: string[] }>[] = headers.map(
+    (header, index) => ({
+      id: String(index),
+      header,
+      cell: (row) => row.cells[index] ?? '',
+    }),
+  );
+  const defaultOptions = (key: DefaultKey) => {
+    const none = { value: NONE, label: t('importMapping.defaults.none') };
+    const list: Array<{ value: string; label: string }> =
+      key === 'category'
+        ? lookups.categories.map((c) => ({ value: c.id, label: c.name }))
+        : key === 'status'
+          ? lookups.statuses
+              .filter((c) => !c.archived_at)
+              .map((c) => ({ value: c.id, label: c.name }))
+          : key === 'location'
+            ? lookups.locations.map((c) => ({ value: c.id, label: lookups.locationLabel(c.id) }))
+            : key === 'department'
+              ? lookups.departments.map((c) => ({ value: c.id, label: c.name }))
+              : lookups.vendors.map((c) => ({ value: c.id, label: c.name }));
+    // the API merges defaults by key, so one that was saved can be changed but not removed
+    return job.options.defaults?.[key] ? list : [none, ...list];
+  };
 
   return (
     <section aria-labelledby="import-mapping-heading" className="flex flex-col gap-5">
@@ -311,84 +491,192 @@ export function StepMapping({ job }: { job: ImportJob }) {
         </h2>
         <p className="text-base text-muted">{t('importMapping.description')}</p>
         <p className="mt-1 text-sm text-muted" data-testid="import-file-summary">
-          {ready?.rows_total != null
-            ? t('importMapping.file', {
-                name: job.original_filename ?? '',
-                count: formatNumber(ready.rows_total),
-              })
-            : t('importMapping.fileNoCount', { name: job.original_filename ?? '' })}
+          {t('importMapping.file', {
+            name: job.filename ?? '',
+            count: formatNumber(job.rows_total),
+          })}
         </p>
       </div>
 
-      {suggestedCount !== null ? (
+      {job.state === 'analyzed' ? (
         <Banner tone="info">
-          {suggestedCount > 0
-            ? t('importMapping.autoNote', { count: suggestedCount })
+          {mappedCount(job.mapping) > 0
+            ? t('importMapping.autoNote', { count: mappedCount(job.mapping) })
             : t('importMapping.autoNoneNote')}
+        </Banner>
+      ) : null}
+      {constants.length > 0 ? (
+        <Banner tone="info" title={t('importMapping.constantsHeading')}>
+          {t('importMapping.constantsNote', {
+            pairs: constants.map(([field, value]) => `${labelOf(field)} = ${value}`).join(', '),
+          })}
         </Banner>
       ) : null}
 
       <DataTable
         label={t('importMapping.tableLabel')}
         columns={columnDefs}
-        rows={columns}
-        getRowId={(column) => String(column.index)}
-        getRowLabel={(column) => column.name}
-        loading={fields.isPending}
+        rows={rows}
+        getRowId={(row) => String(row.index)}
+        getRowLabel={(row) => row.header}
+        loading={presets.isPending}
       />
+
+      {previewRows.length > 0 ? (
+        <details className="rounded-lg border border-border bg-surface p-3">
+          <summary className="cursor-pointer text-base font-semibold text-text">
+            {t('importMapping.preview.heading')}
+          </summary>
+          <div className="mt-3">
+            <DataTable
+              label={t('importMapping.preview.label')}
+              columns={previewColumns}
+              rows={previewRows}
+              getRowId={(row) => String(row.position)}
+              density="compact"
+            />
+          </div>
+        </details>
+      ) : !hasContent ? (
+        <p className="text-sm text-muted">{t('importMapping.preview.hidden')}</p>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <fieldset className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
           <legend className="px-1 text-base font-semibold text-text">
             {t('importMapping.options.heading')}
           </legend>
-          {isAsset ? (
+          {entity === 'asset' ? (
+            <Field label={t('importMapping.options.matchOn')}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={edit.match_on}
+                  onValueChange={(value) =>
+                    setEdit({ ...edit, match_on: value as EditableOptions['match_on'] })
+                  }
+                  options={(['auto', 'asset_tag', 'serial', 'external_id'] as const).map(
+                    (value) => ({
+                      value,
+                      label: t(`importMapping.options.matchOptions.${value}`),
+                    }),
+                  )}
+                />
+              )}
+            </Field>
+          ) : null}
+          <Field label={t('importMapping.options.onMatch')}>
+            {(control) => (
+              <Select
+                {...control}
+                value={edit.on_match}
+                onValueChange={(value) =>
+                  setEdit({ ...edit, on_match: value as EditableOptions['on_match'] })
+                }
+                options={(['skip', 'update', 'error'] as const).map((value) => ({
+                  value,
+                  label: t(`importMapping.options.onMatchOptions.${value}`),
+                }))}
+              />
+            )}
+          </Field>
+          {updating ? (
+            <Field label={t('importMapping.options.blankCells')}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={edit.blank_cells}
+                  onValueChange={(value) =>
+                    setEdit({ ...edit, blank_cells: value as EditableOptions['blank_cells'] })
+                  }
+                  options={(['ignore', 'clear'] as const).map((value) => ({
+                    value,
+                    label: t(`importMapping.options.blankOptions.${value}`),
+                  }))}
+                />
+              )}
+            </Field>
+          ) : null}
+          {updating ? (
+            <Checkbox
+              label={t('importMapping.options.detectChanges')}
+              checked={edit.detect_changes}
+              onCheckedChange={(value) => setEdit({ ...edit, detect_changes: value === true })}
+            />
+          ) : null}
+          {showDates ? (
+            <Field label={t('importMapping.options.dateFormat')}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={edit.date_format}
+                  onValueChange={(value) =>
+                    setEdit({ ...edit, date_format: value as EditableOptions['date_format'] })
+                  }
+                  options={(['auto', 'iso', 'dmy', 'mdy'] as const).map((value) => ({
+                    value,
+                    label: t(`importMapping.dateOptions.${value}`),
+                  }))}
+                />
+              )}
+            </Field>
+          ) : null}
+          {hasNumberTarget(mapping) ? (
             <>
-              <Field label={t('importMapping.options.matchOn')}>
+              <Field label={t('importMapping.options.numberFormat')}>
                 {(control) => (
                   <Select
                     {...control}
-                    value={options.match_on}
-                    onValueChange={(value) => setOptions({ ...options, match_on: value })}
-                    options={(['asset_tag', 'serial'] as const).map((value) => ({
+                    value={edit.number_format}
+                    onValueChange={(value) =>
+                      setEdit({ ...edit, number_format: value as EditableOptions['number_format'] })
+                    }
+                    options={(['auto', 'dot', 'comma'] as const).map((value) => ({
                       value,
-                      label: t(`importMapping.options.matchOptions.${value}`),
+                      label: t(`importMapping.options.numberOptions.${value}`),
                     }))}
                   />
                 )}
               </Field>
-              <Field label={t('importMapping.options.onDuplicate')}>
+              <Field
+                label={t('importMapping.options.defaultCurrency')}
+                hint={t('importMapping.options.defaultCurrencyHint')}
+              >
                 {(control) => (
-                  <Select
+                  <Input
                     {...control}
-                    value={options.on_duplicate}
-                    onValueChange={(value) => setOptions({ ...options, on_duplicate: value })}
-                    options={(['skip', 'update', 'error'] as const).map((value) => ({
-                      value,
-                      label: t(`importMapping.options.duplicateOptions.${value}`),
-                    }))}
+                    value={edit.default_currency}
+                    maxLength={3}
+                    className="w-28 uppercase"
+                    onChange={(event) =>
+                      setEdit({ ...edit, default_currency: event.target.value.toUpperCase() })
+                    }
                   />
                 )}
               </Field>
             </>
           ) : null}
-          <Checkbox
-            label={t('importMapping.options.createMissing')}
-            checked={options.create_missing_references}
-            onCheckedChange={(value) =>
-              setOptions({ ...options, create_missing_references: value === true })
-            }
-          />
-          {hasDates ? (
-            <Field label={t('importMapping.options.dateFormat')}>
+          {entity === 'asset' && used.includes('assigned_to') ? (
+            <Checkbox
+              label={t('importMapping.options.assign')}
+              checked={edit.assign}
+              onCheckedChange={(value) => setEdit({ ...edit, assign: value === true })}
+            />
+          ) : null}
+          {entity === 'location' ? (
+            <Field label={t('importMapping.options.locationKind')}>
               {(control) => (
                 <Select
                   {...control}
-                  value={options.date_format}
-                  onValueChange={(value) => setOptions({ ...options, date_format: value })}
-                  options={(['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'] as const).map((value) => ({
+                  value={edit.location_kind}
+                  onValueChange={(value) =>
+                    setEdit({ ...edit, location_kind: value as EditableOptions['location_kind'] })
+                  }
+                  options={(
+                    ['site', 'building', 'floor', 'room', 'storage', 'vehicle', 'other'] as const
+                  ).map((value) => ({
                     value,
-                    label: t(`importMapping.options.dateOptions.${value}`),
+                    label: t(`importMapping.options.kindOptions.${value}`),
                   }))}
                 />
               )}
@@ -396,88 +684,123 @@ export function StepMapping({ job }: { job: ImportJob }) {
           ) : null}
         </fieldset>
 
-        <fieldset className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
-          <legend className="px-1 text-base font-semibold text-text">
-            {t('importMapping.saved.heading')}
-          </legend>
-          {saved.data && saved.data.length > 0 ? (
-            <div className="flex items-end gap-2">
-              <Field label={t('importMapping.saved.apply')} className="flex-1">
+        {defaultFields.length > 0 ? (
+          <fieldset className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+            <legend className="px-1 text-base font-semibold text-text">
+              {t('importMapping.defaults.heading')}
+            </legend>
+            <p className="text-sm text-muted">{t('importMapping.defaults.note')}</p>
+            {defaultFields.map((key) => (
+              <Field key={key} label={t(`importMapping.defaults.${key}`)}>
                 {(control) => (
                   <Select
                     {...control}
-                    value={chosenSaved || SAVED_NONE}
-                    placeholder={t('importMapping.saved.placeholder')}
-                    onValueChange={(value) =>
-                      value === SAVED_NONE ? setChosenSaved('') : applyTemplate(value)
-                    }
-                    options={[
-                      { value: SAVED_NONE, label: t('importMapping.saved.placeholder') },
-                      ...saved.data!.map((template) => ({
-                        value: template.id,
-                        label: template.name,
-                      })),
-                    ]}
+                    value={edit.defaults[key] ?? NONE}
+                    onValueChange={(value) => {
+                      const next = { ...edit.defaults };
+                      if (value === NONE) delete next[key];
+                      else next[key] = value;
+                      setEdit({ ...edit, defaults: next });
+                    }}
+                    options={defaultOptions(key)}
                   />
                 )}
               </Field>
-              <Button
-                aria-label={t('importMapping.saved.delete')}
-                disabled={!chosenSaved}
-                onClick={() => void removeTemplate()}
-              >
-                <Trash2 aria-hidden className="size-4" />
-              </Button>
+            ))}
+          </fieldset>
+        ) : null}
+
+        {canRun ? (
+          <fieldset className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+            <legend className="px-1 text-base font-semibold text-text">
+              {t('importMapping.saved.heading')}
+            </legend>
+            {saved.data && saved.data.length > 0 ? (
+              <div className="flex items-end gap-2">
+                <Field label={t('importMapping.saved.apply')} className="flex-1">
+                  {(control) => (
+                    <Select
+                      {...control}
+                      value={chosenSaved || SAVED_NONE}
+                      placeholder={t('importMapping.saved.placeholder')}
+                      onValueChange={(value) => setChosenSaved(value === SAVED_NONE ? '' : value)}
+                      options={[
+                        { value: SAVED_NONE, label: t('importMapping.saved.placeholder') },
+                        ...saved.data!.map((template) => ({
+                          value: template.id,
+                          label: template.name,
+                        })),
+                      ]}
+                    />
+                  )}
+                </Field>
+                <Button
+                  disabled={!chosenSaved}
+                  onClick={() => {
+                    const template = saved.data?.find((candidate) => candidate.id === chosenSaved);
+                    if (template) void applyTemplate(template);
+                  }}
+                >
+                  {t('importMapping.saved.use')}
+                </Button>
+                <Button
+                  aria-label={t('importMapping.saved.delete')}
+                  disabled={!chosenSaved}
+                  onClick={() => void removeTemplate()}
+                >
+                  <Trash2 aria-hidden className="size-4" />
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">{t('importMapping.saved.none')}</p>
+            )}
+            <div className="flex items-end gap-2">
+              <Field label={t('importMapping.saved.name')} error={nameError} className="flex-1">
+                {(control) => (
+                  <Input
+                    {...control}
+                    value={mappingName}
+                    maxLength={100}
+                    invalid={!!nameError}
+                    onChange={(event) => setMappingName(event.target.value)}
+                  />
+                )}
+              </Field>
+              <Button onClick={() => void saveTemplate()}>{t('importMapping.saved.save')}</Button>
             </div>
-          ) : (
-            <p className="text-sm text-muted">{t('importMapping.saved.none')}</p>
-          )}
-          <div className="flex items-end gap-2">
-            <Field label={t('importMapping.saved.name')} error={nameError} className="flex-1">
-              {(control) => (
-                <Input
-                  {...control}
-                  value={mappingName}
-                  maxLength={120}
-                  invalid={!!nameError}
-                  onChange={(event) => setMappingName(event.target.value)}
-                />
-              )}
-            </Field>
-            <Button onClick={() => void saveTemplate()}>{t('importMapping.saved.save')}</Button>
-          </div>
-        </fieldset>
+          </fieldset>
+        ) : null}
       </div>
 
-      {problemLines.length > 0 ? (
+      {problems.length > 0 ? (
         <Banner tone="warning" className="max-w-3xl">
           <ul className="list-disc pl-5">
-            {problemLines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
+            {problems.map((problem) => {
+              const line = problemLine(problem);
+              return <li key={line}>{line}</li>;
+            })}
           </ul>
         </Banner>
       ) : null}
       {error ? (
-        <FormError
-          message={`${t('importMapping.saveFailed')} ${uiErrorText(t, error)}`}
-          requestId={error.requestId}
-        />
+        <FormError message={error.message} requestId={error.requestId} details={error.details} />
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild>
           <Link href={routes.importJob(job.id, 'file')}>{t('importMapping.uploadOther')}</Link>
         </Button>
-        <Button
-          variant="primary"
-          loading={saving}
-          disabled={!problems.ok || fields.isPending}
-          onClick={() => void save()}
-        >
-          {t('importMapping.next')}
-          <ArrowRight aria-hidden className="size-4" />
-        </Button>
+        {canRun ? (
+          <Button
+            variant="primary"
+            loading={saving}
+            disabled={problems.length > 0 || presets.isPending}
+            onClick={() => void next()}
+          >
+            {t('importMapping.next')}
+            <ArrowRight aria-hidden className="size-4" />
+          </Button>
+        ) : null}
       </div>
     </section>
   );

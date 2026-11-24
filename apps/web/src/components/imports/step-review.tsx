@@ -12,140 +12,162 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { FormError } from '@/components/auth/form-error';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
-import { getApi, type UiError } from '@/lib/api';
 import { createKeyKeeper } from '@/lib/custody/helpers';
-import { uiErrorText } from '@/lib/error-text';
 import {
   downloadErrorReport,
+  importKeys,
   importsApi,
   type ImportJob,
-  type ImportOutcome,
   type ImportRow,
 } from '@/lib/imports/api';
-import { rowKey, rowMessages, rowsToWrite } from '@/lib/imports/helpers';
+import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
+import {
+  CHROMEBOOK_CATEGORY,
+  errorGroupsOf,
+  isKnownCode,
+  progressPercent,
+  rowKey,
+  rowQueryFor,
+  rowsToWrite,
+  setupOf,
+  willCreateOf,
+  type RowFilter,
+} from '@/lib/imports/helpers';
 import { routes } from '@/lib/routes';
 
 const PAGE_SIZE = 50;
-type Filter = 'all' | ImportOutcome;
-const FILTERS: readonly Filter[] = ['all', 'error', 'skip', 'create', 'update'];
+const FILTERS: readonly RowFilter[] = ['all', 'error', 'warnings', 'skip', 'create', 'update'];
 
-const OUTCOME: Record<ImportOutcome, { tone: NonNullable<BadgeProps['tone']>; icon: LucideIcon }> =
-  {
-    create: { tone: 'success', icon: CircleCheck },
-    update: { tone: 'info', icon: Pencil },
-    skip: { tone: 'neutral', icon: CircleMinus },
-    error: { tone: 'danger', icon: CircleAlert },
-  };
+type Plan = NonNullable<ImportRow['plan']>;
+const OUTCOME: Record<Plan, { tone: NonNullable<BadgeProps['tone']>; icon: LucideIcon }> = {
+  create: { tone: 'success', icon: CircleCheck },
+  update: { tone: 'info', icon: Pencil },
+  skip: { tone: 'neutral', icon: CircleMinus },
+  error: { tone: 'danger', icon: CircleAlert },
+};
 
-const countOf = (job: ImportJob, filter: Filter): number =>
-  filter === 'all'
-    ? (job.rows_total ?? 0)
-    : filter === 'create'
-      ? (job.rows_create ?? 0)
-      : filter === 'update'
-        ? (job.rows_update ?? 0)
-        : filter === 'skip'
-          ? (job.rows_skip ?? 0)
-          : (job.rows_error ?? 0);
+/** The row's problems and notes, errors first; each with the field it is about when it has one. */
+export function RowProblems({ row }: { row: ImportRow }) {
+  const { t } = useI18n();
+  if (row.errors.length === 0 && row.warnings.length === 0) {
+    return <span className="text-muted">{t('importReview.noProblem')}</span>;
+  }
+  return (
+    <span className="flex flex-col whitespace-normal">
+      {row.errors.map((e) => (
+        <span key={`e-${e.code}-${e.field}-${e.message}`} className="text-danger-text">
+          {e.message}
+        </span>
+      ))}
+      {row.warnings.map((w) => (
+        <span key={`w-${w.code}-${w.field}-${w.message}`} className="text-muted">
+          {w.message}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /**
- * Step "Dry run" (WEB-14 step 3, W22): the worker is checking the file, then the result. A banner
- * says nothing is saved yet; four counts; the rows filtered by result and paged from the server (a
- * file can have 100,000); the error report as a CSV; and the way on: import, or fix the file and go
- * again. Importing needs the digest of the dry run the person reviewed.
+ * Step "Dry run" (WEB-14 step 3, W22): the worker is checking the file (a progress bar fed by polling),
+ * then the result. A banner says nothing is saved yet; four counts; why rows were rejected and what the
+ * import would create on the way (the job's summary); the rows filtered by result and paged from the
+ * server (a file can have 100,000); the error report as a CSV; and the way on: import, or fix the file
+ * and go again. Importing needs the digest of the dry run the person reviewed. Without `import:run`
+ * the counts are shown, the rows and the import are not.
  */
-export function StepReview({ job }: { job: ImportJob }) {
+export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean }) {
   const { t, formatNumber } = useI18n();
-  const router = useRouter();
   const client = useQueryClient();
-  const [filter, setFilter] = useState<Filter>('all');
+  const { toast } = useToast();
+  const [filter, setFilter] = useState<RowFilter>('all');
   const [cursors, setCursors] = useState<string[]>([]);
   const [committing, setCommitting] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ImportErrorText | null>(null);
   const [reportFailed, setReportFailed] = useState(false);
   const keys = useRef(createKeyKeeper());
 
-  const complete = job.state === 'dry_run_complete';
+  const done = job.state === 'dry_run_done';
+  const counts = job.counts.dry_run;
   const cursor = cursors[cursors.length - 1];
   const rows = useQuery({
-    queryKey: ['import', job.id, 'rows', filter, cursor ?? '', job.dry_run_digest ?? ''],
+    queryKey: [...importKeys.rows(job.id), filter, cursor ?? '', job.dry_run_digest ?? ''],
     queryFn: () =>
       importsApi.rows(job.id, {
         phase: 'dry_run',
         limit: PAGE_SIZE,
-        ...(filter === 'all' ? {} : { outcome: [filter] }),
+        ...rowQueryFor(filter, 'dry_run'),
         ...(cursor ? { cursor } : {}),
       }),
-    enabled: complete,
+    enabled: done && canRun,
     placeholderData: keepPreviousData,
   });
 
-  const total = countOf(job, filter);
+  const total = filter === 'all' ? job.rows_total : filter === 'warnings' ? null : counts[filter];
   const pageStart = cursors.length * PAGE_SIZE;
   const shown = rows.data?.data.length ?? 0;
   const toWrite = rowsToWrite(job);
+  const errorGroups = errorGroupsOf(job);
+  const willCreate = willCreateOf(job);
+  const setup = setupOf(job);
+  const reasonOf = (code: string) => (isKnownCode(code) ? t(`importCodes.${code}`) : code);
+  const setupText = setup
+    ? setup.customFieldsCreated.length > 0
+      ? t('importReview.setupCreated', {
+          category: CHROMEBOOK_CATEGORY,
+          fields: setup.customFieldsCreated.join(', '),
+        })
+      : setup.categoryCreated
+        ? t('importReview.setupCategoryOnly', { category: CHROMEBOOK_CATEGORY })
+        : null
+    : null;
 
-  const columns = useMemo<DataTableColumn<ImportRow>[]>(
-    () => [
-      {
-        id: 'row',
-        header: t('importReview.columns.row'),
-        align: 'end',
-        sticky: true,
-        cell: (row) => formatNumber(row.row_no),
+  const columns: DataTableColumn<ImportRow>[] = [
+    {
+      id: 'row',
+      header: t('importReview.columns.row'),
+      align: 'end',
+      sticky: true,
+      cell: (row) => (
+        <span title={t('importReview.line', { line: row.line_no })}>
+          {formatNumber(row.row_no)}
+        </span>
+      ),
+    },
+    {
+      id: 'outcome',
+      header: t('importReview.columns.outcome'),
+      cell: (row) => {
+        const plan = row.plan ?? 'skip';
+        const style = OUTCOME[plan];
+        return (
+          <Badge tone={style.tone} icon={style.icon}>
+            {t(`importReview.outcomes.${plan}`)}
+          </Badge>
+        );
       },
-      {
-        id: 'outcome',
-        header: t('importReview.columns.outcome'),
-        cell: (row) => {
-          const style = OUTCOME[row.outcome];
-          return (
-            <Badge tone={style.tone} icon={style.icon}>
-              {t(`importReview.outcomes.${row.outcome}`)}
-            </Badge>
-          );
-        },
-      },
-      {
-        id: 'key',
-        header: t('importReview.columns.key'),
-        mono: true,
-        cell: (row) => rowKey(row, job.mapping) || '-',
-      },
-      {
-        id: 'problem',
-        header: t('importReview.columns.problem'),
-        cell: (row) => {
-          const lines = rowMessages(row);
-          if (lines.length === 0)
-            return <span className="text-muted">{t('importReview.noProblem')}</span>;
-          return (
-            <span className="flex flex-col">
-              {row.errors.map((e) => (
-                <span key={`e-${e.pointer}-${e.message}`} className="text-danger-text">
-                  {e.message}
-                </span>
-              ))}
-              {row.warnings.map((w) => (
-                <span key={`w-${w.pointer}-${w.message}`} className="text-muted">
-                  {w.message}
-                </span>
-              ))}
-            </span>
-          );
-        },
-      },
-    ],
-    [t, formatNumber, job.mapping],
-  );
+    },
+    {
+      id: 'key',
+      header: t('importReview.columns.key'),
+      mono: true,
+      cell: (row) => rowKey(row) || '-',
+    },
+    {
+      id: 'problem',
+      header: t('importReview.columns.problem'),
+      cell: (row) => <RowProblems row={row} />,
+    },
+  ];
 
   const commit = async () => {
     if (!job.dry_run_digest) return;
@@ -153,38 +175,80 @@ export function StepReview({ job }: { job: ImportJob }) {
     setError(null);
     try {
       await importsApi.commit(job.id, job.dry_run_digest, keys.current.keyFor(job.dry_run_digest));
-      await client.invalidateQueries({ queryKey: ['import', job.id] });
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
     } catch (err) {
-      setError(getApi().toUiError(err));
+      const text = importErrorText(t, err, t('importReview.commitFailed'));
+      setError(text);
+      // the import may have moved on (another state): the screen follows it, so the reason also goes to a toast
+      if (text.code === 'import-wrong-state') {
+        toast({ variant: 'danger', title: text.message, requestId: text.requestId });
+      }
+      // show what is true now
+      void client.invalidateQueries({ queryKey: importKeys.job(job.id) });
     } finally {
       setCommitting(false);
     }
   };
 
-  /** Back to an earlier step: saving the settings again returns a reviewed dry run to a draft. */
-  const backTo = async (step: 'mapping' | 'file') => {
+  const runAgain = async () => {
+    setBusy(true);
+    setError(null);
     try {
-      await importsApi.update(job.id, { mapping: job.mapping });
-      await client.invalidateQueries({ queryKey: ['import', job.id] });
-      router.push(routes.importJob(job.id, step));
+      await importsApi.startDryRun(job.id);
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
     } catch (err) {
-      setError(getApi().toUiError(err));
+      setError(importErrorText(t, err, t('importReview.rerunFailed')));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await importsApi.cancel(job.id);
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
+    } catch (err) {
+      setError(importErrorText(t, err, t('importReview.cancelFailed')));
+    } finally {
+      setBusy(false);
     }
   };
 
   // ---- the worker is still checking ----------------------------------------------------------------
 
-  if (!complete) {
+  if (!done) {
     return (
       <section aria-labelledby="import-review-heading" aria-busy className="flex flex-col gap-4">
         <h2 id="import-review-heading" className="text-lg font-semibold text-text">
           {t('importReview.heading')}
         </h2>
         <Banner tone="info">{t('importReview.banner')}</Banner>
-        <p role="status" className="text-base text-text">
-          {job.state === 'dry_run_queued' ? t('importReview.waiting') : t('importReview.checking')}
+        <p role="status" className="text-base text-text" data-testid="import-check-text">
+          {job.progress.processed > 0
+            ? t('importReview.progress', {
+                done: formatNumber(job.progress.processed),
+                total: formatNumber(job.progress.total),
+              })
+            : t('importReview.checking')}
         </p>
-        <progress className="h-2 w-full max-w-xl" aria-label={t('importReview.checking')} />
+        <progress
+          className="h-2 w-full max-w-xl"
+          value={progressPercent(job)}
+          max={100}
+          aria-label={t('importReview.checking')}
+        />
+        {error ? (
+          <FormError message={error.message} requestId={error.requestId} details={error.details} />
+        ) : null}
+        {canRun ? (
+          <div>
+            <Button disabled={busy || job.cancel_requested} onClick={() => void cancel()}>
+              {t('importReview.cancel')}
+            </Button>
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -197,12 +261,13 @@ export function StepReview({ job }: { job: ImportJob }) {
         </h2>
         <p className="text-sm text-muted">
           {t('importMapping.file', {
-            name: job.original_filename ?? '',
-            count: formatNumber(job.rows_total ?? 0),
+            name: job.filename ?? '',
+            count: formatNumber(job.rows_total),
           })}
         </p>
       </div>
       <Banner tone="info">{t('importReview.banner')}</Banner>
+      {setupText ? <Banner tone="info">{setupText}</Banner> : null}
 
       <ul
         aria-label={t('importReview.tilesLabel')}
@@ -219,7 +284,7 @@ export function StepReview({ job }: { job: ImportJob }) {
               className="flex flex-col rounded-lg border border-border bg-surface px-4 py-3"
             >
               <span className="text-3xl leading-tight font-semibold text-text tabular-nums">
-                {formatNumber(countOf(job, outcome))}
+                {formatNumber(counts[outcome])}
               </span>
               <span className="inline-flex items-center gap-1.5 text-sm text-muted">
                 <Icon aria-hidden className="size-3.5" />
@@ -230,127 +295,180 @@ export function StepReview({ job }: { job: ImportJob }) {
         })}
       </ul>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label={t('importReview.show')} className="flex flex-wrap gap-1.5">
-          {FILTERS.map((option) => (
-            <Button
-              key={option}
-              size="sm"
-              variant={filter === option ? 'primary' : 'secondary'}
-              aria-pressed={filter === option}
-              onClick={() => {
-                setFilter(option);
-                setCursors([]);
-              }}
-            >
-              {t(`importReview.filters.${option}`)}
-            </Button>
-          ))}
-        </div>
-        {(job.rows_error ?? 0) > 0 ? (
-          <Button
-            className="ml-auto"
-            onClick={() => void downloadErrorReport(job.id).catch(() => setReportFailed(true))}
+      {errorGroups.length > 0 ? (
+        <section aria-labelledby="import-errors-heading" className="flex flex-col gap-1">
+          <h3 id="import-errors-heading" className="text-base font-semibold text-text">
+            {t('importReview.errorsHeading')}
+          </h3>
+          <ul
+            aria-label={t('importReview.errorsList')}
+            className="list-disc pl-5 text-base text-text"
           >
-            <Download aria-hidden className="size-4" />
-            {t('importReview.errorReport')}
-          </Button>
-        ) : null}
-      </div>
-      {reportFailed ? (
-        <p role="alert" className="text-sm text-danger-text">
-          {t('importReview.errorReportFailed')}
-        </p>
+            {errorGroups.map((group) => (
+              <li key={`${group.code}-${group.field}`}>
+                {t('importReview.errorLine', { count: group.count, reason: reasonOf(group.code) })}
+                {group.field ? t('importReview.errorLineField', { field: group.field }) : ''}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {willCreate.length > 0 ? (
+        <section aria-labelledby="import-create-heading" className="flex flex-col gap-1">
+          <h3 id="import-create-heading" className="text-base font-semibold text-text">
+            {t('importReview.willCreateHeading')}
+          </h3>
+          <ul
+            aria-label={t('importReview.willCreateList')}
+            className="list-disc pl-5 text-base text-text"
+          >
+            {willCreate.map((entry) => (
+              <li key={`${entry.field}-${entry.message}`}>
+                {t('importReview.willCreateLine', { count: entry.count, message: entry.message })}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
-      {rows.isError && !rows.data ? (
-        <Banner
-          tone="danger"
-          action={<Button onClick={() => void rows.refetch()}>{t('common.retry')}</Button>}
-        >
-          {t('importReview.rowsFailed')}
-        </Banner>
-      ) : null}
-      <DataTable
-        label={t('importReview.tableLabel')}
-        columns={columns}
-        rows={rows.data?.data ?? []}
-        getRowId={(row) => String(row.row_no)}
-        getRowLabel={(row) => String(row.row_no)}
-        loading={rows.isPending}
-        className={rows.isPlaceholderData ? 'opacity-60' : undefined}
-        empty={<p className="px-4 py-6 text-base text-muted">{t('importReview.noRows')}</p>}
-      />
-      {shown > 0 ? (
-        <nav
-          aria-label={t('importReview.pagination')}
-          className="flex flex-wrap items-center justify-between gap-2"
-        >
-          <p className="text-sm text-muted" data-testid="import-range" aria-live="polite">
-            {t('importReview.range', {
-              from: formatNumber(pageStart + 1),
-              to: formatNumber(pageStart + shown),
-              total: formatNumber(total),
-            })}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={cursors.length === 0}
-              onClick={() => setCursors((current) => current.slice(0, -1))}
+      {canRun ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              role="group"
+              aria-label={t('importReview.show')}
+              className="flex flex-wrap gap-1.5"
             >
-              <ChevronLeft aria-hidden className="size-4" />
-              {t('importReview.previous')}
-            </Button>
-            <Button
-              size="sm"
-              disabled={!rows.data?.page.has_more}
-              onClick={() => {
-                const next = rows.data?.page.next_cursor;
-                if (next) setCursors((current) => [...current, next]);
-              }}
-            >
-              {t('importReview.next')}
-              <ChevronRight aria-hidden className="size-4" />
-            </Button>
+              {FILTERS.map((option) => (
+                <Button
+                  key={option}
+                  size="sm"
+                  variant={filter === option ? 'primary' : 'secondary'}
+                  aria-pressed={filter === option}
+                  onClick={() => {
+                    setFilter(option);
+                    setCursors([]);
+                  }}
+                >
+                  {t(`importReview.filters.${option}`)}
+                </Button>
+              ))}
+            </div>
+            {counts.error > 0 ? (
+              <Button
+                className="ml-auto"
+                onClick={() => void downloadErrorReport(job.id).catch(() => setReportFailed(true))}
+              >
+                <Download aria-hidden className="size-4" />
+                {t('importReview.errorReport')}
+              </Button>
+            ) : null}
           </div>
-        </nav>
-      ) : null}
+          {reportFailed ? (
+            <p role="alert" className="text-sm text-danger-text">
+              {t('importReview.errorReportFailed')}
+            </p>
+          ) : null}
 
-      {(job.rows_error ?? 0) > 0 && toWrite > 0 ? (
+          {rows.isError && !rows.data ? (
+            <Banner
+              tone="danger"
+              action={<Button onClick={() => void rows.refetch()}>{t('common.retry')}</Button>}
+            >
+              {t('importReview.rowsFailed')}
+            </Banner>
+          ) : null}
+          <DataTable
+            label={t('importReview.tableLabel')}
+            columns={columns}
+            rows={rows.data?.data ?? []}
+            getRowId={(row) => String(row.row_no)}
+            getRowLabel={(row) => String(row.row_no)}
+            loading={rows.isPending}
+            className={rows.isPlaceholderData ? 'opacity-60' : undefined}
+            empty={<p className="px-4 py-6 text-base text-muted">{t('importReview.noRows')}</p>}
+          />
+          {shown > 0 ? (
+            <nav
+              aria-label={t('importReview.pagination')}
+              className="flex flex-wrap items-center justify-between gap-2"
+            >
+              <p className="text-sm text-muted" data-testid="import-range" aria-live="polite">
+                {total === null
+                  ? t('importReview.rangeNoTotal', {
+                      from: formatNumber(pageStart + 1),
+                      to: formatNumber(pageStart + shown),
+                    })
+                  : t('importReview.range', {
+                      from: formatNumber(pageStart + 1),
+                      to: formatNumber(pageStart + shown),
+                      total: formatNumber(total),
+                    })}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  disabled={cursors.length === 0}
+                  onClick={() => setCursors((current) => current.slice(0, -1))}
+                >
+                  <ChevronLeft aria-hidden className="size-4" />
+                  {t('importReview.previous')}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!rows.data?.page.has_more}
+                  onClick={() => {
+                    const next = rows.data?.page.next_cursor;
+                    if (next) setCursors((current) => [...current, next]);
+                  }}
+                >
+                  {t('importReview.next')}
+                  <ChevronRight aria-hidden className="size-4" />
+                </Button>
+              </div>
+            </nav>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-sm text-muted">{t('importReview.readOnly')}</p>
+      )}
+
+      {counts.error > 0 && toWrite > 0 ? (
         <Banner tone="warning">
-          {t('importReview.errorsWillBeSkipped', { count: job.rows_error ?? 0 })}
+          {t('importReview.errorsWillBeSkipped', { count: counts.error })}
         </Banner>
       ) : null}
       {toWrite === 0 ? <Banner tone="warning">{t('importReview.nothingToImport')}</Banner> : null}
       {error ? (
-        <FormError
-          message={
-            error.code === 'import-stale-dry-run'
-              ? t('importReview.stale')
-              : `${t('importReview.commitFailed')} ${uiErrorText(t, error)}`
-          }
-          requestId={error.requestId}
-        />
+        <FormError message={error.message} requestId={error.requestId} details={error.details} />
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => void backTo('mapping')}>{t('importReview.back')}</Button>
-        <Button onClick={() => void backTo('file')}>{t('importReview.fix')}</Button>
-        <Button
-          variant="primary"
-          loading={committing}
-          disabled={toWrite === 0}
-          onClick={() => void commit()}
-        >
-          {toWrite === 0
-            ? t('importReview.importNothing')
-            : t('importReview.importButton', { count: toWrite })}
-        </Button>
-        <Button asChild variant="ghost">
-          <Link href={routes.imports}>{t('imports.allImports')}</Link>
-        </Button>
-      </div>
+      {canRun ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild>
+            <Link href={routes.importJob(job.id, 'mapping')}>{t('importReview.back')}</Link>
+          </Button>
+          <Button asChild>
+            <Link href={routes.importJob(job.id, 'file')}>{t('importReview.fix')}</Link>
+          </Button>
+          <Button disabled={busy} onClick={() => void runAgain()}>
+            {t('importReview.runAgain')}
+          </Button>
+          <Button
+            variant="primary"
+            loading={committing}
+            disabled={toWrite === 0}
+            onClick={() => void commit()}
+          >
+            {toWrite === 0
+              ? t('importReview.importNothing')
+              : t('importReview.importButton', { count: toWrite })}
+          </Button>
+          <Button asChild variant="ghost">
+            <Link href={routes.imports}>{t('imports.allImports')}</Link>
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -41,58 +41,81 @@ export interface MockCustodySettings {
 
 export type ImportState = S['ImportJob']['state'];
 
-/** A stored import job: the contract object plus what the mock "worker" keeps to move it along. */
+/** A stored import job: the contract object (as the API keeps it) plus what the mock worker needs. */
 export interface MockImportJob {
   id: string;
-  source: S['ImportJob']['source'];
   entity_type: S['ImportJob']['entity_type'];
+  source: S['ImportJob']['source'];
+  preset_key: string | null;
   state: ImportState;
+  filename: string | null;
   file_attachment_id: string | null;
-  original_filename: string | null;
-  mapping: Record<string, string>;
+  parse: Record<string, unknown>;
+  headers: string[] | null;
+  mapping: Record<string, unknown>;
   options: Record<string, unknown>;
+  value_map: Record<string, Record<string, unknown>>;
   rows_total: number;
-  rows_create: number;
-  rows_update: number;
-  rows_skip: number;
-  rows_error: number;
+  /** The dry-run verdict counts and the commit result counts. */
+  plan: { create: number; update: number; skip: number; error: number };
+  done: { created: number; updated: number; skipped: number; error: number };
   dry_run_digest: string | null;
-  dry_run_completed_at: string | null;
+  dry_run_at: string | null;
   committed_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  data_purged_at: string | null;
+  cancel_requested: boolean;
   error: string | null;
+  summary: Record<string, unknown> | null;
+  requested_by: string;
   created_at: string;
   updated_at: string;
-  created_by: string | null;
-  commit_progress: S['ImportCommitProgress'] | null;
-  /** The text of the attached CSV file (the mock storage keeps no bytes). */
+  profile: unknown[] | null;
+  samples: string[][] | null;
+  confidence: Record<string, number> | null;
+  /** The text of the attached CSV (the mock storage keeps no bytes); null for a spreadsheet or after the purge. */
   file_text: string | null;
-  /** Epoch ms at which the queued dry run finishes (the mock "worker"). */
-  dry_run_ready_at: number | null;
-  /** Epoch ms at which the commit started running. */
-  commit_started_at: number | null;
-  cancel_requested: boolean;
+  /** Epoch ms the running phase started (the mock worker derives its progress from it); null when idle. */
+  phase_started_at: number | null;
+  /** Rows of the running phase the worker has handled so far. */
+  cursor: number;
+  /** Batches the worker had finished when a cancel was asked: the batch in flight is finished, then it stops. */
+  cancel_batches: number;
   _v: number;
 }
 
+/** One row of the file with its verdicts (the import_row table): raw cells, typed record, dry-run plan and commit result. */
 export interface MockImportRow {
   job_id: string;
   row_no: number;
-  phase: 'dry_run' | 'commit';
-  outcome: 'create' | 'update' | 'skip' | 'error';
+  line_no: number;
+  raw: string[];
+  mapped: Record<string, unknown> | null;
+  plan: 'create' | 'update' | 'skip' | 'error' | null;
+  errors: Array<{ field: string | null; message: string; code: string }>;
+  warnings: Array<{ field: string | null; message: string; code: string }>;
   entity_id: string | null;
-  errors: Array<{ pointer: string; message: string; code?: string }>;
-  warnings: Array<{ pointer: string; message: string; code?: string }>;
-  source_data: Record<string, string> | null;
+  /** Version of the existing record at dry-run time (to notice an edit before the commit). */
+  entity_version: number | null;
+  dup_of: number | null;
+  result: 'created' | 'updated' | 'skipped' | 'error' | null;
+  result_errors: Array<{ field: string | null; message: string; code: string }> | null;
+  created_id: string | null;
+  before_image: Record<string, unknown> | null;
 }
 
 export interface MockMappingTemplate {
   id: string;
   name: string;
+  description: string | null;
   entity_type: S['ImportJob']['entity_type'];
-  source: S['ImportJob']['source'];
-  mapping: Record<string, string>;
+  columns: Array<{ header: string; target: string | null; date_format?: string }>;
   options: Record<string, unknown>;
   created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  _v: number;
 }
 
 export interface W3Data {
@@ -106,7 +129,7 @@ export interface W3Data {
   mappingTemplates: MockMappingTemplate[];
 }
 
-const KEY = 'at-mock-w3-v2';
+const KEY = 'at-mock-w3-v3';
 
 const KIND_CODE = { pool: '00b1', import: '00b2', template: '00b3', row: '00b4' } as const;
 export type W3Kind = keyof typeof KIND_CODE;

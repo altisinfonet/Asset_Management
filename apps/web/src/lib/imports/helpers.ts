@@ -1,42 +1,49 @@
 import type {
-  ImportAnalysis,
+  ImportColumnProfile,
   ImportEntity,
   ImportJob,
-  ImportLookup,
+  ImportMapping,
+  ImportMappingColumn,
+  ImportOptions,
+  ImportPreset,
+  ImportRefKind,
   ImportRow,
-  ImportSource,
   ImportState,
-  ImportTargetField,
-  ValueMap,
+  ImportValue,
+  ImportValueEntry,
+  ImportValueMap,
 } from './api';
 
 /**
- * Pure logic of the import wizard (M2-IMP-08): the kinds of data it offers, which step a job is on,
- * the checks before a dry run, the value decisions and the numbers behind the progress bar.
+ * Pure logic of the import wizard (M2-IMP-08): the kinds of data it offers, which step a job is on, the
+ * checks before a dry run (the same rules the API applies to a mapping), the value decisions and the
+ * numbers behind the progress bars.
  */
 
-/** What the user picks in step 1: a kind of data, which is an entity and a file source. */
+// ---- what is imported -----------------------------------------------------------------------------------
+
+/** What the user picks in step 1: a built-in preset (an entity type plus how its file is read). */
 export type ImportKind = 'asset' | 'person' | 'location' | 'department' | 'chromeos';
 
 export const IMPORT_KINDS: ReadonlyArray<{
   id: ImportKind;
   entity: ImportEntity;
-  source: ImportSource;
-  /** Needs `asset:create` as well (the importer writes through the registry). */
-  permission?: string;
+  /** The key of the preset (`GET /v1/imports/presets`) the import is created from. */
+  preset: string;
 }> = [
-  { id: 'asset', entity: 'asset', source: 'csv' },
-  { id: 'person', entity: 'person', source: 'csv' },
-  { id: 'location', entity: 'location', source: 'csv' },
-  { id: 'department', entity: 'department', source: 'csv' },
-  { id: 'chromeos', entity: 'asset', source: 'google_admin_csv' },
+  { id: 'asset', entity: 'asset', preset: 'assets' },
+  { id: 'person', entity: 'person', preset: 'people' },
+  { id: 'location', entity: 'location', preset: 'locations' },
+  { id: 'department', entity: 'department', preset: 'departments' },
+  { id: 'chromeos', entity: 'asset', preset: 'google_admin_chromeos' },
 ];
 
-export const kindOf = (job: Pick<ImportJob, 'entity_type' | 'source'>): ImportKind =>
-  job.source === 'google_admin_csv'
+export const kindOf = (
+  job: Pick<ImportJob, 'entity_type' | 'source' | 'preset_key'>,
+): ImportKind =>
+  job.preset_key === 'google_admin_chromeos' || job.source === 'google_admin_csv'
     ? 'chromeos'
-    : (IMPORT_KINDS.find((kind) => kind.entity === job.entity_type && kind.source === 'csv')?.id ??
-      'asset');
+    : (IMPORT_KINDS.find((kind) => kind.entity === job.entity_type)?.id ?? 'asset');
 
 export const isImportKind = (value: string | null | undefined): value is ImportKind =>
   IMPORT_KINDS.some((kind) => kind.id === value);
@@ -48,6 +55,33 @@ export const RECOMMENDED_ORDER: readonly ImportKind[] = [
   'person',
   'asset',
 ];
+
+// ---- the file --------------------------------------------------------------------------------------------
+
+const CONTENT_TYPES = {
+  csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+} as const;
+
+/** `.csv` or `.xlsx` (the two formats the importer reads), from the file name. */
+export function fileFormatOf(name: string): 'csv' | 'xlsx' | null {
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
+  return ext === 'csv' || ext === 'xlsx' ? ext : null;
+}
+
+/**
+ * The file with the content type its extension calls for. Browsers report what the operating system
+ * says (Excel makes `.csv` files `application/vnd.ms-excel`, others send nothing), and the upload
+ * allow-list matches the type to the extension, so the declared type is set here.
+ */
+export function withImportContentType(file: File): File {
+  const format = fileFormatOf(file.name);
+  if (!format || file.type === CONTENT_TYPES[format]) return file;
+  return new File([file], file.name, {
+    type: CONTENT_TYPES[format],
+    lastModified: file.lastModified,
+  });
+}
 
 // ---- steps ---------------------------------------------------------------------------------------------
 
@@ -61,192 +95,424 @@ export const WIZARD_STEPS: readonly Exclude<WizardStep, 'done'>[] = [
   'import',
 ];
 
-/** Steps a draft job can be moved back to (`?step=`). */
-const DRAFT_STEPS: readonly WizardStep[] = ['file', 'mapping', 'values'];
+/** Steps an analysed import can be sent back to (`?step=`). */
+const EDIT_STEPS: readonly WizardStep[] = ['file', 'mapping', 'values'];
 
 /**
- * Where a job belongs: its state decides, so a reload or a link from the list lands on the right
- * step. Only a draft with a file can be sent back to an earlier step (`requested`).
+ * Where a job belongs: its state decides, so a reload, a link from the list or the "import finished"
+ * notification lands on the right step. An analysed (or mapped, or reviewed) import can be sent back to
+ * an earlier step with `requested`; a failed one can take another file.
  */
-export function stepFor(
-  job: Pick<ImportJob, 'state' | 'file_attachment_id'>,
-  requested?: string | null,
-): WizardStep {
+export function stepFor(job: Pick<ImportJob, 'state'>, requested?: string | null): WizardStep {
   switch (job.state) {
     case 'draft':
-      if (requested === 'file') return 'file';
-      if (!job.file_attachment_id) return 'file';
-      return DRAFT_STEPS.includes(requested as WizardStep) ? (requested as WizardStep) : 'mapping';
-    case 'dry_run_queued':
-    case 'dry_run_running':
-    case 'dry_run_complete':
+    case 'uploaded':
+      return 'file';
+    case 'analyzing':
+      return 'mapping';
+    case 'analyzed':
+    case 'mapped':
+      return EDIT_STEPS.includes(requested as WizardStep) ? (requested as WizardStep) : 'mapping';
+    case 'dry_running':
       return 'review';
-    case 'commit_queued':
+    case 'dry_run_done':
+      return EDIT_STEPS.includes(requested as WizardStep) ? (requested as WizardStep) : 'review';
     case 'committing':
       return 'import';
-    case 'committed':
     case 'failed':
+      return requested === 'file' ? 'file' : 'done';
+    case 'completed':
     case 'cancelled':
       return 'done';
   }
 }
 
-/** The stepper item that is current (the finished screen is the last step, done). */
+/** The stepper item that is current (the finished screen is the last step). */
 export const stepperIndex = (step: WizardStep): number =>
   step === 'done' ? WIZARD_STEPS.length - 1 : WIZARD_STEPS.indexOf(step);
 
 /** A state the worker is still moving: poll until it settles. */
 export const isRunning = (state: ImportState): boolean =>
-  state === 'dry_run_queued' ||
-  state === 'dry_run_running' ||
-  state === 'commit_queued' ||
-  state === 'committing';
+  state === 'analyzing' || state === 'dry_running' || state === 'committing';
 
 export const isFinished = (state: ImportState): boolean =>
-  state === 'committed' || state === 'failed' || state === 'cancelled';
+  state === 'completed' || state === 'failed' || state === 'cancelled';
 
 /** Can the job still be resumed from the list? */
 export const isResumable = (state: ImportState): boolean => !isFinished(state);
 
-// ---- mapping ------------------------------------------------------------------------------------------
+/** The analysis failed (no data rows were read), as opposed to a dry run or commit that failed. */
+export const analysisFailed = (job: Pick<ImportJob, 'state' | 'headers'>): boolean =>
+  job.state === 'failed' && !job.headers;
 
-/** A mapping from the heuristics' suggestions: every column with a suggestion, each target once. */
-export function suggestedMapping(
-  analysis: Pick<ImportAnalysis, 'columns'>,
-): Record<string, string> {
-  const mapping: Record<string, string> = {};
-  const taken = new Set<string>();
-  for (const column of analysis.columns) {
-    const target = column.suggested_field;
-    if (!target || taken.has(target)) continue;
-    mapping[column.name] = target;
-    taken.add(target);
-  }
-  return mapping;
+/** The retention job removed the rows, profile, samples, value map and file of this finished import (ED-25). */
+export const isPurged = (job: Pick<ImportJob, 'data_purged_at'>): boolean => !!job.data_purged_at;
+
+// ---- targets -----------------------------------------------------------------------------------------------
+
+export interface TargetOption {
+  /** The value of the mapping: a field of the entity or `cf:<custom field key>`. */
+  key: string;
+  label: string;
+  description: string;
+  required: boolean;
+  custom: boolean;
 }
 
-export interface MappingProblems {
-  /** Required fields no column goes to. */
-  missingRequired: ImportTargetField[];
-  /** Targets two columns are mapped to. */
-  duplicates: string[];
-  /** The field the duplicate check uses (tag or serial) has no column. */
-  missingKey: string | null;
-  ok: boolean;
+/** `serial_number` -> `Serial number`: the label of a target the data dictionary does not describe. */
+export function humanizeTarget(key: string): string {
+  const text = key.replace(/^cf:/, '').replace(/[_-]+/g, ' ').trim();
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : key;
 }
 
-/** What blocks a dry run: a required field with no column, a target used twice, no column for the match key. */
-export function mappingProblems(
-  mapping: Record<string, string>,
-  fields: readonly ImportTargetField[],
+/**
+ * What a column of this entity can be mapped to: the data dictionary of the presets of the entity (the
+ * template columns, with their descriptions) and, for assets, the organisation's custom fields as
+ * `cf:<key>`. A target the job already uses but the dictionary lacks is kept, so no choice is lost.
+ */
+export function targetOptionsFor(
   entity: ImportEntity,
-  matchOn: string,
-): MappingProblems {
-  const targets = Object.values(mapping).filter(Boolean);
-  const counts = new Map<string, number>();
-  for (const target of targets) counts.set(target, (counts.get(target) ?? 0) + 1);
-  const duplicates = [...counts].filter(([, n]) => n > 1).map(([target]) => target);
-  const missingRequired = fields.filter((f) => f.required && !counts.has(f.key));
-  const missingKey = entity === 'asset' && !counts.has(matchOn) ? matchOn : null;
+  presets: readonly ImportPreset[],
+  customFields: ReadonlyArray<{ key: string; label: string; category?: string | null }>,
+  used: readonly string[] = [],
+): TargetOption[] {
+  const out: TargetOption[] = [];
+  const seen = new Set<string>();
+  for (const preset of presets.filter((p) => p.entity_type === entity)) {
+    for (const column of preset.columns) {
+      if (column.target.startsWith('cf:') || seen.has(column.target)) continue;
+      seen.add(column.target);
+      out.push({
+        key: column.target,
+        label: column.column,
+        description: column.description,
+        required: column.required.startsWith('yes'),
+        custom: false,
+      });
+    }
+  }
+  if (entity === 'asset') {
+    for (const field of customFields) {
+      const key = `cf:${field.key}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        key,
+        label: field.category ? `${field.label} (${field.category})` : field.label,
+        description: '',
+        required: false,
+        custom: true,
+      });
+    }
+  }
+  for (const key of used) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      key,
+      label: humanizeTarget(key),
+      description: '',
+      required: false,
+      custom: key.startsWith('cf:'),
+    });
+  }
+  return out;
+}
+
+// ---- mapping -------------------------------------------------------------------------------------------------
+
+/** The mapped columns of a mapping (a draft import's mapping is `{}`, so `columns` can be absent). */
+export const columnsOf = (
+  mapping: Partial<ImportMapping> | null | undefined,
+): ImportMappingColumn[] => mapping?.columns ?? [];
+
+/** The target of a column of the file (null: not imported). */
+export const targetOfColumn = (mapping: Partial<ImportMapping>, index: number): string | null =>
+  columnsOf(mapping).find((c) => c.index === index)?.target ?? null;
+
+/** The mapping with column `index` sent to `target` (a target is used once: another column that had it lets go). */
+export function withTarget(
+  mapping: Partial<ImportMapping>,
+  headerCount: number,
+  index: number,
+  target: string | null,
+): ImportMapping {
+  const byIndex = new Map(columnsOf(mapping).map((c) => [c.index, c]));
+  const columns = Array.from({ length: headerCount }, (_, i) => {
+    const current = byIndex.get(i) ?? { index: i, target: null };
+    if (i === index) return { ...current, target };
+    return target && current.target === target ? { ...current, target: null } : current;
+  });
+  return { ...mapping, columns };
+}
+
+/** The mapping with the date format of one column set (`null` removes the override). */
+export function withDateFormat(
+  mapping: Partial<ImportMapping>,
+  index: number,
+  format: ImportOptions['date_format'] | null,
+): ImportMapping {
   return {
-    missingRequired,
-    duplicates,
-    missingKey,
-    ok: missingRequired.length === 0 && duplicates.length === 0 && missingKey === null,
+    ...mapping,
+    columns: columnsOf(mapping).map((c) => {
+      if (c.index !== index) return c;
+      const { date_format: _unused, ...rest } = c;
+      return format ? { ...rest, date_format: format } : rest;
+    }),
   };
 }
 
-/** The reference fields (category, location ...) that have a column, in the order of the field list. */
-export function mappedReferences(
-  mapping: Record<string, string>,
-  fields: readonly ImportTargetField[],
-): ImportTargetField[] {
-  const targets = new Set(Object.values(mapping));
-  return fields.filter((f) => f.type === 'reference' && targets.has(f.key));
+export type MappingProblem =
+  | { kind: 'category' }
+  | { kind: 'identity' }
+  | { kind: 'name' }
+  | { kind: 'duplicate'; field: string };
+
+/**
+ * What stops a dry run (the rules of the API's `checkMapping`): a target used twice, an asset without a
+ * category (a column, a fixed value or a default) or without anything that tells rows apart, a person,
+ * location or department without a name.
+ */
+export function mappingProblems(
+  entity: ImportEntity,
+  mapping: Partial<ImportMapping>,
+  defaults: ImportOptions['defaults'] | undefined,
+): MappingProblem[] {
+  const problems: MappingProblem[] = [];
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const column of columnsOf(mapping)) {
+    if (!column.target) continue;
+    if (seen.has(column.target)) duplicated.add(column.target);
+    seen.add(column.target);
+  }
+  for (const field of duplicated) problems.push({ kind: 'duplicate', field });
+  const constants = mapping.constants ?? {};
+  const has = (key: string) => seen.has(key) || key in constants;
+  switch (entity) {
+    case 'asset':
+      if (!has('category') && !defaults?.category) problems.push({ kind: 'category' });
+      if (!has('asset_tag') && !has('serial') && !has('name') && !has('external_id')) {
+        problems.push({ kind: 'identity' });
+      }
+      break;
+    case 'person':
+      if (!has('display_name') && !(has('first_name') || has('last_name')) && !has('email')) {
+        problems.push({ kind: 'name' });
+      }
+      break;
+    case 'location':
+      if (!has('name') && !has('path')) problems.push({ kind: 'name' });
+      break;
+    case 'department':
+      if (!has('name')) problems.push({ kind: 'name' });
+      break;
+  }
+  return problems;
 }
 
-/** Only the mapping entries a column still exists for (a saved mapping may name columns this file lacks). */
-export function applicableMapping(
-  mapping: Record<string, string>,
-  analysis: Pick<ImportAnalysis, 'columns'>,
-): Record<string, string> {
-  const names = new Set(analysis.columns.map((c) => c.name));
-  return Object.fromEntries(Object.entries(mapping).filter(([column]) => names.has(column)));
+/** The mapped targets of kind date or money (what the date and number format options are about). */
+export const DATE_TARGETS: ReadonlySet<string> = new Set([
+  'purchase_date',
+  'warranty_end',
+  'cf:last_sync',
+  'cf:auto_update_expiration',
+]);
+
+export const hasDateTarget = (
+  mapping: Partial<ImportMapping>,
+  profile?: readonly ImportColumnProfile[] | null,
+) =>
+  columnsOf(mapping).some(
+    (c) =>
+      !!c.target &&
+      (DATE_TARGETS.has(c.target) || profile?.find((p) => p.index === c.index)?.type === 'date'),
+  );
+
+export const hasNumberTarget = (mapping: Partial<ImportMapping>) =>
+  columnsOf(mapping).some((c) => c.target === 'purchase_cost');
+
+/** A date column whose values do not say the order (`03/04/2024`): it needs a date format. */
+export const needsDateFormat = (
+  profile: Pick<ImportColumnProfile, 'type' | 'date_order'> | undefined,
+) =>
+  profile?.type === 'date' &&
+  (profile.date_order === 'ambiguous' || profile.date_order === 'mixed');
+
+/** The columns that have a target, counted. */
+export const mappedCount = (mapping: Partial<ImportMapping>): number =>
+  columnsOf(mapping).filter((c) => !!c.target).length;
+
+// ---- references and values -------------------------------------------------------------------------------
+
+/** The mapping target each reference kind is read from, per entity type (the API's `REF_TARGET`). */
+export const REF_TARGET: Record<ImportEntity, Partial<Record<ImportRefKind, string>>> = {
+  asset: {
+    category: 'category',
+    manufacturer: 'manufacturer',
+    model: 'model',
+    status: 'status',
+    location: 'location',
+    department: 'department',
+    vendor: 'vendor',
+    person: 'assigned_to',
+  },
+  person: { department: 'department', location: 'location' },
+  location: { location: 'parent_path' },
+  department: { person: 'manager' },
+};
+
+const REF_ORDER: readonly ImportRefKind[] = [
+  'category',
+  'manufacturer',
+  'model',
+  'status',
+  'location',
+  'department',
+  'vendor',
+  'person',
+];
+
+/** The reference kinds that have a column (or a fixed value) in the mapping: the ones the values step is about. */
+export function mappedRefKinds(
+  entity: ImportEntity,
+  mapping: Partial<ImportMapping>,
+): ImportRefKind[] {
+  const targets = new Set(
+    columnsOf(mapping)
+      .map((c) => c.target)
+      .filter(Boolean),
+  );
+  const constants = Object.keys(mapping.constants ?? {});
+  return REF_ORDER.filter((kind) => {
+    const target = REF_TARGET[entity][kind];
+    return !!target && (targets.has(target) || constants.includes(target));
+  });
 }
 
-// ---- values ---------------------------------------------------------------------------------------------
+/** What a missing record of this kind turns into when the user did not decide: create it, or an error (the API's defaults). */
+export const policyOf = (
+  options: Pick<ImportOptions, 'references'> | undefined,
+  kind: ImportRefKind,
+): 'create' | 'must_exist' =>
+  options?.references?.[kind] ?? (kind === 'status' || kind === 'person' ? 'must_exist' : 'create');
 
-/** Kinds of record the importer never invents: a person or a status label has to exist. */
-const NEVER_CREATED: ReadonlySet<ImportLookup['reference']> = new Set(['person', 'status_label']);
-export const canCreateMissing = (reference: ImportLookup['reference']): boolean =>
-  !NEVER_CREATED.has(reference);
+/** An import never invents a status label; every other kind can be created (a person needs `person:manage`). */
+export const canCreate = (kind: ImportRefKind): boolean => kind !== 'status';
 
-/** Values that match nothing yet, per field. */
-export function unmatchedValues(lookups: readonly ImportLookup[]) {
-  return lookups
-    .map((lookup) => ({ ...lookup, values: lookup.values.filter((v) => v.match === null) }))
-    .filter((lookup) => lookup.values.length > 0);
+/** The key a source value has in the value map: trimmed, spaces collapsed, lower case. */
+export const normValue = (text: string): string =>
+  text.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export type EntryKind = 'use' | 'create' | 'skip';
+export const entryKind = (entry: ImportValueEntry | null | undefined): EntryKind | null =>
+  !entry ? null : 'id' in entry ? 'use' : 'create' in entry ? 'create' : 'skip';
+
+/** The value map with one entry set (`null` removes it). */
+export function withEntry(
+  valueMap: ImportValueMap,
+  kind: ImportRefKind,
+  value: string,
+  entry: ImportValueEntry | null,
+): ImportValueMap {
+  const key = normValue(value);
+  const next: Record<string, ImportValueEntry> = { ...(valueMap[kind] ?? {}) };
+  if (entry) next[key] = entry;
+  else delete next[key];
+  return { ...valueMap, [kind]: next };
 }
 
-/** A choice for every unmatched value that can be created: "create it". The rest stay open. */
+export const entryFor = (
+  valueMap: ImportValueMap,
+  kind: ImportRefKind,
+  value: string,
+): ImportValueEntry | null => valueMap[kind]?.[normValue(value)] ?? null;
+
+/** A value the dry run would reject: no decision, no record of that name, and missing records are not created. */
+export function needsDecision(
+  value: Pick<ImportValue, 'value' | 'suggestion'>,
+  kind: ImportRefKind,
+  options: Pick<ImportOptions, 'references'> | undefined,
+  valueMap: ImportValueMap,
+): boolean {
+  if (entryFor(valueMap, kind, value.value)) return false;
+  if (value.suggestion) return false;
+  return policyOf(options, kind) === 'must_exist';
+}
+
+/** A "create it" decision for every value that matches no record, for the kinds that can be created. */
 export function createAllMissing(
-  lookups: readonly ImportLookup[],
-  current: ValueMap = {},
-): ValueMap {
-  const next: ValueMap = {};
-  for (const [field, choices] of Object.entries(current)) next[field] = { ...choices };
-  for (const lookup of unmatchedValues(lookups)) {
-    if (!canCreateMissing(lookup.reference)) continue;
-    next[lookup.field] ??= {};
-    for (const value of lookup.values) {
-      next[lookup.field]![value.value] ??= { action: 'create' };
+  values: ReadonlyArray<{ kind: ImportRefKind; values: readonly ImportValue[] }>,
+  current: ImportValueMap,
+): ImportValueMap {
+  let next = current;
+  for (const group of values) {
+    if (!canCreate(group.kind)) continue;
+    for (const value of group.values) {
+      if (value.suggestion || entryFor(next, group.kind, value.value)) continue;
+      next = withEntry(next, group.kind, value.value, { create: true });
     }
   }
   return next;
 }
 
-/** How many unmatched values still have no decision (they would be errors in the dry run). */
-export function openValueCount(lookups: readonly ImportLookup[], valueMap: ValueMap): number {
-  return unmatchedValues(lookups).reduce(
-    (sum, lookup) =>
-      sum + lookup.values.filter((value) => !valueMap[lookup.field]?.[value.value]).length,
-    0,
-  );
-}
+// ---- progress and results --------------------------------------------------------------------------------
 
-// ---- progress and results ----------------------------------------------------------------------------
-
-/** Share of the rows the commit has handled, 0..100. */
-export function commitPercent(job: Pick<ImportJob, 'rows_total' | 'commit_progress'>): number {
-  const total = job.rows_total ?? 0;
-  const done = job.commit_progress?.processed ?? 0;
-  if (total <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
-}
+/** Share of the rows the running step has handled, 0..100. */
+export const progressPercent = (job: Pick<ImportJob, 'progress'>): number =>
+  Math.max(0, Math.min(100, Math.round(job.progress.percent)));
 
 /** Rows the commit will write: creates and updates (the rest are skipped or in error). */
-export const rowsToWrite = (job: Pick<ImportJob, 'rows_create' | 'rows_update'>): number =>
-  (job.rows_create ?? 0) + (job.rows_update ?? 0);
+export const rowsToWrite = (job: Pick<ImportJob, 'counts'>): number =>
+  job.counts.dry_run.create + job.counts.dry_run.update;
 
-/** The value a row is known by: its tag, serial, name or email, taken from the columns that were mapped to them. */
-export function rowKey(
-  row: Pick<ImportRow, 'source_data'>,
-  mapping: Record<string, string>,
-): string {
-  const data = row.source_data ?? {};
-  for (const target of ['asset_tag', 'serial', 'display_name', 'name', 'email']) {
-    const column = Object.entries(mapping).find(([, to]) => to === target)?.[0];
-    const value = column ? data[column] : undefined;
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return '';
+/** Counts of the dry run as shown by the filter buttons. */
+export type RowFilter = 'all' | 'error' | 'skip' | 'create' | 'update' | 'warnings';
+
+/** The dry-run rows (or commit rows) the filter stands for, as the `outcome` / `has_warnings` query. */
+export function rowQueryFor(
+  filter: RowFilter,
+  phase: 'dry_run' | 'commit',
+): {
+  outcome?: Array<'create' | 'update' | 'skip' | 'error' | 'created' | 'updated' | 'skipped'>;
+  has_warnings?: boolean;
+} {
+  if (filter === 'all') return {};
+  if (filter === 'warnings') return { has_warnings: true };
+  if (phase === 'dry_run') return { outcome: [filter] };
+  return {
+    outcome: [
+      filter === 'create'
+        ? 'created'
+        : filter === 'update'
+          ? 'updated'
+          : filter === 'skip'
+            ? 'skipped'
+            : 'error',
+    ],
+  };
 }
 
-/** Lines of a row's problem: its errors, then its warnings. */
-export const rowMessages = (row: Pick<ImportRow, 'errors' | 'warnings'>): string[] => [
-  ...row.errors.map((e) => e.message),
-  ...row.warnings.map((w) => w.message),
-];
+const KEY_FIELDS = [
+  'asset_tag',
+  'serial',
+  'display_name',
+  'name',
+  'email',
+  'path',
+  'code',
+] as const;
+
+/** The value a row is known by: its tag, serial, name, email or path (from the typed record), else its first cell. */
+export function rowKey(row: Pick<ImportRow, 'mapped' | 'source'>): string {
+  const typed = (row.mapped as { f?: Record<string, unknown> } | null)?.f;
+  for (const field of KEY_FIELDS) {
+    const value = typed?.[field];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  const first = Object.values(row.source ?? {}).find((v) => v.trim() !== '');
+  return first?.trim() ?? '';
+}
 
 /** The entity's list, to open once rows were imported. */
 export function listRouteFor(
@@ -262,4 +528,79 @@ export function listRouteFor(
     default:
       return '/assets';
   }
+}
+
+/** What the dry run summary says about the preset's setup (the category and fields creating the import made). */
+export function setupOf(
+  job: Pick<ImportJob, 'summary'>,
+): { categoryCreated: boolean; customFieldsCreated: string[] } | null {
+  const setup = (job.summary as { setup?: Record<string, unknown> } | null)?.setup;
+  if (!setup) return null;
+  return {
+    categoryCreated: setup.category_created === true,
+    customFieldsCreated: Array.isArray(setup.custom_fields_created)
+      ? (setup.custom_fields_created as string[])
+      : [],
+  };
+}
+
+/** The category the Google Admin preset creates (the API's `GOOGLE_CHROMEBOOK_CATEGORY`). */
+export const CHROMEBOOK_CATEGORY = 'Chromebook';
+
+/** The row problem codes that have a sentence of their own in the messages. */
+const KNOWN_CODES = [
+  'required',
+  'not-found',
+  'exists',
+  'duplicate-in-file',
+  'duplicate',
+  'ambiguous-date',
+  'ambiguous',
+  'date',
+  'number',
+  'enum',
+  'invalid',
+  'changed-since-dry-run',
+  'conflict',
+  'too-deep',
+  'internal',
+] as const;
+export type KnownCode = (typeof KNOWN_CODES)[number];
+export const isKnownCode = (code: string): code is KnownCode =>
+  (KNOWN_CODES as readonly string[]).includes(code);
+
+export interface ErrorGroup {
+  code: string;
+  field: string | null;
+  count: number;
+}
+
+/** `summary.errors_by_code` of a dry run, most frequent first. */
+export function errorGroupsOf(job: Pick<ImportJob, 'summary'>): ErrorGroup[] {
+  const list = (job.summary as { errors_by_code?: unknown } | null)?.errors_by_code;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    const e = entry as { code?: unknown; field?: unknown; n?: unknown };
+    return typeof e.code === 'string' && typeof e.n === 'number'
+      ? [{ code: e.code, field: typeof e.field === 'string' ? e.field : null, count: e.n }]
+      : [];
+  });
+}
+
+export interface WillCreate {
+  field: string | null;
+  message: string;
+  count: number;
+}
+
+/** `summary.will_create` of a dry run: the records the commit would create on the way. */
+export function willCreateOf(job: Pick<ImportJob, 'summary'>): WillCreate[] {
+  const list = (job.summary as { will_create?: unknown } | null)?.will_create;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    const e = entry as { field?: unknown; message?: unknown; n?: unknown };
+    return typeof e.message === 'string' && typeof e.n === 'number'
+      ? [{ field: typeof e.field === 'string' ? e.field : null, message: e.message, count: e.n }]
+      : [];
+  });
 }

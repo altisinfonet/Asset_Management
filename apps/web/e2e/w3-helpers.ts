@@ -124,6 +124,7 @@ export async function poolWithDevices(
   return { pool: created.json, devices };
 }
 
+/** Six devices: four can be created, one repeats a serial number of the file, one has no category. */
 export const CSV_ASSETS = [
   'Serial Number,Asset ID,Category,Location',
   '5CG0001,IMP-0001,Chromebook,Room 101',
@@ -131,6 +132,7 @@ export const CSV_ASSETS = [
   ',IMP-0003,Chromebook,Room 101',
   '5CG0001,IMP-0004,Chromebook,Room 101',
   '5CG0005,IMP-0005,Hovercraft,Room 101',
+  '5CG0006,IMP-0006,,Room 101',
 ].join('\n');
 
 export const CSV_MATCHING = [
@@ -149,9 +151,15 @@ export function bigCsv(rows: number): string {
   return lines.join('\n');
 }
 
+/**
+ * Where an import is brought to: a draft; `uploaded` (the file is uploaded, scanned and read, so it is
+ * `analyzed`, or `failed` when it cannot be read); `mapped`; a dry run in flight; a reviewed dry run; a
+ * commit in flight; a finished import.
+ */
 export type ImportStage =
   'draft' | 'uploaded' | 'mapped' | 'dry-run-running' | 'reviewed' | 'committing' | 'committed';
 
+/** Column header -> target field of the standard asset file. */
 export const ASSET_MAPPING = {
   'Serial Number': 'serial',
   'Asset ID': 'asset_tag',
@@ -159,9 +167,16 @@ export const ASSET_MAPPING = {
   Location: 'location',
 };
 
+/** The state of an import. */
+export async function importState(page: Page, id: string): Promise<string> {
+  return (await api<{ state: string }>(page, 'GET', `/v1/imports/${id}`)).json.state;
+}
+
 /**
- * An import brought to `stage` through the API: draft job, file uploaded against it (the mock's virus
- * scan takes about a second and a half), mapping, dry run, commit.
+ * An import brought to `stage` through the API, as the wizard does it: a draft from the preset, the file
+ * uploaded against it (the mock's virus scan takes about a second and a half) and analysed, the mapping
+ * (`mapping` is header -> target; the match key is the serial number unless `importOptions` say else), the
+ * dry run, the commit.
  */
 export async function importAt(
   page: Page,
@@ -169,17 +184,21 @@ export async function importAt(
   options: {
     csv?: string;
     filename?: string;
+    contentType?: string;
     mapping?: Record<string, string>;
     importOptions?: Record<string, unknown>;
     entity?: string;
-    source?: string;
+    /** The preset the import is created from (`assets`, `people`, `google_admin_chromeos` ...). */
+    preset?: string;
   } = {},
 ): Promise<{ id: string }> {
   const csv = options.csv ?? CSV_ASSETS;
+  const entity = options.entity ?? 'asset';
   const job = await api<{ id: string }>(page, 'POST', '/v1/imports', {
-    source: options.source ?? 'csv',
-    entity_type: options.entity ?? 'asset',
+    entity_type: entity,
+    preset_key: options.preset ?? (entity === 'asset' ? 'assets' : undefined),
   });
+  expect(job.status).toBe(201);
   const id = job.json.id;
   if (stage === 'draft') return { id };
 
@@ -192,7 +211,7 @@ export async function importAt(
       entity_id: id,
       kind: 'import_file',
       filename: options.filename ?? 'devices.csv',
-      content_type: 'text/csv',
+      content_type: options.contentType ?? 'text/csv',
       size_bytes: new TextEncoder().encode(csv).byteLength,
     },
   );
@@ -209,42 +228,39 @@ export async function importAt(
       async () =>
         (await api<{ scan_status: string }>(page, 'GET', `/v1/attachments/${attachmentId}`)).json
           .scan_status,
-      {
-        timeout: 15_000,
-      },
+      { timeout: 15_000 },
     )
     .toBe('clean');
-  const etagOf = async () => (await api(page, 'GET', `/v1/imports/${id}`)).etag ?? '';
-  const attached = await api(
-    page,
-    'PATCH',
-    `/v1/imports/${id}`,
-    { file_attachment_id: attachmentId },
-    { 'if-match': await etagOf() },
-  );
-  expect(attached.status).toBe(200);
+  const queued = await api(page, 'POST', `/v1/imports/${id}/analyze`, {
+    file_attachment_id: attachmentId,
+  });
+  expect(queued.status).toBe(202);
+  await expect.poll(async () => importState(page, id), { timeout: 15_000 }).not.toBe('analyzing');
   if (stage === 'uploaded') return { id };
 
+  const read = await api<{ headers: string[] }>(page, 'GET', `/v1/imports/${id}`);
+  const targets: Record<string, string> = options.mapping ?? ASSET_MAPPING;
   const mapped = await api(
     page,
     'PATCH',
     `/v1/imports/${id}`,
     {
-      mapping: options.mapping ?? ASSET_MAPPING,
-      options: options.importOptions ?? { match_on: 'serial', create_missing_references: false },
+      mapping: {
+        columns: read.json.headers.map((header, index) => ({
+          index,
+          target: targets[header] ?? null,
+        })),
+      },
+      options: options.importOptions ?? { match_on: 'serial' },
     },
-    { 'if-match': await etagOf() },
+    { 'if-match': read.etag ?? '' },
   );
   expect(mapped.status).toBe(200);
   if (stage === 'mapped') return { id };
 
   expect((await api(page, 'POST', `/v1/imports/${id}/dry-run`)).status).toBe(202);
   if (stage === 'dry-run-running') return { id };
-  await expect
-    .poll(async () => (await api<{ state: string }>(page, 'GET', `/v1/imports/${id}`)).json.state, {
-      timeout: 15_000,
-    })
-    .toBe('dry_run_complete');
+  await expect.poll(async () => importState(page, id), { timeout: 30_000 }).toBe('dry_run_done');
   if (stage === 'reviewed') return { id };
 
   const digest = (await api<{ dry_run_digest: string }>(page, 'GET', `/v1/imports/${id}`)).json
@@ -253,10 +269,6 @@ export async function importAt(
     (await api(page, 'POST', `/v1/imports/${id}/commit`, { dry_run_digest: digest })).status,
   ).toBe(202);
   if (stage === 'committing') return { id };
-  await expect
-    .poll(async () => (await api<{ state: string }>(page, 'GET', `/v1/imports/${id}`)).json.state, {
-      timeout: 30_000,
-    })
-    .toBe('committed');
+  await expect.poll(async () => importState(page, id), { timeout: 40_000 }).toBe('completed');
   return { id };
 }

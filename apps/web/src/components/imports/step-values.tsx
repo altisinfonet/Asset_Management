@@ -1,134 +1,151 @@
 'use client';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { FormError } from '@/components/auth/form-error';
 import { PersonPicker, type PersonRef } from '@/components/registry/person-picker';
+import { Badge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import { Field } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useI18n } from '@/i18n';
-import { getApi, type UiError } from '@/lib/api';
-import { uiErrorText } from '@/lib/error-text';
 import {
+  importKeys,
   importsApi,
   type ImportJob,
-  type ImportLookup,
-  type ImportLookupValue,
-  type ImportReference,
-  type ValueMap,
+  type ImportOptions,
+  type ImportRefKind,
+  type ImportValue,
+  type ImportValueEntry,
+  type ImportValueMap,
 } from '@/lib/imports/api';
+import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
 import {
-  canCreateMissing,
+  canCreate,
   createAllMissing,
-  openValueCount,
-  unmatchedValues,
+  entryFor,
+  entryKind,
+  mappedRefKinds,
+  needsDecision,
+  normValue,
+  policyOf,
+  withEntry,
 } from '@/lib/imports/helpers';
 import { useLookups } from '@/lib/registry/queries';
+import { useDebounced } from '@/lib/use-debounced';
 import { routes } from '@/lib/routes';
 
-const OPEN = '__open__';
+const AUTO = 'auto';
+
+type Policies = NonNullable<ImportOptions['references']>;
 
 /** The existing records of one kind, as select options (people use the type-ahead picker instead). */
-function useExistingOptions(reference: ImportReference) {
+function useExistingOptions(kind: ImportRefKind) {
   const lookups = useLookups();
   return useMemo(() => {
-    switch (reference) {
+    const live = <T extends { archived_at?: string | null }>(list: T[]) =>
+      list.filter((item) => !item.archived_at);
+    switch (kind) {
       case 'category':
-        return lookups.categories
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
+        return live(lookups.categories).map((c) => ({ value: c.id, label: c.name }));
       case 'manufacturer':
-        return lookups.manufacturers
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
-      case 'asset_model':
-        return lookups.models
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
+        return live(lookups.manufacturers).map((c) => ({ value: c.id, label: c.name }));
+      case 'model':
+        return live(lookups.models).map((c) => ({ value: c.id, label: c.name }));
       case 'location':
-        return lookups.locations
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: lookups.locationLabel(c.id) }));
+        return live(lookups.locations).map((c) => ({
+          value: c.id,
+          label: lookups.locationLabel(c.id),
+        }));
       case 'department':
-        return lookups.departments
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
+        return live(lookups.departments).map((c) => ({ value: c.id, label: c.name }));
       case 'vendor':
-        return lookups.vendors
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
-      case 'status_label':
-        return lookups.statuses
-          .filter((c) => !c.archived_at)
-          .map((c) => ({ value: c.id, label: c.name }));
+        return live(lookups.vendors).map((c) => ({ value: c.id, label: c.name }));
+      case 'status':
+        return live(lookups.statuses).map((c) => ({ value: c.id, label: c.name }));
       default:
         return [];
     }
-  }, [reference, lookups]);
+  }, [kind, lookups]);
 }
 
 /**
  * Step "Match values" (WEB-14, M2-IMP-03): for every reference column (category, model, location,
- * person ...) the values of the file that match no record yet, each with how many rows carry it and
- * a decision: create it, use an existing record, or leave the field empty. "Create all that are
- * missing" decides the lot for everything the importer may create. Matched values need nothing.
+ * person ...) the distinct values of the file with how many rows carry each, the record each one
+ * matches by name, and a decision: use the match, use another record, create it, or leave the field
+ * empty. A kind has a policy for what matches nothing (create it, or report an error). "Create all
+ * that are missing" decides the lot for everything the importer may create. The decisions are the
+ * job's value map (keyed by the normalised value); saving them returns a reviewed dry run to
+ * `mapped`, so the dry run is requested again.
  */
-export function StepValues({ job }: { job: ImportJob }) {
+export function StepValues({ job, etag }: { job: ImportJob; etag: string | undefined }) {
   const { t } = useI18n();
   const router = useRouter();
   const client = useQueryClient();
-  const lookups = useQuery({
-    queryKey: ['import', job.id, 'lookups'],
-    queryFn: () => importsApi.lookups(job.id),
+  const kinds = useMemo(() => mappedRefKinds(job.entity_type, job.mapping), [job]);
+  const lists = useQueries({
+    queries: kinds.map((kind) => ({
+      queryKey: importKeys.values(job.id, kind),
+      queryFn: () => importsApi.values(job.id, kind, { limit: 200 }),
+    })),
   });
-  const [valueMap, setValueMap] = useState<ValueMap>(
-    () => (job.options?.value_map as ValueMap | undefined) ?? {},
-  );
+  const [valueMap, setValueMap] = useState<ImportValueMap>(() => job.value_map ?? {});
+  const [policies, setPolicies] = useState<Policies>(() => ({ ...job.options.references }));
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  const [error, setError] = useState<ImportErrorText | null>(null);
+  const latestEtag = useRef(etag);
 
-  const data = lookups.data ?? [];
-  const missing = unmatchedValues(data);
-  const open = openValueCount(data, valueMap);
-  const matchedCount = data.reduce(
-    (sum, lookup) => sum + lookup.values.filter((v) => v.match !== null).length,
+  const options = useMemo(() => ({ references: policies }), [policies]);
+  const loading = lists.some((list) => list.isPending);
+  const failed = lists.find((list) => list.isError);
+  const groups = kinds.map((kind, i) => ({ kind, values: lists[i]?.data?.data ?? [] }));
+  const open = groups.reduce(
+    (sum, group) =>
+      sum + group.values.filter((v) => needsDecision(v, group.kind, options, valueMap)).length,
+    0,
+  );
+  const matched = groups.reduce(
+    (sum, group) => sum + group.values.filter((v) => v.suggestion).length,
     0,
   );
 
-  const choose = (field: string, value: string, choice: ValueMap[string][string] | null) =>
-    setValueMap((current) => {
-      const next: ValueMap = { ...current, [field]: { ...(current[field] ?? {}) } };
-      if (choice) next[field]![value] = choice;
-      else delete next[field]![value];
-      return next;
-    });
+  const choose = (kind: ImportRefKind, value: string, entry: ImportValueEntry | null) =>
+    setValueMap((current) => withEntry(current, kind, value, entry));
 
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
-      await importsApi.update(job.id, { options: { value_map: valueMap } });
+      const value_map: ImportValueMap = {};
+      for (const kind of kinds) value_map[kind] = valueMap[kind] ?? {};
+      const updated = await importsApi.update(
+        job.id,
+        { value_map, options: { references: policies } },
+        latestEtag.current,
+      );
+      latestEtag.current = updated.etag;
       await importsApi.startDryRun(job.id);
-      await client.invalidateQueries({ queryKey: ['import', job.id] });
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
       router.replace(routes.importJob(job.id));
     } catch (err) {
-      setError(getApi().toUiError(err));
+      setError(importErrorText(t, err, t('importValues.saveFailed')));
     } finally {
       setSaving(false);
     }
   };
 
-  if (lookups.isError) {
+  if (failed) {
     return (
       <Banner
         tone="danger"
-        action={<Button onClick={() => void lookups.refetch()}>{t('common.retry')}</Button>}
+        action={<Button onClick={() => void failed.refetch()}>{t('common.retry')}</Button>}
       >
         {t('importValues.loadFailed')}
       </Banner>
@@ -144,45 +161,50 @@ export function StepValues({ job }: { job: ImportJob }) {
         <p className="text-base text-muted">{t('importValues.description')}</p>
       </div>
 
-      {lookups.isPending ? (
+      {loading ? (
         <Skeleton className="h-40 w-full" />
-      ) : missing.length === 0 ? (
-        <Banner tone="success">{t('importValues.allMatched')}</Banner>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => setValueMap(createAllMissing(data, valueMap))}>
-              {t('importValues.createAll')}
-            </Button>
-            <p className="text-sm text-muted" role="status" data-testid="import-values-open">
-              {open > 0 ? t('importValues.open', { count: open }) : null}
-              {matchedCount > 0
-                ? `${open > 0 ? ' ' : ''}${t('importValues.matched', { count: matchedCount })}`
-                : null}
-            </p>
-          </div>
-          {missing.map((lookup) => (
-            <LookupTable key={lookup.field} lookup={lookup} valueMap={valueMap} onChoose={choose} />
+          {open === 0 ? (
+            <Banner tone="success">{t('importValues.allMatched')}</Banner>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => setValueMap(createAllMissing(groups, valueMap))}>
+                {t('importValues.createAll')}
+              </Button>
+              <p className="text-sm text-muted" role="status" data-testid="import-values-open">
+                {t('importValues.open', { count: open })}
+                {matched > 0 ? ` ${t('importValues.matched', { count: matched })}` : null}
+              </p>
+            </div>
+          )}
+          {groups.map((group, i) => (
+            <ValueGroup
+              key={group.kind}
+              job={job}
+              kind={group.kind}
+              values={group.values}
+              distinct={lists[i]?.data?.distinct ?? 0}
+              column={lists[i]?.data?.column ?? null}
+              valueMap={valueMap}
+              policies={policies}
+              onPolicy={(kind, policy) =>
+                setPolicies((current) => ({ ...current, [kind]: policy }))
+              }
+              onChoose={choose}
+            />
           ))}
         </>
       )}
 
       {error ? (
-        <FormError
-          message={`${t('importValues.saveFailed')} ${uiErrorText(t, error)}`}
-          requestId={error.requestId}
-        />
+        <FormError message={error.message} requestId={error.requestId} details={error.details} />
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild>
           <Link href={routes.importJob(job.id, 'mapping')}>{t('imports.back')}</Link>
         </Button>
-        <Button
-          variant="primary"
-          loading={saving}
-          disabled={lookups.isPending}
-          onClick={() => void submit()}
-        >
+        <Button variant="primary" loading={saving} disabled={loading} onClick={() => void submit()}>
           {t('importValues.continue')}
           <ArrowRight aria-hidden className="size-4" />
         </Button>
@@ -191,23 +213,52 @@ export function StepValues({ job }: { job: ImportJob }) {
   );
 }
 
-function LookupTable({
-  lookup,
+function ValueGroup({
+  job,
+  kind,
+  values,
+  distinct,
+  column,
   valueMap,
+  policies,
+  onPolicy,
   onChoose,
 }: {
-  lookup: ImportLookup;
-  valueMap: ValueMap;
-  onChoose: (field: string, value: string, choice: ValueMap[string][string] | null) => void;
+  job: ImportJob;
+  kind: ImportRefKind;
+  values: ImportValue[];
+  distinct: number;
+  column: string | null;
+  valueMap: ImportValueMap;
+  policies: Policies;
+  onPolicy: (kind: ImportRefKind, policy: 'create' | 'must_exist') => void;
+  onChoose: (kind: ImportRefKind, value: string, entry: ImportValueEntry | null) => void;
 }) {
   const { t, formatNumber } = useI18n();
-  const existing = useExistingOptions(lookup.reference);
-  const refName = t(`importValues.refs.${lookup.reference}`);
-  const create = canCreateMissing(lookup.reference);
+  const existing = useExistingOptions(kind);
+  const refName = t(`importValues.refs.${kind}`);
+  const creatable = canCreate(kind);
+  const policy = policyOf({ references: policies }, kind);
+  const [search, setSearch] = useState('');
+  const q = useDebounced(search.trim(), 250);
+  /** Values that were set to "use an existing one" and wait for the record to be picked. */
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   /** Names of the people picked here, to show them again (the decision itself keeps only the id). */
   const [names, setNames] = useState<Record<string, string>>({});
+  const found = useQuery({
+    queryKey: [...importKeys.values(job.id, kind), 'q', q],
+    queryFn: () => importsApi.values(job.id, kind, { limit: 200, q }),
+    enabled: q !== '',
+  });
+  const shown = q !== '' ? (found.data?.data ?? []) : values;
 
-  const columns: DataTableColumn<ImportLookupValue>[] = [
+  const actionOf = (row: ImportValue): string => {
+    const kindOfEntry = entryKind(entryFor(valueMap, kind, row.value));
+    if (kindOfEntry) return kindOfEntry;
+    return pending.has(normValue(row.value)) ? 'use' : AUTO;
+  };
+
+  const columns: DataTableColumn<ImportValue>[] = [
     {
       id: 'value',
       header: t('importValues.columns.value'),
@@ -218,60 +269,85 @@ function LookupTable({
       id: 'rows',
       header: t('importValues.columns.rows'),
       align: 'end',
-      cell: (row) => formatNumber(row.rows),
+      cell: (row) => formatNumber(row.count),
+    },
+    {
+      id: 'status',
+      header: t('importValues.columns.status'),
+      cell: (row) => {
+        if (actionOf(row) !== AUTO) return <Badge>{t('importValues.status.decided')}</Badge>;
+        if (row.suggestion) {
+          return (
+            <Badge tone="success">
+              {t('importValues.status.matches', { name: row.suggestion.name })}
+            </Badge>
+          );
+        }
+        return policy === 'create' && creatable ? (
+          <Badge tone="info">{t('importValues.status.willCreate')}</Badge>
+        ) : (
+          <Badge tone="danger">{t('importValues.status.notFound')}</Badge>
+        );
+      },
     },
     {
       id: 'action',
       header: t('importValues.columns.action'),
-      cell: (row) => {
-        const choice = valueMap[lookup.field]?.[row.value];
-        return (
-          <Select
-            size="sm"
-            variant="ghost"
-            className="-ml-2 min-w-44"
-            aria-label={t('importValues.choose', { value: row.value })}
-            value={choice?.action ?? OPEN}
-            onValueChange={(action) =>
-              onChoose(
-                lookup.field,
-                row.value,
-                action === OPEN ? null : { action: action as 'create' | 'map' | 'skip' },
-              )
-            }
-            options={[
-              { value: OPEN, label: t('importValues.actions.open') },
-              ...(create ? [{ value: 'create', label: t('importValues.actions.create') }] : []),
-              { value: 'map', label: t('importValues.actions.map') },
-              { value: 'skip', label: t('importValues.actions.skip') },
-            ]}
-          />
-        );
-      },
+      cell: (row) => (
+        <Select
+          size="sm"
+          variant="ghost"
+          className="-ml-2 min-w-44"
+          aria-label={t('importValues.choose', { value: row.value })}
+          value={actionOf(row)}
+          options={[
+            { value: AUTO, label: t('importValues.actions.auto') },
+            { value: 'use', label: t('importValues.actions.use') },
+            ...(creatable ? [{ value: 'create', label: t('importValues.actions.create') }] : []),
+            { value: 'skip', label: t('importValues.actions.skip') },
+          ]}
+          onValueChange={(action) => {
+            const key = normValue(row.value);
+            setPending((current) => {
+              const next = new Set(current);
+              if (action === 'use' && !row.suggestion) next.add(key);
+              else next.delete(key);
+              return next;
+            });
+            if (action === AUTO) onChoose(kind, row.value, null);
+            else if (action === 'create') onChoose(kind, row.value, { create: true });
+            else if (action === 'skip') onChoose(kind, row.value, { skip: true });
+            else if (row.suggestion) onChoose(kind, row.value, { id: row.suggestion.id });
+            else onChoose(kind, row.value, null);
+          }}
+        />
+      ),
     },
     {
       id: 'existing',
       header: t('importValues.columns.existing'),
       cell: (row) => {
-        const choice = valueMap[lookup.field]?.[row.value];
-        if (choice?.action !== 'map') return '-';
-        return lookup.reference === 'person' ? (
+        if (actionOf(row) !== 'use') return '-';
+        const entry = entryFor(valueMap, kind, row.value);
+        const id = entry && 'id' in entry ? entry.id : undefined;
+        return kind === 'person' ? (
           <PersonPicker
             aria-label={t('importValues.pickExisting', { value: row.value })}
             value={
-              choice.id
+              id
                 ? ({
-                    id: choice.id,
-                    display_name: names[row.value] ?? t('importValues.savedChoice'),
+                    id,
+                    display_name:
+                      names[row.value] ??
+                      (row.suggestion?.id === id
+                        ? row.suggestion.name
+                        : t('importValues.savedChoice')),
                   } as PersonRef)
                 : null
             }
             onChange={(person) => {
               if (person) setNames((current) => ({ ...current, [row.value]: person.display_name }));
-              onChoose(lookup.field, row.value, {
-                action: 'map',
-                ...(person ? { id: person.id } : {}),
-              });
+              onChoose(kind, row.value, person ? { id: person.id } : null);
             }}
           />
         ) : (
@@ -281,9 +357,9 @@ function LookupTable({
             className="-ml-2 min-w-44"
             aria-label={t('importValues.pickExisting', { value: row.value })}
             placeholder={t('importValues.pickPlaceholder')}
-            value={choice.id}
+            value={id}
             options={existing}
-            onValueChange={(id) => onChoose(lookup.field, row.value, { action: 'map', id })}
+            onValueChange={(next) => onChoose(kind, row.value, { id: next })}
           />
         );
       },
@@ -292,16 +368,68 @@ function LookupTable({
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-base font-semibold text-text">
-        {t('importValues.fieldHeading', { field: refName })}
-      </h3>
-      {!create ? <p className="text-sm text-muted">{t('importValues.neverCreated')}</p> : null}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-text">
+            {t('importValues.fieldHeading', { field: refName })}
+          </h3>
+          {column ? (
+            <p className="text-sm text-muted">{t('importValues.column', { name: column })}</p>
+          ) : null}
+        </div>
+        {creatable ? (
+          <Field
+            label={t('importValues.policyFor', { field: refName.toLowerCase() })}
+            className="w-60"
+          >
+            {(control) => (
+              <Select
+                {...control}
+                value={policy}
+                onValueChange={(value) => onPolicy(kind, value as 'create' | 'must_exist')}
+                options={(['create', 'must_exist'] as const).map((value) => ({
+                  value,
+                  label: t(`importValues.policyOptions.${value}`),
+                }))}
+              />
+            )}
+          </Field>
+        ) : null}
+      </div>
+      {!creatable ? <p className="text-sm text-muted">{t('importValues.neverCreated')}</p> : null}
+      {distinct > values.length || q !== '' ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <Field
+            label={t('importValues.search', { field: refName.toLowerCase() })}
+            className="w-72"
+          >
+            {(control) => (
+              <Input
+                {...control}
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            )}
+          </Field>
+          {distinct > values.length && q === '' ? (
+            <p className="pb-2 text-sm text-muted">
+              {t('importValues.more', {
+                shown: formatNumber(values.length),
+                total: formatNumber(distinct),
+              })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <DataTable
         label={t('importValues.tableLabel', { field: refName })}
         columns={columns}
-        rows={lookup.values}
+        rows={shown}
         getRowId={(row) => row.value}
         getRowLabel={(row) => row.value}
+        loading={q !== '' && found.isPending}
+        empty={<p className="px-4 py-6 text-base text-muted">{t('importValues.noMatches')}</p>}
       />
     </div>
   );

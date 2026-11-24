@@ -12,18 +12,20 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useI18n } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
-import { importsApi, type ImportJob, type ImportState } from '@/lib/imports/api';
-import { isResumable, isRunning, kindOf } from '@/lib/imports/helpers';
+import { importKeys, importsApi, type ImportJob, type ImportState } from '@/lib/imports/api';
+import { isResumable, isRunning, kindOf, progressPercent } from '@/lib/imports/helpers';
 import { routes } from '@/lib/routes';
 
 const STATE_TONE: Record<ImportState, NonNullable<BadgeProps['tone']>> = {
   draft: 'neutral',
-  dry_run_queued: 'info',
-  dry_run_running: 'info',
-  dry_run_complete: 'warning',
-  commit_queued: 'info',
+  uploaded: 'neutral',
+  analyzing: 'info',
+  analyzed: 'warning',
+  mapped: 'warning',
+  dry_running: 'info',
+  dry_run_done: 'warning',
   committing: 'primary',
-  committed: 'success',
+  completed: 'success',
   failed: 'danger',
   cancelled: 'neutral',
 };
@@ -37,7 +39,7 @@ export function ImportsScreen() {
   const { t, formatNumber, formatDateTime } = useI18n();
   const { can } = useAuth();
   const list = useQuery({
-    queryKey: ['imports', 'list'],
+    queryKey: importKeys.list(),
     queryFn: () => importsApi.list({ limit: 50 }),
     select: (page) => page.data,
     refetchInterval: (query) =>
@@ -55,7 +57,7 @@ export function ImportsScreen() {
           href={routes.importJob(job.id)}
           className="rounded-sm text-primary-text underline underline-offset-2"
         >
-          {job.original_filename ?? t('imports.noFile')}
+          {job.filename ?? t('imports.noFile')}
         </Link>
       ),
     },
@@ -67,7 +69,14 @@ export function ImportsScreen() {
     {
       id: 'state',
       header: t('imports.columns.state'),
-      cell: (job) => <Badge tone={STATE_TONE[job.state]}>{t(`imports.states.${job.state}`)}</Badge>,
+      cell: (job) => (
+        <Badge tone={STATE_TONE[job.state]}>
+          {t(`imports.states.${job.state}`)}
+          {isRunning(job.state) && job.progress.total > 0
+            ? ` ${t('imports.percent', { percent: progressPercent(job) })}`
+            : ''}
+        </Badge>
+      ),
     },
     {
       id: 'rows',
@@ -86,7 +95,7 @@ export function ImportsScreen() {
       srOnlyHeader: true,
       align: 'end',
       cell: (job) => {
-        const name = job.original_filename ?? t(`imports.kinds.${kindOf(job)}.title`);
+        const name = job.filename ?? t(`imports.kinds.${kindOf(job)}.title`);
         return (
           <Button asChild size="sm">
             <Link
@@ -136,7 +145,7 @@ export function ImportsScreen() {
         columns={columns}
         rows={list.data ?? []}
         getRowId={(job) => job.id}
-        getRowLabel={(job) => job.original_filename ?? job.id}
+        getRowLabel={(job) => job.filename ?? job.id}
         loading={list.isPending}
         empty={
           <EmptyState

@@ -11,18 +11,26 @@ import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { useI18n } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
-import { uiErrorText } from '@/lib/error-text';
-import { downloadTemplate, importsApi } from '@/lib/imports/api';
-import { IMPORT_KINDS, isImportKind, isResumable, type ImportKind } from '@/lib/imports/helpers';
 import { cn } from '@/lib/cn';
+import { uiErrorText } from '@/lib/error-text';
+import {
+  downloadTemplate,
+  importKeys,
+  importsApi,
+  type ImportPresetColumn,
+  type TemplateFormat,
+} from '@/lib/imports/api';
+import { IMPORT_KINDS, isImportKind, isResumable, type ImportKind } from '@/lib/imports/helpers';
 import { routes } from '@/lib/routes';
 
 /**
- * Step 1 of the import wizard (WEB-14): which kind of data, with the template for it. Choosing
- * creates a draft import (nothing is saved to the register), which the next step uploads the file
- * to. A draft or a running import from before is offered so nothing is started twice.
+ * Step 1 of the import wizard (WEB-14): which kind of data, with the template for it (CSV or Excel)
+ * and what its columns mean (the data dictionary of the preset). Choosing creates a draft import from
+ * the preset (nothing is saved to the register), which the next step uploads the file to. A draft or
+ * a running import from before is offered so nothing is started twice.
  */
 export function NewImportScreen() {
   const { t } = useI18n();
@@ -35,23 +43,75 @@ export function NewImportScreen() {
   const [templateFailed, setTemplateFailed] = useState(false);
 
   const recent = useQuery({
-    queryKey: ['imports', 'resume'],
+    queryKey: [...importKeys.list(), 'resume'],
     queryFn: () => importsApi.list({ limit: 5 }),
     select: (page) => page.data.find((job) => isResumable(job.state)) ?? null,
   });
+  const presets = useQuery({
+    queryKey: importKeys.presets(),
+    queryFn: () => importsApi.presets(),
+    staleTime: 5 * 60_000,
+  });
+
+  const chosen = IMPORT_KINDS.find((candidate) => candidate.id === kind)!;
+  const preset = presets.data?.find((candidate) => candidate.key === chosen.preset);
+  const kindName = t(`imports.kinds.${kind}.title`);
 
   const create = async () => {
-    const chosen = IMPORT_KINDS.find((candidate) => candidate.id === kind)!;
     setCreating(true);
     setError(null);
     try {
-      const job = await importsApi.create({ source: chosen.source, entity_type: chosen.entity });
+      const job = await importsApi.create({
+        entity_type: chosen.entity,
+        preset_key: chosen.preset,
+      });
       router.push(routes.importJob(job.value.id));
     } catch (err) {
       setError(getApi().toUiError(err));
       setCreating(false);
     }
   };
+
+  const download = (format: TemplateFormat) => {
+    setTemplateFailed(false);
+    void downloadTemplate(chosen.preset, format).catch(() => setTemplateFailed(true));
+  };
+
+  const dictionary: DataTableColumn<ImportPresetColumn>[] = [
+    {
+      id: 'column',
+      header: t('importNew.dictionaryColumns.column'),
+      sticky: true,
+      cell: (row) => <span className="font-medium text-text">{row.column}</span>,
+    },
+    {
+      id: 'target',
+      header: t('importNew.dictionaryColumns.field'),
+      mono: true,
+      cell: (row) => row.target,
+    },
+    {
+      id: 'description',
+      header: t('importNew.dictionaryColumns.description'),
+      cell: (row) => <span className="block max-w-md whitespace-normal">{row.description}</span>,
+    },
+    {
+      id: 'required',
+      header: t('importNew.dictionaryColumns.required'),
+      cell: (row) =>
+        row.required === 'yes'
+          ? t('importNew.requiredYes')
+          : row.required.startsWith('yes')
+            ? row.required
+            : t('importNew.requiredNo'),
+    },
+    {
+      id: 'example',
+      header: t('importNew.dictionaryColumns.example'),
+      mono: true,
+      cell: (row) => row.example || '-',
+    },
+  ];
 
   return (
     <>
@@ -70,7 +130,7 @@ export function NewImportScreen() {
           }
         >
           {t('importNew.resume', {
-            name: recent.data.original_filename ?? t('importNew.resumeUntitled'),
+            name: recent.data.filename ?? t('importNew.resumeUntitled'),
           })}
         </Banner>
       ) : null}
@@ -112,6 +172,50 @@ export function NewImportScreen() {
 
         <p className="text-sm text-muted">{t('importNew.order')}</p>
 
+        {preset?.sets_up ? (
+          <Banner tone="info">
+            {t('importNew.setsUp', {
+              category: preset.sets_up.category,
+              fields: preset.sets_up.custom_fields.join(', '),
+            })}
+          </Banner>
+        ) : null}
+        {preset && preset.notes.length > 0 ? (
+          <section aria-labelledby="import-notes-heading" className="flex flex-col gap-1">
+            <h2 id="import-notes-heading" className="text-base font-semibold text-text">
+              {t('importNew.notesHeading')}
+            </h2>
+            <ul className="list-disc pl-5 text-sm text-muted">
+              {preset.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {presets.isError ? (
+          <p role="alert" className="text-sm text-danger-text">
+            {t('importNew.presetsFailed')}
+          </p>
+        ) : null}
+
+        {preset ? (
+          <details className="rounded-lg border border-border bg-surface p-3">
+            <summary className="cursor-pointer text-base font-semibold text-text">
+              {t('importNew.dictionaryHeading')}
+            </summary>
+            <div className="mt-3">
+              <DataTable
+                label={t('importNew.dictionaryTable', { kind: kindName })}
+                columns={dictionary}
+                rows={preset.columns}
+                getRowId={(row) => row.target}
+                getRowLabel={(row) => row.column}
+                density="compact"
+              />
+            </div>
+          </details>
+        ) : null}
+
         {templateFailed ? (
           <p role="alert" className="text-sm text-danger-text">
             {t('importNew.templateFailed')}
@@ -124,17 +228,13 @@ export function NewImportScreen() {
           />
         ) : null}
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            onClick={() => {
-              const chosen = IMPORT_KINDS.find((candidate) => candidate.id === kind)!;
-              setTemplateFailed(false);
-              void downloadTemplate(chosen.entity, chosen.source).catch(() =>
-                setTemplateFailed(true),
-              );
-            }}
-          >
+          <Button onClick={() => download('csv')}>
             <Download aria-hidden className="size-4" />
-            {t('importNew.templateNamed', { kind: t(`imports.kinds.${kind}.title`) })}
+            {t('importNew.templateCsv', { kind: kindName })}
+          </Button>
+          <Button onClick={() => download('xlsx')}>
+            <Download aria-hidden className="size-4" />
+            {t('importNew.templateXlsx', { kind: kindName })}
           </Button>
           <Button variant="primary" loading={creating} onClick={() => void create()}>
             {t('importNew.continue')}

@@ -9,39 +9,45 @@ import { FormError } from '@/components/auth/form-error';
 import { FileDropzone, UploadList } from '@/components/files/file-parts';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
-import { getApi, type UiError } from '@/lib/api';
-import { uiErrorText } from '@/lib/error-text';
 import { megabytes } from '@/lib/files/messages';
 import { useUploadLimit } from '@/lib/files/use-upload-limit';
 import { useUploads } from '@/lib/files/use-uploads';
-import { downloadTemplate, importsApi, type ImportJob } from '@/lib/imports/api';
-import { kindOf } from '@/lib/imports/helpers';
+import { downloadTemplate, importKeys, importsApi, type ImportJob } from '@/lib/imports/api';
+import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
+import { IMPORT_KINDS, isPurged, kindOf, withImportContentType } from '@/lib/imports/helpers';
 import { routes } from '@/lib/routes';
 
 /**
  * Step "Upload file": the same pipeline as every attachment (presigned PUT with progress, then the
- * virus scan), owned by the import job. Once the file is clean it is attached to the job and the
- * wizard moves on to matching columns. With `replacing`, a file already attached is swapped; the
- * column choices are kept and the job goes back to its draft.
+ * virus scan), owned by the import job. Once the file is clean the analysis is queued (`202`) and the
+ * wizard moves on to matching columns while the worker reads the file. CSV and Excel (.xlsx) files
+ * are accepted. With `replacing`, the file of an import that has been read already is swapped: the
+ * new file is read again and its columns are matched afresh.
  */
 export function StepFile({ job, replacing = false }: { job: ImportJob; replacing?: boolean }) {
   const { t } = useI18n();
   const router = useRouter();
   const client = useQueryClient();
   const limit = useUploadLimit();
-  const [error, setError] = useState<UiError | null>(null);
+  const [error, setError] = useState<ImportErrorText | null>(null);
   const [templateFailed, setTemplateFailed] = useState(false);
+  const [starting, setStarting] = useState(false);
+  /** The file that is uploaded and clean but whose analysis could not be queued (a retry starts it). */
+  const [waiting, setWaiting] = useState<string | null>(null);
 
-  const attach = async (attachmentId: string) => {
+  const analyse = async (attachmentId?: string) => {
     setError(null);
+    setStarting(true);
     try {
-      // A reviewed dry run goes back to a draft when its settings are saved again (the contract's rule).
-      if (job.state !== 'draft') await importsApi.update(job.id, { mapping: job.mapping });
-      await importsApi.update(job.id, { file_attachment_id: attachmentId });
-      await client.invalidateQueries({ queryKey: ['import', job.id] });
+      setWaiting(attachmentId ?? null);
+      await importsApi.analyze(job.id, attachmentId ? { file_attachment_id: attachmentId } : {});
+      setWaiting(null);
+      await client.invalidateQueries({ queryKey: importKeys.job(job.id) });
       router.replace(routes.importJob(job.id));
     } catch (err) {
-      setError(getApi().toUiError(err));
+      setError(importErrorText(t, err, t('importFile.attachFailed')));
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -50,12 +56,15 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
     entityId: job.id,
     kind: 'import_file',
     maxBytes: limit,
-    onReady: (attachment) => void attach(attachment.id),
+    onReady: (attachment) => void analyse(attachment.id),
   });
   const kind = kindOf(job);
-  const busy = uploads.items.some((item) =>
-    ['queued', 'uploading', 'finishing', 'scanning'].includes(item.status),
-  );
+  const preset = IMPORT_KINDS.find((candidate) => candidate.id === kind)!.preset;
+  const busy =
+    starting ||
+    uploads.items.some((item) =>
+      ['queued', 'uploading', 'finishing', 'scanning'].includes(item.status),
+    );
 
   return (
     <section aria-labelledby="import-file-heading" className="flex max-w-2xl flex-col gap-4">
@@ -69,14 +78,14 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
       {/* one file at a time: while it travels or is scanned the drop zone gives way to its progress */}
       {busy ? null : (
         <FileDropzone
-          accept=".csv,text/csv"
+          accept=".csv,.xlsx"
           multiple={false}
           buttonLabel={t('importFile.button')}
           dropLabel={t('importFile.drop')}
           hint={
             limit ? t('importFile.hint', { limit: megabytes(limit) }) : t('importFile.hintNoLimit')
           }
-          onFiles={uploads.add}
+          onFiles={(files) => uploads.add(files.map(withImportContentType))}
         />
       )}
       <UploadList
@@ -87,10 +96,7 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
         onRetry={uploads.retry}
       />
       {error ? (
-        <FormError
-          message={error.detail ?? `${t('importFile.attachFailed')} ${uiErrorText(t, error)}`}
-          requestId={error.requestId}
-        />
+        <FormError message={error.message} requestId={error.requestId} details={error.details} />
       ) : null}
       {templateFailed ? (
         <p role="alert" className="text-sm text-danger-text">
@@ -101,13 +107,29 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
         <Button
           variant="link"
           size="sm"
-          onClick={() =>
-            void downloadTemplate(job.entity_type, job.source).catch(() => setTemplateFailed(true))
-          }
+          onClick={() => void downloadTemplate(preset, 'csv').catch(() => setTemplateFailed(true))}
         >
           <Download aria-hidden className="size-4" />
-          {t('importNew.templateNamed', { kind: t(`imports.kinds.${kind}.title`) })}
+          {t('importNew.templateCsv', { kind: t(`imports.kinds.${kind}.title`) })}
         </Button>
+        <Button
+          variant="link"
+          size="sm"
+          onClick={() => void downloadTemplate(preset, 'xlsx').catch(() => setTemplateFailed(true))}
+        >
+          <Download aria-hidden className="size-4" />
+          {t('importNew.templateXlsx', { kind: t(`imports.kinds.${kind}.title`) })}
+        </Button>
+        {waiting ? (
+          <Button size="sm" disabled={starting} onClick={() => void analyse(waiting)}>
+            {t('importFile.readAgain')}
+          </Button>
+        ) : null}
+        {replacing && job.file_attachment_id && !isPurged(job) ? (
+          <Button size="sm" variant="ghost" disabled={starting} onClick={() => void analyse()}>
+            {t('importFile.readAgain')}
+          </Button>
+        ) : null}
         {replacing ? (
           <Button asChild size="sm" variant="ghost">
             <Link href={routes.importJob(job.id)}>{t('importFile.cancel')}</Link>

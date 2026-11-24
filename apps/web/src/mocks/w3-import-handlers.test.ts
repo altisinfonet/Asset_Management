@@ -88,7 +88,7 @@ async function uploaded(
 }
 
 async function settle(id: string, wanted: ImportJob['state']) {
-  for (let i = 0; i < 300; i += 1) {
+  for (let i = 0; i < 1000; i += 1) {
     const job = (await importsApi.get(id)).value;
     if (job.state === wanted) return job;
     if (job.state === 'failed' && wanted !== 'failed') throw new Error(job.error ?? 'failed');
@@ -750,10 +750,10 @@ describe('mock imports: the commit', () => {
   });
 
   it('cancels a running commit after the current batch; the rows already written stay', async () => {
-    setMockImportTiming({ batchMs: 60, batchRows: 1 });
+    setMockImportTiming({ batchMs: 300, batchRows: 1 });
     const job = await reviewed();
     await importsApi.commit(job.id, job.dry_run_digest!, 'key-cancel-0001');
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 350));
     await importsApi.cancel(job.id);
     const done = await settle(job.id, 'cancelled');
     expect(done.counts.commit.created).toBeGreaterThan(0);

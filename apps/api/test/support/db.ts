@@ -165,3 +165,14 @@ export async function createFixtureTenant(
     };
   });
 }
+
+/**
+ * Violations of `app.schema_lint()`, ignoring the temporary far-future partitions (years 2040-2089) that
+ * schema-lint.e2e.test.ts creates and drops while other files run in parallel.
+ */
+export async function schemaLintViolations(c: pg.Client): Promise<string[]> {
+  const { rows } = await c.query<{ violation: string }>('select violation from app.schema_lint()');
+  return rows
+    .map((r) => r.violation)
+    .filter((v) => !/\b(audit_log|asset_history)_20[4-8]\d_\d{2}\b/.test(v));
+}

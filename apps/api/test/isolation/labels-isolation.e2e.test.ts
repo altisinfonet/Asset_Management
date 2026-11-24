@@ -2,7 +2,14 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dbEnabled } from '../auth/support.js';
-import { env, mode, rawTenantTx, sqlState, withClient } from '../support/db.js';
+import {
+  env,
+  mode,
+  rawTenantTx,
+  schemaLintViolations,
+  sqlState,
+  withClient,
+} from '../support/db.js';
 import {
   type App,
   type TenantFixture,
@@ -204,7 +211,7 @@ describe.skipIf(!dbEnabled)(`tenant isolation of label templates and batches (${
 
   it('the schema lint is clean and the grants are exactly select/insert/update', async () => {
     await withClient(env.migratorUrl!, async (c) => {
-      expect((await c.query('select violation from app.schema_lint()')).rows).toEqual([]);
+      expect(await schemaLintViolations(c)).toEqual([]);
       const grants = await c.query(
         `select table_name, privilege_type from information_schema.role_table_grants
           where grantee = 'app_user' and table_schema = 'app' and table_name = any($1::text[])`,

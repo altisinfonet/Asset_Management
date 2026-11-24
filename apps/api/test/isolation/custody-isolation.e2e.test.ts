@@ -2,7 +2,14 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dbEnabled } from '../auth/support.js';
-import { env, mode, rawTenantTx, sqlState, withClient } from '../support/db.js';
+import {
+  env,
+  mode,
+  rawTenantTx,
+  schemaLintViolations,
+  sqlState,
+  withClient,
+} from '../support/db.js';
 import {
   type App,
   type TenantFixture,
@@ -288,7 +295,7 @@ describe.skipIf(!dbEnabled)(`tenant isolation of locations, people and custody (
 
   it('the schema lint is clean with the new tables and every asset_history partition is FORCE RLS with no grants', async () => {
     await withClient(env.migratorUrl!, async (c) => {
-      expect((await c.query('select violation from app.schema_lint()')).rows).toEqual([]);
+      expect(await schemaLintViolations(c)).toEqual([]);
       const parts = await c.query(
         `select c.relname, c.relforcerowsecurity as forced, c.relacl::text as acl
            from pg_class c join pg_inherits i on i.inhrelid = c.oid

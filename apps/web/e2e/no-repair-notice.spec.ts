@@ -169,7 +169,7 @@ test.describe('not deployable without a repair', () => {
     );
     expect(await violations(page)).toEqual([]);
     await dialog.getByRole('button', { name: 'Apply to 2 assets' }).click();
-    await expect(page.getByText('Done: 2 assets updated.')).toBeVisible();
+    await expect(page.getByText('Done: 2 assets updated.', { exact: true })).toBeVisible();
   });
 });
 

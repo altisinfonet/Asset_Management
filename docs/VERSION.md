@@ -21,19 +21,22 @@ self-hosted edition in M4).
 Examples: `0.1.0` = M1; `0.2.1` = M2 wave 1; `0.2.2` = M2 wave 2; `0.2.3` = fixes after the founder review. Planned: `0.2.4` =
 M2 wave 3 (import, loaners, location scoping), `0.3.x` = M3 mobile app, `0.4.x` = M4 self-hosted edition (first real users).
 A release is a merge to `main` that passed the verification in [`engineering/contributing.md`](engineering/contributing.md);
-its entry here names that commit. There are no git tags yet; adding one per release (`v0.2.3`) is recommended.
+its entry here names that commit, and the commit is tagged `v<version>` (annotated tag).
 
-### Where the version is defined today
+### Where the version is defined
 
-No version is set anywhere: the root `package.json`, `apps/api`, `apps/web` and all three packages say `"version": "0.0.0"`.
-The API reports it through `GET /v1/version`, which returns `config.APP_VERSION` when set and otherwise the `version` of
-`apps/api/package.json` (so today `0.0.0`), plus the commit from `GIT_SHA`. The Docker build accepts `APP_VERSION`
-(`apps/api/Dockerfile`) but neither Compose nor CI passes it (CI passes `GIT_SHA` only). The OpenAPI contract has its own
-version, `info.version` in `engineering/tools/gen.mjs` (today `1.0.0-m2`).
+Since 2026-11-24 the version is set in every workspace `package.json` (root, `apps/api`, `apps/web` and the three packages),
+all kept equal; **`apps/api/package.json` is the source of truth**. `GET /v1/version` returns `config.APP_VERSION` when that
+environment variable is set and otherwise the `version` of `apps/api/package.json`, plus the commit from `GIT_SHA`. The OpenAPI
+contract has its own version, `info.version` in `engineering/tools/gen.mjs` (`1.0.0-m2`), which tracks the API contract, not
+releases.
 
-**Recommendation (not done, this page changes no code):** make `apps/api/package.json` the single source of truth
-(`"version": "0.2.3"`), keep the root and web package in step with it, pass `APP_VERSION` (and `GIT_SHA`) as build arguments in
-the CI image build and Compose, and tag each release on `main`. Then `/v1/version` and this page agree.
+**Releasing a version:** bump all six `package.json` versions together, add the entry below, merge to `main`, then tag that
+commit (`git tag -a v0.2.4 -m "0.2.4: …"`) and push the tag.
+
+**Tags:** `v0.1.0` (`6634c54`), `v0.2.1` (`916b15c`) and `v0.2.2` (`2f7c467`) were added afterwards on their release merges;
+their `package.json` files still say `0.0.0` because versions were only introduced with 0.2.3. `v0.2.3` points at the commit
+that set the versions (the release content itself is `2d9a14b` plus that commit).
 
 ---
 

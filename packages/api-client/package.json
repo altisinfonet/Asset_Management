@@ -1,6 +1,6 @@
 {
   "name": "@assettracker/api-client",
-  "version": "0.0.0",
+  "version": "0.2.3",
   "private": true,
   "description": "Typed fetch client for the REST API; types are generated from docs/engineering/openapi.yaml",
   "type": "module",

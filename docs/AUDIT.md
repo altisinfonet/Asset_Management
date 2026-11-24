@@ -194,9 +194,8 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
   superuser and owner bypass, the partition rule, whole-database restore granularity, and storage-level encryption only.
 - **Follow-ups (section 9 of the document):** no general rate limit; no load test of concurrent argon2 logins; no
   single-tenant restore test (M6-TOPS-02); no production Compose or "refuse default password" check (M4); SPF/DKIM guidance
-  (M4); CODEOWNERS and branch protection inactive until the founder acts. **Two lines in that document are out of date:**
-  T-SH-4 and the Trivy row of section 9 still describe the six npm findings as accepted exceptions, but they were removed on
-  the same day (B.8). The document should be corrected.
+  (M4); CODEOWNERS and branch protection inactive until the founder acts. T-SH-4 and section 9 used to describe the six npm
+  findings as accepted exceptions although they were removed the same day (B.8); corrected on 2026-11-24.
 
 ### B.7 M1 registry review - 2026-11-18 (`4fd487d`)
 
@@ -321,6 +320,5 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 | No production Compose bundle, "refuse default password" check, restore drill, single-tenant restore test | Needed before real users and before Cloud                             | M4-BND, M4-REL, M6-MON-03, M6-TOPS-02                                                                    |
 | Load test of concurrent argon2 logins                                                                    | CPU and memory exhaustion by logins not measured                      | threat model T-AUTH-10                                                                                   |
 | `picomatch` advisory allow-listed (dev tooling) until 2027-01-15                                         | Expires and then fails the build unless a fix exists                  | `.github/security/audit-allowlist.json`                                                                  |
-| Out-of-date lines in the threat model (Trivy exceptions)                                                 | Misstates the current security posture                                | documentation fix, B.6                                                                                   |
 | Read-only root filesystem for the runtime container not set                                              | Hardening                                                             | M1-REPO-04 (partial)                                                                                     |
 | Two open Dependabot pull requests (GitHub Actions; OpenTelemetry exporter)                               | The exporter was pinned on purpose                                    | Founder 👤, STATUS.md                                                                                    |

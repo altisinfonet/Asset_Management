@@ -17,6 +17,16 @@ docker/postgres/init/   roles (app_owner, app_user) and extensions for the dev d
 docker/pgbouncer/        PgBouncer config for dev and CI (transaction mode, `app_one` negative-control alias)
 ```
 
+## Project documentation
+
+Kept up to date with every change (see [docs/engineering/contributing.md](docs/engineering/contributing.md)):
+
+- [docs/STATUS.md](docs/STATUS.md): one-screen project status and what waits on the founder
+- [docs/FEATURES.md](docs/FEATURES.md): every user-visible feature, its state, milestone and stories
+- [docs/API.md](docs/API.md): API reference overview and endpoint catalogue (generated from the contract)
+- [docs/VERSION.md](docs/VERSION.md): version scheme and changelog
+- [docs/AUDIT.md](docs/AUDIT.md): how the product audits itself, and the log of quality and security audits
+
 ## Prerequisites
 
 - Node 24 LTS (`.nvmrc`; minimum 22.13) with Corepack: `corepack enable`

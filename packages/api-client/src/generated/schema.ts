@@ -6495,6 +6495,11 @@ export interface components {
             started_at: string | null;
             /** Format: date-time */
             finished_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.
+             */
+            data_purged_at: string | null;
             cancel_requested: boolean;
             /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
             error: string | null;

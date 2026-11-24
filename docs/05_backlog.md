@@ -815,14 +815,14 @@ Modelled with the existing asset and assignment tables; no new entity (plan 5.3)
 
 #### M2-LOAN-01 - Loaner pool model and defaults
 Size: M - Owner: Both - Deps: M2-LIFE-02
-Status: API done (2026-11-24, ADR 0011, ED-20, ED-21, migration 0120, contract tag Loaners): pools with rules, membership (single and bulk), the `loaner_pool_id` / `in_loaner_pool` asset filters, extension, the tenant custody settings. The pool admin screens are web work, not done. Default and maximum loan length are per pool (`default_loan_days`, `max_loan_days`), the reminder lead time is the tenant setting `loan_reminder_days`.
+Status: API done (2026-11-24, ADR 0011, ED-20, ED-21, migration 0120, contract tag Loaners): pools with rules, membership (single and bulk), the `loaner_pool_id` / `in_loaner_pool` asset filters, extension, the tenant custody settings. Done (integrated, unreleased): the pool admin screens (Loaners > Pools). Loan length (ED-24, migration 0140): request, else the pool's optional `default_loan_days`, else the organisation default, else 7 days, cut to the pool's `max_loan_days`; the reminder lead time is the tenant setting `loan_reminder_days`. Per-pool `email_borrowers_without_login` (default: every kind except students). "Next available" is the device idle the longest. Founder vocabulary (2026-11-24): no new fields, student ID = employee ref, homeroom = department or room, device / cart number = asset tag or custom field (documented in getting-started.md).
 - [x] An asset can belong to the loaner pool (flag or pool membership defined by ADR; filterable and bulk-assignable); tenant settings: default loan length, maximum loan length, reminder lead time.
 - [x] Loaner check-out applies the default due date automatically; extending a loan is a logged action.
-- [ ] Founder confirms the K-12 workflow vocabulary (borrower, homeroom, device number) so UI labels match.
+- [x] Founder confirms the K-12 workflow vocabulary (borrower, homeroom, device number) so UI labels match: confirmed 2026-11-24, mapped onto existing fields (ED-24).
 
 #### M2-LOAN-02 - Quick loaner flows (web)
 Size: M - Owner: Both - Deps: M2-LOAN-01, M2-LIFE-08
-Status: API done (2026-11-24, ADR 0011): `POST /v1/loaner-pools/{id}/quick-checkout` (one borrower found by email or badge, many devices, per-item results, due date from the pool), `POST /v1/loans/return` (scan many, per-scan results, summary), both idempotent; covered by an API test that checks 10 devices out and in. The screens and the Playwright script are web work, not done.
+Status: API done (2026-11-24, ADR 0011): `POST /v1/loaner-pools/{id}/quick-checkout` (one borrower found by email or badge, many devices, per-item results, due date from the pool), `POST /v1/loans/return` (scan many, per-scan results, summary), both idempotent; covered by an API test that checks 10 devices out and in. Done (integrated, unreleased): the loaner desk (`/loaners/desk`) with the mock Playwright script (10 devices out and in) and a real-stack script (3 out, 3 back).
 - [ ] Quick check-out screen: scan/type person, scan device(s), confirm; due date defaults; multiple devices per borrower supported.
 - [ ] Bulk check-in screen: scan many devices in a row with per-scan success/failure feedback and a summary.
 - [ ] Covered by a Playwright script that checks 10 devices out and in.
@@ -836,7 +836,7 @@ Status: done (2026-11-24, ADR 0011, ED-21): queue `loan.alerts` (daily per tenan
 
 #### M2-LOAN-04 - Loaner dashboard page
 Size: S - Owner: Both - Deps: M2-LOAN-02
-Status: API done (2026-11-24, ADR 0011): `GET /v1/loaners/dashboard` (per-pool and total counts, recent activity) and the lists behind each count (`GET /v1/loans`, `GET /v1/loaner-pools/{id}/members?available=true`). The page is web work, not done.
+Status: API done (2026-11-24, ADR 0011): `GET /v1/loaners/dashboard` (per-pool and total counts, recent activity) and the lists behind each count (`GET /v1/loans`, `GET /v1/loaner-pools/{id}/members?available=true`). Done (integrated, unreleased): the dashboard page (`/loaners`).
 - [ ] Page showing pool size, available, out, overdue and due today, with click-through lists.
 
 ### E2.6 Repair log
@@ -886,7 +886,7 @@ Size: S - Owner: Founder - Deps: M2-TAG-03, F-02
 
 #### M2-IMP-01 - Import framework
 Size: L - Owner: Claude - Deps: M2-FILE-01, M1-PLAT-06, M1-REG-05
-Status: done (M2 wave 3, ADR 0010, ED-18; API side) - tables `import_job`, `import_row` (one row per file row, both phases, before-image included) and `import_template` (migration 0110); states draft, uploaded, analyzing, analyzed, mapped, dry_running, dry_run_done, committing, completed, failed, cancelled; writes only through the assets facade and the people, location, department, catalogue and custody services, audit entries carry `meta.import_job_id`; quotas `IMPORT_MAX_ROWS` (100,000) and `IMPORT_MAX_CONCURRENT` (2, `429 import-quota-exceeded`), `bulk` queue class; polling `GET /v1/imports/{id}` (state, progress, counts); one worker job per batch with the cursor on the job, so a step that dies rolls back whole and is retried: tests roll a batch back mid-way and finish it with no duplicates, and the worker container was SIGKILLed during a 100,000-row commit on the compose stack: the import resumed and ended with exactly 100,000 assets. Open: a retention job for old `import_row` data (ED-19), the wizard (M2-IMP-08).
+Status: done (M2 wave 3, ADR 0010, ED-18; API side) - tables `import_job`, `import_row` (one row per file row, both phases, before-image included) and `import_template` (migration 0110); states draft, uploaded, analyzing, analyzed, mapped, dry_running, dry_run_done, committing, completed, failed, cancelled; writes only through the assets facade and the people, location, department, catalogue and custody services, audit entries carry `meta.import_job_id`; quotas `IMPORT_MAX_ROWS` (100,000) and `IMPORT_MAX_CONCURRENT` (2, `429 import-quota-exceeded`), `bulk` queue class; polling `GET /v1/imports/{id}` (state, progress, counts); one worker job per batch with the cursor on the job, so a step that dies rolls back whole and is retried: tests roll a batch back mid-way and finish it with no duplicates, and the worker container was SIGKILLed during a 100,000-row commit on the compose stack: the import resumed and ended with exactly 100,000 assets. Retention of old `import_row` data: done (ED-25, `IMPORT_ROW_RETENTION_DAYS`, 30 days, migration 0141); the sweep's six-hour give-up is tested with an injected clock. The wizard (M2-IMP-08): done.
 - [ ] `import_job` and `import_row` tenant tables (state machine: uploaded, analyzed, mapped, dry_run_done, committing, completed, failed, cancelled); rows keep raw values, mapped values, outcome, error, created ids and before-image (recorded now so v1.1 undo needs no migration).
 - [ ] Writes go only through registry/people/location facades so validation, audit and events are never bypassed; each commit batch audit entry carries the `import_job_id`.
 - [ ] Per-tenant import quotas (rows, concurrent jobs) and the low-priority `bulk` queue class; status polling endpoint with counts.
@@ -939,6 +939,7 @@ Status: done (M2 wave 3; API side) - presets and downloadable CSV / XLSX templat
 
 #### M2-IMP-08 - Import wizard UI
 Size: L - Owner: Both - Deps: M2-IMP-05, M2-IMP-06, M1-WEB-02
+Status: done (M2 wave 3, integrated, unreleased) - Assets > Import and Settings > Imports: type and file (CSV or XLSX), mapping (profile, confidence, date formats, saved templates), value mapping, dry run with filters and paging, commit with progress and cancel, results with the error report, resume from the list; mock Playwright (axe in light and dark) and a real-stack run of the Google Admin sample (dry run, commit, assets visible). Waiting for the founder's real-data run (M2-UX-01).
 - [ ] Steps: choose type and file, review mapping, dry-run preview, commit, results; progress bars from polling; leave and resume from an import list.
 - [ ] Error report download and a "fix and re-upload" loop; clear copy that dry run changes nothing.
 - [ ] Founder runs the wizard on real data and accepts it in M2-UX-01.
@@ -1019,7 +1020,7 @@ Found while integrating locations, people, custody and files; each was judged bi
 #### M2-LIFE-09 - Tenant default for the expected return
 Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Should
 Deferred from wave 1 integration. The check-out dialog leaves the expected return empty; schools want "end of term" or "+14 days" pre-filled.
-Status: API done (2026-11-24, ED-21): `GET/PUT /v1/settings/custody` with `default_expected_return_days` and `loan_reminder_days`; the dialogs' pre-fill is web work, not done.
+Status: API done (2026-11-24, ED-21): `GET/PUT /v1/settings/custody` with `default_expected_return_days` and `loan_reminder_days`; the check-out and transfer dialogs pre-fill it (integrated, unreleased); a loaner pool without its own loan length takes it too (ED-24).
 - [x] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:manage` (the catalogue permission; `catalog:write` does not exist) to change it; ETag and audit like the other settings.
 - [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently (it does not: a check-out without a date stays open-ended, tested).
 

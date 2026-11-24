@@ -4,7 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dbEnabled } from '../auth/support.js';
 import { mode } from '../support/db.js';
 import { LoanAlerts } from '../../src/loaners/index.js';
-import { OutboxRelay, OutboxSubscribers } from '../../src/outbox/index.js';
+import {
+  NOTIFICATION_SUBSCRIPTIONS,
+  NotificationSubscribers,
+} from '../../src/notifications/index.js';
 import { TenancyService } from '../../src/tenancy/index.js';
 import {
   type App,
@@ -249,16 +252,49 @@ describe.skipIf(!dbEnabled)(`loaner defaults, mail and next available (${mode})`
       b = saved.b!;
     });
 
-    /** Delivers every pending event (a pass handles at most 50 per tenant). */
+    /**
+     * Hands the loan events of the tenant to their notification subscriptions in THIS process, so the
+     * mail lands in this file's capture. (The OutboxRelay of another test file may claim the events of
+     * any active tenant, and its mail would go to that file's own fakes.) Each event is handled once.
+     */
+    const handled = new Set<string>();
     const relay = async () => {
-      const relayer = new OutboxRelay({
-        tenancy: runtime,
-        tenants: async () => [{ tenantId: t.tenantId }],
-        subscribers: app.get(OutboxSubscribers, { strict: false }),
-        logger: pino({ level: 'silent' }),
-      });
-      for (let pass = 0; pass < 20; pass++) {
-        if ((await relayer.runOnce()).delivered === 0) return;
+      const rows = (
+        await ownerTenantSql(
+          t.tenantId,
+          "select id, event_type, aggregate_type, aggregate_id, payload, created_at from app.outbox_event where event_type like 'loan.%' order by id",
+        )
+      ).rows as Array<{
+        id: string;
+        event_type: string;
+        aggregate_type: string;
+        aggregate_id: string;
+        payload: Record<string, unknown>;
+        created_at: Date;
+      }>;
+      const subscribers = app.get(NotificationSubscribers, { strict: false });
+      for (const row of rows) {
+        if (handled.has(row.id)) continue;
+        handled.add(row.id);
+        const sub = NOTIFICATION_SUBSCRIPTIONS.find((s) => s.event === row.event_type);
+        if (!sub) continue;
+        await runtime.withTenantTx({ tenantId: t.tenantId }, (tx) =>
+          subscribers.handle(
+            sub,
+            {
+              id: row.id,
+              tenantId: t.tenantId,
+              type: row.event_type,
+              aggregateType: row.aggregate_type,
+              aggregateId: row.aggregate_id,
+              payload: row.payload,
+              version: 1,
+              createdAt: row.created_at,
+              attempts: 0,
+            },
+            tx,
+          ),
+        );
       }
     };
     const runJob = (today: string) =>
@@ -320,7 +356,7 @@ describe.skipIf(!dbEnabled)(`loaner defaults, mail and next available (${mode})`
 
       expect(await runJob(inDays(0))).toMatchObject({ overdue: 6 });
       await relay();
-      await relay(); // a redelivery sends nothing twice
+      await relay(); // the same events again: nothing more is sent
       const mail = async (p: { id: string }) => mailsTo(await emailOf(p));
 
       expect(await mail(employee)).toHaveLength(1);

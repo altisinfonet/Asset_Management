@@ -19781,6 +19781,12 @@ components:
             - string
             - "null"
           format: date-time
+        data_purged_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.
         cancel_requested:
           type: boolean
         error:
@@ -19849,6 +19855,7 @@ components:
         - committed_at
         - started_at
         - finished_at
+        - data_purged_at
         - cancel_requested
         - error
         - summary

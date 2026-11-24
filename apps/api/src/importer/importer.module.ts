@@ -37,12 +37,20 @@ import { RefServicesToken } from './tokens.js';
 
 export const IMPORT_SWEEP_JOB = 'import.sweep';
 
+/** Jobs whose content one `import.sweep` run purges (the rest follows in the next runs, 5 minutes apart). */
+const PURGE_JOBS_PER_RUN = 5;
+/** Rows deleted per statement, so a 100,000-row import never holds one huge delete. */
+const PURGE_ROWS_PER_STATEMENT = 10_000;
+
 /** The worker side: job handlers over the engine, and the sweep that wakes imports whose job was lost. */
 @Injectable()
 export class ImportRunner {
   constructor(
     private readonly engine: ImportEngine,
     @Inject(JOB_QUEUE) private readonly jobs: JobQueue,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Inject(AUDIT_WRITER) private readonly audit: AuditWriter,
   ) {}
 
   analyze(payload: { tenantId: string; importId?: unknown }, ctx: TenantJobContext): Promise<void> {
@@ -53,12 +61,25 @@ export class ImportRunner {
     return this.engine.step(ctx.tx, ctx.tenantId, String(payload.importId ?? ''), ctx);
   }
 
-  /** Imports that are "running" but have not moved for ten minutes lost their job: queue it again. */
-  async sweep(_payload: { tenantId: string }, ctx: TenantJobContext): Promise<void> {
+  /**
+   * The scheduled sweep (every 5 minutes per tenant). `now` is the clock: tests inject it, the job
+   * uses the real one.
+   *  1. Imports that are "running" but have not moved for ten minutes lost their job: queue it again;
+   *     one that has been running for more than six hours is given up (it ends `failed`).
+   *  2. Retention (ED-25): the content of imports that finished more than IMPORT_ROW_RETENTION_DAYS
+   *     ago is purged.
+   */
+  async sweep(
+    _payload: { tenantId: string },
+    ctx: TenantJobContext,
+    now: Date = new Date(),
+  ): Promise<void> {
     const stale = await ctx.tx.$queryRaw<Array<{ id: string; state: string; abandoned: boolean }>>`
-      select id, state, coalesce(started_at, created_at) < now() - interval '6 hours' as abandoned
+      select id, state,
+             coalesce(started_at, created_at) < ${now}::timestamptz - interval '6 hours' as abandoned
         from app.import_job
-       where state in ('analyzing','dry_running','committing') and updated_at < now() - interval '10 minutes'
+       where state in ('analyzing','dry_running','committing')
+         and updated_at < ${now}::timestamptz - interval '10 minutes'
        limit 20`;
     for (const job of stale) {
       if (job.abandoned) {
@@ -74,6 +95,65 @@ export class ImportRunner {
     }
     if (stale.length > 0)
       ctx.logger.warn({ imports: stale.length }, 'import jobs re-queued by the sweep');
+    await this.purge(ctx, now);
+  }
+
+  /**
+   * Removes the content of finished imports older than the retention period (ED-25): the rows of the
+   * file, the column profile, the 50 sample rows, the value map and the uploaded file (archived, its
+   * object deleted). The job (counts, summary, mapping, options, audit trail) stays, stamped
+   * `data_purged_at`. Returns the number of imports purged (at most 5 per run).
+   */
+  async purge(ctx: TenantJobContext, now: Date = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - this.config.IMPORT_ROW_RETENTION_DAYS * 86_400_000);
+    const old = await ctx.tx.$queryRaw<Array<{ id: string; file_attachment_id: string | null }>>`
+      select id, file_attachment_id from app.import_job
+       where state in ('completed','failed','cancelled') and data_purged_at is null
+         and coalesce(finished_at, updated_at) < ${cutoff}::timestamptz
+       order by finished_at nulls first, id
+       limit ${PURGE_JOBS_PER_RUN}`;
+    for (const job of old) {
+      let rows = 0;
+      for (;;) {
+        const n = await ctx.tx.$executeRaw`
+          delete from app.import_row
+           where ctid in (select ctid from app.import_row
+                           where job_id = ${job.id}::uuid limit ${PURGE_ROWS_PER_STATEMENT})`;
+        rows += n;
+        if (n < PURGE_ROWS_PER_STATEMENT) break;
+      }
+      if (job.file_attachment_id) {
+        const [file] = await ctx.tx.$queryRaw<
+          Array<{ storage_key: string; thumb_key: string | null }>
+        >`
+          update app.attachment set archived_at = ${now}::timestamptz, version = version + 1
+           where id = ${job.file_attachment_id}::uuid and archived_at is null
+          returning storage_key, thumb_key`;
+        if (file) {
+          for (const key of [file.storage_key, file.thumb_key]) {
+            if (key) await this.storage.delete(key).catch(() => undefined);
+          }
+        }
+      }
+      await ctx.tx.$executeRaw`
+        update app.import_job
+           set profile = null, samples = null, value_map = '{}'::jsonb, file_attachment_id = null,
+               data_purged_at = ${now}::timestamptz, version = version + 1,
+               updated_at = ${now}::timestamptz
+         where id = ${job.id}::uuid`;
+      await this.audit.write(ctx.tx, {
+        action: 'import.data_purged',
+        entityType: 'import_job',
+        entityId: job.id,
+        meta: {
+          import_job_id: job.id,
+          rows_deleted: rows,
+          retention_days: this.config.IMPORT_ROW_RETENTION_DAYS,
+        },
+      });
+    }
+    if (old.length > 0) ctx.logger.info({ imports: old.length }, 'import content purged');
+    return old.length;
   }
 }
 

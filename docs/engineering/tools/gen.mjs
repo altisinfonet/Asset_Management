@@ -2591,6 +2591,7 @@ S_.Me.required.push('mfa_policy');
     }, ['phase', 'processed', 'total', 'percent']),
     dry_run_digest: nstr({ description: 'Digest of the reviewed dry run (file, parse settings, mapping, options, value map and every row\'s outcome). Quote it in the commit request.' }),
     dry_run_at: ndt(), committed_at: ndt(), started_at: ndt(), finished_at: ndt(),
+    data_purged_at: ndt({ description: 'When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.' }),
     cancel_requested: bool(),
     error: nstr({ description: 'Why a failed import failed (a sentence; for a bad file it names the line).' }),
     summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created).' },
@@ -2600,7 +2601,7 @@ S_.Me.required.push('mfa_policy');
     samples: { type: ['array', 'null'], items: arr(str()), description: 'The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file).' },
     confidence: { type: ['object', 'null'], additionalProperties: { type: 'number' }, description: 'How sure the suggested mapping is per column index (1 = exact header match).' },
     value_map: { ...S('ImportValueMap'), description: 'Empty without `import:run` (its keys are values of the file).' },
-  }, ['id', 'entity_type', 'source', 'preset_key', 'state', 'filename', 'file_attachment_id', 'parse', 'headers', 'mapping', 'options', 'rows_total', 'counts', 'progress', 'dry_run_digest', 'dry_run_at', 'committed_at', 'started_at', 'finished_at', 'cancel_requested', 'error', 'summary', 'requested_by', 'created_at', 'updated_at']);
+  }, ['id', 'entity_type', 'source', 'preset_key', 'state', 'filename', 'file_attachment_id', 'parse', 'headers', 'mapping', 'options', 'rows_total', 'counts', 'progress', 'dry_run_digest', 'dry_run_at', 'committed_at', 'started_at', 'finished_at', 'data_purged_at', 'cancel_requested', 'error', 'summary', 'requested_by', 'created_at', 'updated_at']);
   S_.ImportList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
   S_.ImportCreate = obj({
     entity_type: en(ENTITY),

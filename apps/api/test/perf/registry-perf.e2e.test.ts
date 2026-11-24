@@ -31,6 +31,17 @@ const PER_TENANT = Number(process.env.PERF_ASSETS ?? 50_000);
 const SAMPLES = Number(process.env.PERF_SAMPLES ?? 120);
 const BUDGET = { list: 500, search: 200, lookup: 150, custody: 300 } as const;
 
+/**
+ * The real budgets are enforced only when PERF is set (the nightly perf job and the CI perf job run the
+ * machine to themselves). In the ordinary e2e run several test files share one database and one
+ * machine, a p95 can be several times its budget while being fine alone, so the numbers are recorded
+ * (the table printed at the end, `test-results/registry-perf.json`) and only a generous sanity ceiling
+ * (10 times the budget: "it still works") is asserted.
+ */
+const ENFORCE = !['', '0', 'false'].includes((process.env.PERF ?? '').toLowerCase());
+const SANITY_FACTOR = 10;
+const limit = (budget: number): number => (ENFORCE ? budget : budget * SANITY_FACTOR);
+
 const pct = (sorted: number[], p: number) =>
   sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
 
@@ -195,10 +206,15 @@ describe.skipIf(!dbEnabled)(
       mkdirSync(dir, { recursive: true });
       writeFileSync(
         join(dir, 'registry-perf.json'),
-        JSON.stringify({ perTenant: PER_TENANT, budgetsMs: BUDGET, stats }, null, 2),
+        JSON.stringify(
+          { perTenant: PER_TENANT, budgetsMs: BUDGET, enforced: ENFORCE, stats },
+          null,
+          2,
+        ),
       );
       console.log(
-        `\nregistry perf (${PER_TENANT} assets x 2 tenants, ${SAMPLES} samples each, ms):\n` +
+        `\nregistry perf (${PER_TENANT} assets x 2 tenants, ${SAMPLES} samples each, ms; ` +
+          `${ENFORCE ? 'budgets ENFORCED (PERF set)' : `budgets recorded only, ${SANITY_FACTOR}x sanity ceiling (set PERF=1 to enforce)`}):\n` +
           stats
             .map(
               (s) =>
@@ -258,7 +274,7 @@ describe.skipIf(!dbEnabled)(
         const stat = await measure(name, SAMPLES, async () => {
           await get(url().replace('STATUS', status));
         });
-        expect(stat.p95, name).toBeLessThan(BUDGET.list);
+        expect(stat.p95, name).toBeLessThan(limit(BUDGET.list));
       }
     }, 300_000);
 
@@ -280,7 +296,7 @@ describe.skipIf(!dbEnabled)(
         await get(`/v1/scan/resolve?code=${sample.tags[i % sample.tags.length]}`);
       });
       for (const s of [byTag, bySerial, scan, scanTag])
-        expect(s.p95, s.name).toBeLessThan(BUDGET.lookup);
+        expect(s.p95, s.name).toBeLessThan(limit(BUDGET.lookup));
     }, 300_000);
 
     it(`custody p95 < ${BUDGET.custody} ms: check-out, transfer, check-in and the custody filters (M2-LIFE-02)`, async () => {
@@ -356,7 +372,7 @@ describe.skipIf(!dbEnabled)(
         history,
         personAssignments,
       ]) {
-        expect(s.p95, s.name).toBeLessThan(BUDGET.custody);
+        expect(s.p95, s.name).toBeLessThan(limit(BUDGET.custody));
       }
     }, 300_000);
 
@@ -384,7 +400,7 @@ describe.skipIf(!dbEnabled)(
         await get('/v1/search?q=maker&limit=5&types=model,category');
       });
       for (const s of [exact, serial, partialTag, word, short, typed]) {
-        expect(s.p95, s.name).toBeLessThan(BUDGET.search);
+        expect(s.p95, s.name).toBeLessThan(limit(BUDGET.search));
       }
     }, 300_000);
 
@@ -416,7 +432,7 @@ describe.skipIf(!dbEnabled)(
         p99: Math.round(pct(times, 99) * 10) / 10,
         max: Math.round(times.at(-1)! * 10) / 10,
       });
-      expect(pct(times, 95)).toBeLessThan(BUDGET.list);
+      expect(pct(times, 95)).toBeLessThan(limit(BUDGET.list));
     }, 300_000);
 
     it('the hot statements use index plans (query plans captured)', async () => {
@@ -604,7 +620,7 @@ describe.skipIf(!dbEnabled)(
           await get('/v1/assets?limit=50&sort=location&assigned=true');
         }),
       );
-      for (const s of sortStats) expect(s.p95, s.name).toBeLessThan(BUDGET.list);
+      for (const s of sortStats) expect(s.p95, s.name).toBeLessThan(limit(BUDGET.list));
 
       // correctness on the big dataset: the first pages equal the SQL order, empty values last
       const check = async (sort: string, order: string) => {

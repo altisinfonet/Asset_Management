@@ -164,7 +164,10 @@ describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {
     out.projected_dry_run_minutes_100k = Math.round(projectedDryMinutes * 10) / 10;
     // The budgets are asserted by the nightly perf job (IMPORT_PERF_ROWS set, the machine to itself). In the
     // ordinary e2e run six test files share one database and the numbers only say the pipeline works.
-    if (process.env.IMPORT_PERF_ROWS !== undefined) {
+    if (
+      process.env.IMPORT_PERF_ROWS !== undefined ||
+      !['', '0', 'false'].includes((process.env.PERF ?? '').toLowerCase())
+    ) {
       expect(out.commit_rows_per_minute as number).toBeGreaterThanOrEqual(GATE.commitRowsPerMinute);
       // interactive list stays inside its 500 ms budget while an import commits
       expect(out.list_p95_ms_during_commit as number).toBeLessThan(500);

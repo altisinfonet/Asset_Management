@@ -182,6 +182,7 @@ export function importDto(r: JobRecord, full: boolean, content = true): Record<s
     committed_at: r.committed_at ? r.committed_at.toISOString() : null,
     started_at: r.started_at ? r.started_at.toISOString() : null,
     finished_at: r.finished_at ? r.finished_at.toISOString() : null,
+    data_purged_at: r.data_purged_at ? r.data_purged_at.toISOString() : null,
     cancel_requested: r.cancel_requested,
     error: r.error,
     summary: r.summary ?? null,

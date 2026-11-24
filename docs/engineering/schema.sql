@@ -1358,6 +1358,7 @@ CREATE TABLE app.import_job (                          -- one CSV / XLSX import:
   finished_at          timestamptz,
   cancel_requested     boolean NOT NULL DEFAULT false,
   error                text CHECK (error IS NULL OR length(error) <= 1000),
+  data_purged_at       timestamptz,                  -- rows, profile, samples, value map and file removed by the retention job (ED-25, migration 0141)
   created_at           timestamptz NOT NULL DEFAULT now(),
   updated_at           timestamptz NOT NULL DEFAULT now(),
   created_by           uuid,
@@ -1371,6 +1372,7 @@ CREATE TABLE app.import_job (                          -- one CSV / XLSX import:
 );
 CREATE INDEX import_job_state_idx     ON app.import_job (tenant_id, state, updated_at) WHERE state IN ('analyzing','dry_running','committing');
 CREATE INDEX import_job_requester_idx ON app.import_job (tenant_id, requested_by, created_at DESC, id DESC);
+CREATE INDEX import_job_purge_idx     ON app.import_job (tenant_id, finished_at) WHERE data_purged_at IS NULL AND state IN ('completed','failed','cancelled');  -- migration 0141
 
 CREATE TABLE app.import_row (                          -- one row of the file, BOTH phases (ED-18); no surrogate id: nothing refers to a row
   tenant_id      uuid NOT NULL REFERENCES app.tenant (id),

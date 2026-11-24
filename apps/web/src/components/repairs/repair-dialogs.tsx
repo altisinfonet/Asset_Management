@@ -55,12 +55,15 @@ export function LogRepairDialog({
   open,
   onOpenChange,
   asset,
+  defaultStatusId,
   onLogged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The asset the repair is for, when the dialog is opened from the asset's page. */
   asset?: { id: string; asset_tag: string };
+  /** The in-repair status to preselect (default: the first one), e.g. the one just chosen in the asset form. */
+  defaultStatusId?: string;
   onLogged?: (repair: Repair) => void;
 }) {
   const { t } = useI18n();
@@ -100,7 +103,9 @@ export function LogRepairDialog({
     setTicket('');
     setCost('');
     setReported(today());
-    setStatusId(inRepairStatuses[0]?.id ?? NONE);
+    setStatusId(
+      inRepairStatuses.find((s) => s.id === defaultStatusId)?.id ?? inRepairStatuses[0]?.id ?? NONE,
+    );
     setLogged(null);
   };
 

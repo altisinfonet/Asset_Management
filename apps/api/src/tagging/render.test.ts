@@ -135,7 +135,9 @@ describe('template geometry', () => {
   });
 });
 
-describe('rendered PDF, decoded', () => {
+// Rasterising whole pages at print resolution and decoding every code is CPU-bound real work; under a
+// loaded parallel `turbo` run a single case can exceed vitest's 5 s default without anything being wrong.
+describe('rendered PDF, decoded', { timeout: 60_000 }, () => {
   it('single-label page: the QR decodes to the label URL and the page has the template size', async () => {
     const t = template('single-50x25-qr');
     const a = item(7);

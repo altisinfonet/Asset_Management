@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CustomFieldInput } from '@/components/registry/custom-field-input';
 import { LocationPicker } from '@/components/registry/location-picker';
+import { NoRepairNotice } from '@/components/repairs/no-repair-notice';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -481,6 +482,15 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
             )}
           </Field>
         </div>
+        {mode === 'edit' && base.asset && !base.asset.value.archived_at ? (
+          <NoRepairNotice
+            asset={{ id: base.asset.value.id, asset_tag: base.asset.value.asset_tag }}
+            statusId={state.status_id}
+            variant="inline"
+            // the repair moved the asset's status: take the new version, keep what was typed
+            onLogged={() => void reload(true)}
+          />
+        ) : null}
       </fieldset>
 
       <fieldset className="flex flex-col gap-4">

@@ -272,27 +272,38 @@ export class RepairsService extends RegistryBase {
       }
 
       // Only one open record at a time moves the asset's status: the restore target stays unambiguous.
+      // An asset that already has an undeployable status (set by hand, so no repair holds it) and that
+      // is asked to take the same status adopts it: this repair becomes the one that holds the status
+      // and gives the asset back as ready (a default deployable label) when it closes.
+      const other = setStatus
+        ? await trx.maintenance_record.findFirst({
+            where: {
+              asset_id: asset.id,
+              set_status_id: { not: null },
+              status: { in: [...OPEN] },
+              archived_at: null,
+            },
+            select: { id: true, title: true },
+          })
+        : null;
+      const adopts =
+        setStatus !== undefined &&
+        forced === undefined &&
+        setStatus.id === prior.status_id &&
+        prior.status_state_type === 'undeployable' &&
+        other === null;
       const moves =
-        setStatus !== undefined && (forced !== undefined || setStatus.id !== prior.status_id);
-      if (moves) {
-        const other = await trx.maintenance_record.findFirst({
-          where: {
-            asset_id: asset.id,
-            set_status_id: { not: null },
-            status: { in: [...OPEN] },
-            archived_at: null,
-          },
-          select: { id: true, title: true },
-        });
-        if (other) {
-          throw problem.conflict(
-            `Another open repair ("${other.title}") already moved this asset's status. Complete or cancel it first, or open this one without set_status_id.`,
-          );
-        }
+        setStatus !== undefined &&
+        (forced !== undefined || setStatus.id !== prior.status_id || adopts);
+      if (moves && other) {
+        throw problem.conflict(
+          `Another open repair ("${other.title}") already moved this asset's status. Complete or cancel it first, or open this one without set_status_id.`,
+        );
       }
 
       const restoreId = moves
-        ? (restoreRequested?.id ?? (await this.defaultRestore(trx, prior, forced !== undefined)))
+        ? (restoreRequested?.id ??
+          (await this.defaultRestore(trx, prior, forced !== undefined || adopts)))
         : null;
       const now = new Date();
       const status = body.status ?? 'open';
@@ -330,9 +341,8 @@ export class RepairsService extends RegistryBase {
       );
 
       // Moving the asset to the in-repair status is what blocks its check-out.
-      const statusChange = moves
-        ? await this.moveAsset(trx, auth, prior, asset, setStatus!.id)
-        : null;
+      const statusChange =
+        moves && !adopts ? await this.moveAsset(trx, auth, prior, asset, setStatus!.id) : null;
       const dto = repairDto(row, await this.namesOf(trx, row));
       await this.record(trx, {
         entity: 'repair',
@@ -664,9 +674,12 @@ export class RepairsService extends RegistryBase {
     return this.moveAsset(trx, auth, asset, asset, target);
   }
 
-  /** The status a repair returns the asset to when none was named: what it had, or the default deployable one. */
-  private async defaultRestore(trx: Tx, asset: AssetRow, wasCheckedOut: boolean): Promise<string> {
-    if (!wasCheckedOut && asset.status_state_type !== 'deployed') return asset.status_id;
+  /**
+   * The status a repair returns the asset to when none was named: what it had, or the default deployable
+   * one (when the asset was checked out, or when the repair adopts an undeployable status nothing else holds).
+   */
+  private async defaultRestore(trx: Tx, asset: AssetRow, useDeployable: boolean): Promise<string> {
+    if (!useDeployable && asset.status_state_type !== 'deployed') return asset.status_id;
     const label =
       (await trx.status_label.findFirst({
         where: { state_type: 'deployable', is_default: true, archived_at: null },

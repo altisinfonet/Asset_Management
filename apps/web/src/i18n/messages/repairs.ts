@@ -68,6 +68,11 @@ export const repairsMessages = {
     cancelDescription:
       'Nothing was fixed: the repair is closed as cancelled and the asset returns to the status it had before.',
     cancelConfirm: 'Cancel repair',
+    noRepair: {
+      text: 'No repair is logged for this asset. Log a repair to track the problem, supplier and cost.',
+      action: 'Log a repair',
+      bulk: 'A not-deployable status does not log repairs. Log one on each asset to track the problem, supplier and cost.',
+    },
     assetTab: {
       summary_one: '{count} repair, {amount} in total',
       summary_other: '{count} repairs, {amount} in total',

@@ -20,6 +20,7 @@ import { useCustody } from '@/components/custody/custody-provider';
 import { AttachmentsPanel } from '@/components/files/attachments-panel';
 import { useLabels } from '@/components/labels/labels-provider';
 import { AssetRepairs } from '@/components/repairs/asset-repairs';
+import { NoRepairNotice } from '@/components/repairs/no-repair-notice';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
 import {
   HISTORY_FILTERS,
@@ -362,6 +363,15 @@ function AssetById({ id }: { id: string }) {
           </>
         }
       />
+      {archived ? null : (
+        <div className="mb-4 empty:hidden">
+          <NoRepairNotice
+            asset={{ id, asset_tag: value.asset_tag }}
+            statusId={value.status_id}
+            variant="banner"
+          />
+        </div>
+      )}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList aria-label={t('assetView.tabsLabel')}>
           <TabsTrigger value="overview">{t('assetView.tabs.overview')}</TabsTrigger>

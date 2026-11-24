@@ -338,7 +338,7 @@ function lcg(seed: number): () => number {
 /**
  * Creates the two demo tenants "Acme" and "Globex" with an Owner, an Admin, a Technician and a
  * Viewer each, default status labels and categories, manufacturers, models, custom field
- * definitions and 200 assets. Idempotent: a tenant that already has assets is left untouched.
+ * definitions and 200 assets (every asset in the "In repair" status has an open repair record). Idempotent: a tenant that already has assets is left untouched.
  * Refuses to run in production.
  */
 export async function seedDemoData(
@@ -547,9 +547,191 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
   }
   await trx.asset.createMany({ data: assets });
   await seedCustody(trx, tenantId, assets, staff, places, statusByName.get('Deployed')!);
+  await seedRepairs(trx, tenantId, assets, {
+    categoryNameById: new Map(categories.map((c) => [c.id, c.name])),
+    vendorIds: vendorRows.map((v) => v.id),
+    staff,
+    inRepairStatusId: statusByName.get('In repair')!,
+    restoreStatusId: statusByName.get('Ready to deploy')!,
+  });
   await seedStock(trx, tenantId, company.id, staff, places);
 
   return true;
+}
+
+// ------------------------------------------------------------------------------ repairs of the demo
+
+/**
+ * What is wrong with an asset in repair, by category (the title is what the Repairs page shows, the
+ * description the detail). Several per category: the seed picks them in turn.
+ */
+export const DEMO_REPAIR_PROBLEMS: Record<string, Array<{ title: string; description: string }>> = {
+  Laptops: [
+    {
+      title: 'Cracked screen, replace panel',
+      description:
+        'Screen cracked across the lower third after a fall. Touch and display still work.',
+    },
+    {
+      title: 'Battery swelling, replace',
+      description:
+        'The trackpad is lifting; the battery is swollen. Stop charging and replace the pack.',
+    },
+    {
+      title: 'Keyboard keys unresponsive',
+      description: 'Several keys on the left side do not register. Needs a new keyboard assembly.',
+    },
+  ],
+  Desktops: [
+    {
+      title: 'Does not boot',
+      description: 'Powers on, fans spin, no display and no POST beeps. Suspect memory or board.',
+    },
+    {
+      title: 'Loud fan, overheating',
+      description: 'The CPU fan is grinding and the machine shuts down under load.',
+    },
+  ],
+  Monitors: [
+    {
+      title: 'Flickering panel',
+      description:
+        'The picture flickers and goes black for a second every few minutes, on every cable.',
+    },
+    {
+      title: 'Dead pixels in a cluster',
+      description:
+        'A cluster of dead pixels near the centre. Covered by warranty if reported in time.',
+    },
+  ],
+  'Phones and tablets': [
+    {
+      title: 'Charging port damaged',
+      description: 'The device only charges when the cable is held at an angle.',
+    },
+    {
+      title: 'Screen replacement',
+      description: 'Display cracked and the digitiser is erratic.',
+    },
+  ],
+  'Network equipment': [
+    {
+      title: 'Port 7 fails, link drops',
+      description: 'Ports 7 and 8 lose link every few minutes. Firmware is current.',
+    },
+    {
+      title: 'Power supply failure',
+      description: 'The unit restarts under load; the power supply is the likely cause.',
+    },
+  ],
+  Peripherals: [
+    {
+      title: 'Not recognised by the computer',
+      description:
+        'The device is not detected on any port or machine. Suspect the cable or controller.',
+    },
+  ],
+};
+const GENERIC_REPAIR_PROBLEM = {
+  title: 'Fault found, needs service',
+  description: 'The device fails its basic checks and needs a technician.',
+};
+
+/**
+ * An open repair for every active asset the demo puts in the "In repair" status, so the Repairs
+ * page, the dashboard panel and the asset's Repairs tab agree with the status labels. This is what
+ * `RepairsService.create` leaves behind for a repair that moves the asset's status: one open record
+ * per asset (`set_status_id` = the in-repair label, `restore_status_id` = what the asset returns to
+ * when the repair is closed), a `repair_opened` history entry, opened one to thirty days ago. Some
+ * are with a supplier (with a ticket), some in-house; some are already in progress; some have a
+ * quoted cost. "Broken" assets are deliberately left without a record: broken is not the same as
+ * being repaired. Like the rest of the seed this writes rows directly (no audit or outbox rows, so
+ * demo data raises no notifications).
+ */
+async function seedRepairs(
+  trx: Tx,
+  tenantId: string,
+  assets: Array<{
+    id: string;
+    category_id: string;
+    status_id: string;
+    archived_at: Date | null;
+  }>,
+  refs: {
+    categoryNameById: Map<string, string>;
+    vendorIds: string[];
+    staff: Array<{ id: string; name: string }>;
+    inRepairStatusId: string;
+    restoreStatusId: string;
+  },
+): Promise<void> {
+  const owner = await trx.user_account.findFirst({
+    where: { role_assignment: { some: { role: { key: 'tenant_admin' } } } },
+    select: { id: true },
+  });
+  const now = Date.now();
+  const day = 86_400_000;
+  const rand = lcg(20251124);
+  const names = await trx.status_label.findMany({
+    where: { id: { in: [refs.inRepairStatusId, refs.restoreStatusId] } },
+    select: { id: true, name: true },
+  });
+  const nameOf = (id: string) => names.find((n) => n.id === id)?.name ?? '';
+  // The in-house workshop: the first two people of the demo staff (IT).
+  const workshop = refs.staff.slice(0, 2);
+
+  const targets = assets.filter((a) => a.status_id === refs.inRepairStatusId && !a.archived_at);
+  const turns = new Map<string, number>();
+  for (const [k, asset] of targets.entries()) {
+    const category = refs.categoryNameById.get(asset.category_id) ?? '';
+    const pool = DEMO_REPAIR_PROBLEMS[category] ?? [GENERIC_REPAIR_PROBLEM];
+    const turn = turns.get(category) ?? 0;
+    turns.set(category, turn + 1);
+    const problem = pool[turn % pool.length]!;
+    const reported = new Date(now - (1 + Math.floor(rand() * 30)) * day);
+    const inProgress = k % 3 === 1;
+    const withSupplier = k % 3 !== 0;
+    const quoted = k % 2 === 0;
+    const id = uuidv7();
+    await trx.maintenance_record.create({
+      data: {
+        id,
+        tenant_id: tenantId,
+        asset_id: asset.id,
+        kind: 'repair',
+        status: inProgress ? 'in_progress' : 'open',
+        title: problem.title,
+        description: problem.description,
+        reported_at: reported,
+        started_at: inProgress ? new Date(Math.min(now, reported.getTime() + day)) : null,
+        vendor_id: withSupplier ? refs.vendorIds[k % refs.vendorIds.length]! : null,
+        performed_by_person_id: withSupplier ? null : (workshop[k % workshop.length]?.id ?? null),
+        ticket_ref: withSupplier ? `RMA-${2000 + k * 7}` : null,
+        cost_minor: quoted ? BigInt(2500 + Math.floor(rand() * 36) * 500) : null,
+        currency: quoted ? 'USD' : null,
+        set_status_id: refs.inRepairStatusId,
+        restore_status_id: refs.restoreStatusId,
+        created_by: owner?.id ?? null,
+      },
+    });
+    await trx.$executeRaw`
+      insert into app.asset_history
+        (id, tenant_id, asset_id, at, event_type, actor_type, actor_id, summary, payload)
+      values (${uuidv7()}::uuid, ${tenantId}::uuid, ${asset.id}::uuid, ${reported}::timestamptz,
+              'repair_opened', 'system', ${owner?.id ?? null}::uuid,
+              ${`Repair opened: ${problem.title}`}::text,
+              ${JSON.stringify({
+                repair_id: id,
+                kind: 'repair',
+                title: problem.title,
+                status: {
+                  from: refs.restoreStatusId,
+                  to: refs.inRepairStatusId,
+                  from_name: nameOf(refs.restoreStatusId),
+                  to_name: nameOf(refs.inRepairStatusId),
+                },
+              })}::jsonb)`;
+  }
 }
 
 // ------------------------------------------------------------------------------ M2 wave 2: stock

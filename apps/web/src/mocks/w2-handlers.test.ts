@@ -423,6 +423,37 @@ describe('mock repairs', () => {
     expect(again.status).toBe(409);
   });
 
+  it('a repair logged with the not-deployable status the asset already has adopts it and gives the asset back as ready (like the API)', async () => {
+    await repairsApi.list({ limit: 1 }); // the mock seeds its repairs from the registry on first read
+    const asset = await readyAsset();
+    const statuses = await fetchAll((cursor) => statusApi.list({ limit: 50, cursor }));
+    const inRepair = statuses.find((s) => s.state_type === 'undeployable')!;
+    const ready = statuses.find((s) => s.state_type === 'deployable' && s.is_default)!;
+    const current = await assetsApi.get(asset.id);
+    await assetsApi.update(asset.id, { status_id: inRepair.id }, current.etag);
+
+    const first = await repairsApi.create({
+      asset_id: asset.id,
+      title: 'Adopt',
+      set_status_id: inRepair.id,
+    });
+    expect(first.value).toMatchObject({
+      set_status_id: inRepair.id,
+      restore_status_id: ready.id,
+    });
+    expect((await assetsApi.get(asset.id)).value.status_id).toBe(inRepair.id);
+    // while it holds the status a second record does not take it over
+    const second = await repairsApi.create({
+      asset_id: asset.id,
+      title: 'Note',
+      set_status_id: inRepair.id,
+    });
+    expect(second.value).toMatchObject({ set_status_id: null, restore_status_id: null });
+
+    await repairsApi.complete(first.value.id, {}, first.etag);
+    expect((await assetsApi.get(asset.id)).value.status_id).toBe(ready.id);
+  });
+
   it('refuses a repair for an asset that is checked out', async () => {
     const held = (await assetsApi.list({ assigned: true, sort: ['asset_tag'], limit: 1 })).data[0]!;
     const error = await fails(repairsApi.create({ asset_id: held.id, title: 'Broken hinge' }));
@@ -441,6 +472,17 @@ describe('mock repairs', () => {
       vendor_name: null,
       set_status_id: null,
     });
+  });
+
+  it('seeds one open repair, moving the status, for every asset in the not-deployable status (like the demo seed)', async () => {
+    const statuses = (await statusApi.list({ limit: 100 })).data;
+    const inRepair = statuses.find((s) => s.state_type === 'undeployable')!;
+    const assets = (await assetsApi.list({ status_id: [inRepair.id], limit: 200 })).data;
+    expect(assets.length).toBeGreaterThan(3);
+    const open = (await repairsApi.list({ status: ['open', 'in_progress'], limit: 200 })).data;
+    expect(open.map((r) => r.asset_id).sort()).toEqual(assets.map((a) => a.id).sort());
+    expect(open.every((r) => r.set_status_id === inRepair.id)).toBe(true);
+    expect(open.some((r) => r.status === 'in_progress')).toBe(true);
   });
 
   it('totals the repair cost of an asset per currency, without the cancelled ones', async () => {

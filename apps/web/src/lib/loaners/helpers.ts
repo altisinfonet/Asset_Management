@@ -11,16 +11,33 @@ import type { LoanerPool, LoanerPoolMember, ProblemBody } from './api';
 export const FALLBACK_LOAN_DAYS = 7;
 
 /**
- * The due date the desk offers: today plus the pool's default period, never beyond the longest loan
- * the pool allows (the API computes the same when no date is sent).
+ * The loan length the pool gives a request without a date (ED-24): the server resolves it (the pool's
+ * own days, else the organisation's default, else 7, cut to the pool's maximum) and sends it as
+ * `effective_default_loan_days`.
+ */
+export function effectiveLoanDays(
+  pool:
+    | Pick<LoanerPool, 'effective_default_loan_days' | 'default_loan_days' | 'max_loan_days'>
+    | null
+    | undefined,
+): number {
+  const days = pool?.effective_default_loan_days ?? pool?.default_loan_days ?? FALLBACK_LOAN_DAYS;
+  const max = pool?.max_loan_days ?? null;
+  return max ? Math.min(days, max) : days;
+}
+
+/**
+ * The due date the desk offers: today plus the pool's effective default period, never beyond the longest
+ * loan the pool allows (the API computes the same when no date is sent).
  */
 export function defaultDueDate(
-  pool: Pick<LoanerPool, 'default_loan_days' | 'max_loan_days'> | null | undefined,
+  pool:
+    | Pick<LoanerPool, 'effective_default_loan_days' | 'default_loan_days' | 'max_loan_days'>
+    | null
+    | undefined,
   now: Date = new Date(),
 ): string {
-  const days = pool?.default_loan_days ?? FALLBACK_LOAN_DAYS;
-  const max = pool?.max_loan_days ?? null;
-  return dateAfter({ days: max ? Math.min(days, max) : days }, now);
+  return dateAfter({ days: effectiveLoanDays(pool) }, now);
 }
 
 /** The latest due date a pool allows for a loan made `now`, or null when it has no limit. */

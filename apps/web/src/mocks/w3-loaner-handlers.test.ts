@@ -53,6 +53,8 @@ describe('mock loaner pools', () => {
       overdue_count: 1,
       due_today_count: 1,
       default_loan_days: 7,
+      effective_default_loan_days: 7,
+      email_borrowers_without_login: null,
       max_loan_days: 28,
       max_loans_per_person: 1,
       eligible_person_kinds: null,
@@ -197,6 +199,52 @@ describe('mock loans: single, quick, return', () => {
       expected_return: inDays(14),
     });
     expect((await pool('Staff')).checked_out_count).toBe(2);
+  });
+
+  it('the due date is the request, else the pool, else the organisation, else 7 days, cut to the maximum (ED-24)', async () => {
+    const http = getApi().http;
+    const person = await borrower(14);
+    const lendFrom = async (poolId: string, extra: Record<string, unknown> = {}) =>
+      (
+        await http.POST('/v1/loaner-pools/{id}/checkout', {
+          params: { path: { id: poolId }, header: { 'Idempotency-Key': key() } },
+          body: { person_id: person.id, ...extra },
+        })
+      ).data?.assignment.expected_return;
+    const { value: bare } = await loanersApi.createPool({ name: 'Inherits' });
+    expect(bare).toMatchObject({ default_loan_days: null, effective_default_loan_days: 7 });
+    expect(bare.email_borrowers_without_login).toBeNull();
+    const free = await http.GET('/v1/assets', {
+      params: {
+        query: { state_type: 'deployable', assigned: false, in_loaner_pool: false, limit: 4 },
+      },
+    });
+    for (const asset of free.data!.data) await loanersApi.addMember(bare.id, asset.id);
+    expect(await lendFrom(bare.id)).toBe(inDays(7));
+    const settings = await custodySettingsApi.get();
+    await custodySettingsApi.put(
+      { default_expected_return_days: 10, loan_reminder_days: 2 },
+      settings.etag,
+    );
+    expect((await loanersApi.pool(bare.id)).value.effective_default_loan_days).toBe(10);
+    expect(await lendFrom(bare.id)).toBe(inDays(10));
+    expect(await lendFrom(bare.id, { expected_return: inDays(3) })).toBe(inDays(3));
+    const own = await loanersApi.updatePool(
+      bare.id,
+      { default_loan_days: 4 },
+      (await loanersApi.pool(bare.id)).etag,
+    );
+    expect(own.value.effective_default_loan_days).toBe(4);
+    const capped = await loanersApi.updatePool(
+      bare.id,
+      { default_loan_days: null, max_loan_days: 6, email_borrowers_without_login: false },
+      own.etag,
+    );
+    expect(capped.value).toMatchObject({
+      default_loan_days: null,
+      effective_default_loan_days: 6,
+      email_borrowers_without_login: false,
+    });
   });
 
   it('a quick check-out lends several devices to one borrower, each answered on its own', async () => {

@@ -119,7 +119,8 @@ function ensureSeed() {
       archived_at: null,
       description: null,
       home_location_id: null,
-      default_loan_days: 7,
+      default_loan_days: null,
+      email_borrowers_without_login: null,
       max_loan_days: null,
       max_loans_per_person: null,
       eligible_person_kinds: null,
@@ -199,10 +200,16 @@ function poolStats(pool: MockPool) {
   };
 }
 
+/** The loan length a request without a date gets (ED-24): pool, else organisation, else 7; cut to the maximum. */
+function effectiveDays(pool: MockPool): number {
+  const days = pool.default_loan_days ?? w3().custodySettings.default_expected_return_days ?? 7;
+  return pool.max_loan_days ? Math.min(days, pool.max_loan_days) : days;
+}
+
 function poolView(pool: MockPool) {
   const { _v: _ignored, ...pub } = pool;
   const { due_soon_count: _soon, ...counts } = poolStats(pool);
-  return { ...pub, ...counts };
+  return { ...pub, effective_default_loan_days: effectiveDays(pool), ...counts };
 }
 
 function onePool(pool: MockPool, status = 200) {
@@ -276,6 +283,7 @@ const POOL_KEYS = [
   'eligible_person_kinds',
   'owner_user_id',
   'is_active',
+  'email_borrowers_without_login',
 ] as const;
 
 function validatePool(body: Body, creating: boolean, existing?: MockPool) {
@@ -288,7 +296,7 @@ function validatePool(body: Body, creating: boolean, existing?: MockPool) {
       ['home_location_id', 'owner_user_id'],
       ['home_location_id', 'owner_user_id'],
     ),
-    ...checkInt(body, 'default_loan_days', { min: 1 }),
+    ...(body.default_loan_days === null ? [] : checkInt(body, 'default_loan_days', { min: 1 })),
     ...(body.max_loan_days === null ? [] : checkInt(body, 'max_loan_days', { min: 1 })),
     ...(body.max_loans_per_person === null
       ? []
@@ -297,6 +305,17 @@ function validatePool(body: Body, creating: boolean, existing?: MockPool) {
   if (body.is_active !== undefined && typeof body.is_active !== 'boolean') {
     errors.push({
       pointer: '/is_active',
+      message: 'Invalid input: expected boolean',
+      code: 'invalid_type',
+    });
+  }
+  if (
+    body.email_borrowers_without_login !== undefined &&
+    body.email_borrowers_without_login !== null &&
+    typeof body.email_borrowers_without_login !== 'boolean'
+  ) {
+    errors.push({
+      pointer: '/email_borrowers_without_login',
       message: 'Invalid input: expected boolean',
       code: 'invalid_type',
     });
@@ -330,10 +349,13 @@ function validatePool(body: Body, creating: boolean, existing?: MockPool) {
       errors.push({ pointer: '/owner_user_id', message: 'No such user.', code: 'not-found' });
     }
   }
-  const days = (body.default_loan_days as number | undefined) ?? existing?.default_loan_days ?? 7;
+  const days =
+    body.default_loan_days === undefined
+      ? (existing?.default_loan_days ?? null)
+      : (body.default_loan_days as number | null);
   const max =
     body.max_loan_days === undefined ? (existing?.max_loan_days ?? null) : body.max_loan_days;
-  if (typeof max === 'number' && Number.isInteger(days) && max < days) {
+  if (typeof max === 'number' && typeof days === 'number' && Number.isInteger(days) && max < days) {
     errors.push({
       pointer: '/max_loan_days',
       message: 'must be at least the default loan length',
@@ -515,7 +537,7 @@ function borrowerOf(pool: MockPool, body: Body): { person: MockPerson } | { resp
 
 /** The due date of a request, or the validation problem. */
 function dueOf(pool: MockPool, body: Body): { due: string } | { response: Response } {
-  const due = (body.expected_return as string | undefined) ?? dayFromToday(pool.default_loan_days);
+  const due = (body.expected_return as string | undefined) ?? dayFromToday(effectiveDays(pool));
   const latest = pool.max_loan_days ? dayFromToday(pool.max_loan_days) : null;
   if (due < todayUtc() || (latest && due > latest)) {
     return {
@@ -593,7 +615,9 @@ const poolHandlers: HttpHandler[] = [
       name,
       description: (body.description as string | null | undefined)?.trim() || null,
       home_location_id: (body.home_location_id as string | null | undefined) ?? null,
-      default_loan_days: (body.default_loan_days as number | undefined) ?? 7,
+      default_loan_days: (body.default_loan_days as number | null | undefined) ?? null,
+      email_borrowers_without_login:
+        (body.email_borrowers_without_login as boolean | null | undefined) ?? null,
       max_loan_days: (body.max_loan_days as number | null | undefined) ?? null,
       max_loans_per_person: (body.max_loans_per_person as number | null | undefined) ?? null,
       eligible_person_kinds:
@@ -640,8 +664,10 @@ const poolHandlers: HttpHandler[] = [
         pool.description = (body.description as string | null)?.trim() || null;
       if ('home_location_id' in body)
         pool.home_location_id = body.home_location_id as string | null;
-      if (typeof body.default_loan_days === 'number')
-        pool.default_loan_days = body.default_loan_days;
+      if ('default_loan_days' in body)
+        pool.default_loan_days = body.default_loan_days as number | null;
+      if ('email_borrowers_without_login' in body)
+        pool.email_borrowers_without_login = body.email_borrowers_without_login as boolean | null;
       if ('max_loan_days' in body) pool.max_loan_days = body.max_loan_days as number | null;
       if ('max_loans_per_person' in body)
         pool.max_loans_per_person = body.max_loans_per_person as number | null;
@@ -860,7 +886,17 @@ const loanHandlers: HttpHandler[] = [
           ]);
         }
       } else {
-        asset = members.find((a) => !a.current_assignment && isDeployable(a));
+        // ED-24: the device idle the longest (earliest return of its last custody period; never lent
+        // first), ties by the lowest asset tag (`members` is in tag order and the sort is stable).
+        const lastReturn = (a: MockAsset): string => {
+          const returns = registry()
+            .assignments.filter((s) => s.asset_id === a.id && s.checked_in_at)
+            .map((s) => String(s.checked_in_at));
+          return returns.sort().at(-1) ?? '';
+        };
+        asset = members
+          .filter((a) => !a.current_assignment && isDeployable(a))
+          .sort((x, y) => lastReturn(x).localeCompare(lastReturn(y)))[0];
         if (!asset) {
           return problem(409, 'no-loaner-available', 'No loaner available', {
             detail: 'Every device of this pool is out or cannot be lent right now.',

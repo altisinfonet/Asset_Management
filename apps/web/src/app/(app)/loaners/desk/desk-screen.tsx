@@ -29,6 +29,7 @@ import { uiErrorText } from '@/lib/error-text';
 import { loanersApi, type ProblemBody } from '@/lib/loaners/api';
 import {
   defaultDueDate,
+  effectiveLoanDays,
   itemFailure,
   lateDays,
   latestDueDate,
@@ -746,9 +747,7 @@ export function DeskScreen() {
                   ))}
               </div>
               <p id="desk-due-hint" className="text-sm text-muted">
-                {pool
-                  ? t('loanerDesk.due.poolDefault', { days: pool.default_loan_days ?? 7 })
-                  : null}
+                {pool ? t('loanerDesk.due.poolDefault', { days: effectiveLoanDays(pool) }) : null}
                 {latest
                   ? ` ${t('loanerDesk.due.latest', {
                       date: formatDate(`${latest}T00:00:00Z`, { timeZone: 'UTC' }),

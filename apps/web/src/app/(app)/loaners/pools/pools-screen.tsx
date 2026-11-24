@@ -67,7 +67,12 @@ export function PoolsScreen() {
     {
       id: 'defaultDays',
       header: t('loanerPools.columns.defaultDays'),
-      cell: (pool) => days(pool.default_loan_days),
+      cell: (pool) =>
+        pool.default_loan_days
+          ? days(pool.default_loan_days)
+          : pool.effective_default_loan_days === 1
+            ? t('loanerPools.inheritedOne')
+            : t('loanerPools.inherited', { count: pool.effective_default_loan_days }),
     },
     {
       id: 'maxDays',

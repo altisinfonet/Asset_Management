@@ -142,6 +142,25 @@ describe('loaner pools', () => {
     expect(await screen.findByRole('row', { name: /Exam week/ })).toHaveTextContent('14 days');
   });
 
+  it('creates a pool without its own loan length (it inherits) and chooses who is e-mailed without a login', async () => {
+    const user = userEvent.setup();
+    renderApp(<PoolsScreen />);
+    await user.click(await screen.findByRole('button', { name: 'New pool' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New loaner pool' });
+    await user.type(within(dialog).getByLabelText(/^Name/), 'Inheriting cart');
+    expect(within(dialog).getByLabelText(/Default loan length/)).toHaveValue(null);
+    const email = within(dialog).getByLabelText(/E-mail borrowers who have no login/);
+    expect(email).toHaveTextContent(
+      'Automatic: employees, contractors and external people, not students',
+    );
+    await user.click(email);
+    await user.click(await screen.findByRole('option', { name: 'Always, students too' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create pool' }));
+    expect(await screen.findByText('Pool "Inheriting cart" created.')).toBeVisible();
+    const row = await screen.findByRole('row', { name: /Inheriting cart/ });
+    expect(row).toHaveTextContent('7 days (organisation default)');
+  });
+
   it('shows the server refusing a second pool with the same name', async () => {
     const user = userEvent.setup();
     renderApp(<PoolsScreen />);

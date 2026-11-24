@@ -86,15 +86,12 @@ export function PoolFormDialog({
         name: 'default_loan_days',
         label: t('loanerPools.form.defaultDays'),
         kind: 'number',
-        required: true,
         min: 1,
         hint: t('loanerPools.form.defaultHint'),
-        validate: (value) => {
-          const n = wholeNumber(value, 1);
-          return n === null || Number.isNaN(n)
+        validate: (value) =>
+          Number.isNaN(wholeNumber(value, 1))
             ? t('loanerPools.form.errors.defaultDays')
-            : undefined;
-        },
+            : undefined,
       },
       {
         name: 'max_loan_days',
@@ -166,6 +163,17 @@ export function PoolFormDialog({
             },
           ]
         : []),
+      {
+        name: 'email_borrowers_without_login',
+        label: t('loanerPools.form.emailLogin'),
+        kind: 'select',
+        hint: t('loanerPools.form.emailLoginHint'),
+        options: [
+          { value: 'auto', label: t('loanerPools.form.emailAuto') },
+          { value: 'always', label: t('loanerPools.form.emailAlways') },
+          { value: 'never', label: t('loanerPools.form.emailNever') },
+        ],
+      },
       { name: 'is_active', label: t('loanerPools.form.active'), kind: 'checkbox' },
     ],
     [t, users.data],
@@ -176,7 +184,13 @@ export function PoolFormDialog({
       name: current?.name ?? '',
       description: current?.description ?? '',
       home_location_id: current?.home_location_id ?? '',
-      default_loan_days: String(current?.default_loan_days ?? 7),
+      default_loan_days: current?.default_loan_days ? String(current.default_loan_days) : '',
+      email_borrowers_without_login:
+        current?.email_borrowers_without_login === true
+          ? 'always'
+          : current?.email_borrowers_without_login === false
+            ? 'never'
+            : 'auto',
       max_loan_days: current?.max_loan_days ? String(current.max_loan_days) : '',
       max_loans_per_person: current?.max_loans_per_person
         ? String(current.max_loans_per_person)
@@ -196,7 +210,13 @@ export function PoolFormDialog({
       name: text(values.name),
       description: text(values.description) || null,
       home_location_id: text(values.home_location_id) || null,
-      default_loan_days: wholeNumber(values.default_loan_days, 1) ?? 7,
+      default_loan_days: wholeNumber(values.default_loan_days, 1),
+      email_borrowers_without_login:
+        values.email_borrowers_without_login === 'always'
+          ? true
+          : values.email_borrowers_without_login === 'never'
+            ? false
+            : null,
       max_loan_days: wholeNumber(values.max_loan_days, 1),
       max_loans_per_person: wholeNumber(values.max_loans_per_person, 1),
       eligible_person_kinds: kinds.length > 0 ? kinds : null,

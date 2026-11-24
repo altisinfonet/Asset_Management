@@ -18,7 +18,10 @@ export interface MockPool {
   name: string;
   description: string | null;
   home_location_id: string | null;
-  default_loan_days: number;
+  /** null = the organisation's default, else 7 (ED-24). */
+  default_loan_days: number | null;
+  /** null = automatic (every kind except students), true = everybody with an address, false = nobody. */
+  email_borrowers_without_login: boolean | null;
   max_loan_days: number | null;
   max_loans_per_person: number | null;
   eligible_person_kinds: Array<'employee' | 'student' | 'contractor' | 'external'> | null;

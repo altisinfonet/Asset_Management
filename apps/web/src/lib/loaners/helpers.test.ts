@@ -32,13 +32,23 @@ const problem = (fields: Partial<ProblemBody>): ProblemBody => ({
 });
 
 describe('due dates', () => {
-  it('offers today plus the pool default, else a week', () => {
-    expect(defaultDueDate({ default_loan_days: 3, max_loan_days: null }, NOW)).toBe('2026-11-27');
+  it('offers today plus the effective pool default (pool, organisation, else a week)', () => {
+    expect(
+      defaultDueDate(
+        { default_loan_days: 3, effective_default_loan_days: 3, max_loan_days: null },
+        NOW,
+      ),
+    ).toBe('2026-11-27');
     expect(defaultDueDate(null, NOW)).toBe('2026-12-01');
   });
 
   it('never goes beyond the longest loan the pool allows', () => {
-    expect(defaultDueDate({ default_loan_days: 14, max_loan_days: 7 }, NOW)).toBe('2026-12-01');
+    expect(
+      defaultDueDate(
+        { default_loan_days: 14, effective_default_loan_days: 14, max_loan_days: 7 },
+        NOW,
+      ),
+    ).toBe('2026-12-01');
     expect(latestDueDate({ max_loan_days: 28 }, NOW)).toBe('2026-12-22');
     expect(latestDueDate({ max_loan_days: null }, NOW)).toBeNull();
     expect(latestDueDate(null, NOW)).toBeNull();

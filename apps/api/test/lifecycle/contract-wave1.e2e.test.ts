@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type Client, dbEnabled, type Resp } from '../auth/support.js';
 import { contractViolations } from '../support/contract-observer.js';
 import {
+  DEPT_TAGS,
   UNIVERSAL_STATUSES,
   WAVE1_TAGS,
   loadContract,
@@ -163,16 +164,17 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
     await hit('listPeople', 'GET', '/v1/people?has_login=maybe', 400);
     await hit('getPerson', 'GET', `/v1/people/${person.body.id}`, 200);
     await hit('getPerson', 'GET', `/v1/people/${uuid()}`, 404);
+    const dept = (await t.admin.post('/v1/departments', { name: unique('Maths') })).body;
     const person2 = await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 200, {
-      body: { department: 'Maths' },
+      body: { department_id: dept.id },
       headers: { 'if-match': etag(person) },
     });
     await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 412, {
-      body: { department: 'x' },
+      body: { department_id: dept.id },
       headers: { 'if-match': etag(person) },
     });
     await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 428, {
-      body: { department: 'x' },
+      body: { department_id: dept.id },
     });
     await hit('updatePerson', 'PATCH', `/v1/people/${person.body.id}`, 422, {
       body: { status: 'sleeping' },
@@ -289,9 +291,82 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
     expect(etag(person2)).toBeTruthy();
   });
 
-  it('the walk covered every operation of the wave-1 tags', () => {
+  it('walks every Departments operation (ED-17): statuses and bodies match the contract', async () => {
+    const uuid = () => randomUUID();
+    const etag = (r: Resp) => String(r.headers.etag);
+    const { categoryId } = await basics(t);
+    const created = await hit('createDepartment', 'POST', '/v1/departments', 201, {
+      body: { name: unique('Physics'), code: unique('P').toUpperCase(), description: 'Labs' },
+    });
+    const id = created.body.id as string;
+    await hit('createDepartment', 'POST', '/v1/departments', 409, {
+      body: { name: created.body.name },
+    });
+    await hit('createDepartment', 'POST', '/v1/departments', 422, { body: { name: '' } });
+    await hit(
+      'listDepartments',
+      'GET',
+      '/v1/departments?limit=5&include_total=true&sort=-name',
+      200,
+    );
+    await hit('listDepartments', 'GET', '/v1/departments?sort=nope', 400);
+    await hit('getDepartment', 'GET', `/v1/departments/${id}`, 200);
+    await hit('getDepartment', 'GET', `/v1/departments/${uuid()}`, 404);
+    const updated = await hit('updateDepartment', 'PATCH', `/v1/departments/${id}`, 200, {
+      body: { description: 'Physics and chemistry' },
+      headers: { 'if-match': etag(created) },
+    });
+    await hit('updateDepartment', 'PATCH', `/v1/departments/${id}`, 412, {
+      body: { description: 'x' },
+      headers: { 'if-match': etag(created) },
+    });
+    await hit('updateDepartment', 'PATCH', `/v1/departments/${id}`, 428, {
+      body: { description: 'x' },
+    });
+    await hit('updateDepartment', 'PATCH', `/v1/departments/${id}`, 422, {
+      body: { manager_person_id: uuid() },
+      headers: { 'if-match': etag(updated) },
+    });
+    // in use: 409 with usage; reassign_to must be a live department (422); then the merge
+    const person = await t.admin.post('/v1/people', {
+      display_name: unique('P'),
+      department_id: id,
+    });
+    expect(person.status).toBe(201);
+    const asset = await t.admin.post('/v1/assets', { category_id: categoryId, department_id: id });
+    expect(asset.status).toBe(201);
+    await hit('archiveDepartment', 'DELETE', `/v1/departments/${id}`, 409, {
+      headers: { 'if-match': etag(updated) },
+    });
+    await hit('archiveDepartment', 'DELETE', `/v1/departments/${id}?reassign_to=${uuid()}`, 422, {
+      headers: { 'if-match': etag(updated) },
+    });
+    await hit('archiveDepartment', 'DELETE', `/v1/departments/${id}?reassign_to=nope`, 400, {
+      headers: { 'if-match': etag(updated) },
+    });
+    const target = await hit('createDepartment', 'POST', '/v1/departments', 201, {
+      body: { name: unique('Target') },
+    });
+    await hit(
+      'archiveDepartment',
+      'DELETE',
+      `/v1/departments/${id}?reassign_to=${target.body.id}`,
+      204,
+      {
+        headers: { 'if-match': etag(updated) },
+      },
+    );
+    await hit('archiveDepartment', 'DELETE', `/v1/departments/${id}`, 404, {
+      headers: { 'if-match': '*' },
+    });
+  });
+
+  it('the walk covered every operation of the wave-1 tags and of the Departments tag', () => {
     const required = operations.filter((o) => WAVE1_TAGS.has(o.tag)).map((o) => o.operationId);
     expect(required.length).toBeGreaterThanOrEqual(15);
     expect(required.filter((id) => !walked.has(id))).toEqual([]);
+    const departments = operations.filter((o) => DEPT_TAGS.has(o.tag)).map((o) => o.operationId);
+    expect(departments).toHaveLength(5);
+    expect(departments.filter((id) => !walked.has(id))).toEqual([]);
   });
 });

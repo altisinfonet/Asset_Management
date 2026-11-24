@@ -26,6 +26,8 @@ export const HISTORY_EVENT_TYPES = [
   'restored',
   'label_printed',
   'imported',
+  /** M2-UX-02: the undo of a check-out, check-in or transfer; the undone event stays in the history. */
+  'custody_undone',
 ] as const;
 export type HistoryEventType = (typeof HISTORY_EVENT_TYPES)[number];
 

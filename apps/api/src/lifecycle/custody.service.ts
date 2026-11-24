@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AuthContext } from '../auth/index.js';
+import { permits, type AuthContext } from '../auth/index.js';
 import { AttachmentsService } from '../files/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
+  ApiProblem,
   type FieldError,
   type IfMatch,
   type Page,
+  type ProblemCode,
   assertIfMatch,
   problem,
 } from '../platform/index.js';
@@ -31,6 +33,7 @@ import {
 } from '../registry/index.js';
 import { TenancyService, type Tx } from '../tenancy/index.js';
 import {
+  ASSIGNMENT_COLUMNS,
   type AssignmentRow,
   assignmentDto,
   listAssignments,
@@ -44,6 +47,7 @@ import type {
   PersonAssignmentsQuery,
   PersonHistoryQuery,
   TransferBody,
+  UndoBody,
 } from './schemas.js';
 
 type AssignmentDto = ReturnType<typeof assignmentDto>;
@@ -52,6 +56,9 @@ export interface CustodyResult {
   asset: AssetDto;
   assignment: AssignmentDto;
   version: number;
+}
+export interface UndoResult extends CustodyResult {
+  undone: 'checkout' | 'checkin' | 'transfer';
 }
 export interface TransferResult extends CustodyResult {
   transfer: ReturnType<typeof transferDto>;
@@ -173,7 +180,12 @@ export class CustodyService extends RegistryBase {
         summary: `Checked out to ${target.name}`,
         payload: {
           ...detail,
-          status: { from: current.status_name, to: deployed.name },
+          status: {
+            from: current.status_name,
+            to: deployed.name,
+            from_id: current.status_id,
+            to_id: deployed.id,
+          },
           ...(body.note ? { note: body.note } : {}),
           ...(body.attachment_ids?.length ? { attachment_ids: body.attachment_ids } : {}),
         },
@@ -255,7 +267,12 @@ export class CustodyService extends RegistryBase {
         summary: `Checked in from ${open.target_name ?? open.target_type}`,
         payload: {
           ...detail,
-          status: { from: current.status_name, to: status.name },
+          status: {
+            from: current.status_name,
+            to: status.name,
+            from_id: current.status_id,
+            to_id: status.id,
+          },
           ...(newLocation ? { location: { from: current.location_id, to: newLocation } } : {}),
           ...(body.condition ? { condition: body.condition } : {}),
           ...(body.note ? { note: body.note } : {}),
@@ -382,6 +399,16 @@ export class CustodyService extends RegistryBase {
         summary: `Transferred ${open ? `from ${open.target_name ?? open.target_type} ` : ''}to ${target.name}`,
         payload: {
           ...detail,
+          ...(deployed
+            ? {
+                status: {
+                  from: current.status_name,
+                  to: deployed.name,
+                  from_id: current.status_id,
+                  to_id: deployed.id,
+                },
+              }
+            : {}),
           ...(newLocation ? { location: { from: current.location_id, to: newLocation } } : {}),
           ...(body.reason ? { reason: body.reason } : {}),
           ...(body.note ? { note: body.note } : {}),
@@ -392,6 +419,271 @@ export class CustodyService extends RegistryBase {
         asset: assetDto(row),
         assignment: assignmentDto(assignment),
         transfer: transferDto(transfer),
+        version: row.version,
+      };
+    });
+  }
+
+  // =========================================================================================
+  // Undo (M2-UX-02, ED-23)
+
+  /**
+   * Reverses the LAST custody action of an asset (check-out, check-in or transfer) as an inverse
+   * action: never a delete. The original history event, assignment and audit row stay; the undo is
+   * a new `custody_undone` event, a new audit row and a new version of the asset.
+   *
+   * Guards, all inside the asset lock: `If-Match` (required) is the ETag the action answered with,
+   * so any later change of the asset is a 412; the newest history event of the asset must be the
+   * custody event of `assignment_id` (a second undo, or any other event, is `undo-asset-changed` /
+   * `undo-not-possible`); the event is at most {@link UNDO_WINDOW_SECONDS} old (`undo-expired`);
+   * the caller needs the permission of the action it reverses; and whatever the inverse needs
+   * (the previous holder, the previous status) must still be valid (`undo-not-possible`).
+   */
+  async undo(
+    auth: AuthContext,
+    assetId: string,
+    ifMatch: IfMatch,
+    body: UndoBody,
+  ): Promise<UndoResult> {
+    if (ifMatch.kind !== 'versions') {
+      throw problem.preconditionRequired(
+        'If-Match with the ETag the custody action answered with is required to undo it.',
+      );
+    }
+    return this.tx(auth, async (trx) => {
+      const current = await this.lock(trx, assetId, ifMatch);
+      const [last] = await trx.$queryRaw<
+        Array<{
+          id: string;
+          at: Date;
+          event_type: string;
+          assignment_id: string | null;
+          transfer_id: string | null;
+          payload: Record<string, unknown>;
+        }>
+      >`select id, at, event_type, assignment_id, transfer_id, payload
+          from app.asset_history where asset_id = ${assetId}::uuid
+         order by at desc, id desc limit 1`;
+      if (last?.event_type === 'custody_undone') {
+        throw undoProblem('undo-not-possible', 'This action was already undone.');
+      }
+      const kind = last ? UNDO_KINDS[last.event_type] : undefined;
+      if (!last || !kind || last.assignment_id !== body.assignment_id) {
+        throw undoProblem(
+          'undo-asset-changed',
+          'The asset changed after this action, so it can no longer be undone.',
+        );
+      }
+      if (Date.now() - last.at.getTime() > UNDO_WINDOW_SECONDS * 1000) {
+        throw undoProblem('undo-expired', 'The time to undo this action has passed.');
+      }
+      if (!permits(auth.permissions, kind.permission)) throw problem.forbidden();
+      const payload = last.payload;
+      const statusOf = (key: 'from_id' | 'to_id') => {
+        const status = payload.status as Record<string, unknown> | undefined;
+        const id = status?.[key];
+        return typeof id === 'string' ? id : null;
+      };
+      const locationFrom = (): { restore: boolean; id: string | null } => {
+        const location = payload.location as { from?: string | null } | undefined;
+        return location && 'from' in location
+          ? { restore: true, id: location.from ?? null }
+          : { restore: false, id: null };
+      };
+      const [original] = await trx.$queryRaw<Array<AssignmentRow>>`
+        select ${ASSIGNMENT_COLUMNS} from app.assignment s where s.id = ${last.assignment_id}::uuid`;
+      if (!original || original.loaner_pool_id) {
+        throw undoProblem(
+          'undo-not-possible',
+          'Loaner custody cannot be undone here. Use the loaner screens.',
+        );
+      }
+
+      // What the asset looked like before the action, and what the inverse does.
+      let reopenedFrom: AssignmentRow | null = null; // the holder who gets the asset back (check-in, transfer)
+      let closedId: string | null = null; // the open period the undo closes (check-out, transfer)
+      let reversedTransferId: string | null = null;
+      if (kind.undone === 'checkin') {
+        if (current.assignment || original.checked_in_at === null) {
+          throw undoProblem('undo-asset-changed', 'The asset is checked out again.');
+        }
+        reopenedFrom = original;
+      } else {
+        if (current.assignment?.assignment_id !== original.id || original.checked_in_at !== null) {
+          throw undoProblem('undo-asset-changed', 'The asset is no longer held as it was.');
+        }
+        closedId = original.id;
+        if (kind.undone === 'transfer') {
+          const fromId = payload.from_assignment_id;
+          if (typeof fromId === 'string') {
+            const [previous] = await trx.$queryRaw<Array<AssignmentRow>>`
+              select ${ASSIGNMENT_COLUMNS} from app.assignment s where s.id = ${fromId}::uuid`;
+            if (!previous || previous.loaner_pool_id) {
+              throw undoProblem('undo-not-possible', 'The previous holder cannot be restored.');
+            }
+            reopenedFrom = previous;
+          }
+        }
+      }
+
+      // The status the asset had before: a check-out / transfer-from-stock / check-in restores it.
+      let restoreStatus: { id: string; name: string } | null = null;
+      if (kind.undone !== 'transfer' || !reopenedFrom) {
+        const wanted = statusOf('from_id');
+        const label = wanted ? await trx.status_label.findUnique({ where: { id: wanted } }) : null;
+        if (!label) {
+          throw undoProblem(
+            'undo-not-possible',
+            'The previous status of the asset is not known any more.',
+          );
+        }
+        restoreStatus = { id: label.id, name: label.name };
+      }
+
+      // The previous holder must still be able to hold the asset.
+      let holder: Target | null = null;
+      if (reopenedFrom) {
+        try {
+          holder = await this.resolveTarget(
+            trx,
+            {
+              ...(reopenedFrom.person_id ? { person_id: reopenedFrom.person_id } : {}),
+              ...(reopenedFrom.location_id ? { location_id: reopenedFrom.location_id } : {}),
+              ...(reopenedFrom.target_asset_id
+                ? { target_asset_id: reopenedFrom.target_asset_id }
+                : {}),
+            },
+            current.id,
+          );
+        } catch (err) {
+          if (err instanceof ApiProblem && err.code === 'validation') {
+            throw undoProblem(
+              'undo-not-possible',
+              'The previous holder can no longer receive the asset, so the action cannot be undone.',
+            );
+          }
+          throw err;
+        }
+      }
+
+      // ---- the inverse, in the order of the original action's tables ----
+      const note = `Undo of ${kind.label}`;
+      let closed: AssignmentRow | null = null;
+      if (closedId) {
+        closed = await this.closeAssignment(trx, auth, closedId, {
+          locationId: null,
+          note,
+          attachmentIds: [],
+          condition: null,
+        });
+      }
+      let reopened: AssignmentRow | null = null;
+      if (reopenedFrom && holder) {
+        const id = uuidv7();
+        await trx.assignment.create({
+          data: {
+            id,
+            tenant_id: auth.tenantId,
+            asset_id: current.id,
+            ...targetColumns(holder),
+            expected_return: reopenedFrom.expected_return,
+            checked_out_by: auth.userId,
+            acceptance_state: reopenedFrom.acceptance_state,
+            note: reopenedFrom.note ?? note,
+          },
+        });
+        reopened = (await loadAssignment(trx, id))!;
+      }
+      const location = locationFrom();
+      await this.touchAsset(trx, auth, current, {
+        ...(restoreStatus && restoreStatus.id !== current.status_id
+          ? { status_id: restoreStatus.id }
+          : {}),
+        ...(location.restore && location.id !== current.location_id
+          ? { location_id: location.id }
+          : {}),
+      });
+      if (kind.undone === 'transfer' && closed && reopened) {
+        reversedTransferId = uuidv7();
+        await trx.transfer.create({
+          data: {
+            id: reversedTransferId,
+            tenant_id: auth.tenantId,
+            asset_id: current.id,
+            from_assignment_id: closed.id,
+            to_assignment_id: reopened.id,
+            from_location_id: current.location_id,
+            to_location_id: location.restore ? location.id : current.location_id,
+            reason: note,
+            transferred_by: auth.userId,
+          },
+        });
+      }
+      const restoredAssignment = (reopened ?? closed)!;
+      const row = (await loadAsset(trx, current.id))!;
+
+      const who = holder ?? {
+        type: original.person_id ? 'person' : original.location_id ? 'location' : 'asset',
+        id: original.person_id ?? original.location_id ?? original.target_asset_id!,
+        name: current.assignment?.target_name ?? '',
+      };
+      const detail = {
+        undone: kind.undone,
+        undone_event_type: last.event_type,
+        undone_assignment_id: original.id,
+        assignment_id: restoredAssignment.id,
+        target_type: who.type,
+        target_id: who.id,
+        target_name: who.name,
+      };
+      await this.record(trx, {
+        entity: 'asset',
+        verb: 'custody_undone',
+        id: current.id,
+        version: row.version,
+        before: {
+          status_id: current.status_id,
+          location_id: current.location_id,
+          holder: current.assignment
+            ? `${current.assignment.target_type}:${current.assignment.target_id}`
+            : null,
+        },
+        after: {
+          status_id: row.status_id,
+          location_id: row.location_id,
+          holder: row.assignment
+            ? `${row.assignment.target_type}:${row.assignment.target_id}`
+            : null,
+        },
+        meta: detail,
+        refs: {
+          assignmentId: restoredAssignment.id,
+          ...(reversedTransferId ? { transferId: reversedTransferId } : {}),
+        },
+      });
+      await writeAssetHistory(trx, auth, {
+        assetId: current.id,
+        eventType: 'custody_undone',
+        assignmentId: restoredAssignment.id,
+        transferId: reversedTransferId,
+        summary: `Undid ${kind.label}${who.name ? ` (${who.name})` : ''}`,
+        payload: {
+          ...detail,
+          status: {
+            from: current.status_name,
+            to: row.status_name,
+            from_id: current.status_id,
+            to_id: row.status_id,
+          },
+          ...(row.location_id !== current.location_id
+            ? { location: { from: current.location_id, to: row.location_id } }
+            : {}),
+        },
+      });
+      return {
+        asset: assetDto(row),
+        assignment: assignmentDto(restoredAssignment),
+        undone: kind.undone,
         version: row.version,
       };
     });
@@ -459,7 +751,7 @@ export class CustodyService extends RegistryBase {
     trx: Tx,
     auth: AuthContext,
     current: AssetRow,
-    data: { status_id?: string; location_id?: string },
+    data: { status_id?: string; location_id?: string | null },
   ): Promise<void> {
     const result = await trx.asset.updateMany({
       where: { id: current.id, version: current.version },
@@ -673,6 +965,26 @@ export class CustodyService extends RegistryBase {
     return status;
   }
 }
+
+/** How long after a custody action it can still be undone (the web offers it for 10 seconds). */
+export const UNDO_WINDOW_SECONDS = 300;
+
+interface UndoKind {
+  undone: 'checkout' | 'checkin' | 'transfer';
+  /** The permission of the action that is reversed. */
+  permission: string;
+  label: string;
+}
+const UNDO_KINDS: Partial<Record<string, UndoKind>> = {
+  checked_out: { undone: 'checkout', permission: 'asset:checkout', label: 'check-out' },
+  checked_in: { undone: 'checkin', permission: 'asset:checkin', label: 'check-in' },
+  transferred: { undone: 'transfer', permission: 'asset:transfer', label: 'transfer' },
+};
+
+const undoProblem = (
+  code: Extract<ProblemCode, 'undo-expired' | 'undo-asset-changed' | 'undo-not-possible'>,
+  detail: string,
+) => new ApiProblem({ code, detail });
 
 const stateOf = (row: AssetRow) => ({
   archived: row.archived_at !== null,

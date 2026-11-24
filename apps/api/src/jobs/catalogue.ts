@@ -214,7 +214,7 @@ export const QUEUES = {
     retryLimit: 5,
     retryDelay: 10,
     retryDelayMax: 5 * MINUTE,
-    expireInSeconds: 2 * MINUTE,
+    expireInSeconds: MINUTE,
     dedupeSeconds: 4 * MINUTE,
     transactionTimeoutSeconds: 3 * MINUTE,
   },

@@ -162,10 +162,14 @@ describe.skipIf(!dbEnabled)('import throughput (M2-OPS-01)', () => {
     // gates (scaled): commit throughput, and a dry run of 100k rows inside 10 minutes
     const projectedDryMinutes = ((dryMs / ROWS) * 100_000) / 60_000;
     out.projected_dry_run_minutes_100k = Math.round(projectedDryMinutes * 10) / 10;
-    expect(out.commit_rows_per_minute as number).toBeGreaterThanOrEqual(GATE.commitRowsPerMinute);
-    // interactive list stays inside its 500 ms budget while an import commits
-    expect(out.list_p95_ms_during_commit as number).toBeLessThan(500);
-    expect(projectedDryMinutes).toBeLessThan(GATE.dryRunMinutesPer100k);
+    // The budgets are asserted by the nightly perf job (IMPORT_PERF_ROWS set, the machine to itself). In the
+    // ordinary e2e run six test files share one database and the numbers only say the pipeline works.
+    if (process.env.IMPORT_PERF_ROWS !== undefined) {
+      expect(out.commit_rows_per_minute as number).toBeGreaterThanOrEqual(GATE.commitRowsPerMinute);
+      // interactive list stays inside its 500 ms budget while an import commits
+      expect(out.list_p95_ms_during_commit as number).toBeLessThan(500);
+      expect(projectedDryMinutes).toBeLessThan(GATE.dryRunMinutesPer100k);
+    }
   }, 3_600_000);
 
   it(`reads a ${ROWS.toLocaleString('en')}-row XLSX as a stream (time and memory)`, async () => {

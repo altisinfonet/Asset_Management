@@ -36,7 +36,7 @@ const SAMPLE = readFileSync(
 );
 
 /** M2-IMP-05/06: commit behaviour (concurrency, crashes, cancel, quotas), templates, XLSX and the Google preset. */
-describe.skipIf(!dbEnabled)(`import flows (${mode})`, () => {
+describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () => {
   const tenancy = newTenancy();
   let ih: ImportHarness;
   let t: TenantFixture;

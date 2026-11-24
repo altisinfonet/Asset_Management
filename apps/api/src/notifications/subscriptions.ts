@@ -236,7 +236,13 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
     async describe(event, tx) {
       const job = await tx.import_job.findUnique({
         where: { id: event.aggregateId },
-        select: { id: true, filename: true, done_create: true, done_update: true, done_error: true },
+        select: {
+          id: true,
+          filename: true,
+          done_create: true,
+          done_update: true,
+          done_error: true,
+        },
       });
       if (!job) return null;
       return {

@@ -459,8 +459,9 @@ export class AssetsFacade extends RegistryBase {
     if (!manual) tag = await this.tags.allocate(trx, category!.tag_prefix);
 
     const id = uuidv7();
+    let created: Awaited<ReturnType<Tx['asset']['create']>>;
     try {
-      await trx.asset.create({
+      created = await trx.asset.create({
         data: {
           id,
           tenant_id: auth.tenantId,
@@ -495,7 +496,14 @@ export class AssetsFacade extends RegistryBase {
       }
       throw err;
     }
-    const row = (await loadAsset(trx, id))!;
+    // The row just written is the row to answer with: a brand-new asset is in no custody and its status label
+    // is the one validated above, so nothing needs to be read back (three queries saved per created asset).
+    const row = {
+      ...created,
+      status_name: status!.name,
+      status_state_type: status!.state_type,
+      assignment: null,
+    } as unknown as AssetRow;
     const dto = assetDto(row);
     await this.record(trx, {
       entity: 'asset',
@@ -515,6 +523,7 @@ export class AssetsFacade extends RegistryBase {
         status_id: row.status_id,
         location_id: row.location_id,
         ...(meta?.cloned_from ? { cloned_from: meta.cloned_from } : {}),
+        ...(meta?.import_job_id ? { import_job_id: meta.import_job_id } : {}),
       },
     });
     return { asset: dto, version: row.version };

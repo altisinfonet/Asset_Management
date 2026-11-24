@@ -59,9 +59,17 @@ export class AssetTagService extends RegistryBase {
     return parsed.success ? parsed.data : DEFAULT_TEMPLATE;
   }
 
+  /** The template per transaction (a bulk import numbers thousands of assets in one transaction). */
+  private readonly templates = new WeakMap<Tx, Promise<AssetTagTemplate>>();
+
   /** The next free tag for an asset of a category with `categoryPrefix`. */
   async allocate(trx: Tx, categoryPrefix: string | null): Promise<string> {
-    const template = await this.templateOf(trx);
+    let pending = this.templates.get(trx);
+    if (!pending) {
+      pending = this.templateOf(trx);
+      this.templates.set(trx, pending);
+    }
+    const template = await pending;
     const prefix = tagPrefixFor(template, categoryPrefix);
     for (let attempt = 0; attempt < MAX_COLLISIONS; attempt++) {
       const [row] = await trx.$queryRaw<Array<{ last_value: bigint }>>`
@@ -110,6 +118,7 @@ export class AssetTagService extends RegistryBase {
         ...((tenant.settings as Record<string, unknown> | null) ?? {}),
         asset_tag_template: template,
       };
+      this.templates.delete(trx);
       const result = await trx.tenant.updateMany({
         where: { id: tenant.id, version: tenant.version },
         data: { settings: settings as Prisma.InputJsonObject },

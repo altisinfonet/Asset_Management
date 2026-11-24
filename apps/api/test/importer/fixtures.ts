@@ -139,6 +139,6 @@ if (process.argv[1]?.endsWith('fixtures.ts') && process.argv[2]) {
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const dir = process.argv[2];
   mkdirSync(dir, { recursive: true });
-  writeFileSync(`${dir}/google-admin-chromeos-sample.csv`, `﻿${googleCsv(48)}`);
+  writeFileSync(`FEFF${googleCsv(48)}`);
   console.log(`wrote ${dir}/google-admin-chromeos-sample.csv`);
 }

@@ -48,6 +48,8 @@ export interface EntityHandler {
   ): { k1: string | null; k2: string | null };
   /** Dry run of a batch: one verdict per row, in order; writes nothing to the registry. */
   plan(env: HandlerEnv, rows: WorkRow[]): Promise<Verdict[]>;
+  /** Called once with the rows of a commit batch, before the first `apply`: preload what they will look up. */
+  begin?(env: HandlerEnv, rows: WorkRow[]): Promise<void>;
   /** Commit of ONE row, inside the engine's savepoint (an exception rolls the row back). */
   apply(env: HandlerEnv, row: WorkRow): Promise<Outcome>;
 }
@@ -60,7 +62,7 @@ export interface EntityHandler {
  */
 export async function inNamedSavepoint<T>(
   tx: Tx,
-  name: 'import_row' | 'import_inner' | 'import_probe',
+  name: 'import_row' | 'import_inner' | 'import_probe' | 'import_batch',
   fn: () => Promise<T>,
 ): Promise<T> {
   switch (name) {
@@ -72,6 +74,9 @@ export async function inNamedSavepoint<T>(
       break;
     case 'import_probe':
       await tx.$executeRaw`savepoint import_probe`;
+      break;
+    case 'import_batch':
+      await tx.$executeRaw`savepoint import_batch`;
       break;
   }
   try {
@@ -87,6 +92,7 @@ export async function inNamedSavepoint<T>(
 async function release(tx: Tx, name: string): Promise<void> {
   if (name === 'import_row') await tx.$executeRaw`release savepoint import_row`;
   else if (name === 'import_inner') await tx.$executeRaw`release savepoint import_inner`;
+  else if (name === 'import_batch') await tx.$executeRaw`release savepoint import_batch`;
   else await tx.$executeRaw`release savepoint import_probe`;
 }
 
@@ -97,6 +103,9 @@ async function rollbackTo(tx: Tx, name: string): Promise<void> {
   } else if (name === 'import_inner') {
     await tx.$executeRaw`rollback to savepoint import_inner`;
     await tx.$executeRaw`release savepoint import_inner`;
+  } else if (name === 'import_batch') {
+    await tx.$executeRaw`rollback to savepoint import_batch`;
+    await tx.$executeRaw`release savepoint import_batch`;
   } else {
     await tx.$executeRaw`rollback to savepoint import_probe`;
     await tx.$executeRaw`release savepoint import_probe`;

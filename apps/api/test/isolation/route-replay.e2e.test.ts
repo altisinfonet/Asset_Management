@@ -650,12 +650,18 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         notFound('PATCH', `/v1/imports/${c.importId}`, { options: { on_match: 'update' } }),
       ],
       'post /v1/imports/:id/analyze': [
-        notFound('POST', `/v1/imports/${c.importId}/analyze`, { file_attachment_id: c.attachmentId }),
+        notFound('POST', `/v1/imports/${c.importId}/analyze`, {
+          file_attachment_id: c.attachmentId,
+        }),
       ],
       'post /v1/imports/:id/apply-template': [
-        notFound('POST', `/v1/imports/${c.importId}/apply-template`, { template_id: c.importTemplateId }),
+        notFound('POST', `/v1/imports/${c.importId}/apply-template`, {
+          template_id: c.importTemplateId,
+        }),
       ],
-      'get /v1/imports/:id/values': [notFound('GET', `/v1/imports/${c.importId}/values?field=category`)],
+      'get /v1/imports/:id/values': [
+        notFound('GET', `/v1/imports/${c.importId}/values?field=category`),
+      ],
       'post /v1/imports/:id/dry-run': [notFound('POST', `/v1/imports/${c.importId}/dry-run`, {})],
       'get /v1/imports/:id/rows': [notFound('GET', `/v1/imports/${c.importId}/rows`)],
       'get /v1/imports/:id/errors.csv': [notFound('GET', `/v1/imports/${c.importId}/errors.csv`)],
@@ -668,16 +674,27 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         {
           method: 'POST',
           url: '/v1/import-templates',
-          body: { name: unique('B-tpl'), entity_type: 'asset', columns: [{ header: 'Serial', target: 'serial' }] },
+          body: {
+            name: unique('B-tpl'),
+            entity_type: 'asset',
+            columns: [{ header: 'Serial', target: 'serial' }],
+          },
           expect: [201],
         },
-        refused('POST', '/v1/import-templates', { name: unique('B-from'), from_import_id: c.importId }),
+        refused('POST', '/v1/import-templates', {
+          name: unique('B-from'),
+          from_import_id: c.importId,
+        }),
       ],
-      'get /v1/import-templates/:id': [notFound('GET', `/v1/import-templates/${c.importTemplateId}`)],
+      'get /v1/import-templates/:id': [
+        notFound('GET', `/v1/import-templates/${c.importTemplateId}`),
+      ],
       'patch /v1/import-templates/:id': [
         notFound('PATCH', `/v1/import-templates/${c.importTemplateId}`, { name: 'b was here' }),
       ],
-      'delete /v1/import-templates/:id': [notFound('DELETE', `/v1/import-templates/${c.importTemplateId}`)],
+      'delete /v1/import-templates/:id': [
+        notFound('DELETE', `/v1/import-templates/${c.importTemplateId}`),
+      ],
       // ---- access
       'get /v1/users': [list('/v1/users?limit=200')],
       'post /v1/users': [
@@ -1150,7 +1167,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       import: await etag(`/v1/imports/${fx.importId}`),
       imports: String((await A.admin.get('/v1/imports?limit=200')).body.data.length),
       importTemplate: await etag(`/v1/import-templates/${fx.importTemplateId}`),
-      importTemplates: String((await A.admin.get('/v1/import-templates?limit=200')).body.data.length),
+      importTemplates: String(
+        (await A.admin.get('/v1/import-templates?limit=200')).body.data.length,
+      ),
       exports: JSON.stringify(
         (await A.admin.get('/v1/exports?limit=200')).body.data.map(
           (e: { id: string; status: string }) => [e.id, e.status],

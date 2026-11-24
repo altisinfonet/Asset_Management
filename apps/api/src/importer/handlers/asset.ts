@@ -32,6 +32,21 @@ interface AssetStepCache {
 }
 
 /** What the cells of one row came to once the references are resolved. */
+interface ExistingAsset {
+  id: string;
+  asset_tag: string;
+  asset_tag_key: string | null;
+  serial_key: string | null;
+  version: number;
+  archived_at: Date | null;
+  external_id: string | null;
+}
+interface Found {
+  byTag: ExistingAsset[];
+  bySerial: ExistingAsset[];
+  byExt: ExistingAsset[];
+}
+
 interface Prepared {
   issues: RowIssue[];
   warnings: RowIssue[];
@@ -331,6 +346,37 @@ export class AssetHandler implements EntityHandler {
 
   // ------------------------------------------------------------------------------------------ lookup
 
+  /** One lookup for the whole commit batch (not one per row). */
+  async begin(env: HandlerEnv, rows: WorkRow[]): Promise<void> {
+    env.memo.set(
+      'asset:existing',
+      await this.existing(
+        env,
+        rows.map((r) => r.mapped),
+      ),
+    );
+  }
+
+  /** Makes an asset created by this batch visible to the later rows of the batch (a repeated tag or serial). */
+  private remember(env: HandlerEnv, id: string, prep: Prepared): void {
+    const found = env.memo.get('asset:existing') as Found | undefined;
+    if (!found) return;
+    const tag = typeof prep.create.asset_tag === 'string' ? prep.create.asset_tag : null;
+    const serial = typeof prep.create.serial === 'string' ? prep.create.serial : null;
+    const entry = {
+      id,
+      asset_tag: tag ?? '',
+      asset_tag_key: tag ? normKey(tag) : null,
+      serial_key: serial ? normKey(serial) : null,
+      version: 1,
+      archived_at: null,
+      external_id: typeof prep.create.external_id === 'string' ? prep.create.external_id : null,
+    };
+    found.byTag.push(entry);
+    found.bySerial.push(entry);
+    found.byExt.push(entry);
+  }
+
   /** The existing assets a batch of rows may be talking about, by tag, serial and external id. */
   private async existing(env: HandlerEnv, recs: MappedRecord[]) {
     const tags = new Set<string>();
@@ -350,30 +396,31 @@ export class AssetHandler implements EntityHandler {
       archived_at: true,
       external_id: true,
     } as const;
-    const [byTag, bySerial, byExt] = await Promise.all([
-      tags.size
-        ? env.tx.asset.findMany({ where: { asset_tag_key: { in: [...tags] } }, select })
-        : [],
-      serials.size
-        ? env.tx.asset.findMany({ where: { serial_key: { in: [...serials] } }, select })
-        : [],
-      ext.size
-        ? env.tx.asset.findMany({
-            where: {
-              external_source: env.options.external_source ?? 'import',
-              external_id: { in: [...ext] },
-            },
-            select,
-          })
-        : [],
-    ]);
-    return { byTag, bySerial, byExt };
+    const [byTag, bySerial, byExt]: [ExistingAsset[], ExistingAsset[], ExistingAsset[]] =
+      await Promise.all([
+        tags.size
+          ? env.tx.asset.findMany({ where: { asset_tag_key: { in: [...tags] } }, select })
+          : [],
+        serials.size
+          ? env.tx.asset.findMany({ where: { serial_key: { in: [...serials] } }, select })
+          : [],
+        ext.size
+          ? env.tx.asset.findMany({
+              where: {
+                external_source: env.options.external_source ?? 'import',
+                external_id: { in: [...ext] },
+              },
+              select,
+            })
+          : [],
+      ]);
+    return { byTag, bySerial, byExt } as Found;
   }
 
   private match(
     env: HandlerEnv,
     rec: MappedRecord,
-    found: Awaited<ReturnType<AssetHandler['existing']>>,
+    found: Found,
   ): {
     hit: { id: string; asset_tag: string; version: number; archived_at: Date | null } | null;
     issue?: RowIssue;
@@ -437,7 +484,7 @@ export class AssetHandler implements EntityHandler {
   private async planRow(
     env: HandlerEnv,
     cache: AssetStepCache,
-    found: Awaited<ReturnType<AssetHandler['existing']>>,
+    found: Found,
     row: WorkRow,
   ): Promise<Verdict> {
     const prep = await this.prepare(env, cache, row.mapped);
@@ -613,7 +660,10 @@ export class AssetHandler implements EntityHandler {
     const warnings = [...prep.warnings];
     if (prep.issues.length > 0) return { result: 'error', errors: prep.issues, warnings };
 
-    const found = await this.existing(env, [row.mapped]);
+    // the batch's lookups were made once (`begin`); assets created by earlier rows of the batch are added below
+    const found =
+      (env.memo.get('asset:existing') as Found | undefined) ??
+      (await this.existing(env, [row.mapped]));
     const { hit, issue } = this.match(env, row.mapped, found);
     if (issue) return { result: 'error', errors: [issue], warnings };
     const policy = env.options.on_match;
@@ -703,6 +753,7 @@ export class AssetHandler implements EntityHandler {
         meta,
       );
       const id = created.asset.id;
+      this.remember(env, id, prep);
       if (wantsAssign) await this.checkout(env, id, (prep.assignee as { id: string }).id, warnings);
       return { result: 'created', errors: [], createdId: id, warnings };
     } catch (err) {

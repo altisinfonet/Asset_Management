@@ -7,6 +7,7 @@ import { dbEnabled } from '../auth/support.js';
 import { mode } from '../support/db.js';
 import { PgAuditWriter } from '../../src/audit/index.js';
 import { ExportRunner } from '../../src/exports/index.js';
+import { OutboxRelay, OutboxSubscribers } from '../../src/outbox/index.js';
 import {
   type ImportHarness,
   type Json,
@@ -127,6 +128,21 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, () => {
     // running the finished job's step again changes nothing
     await runStepOnce(ih, t.tenantId, job.id);
     expect((await registryCounts(t.tenantId)).assets).toBe(before.assets + 12);
+
+    // the requester is told in the bell (M2-IMP-05): the outbox event reaches the notification subscriber
+    await new OutboxRelay({
+      tenancy: ih.runtime,
+      tenants: async () => [{ tenantId: t.tenantId }],
+      subscribers: ih.h.app.get(OutboxSubscribers, { strict: false }),
+      logger: pino({ level: 'silent' }),
+    }).runOnce();
+    const bell = (await admin().get('/v1/notifications?limit=50')).body.data as Json[];
+    const note = bell.find((n) => n.type === 'import.completed');
+    expect(note, JSON.stringify(bell.map((n) => n.type))).toMatchObject({
+      title: 'Import finished',
+    });
+    expect(note!.body).toContain('RS.csv');
+    expect(note!.body).toContain('12 created');
   });
 
   it('can be cancelled between batches; what was written stays', async () => {

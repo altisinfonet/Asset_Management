@@ -46,6 +46,13 @@ export interface EngineDeps {
   config: EngineConfig;
 }
 
+/** The fast path of a batch met a row it cannot settle without a savepoint of its own. */
+class BatchNeedsRowSavepoints extends Error {
+  constructor() {
+    super('batch needs row savepoints');
+  }
+}
+
 /** Thrown to roll a row's savepoint back and carry its outcome out of it. */
 class RowRolledBack extends Error {
   constructor(readonly outcome: Outcome) {
@@ -582,63 +589,88 @@ export class ImportEngine {
          where job_id = ${job.id}::uuid and plan in ('skip','error') and result is null`;
     }
     const rows = await this.nextRows(tx, job, this.deps.config.batchRows, true);
-    const outcomes: Array<{
-      row_no: number;
-      result: string;
-      result_errors: RowIssue[] | null;
-      created_id: string | null;
-      before_image: Record<string, unknown> | null;
-      warnings: RowIssue[];
-    }> = [];
-    for (const r of rows) {
-      const work: WorkRow = {
-        row_no: r.row_no,
-        mapped: r.mapped!,
-        dup_of: r.dup_of,
-        match_key: r.match_key,
-        match_key2: r.match_key2,
-        plan: r.plan,
-        entity_id: r.entity_id,
-        entity_version: r.entity_version,
-      };
-      let outcome: Outcome;
+    const works: WorkRow[] = rows.map((r) => ({
+      row_no: r.row_no,
+      mapped: r.mapped!,
+      dup_of: r.dup_of,
+      match_key: r.match_key,
+      match_key2: r.match_key2,
+      plan: r.plan,
+      entity_id: r.entity_id,
+      entity_version: r.entity_version,
+    }));
+    // Fast path: the whole batch in one savepoint, no savepoint per row (a savepoint per row is two statements
+    // and a sub-transaction id each). It is only trusted when every row went through; the first row that fails,
+    // or throws, undoes the batch and runs it again row by row, each row in its own savepoint.
+    let outcomes: Outcome[] | null = null;
+    if (works.length > 1) {
       try {
-        outcome = await inNamedSavepoint(tx, 'import_row', async () => {
-          const o = await handler.apply(env, work);
-          if (o.result === 'error') throw new RowRolledBack(o);
-          return o;
+        outcomes = await inNamedSavepoint(tx, 'import_batch', async () => {
+          if (handler.begin) await handler.begin(env, works);
+          const fast: Outcome[] = [];
+          for (const work of works) {
+            const o = await handler.apply(env, work);
+            if (o.result === 'error') throw new BatchNeedsRowSavepoints();
+            fast.push(o);
+          }
+          return fast;
         });
       } catch (err) {
-        if (err instanceof RowRolledBack) outcome = err.outcome;
-        else {
-          ctx.logger.error(
-            { import_id: job.id, row_no: r.row_no, err },
-            'import row failed unexpectedly',
+        if (!(err instanceof BatchNeedsRowSavepoints)) {
+          // an unexpected exception: the transaction may be poisoned; the savepoint rollback has repaired it
+          ctx.logger.warn({ import_id: job.id, err }, 'import batch retried row by row');
+        }
+        env.memo.clear(); // caches of what the undone batch created
+        outcomes = null;
+      }
+    }
+    if (outcomes === null) {
+      if (handler.begin) await handler.begin(env, works);
+      outcomes = [];
+      for (const work of works) {
+        try {
+          outcomes.push(
+            await inNamedSavepoint(tx, 'import_row', async () => {
+              const o = await handler.apply(env, work);
+              if (o.result === 'error') throw new RowRolledBack(o);
+              return o;
+            }),
           );
-          outcome = {
-            result: 'error',
-            errors: [
-              {
-                field: null,
-                code: 'internal',
-                message:
-                  'The row could not be written (unexpected error). It was skipped; try it again later.',
-              },
-            ],
-          };
+        } catch (err) {
+          if (err instanceof RowRolledBack) outcomes.push(err.outcome);
+          else {
+            ctx.logger.error(
+              { import_id: job.id, row_no: work.row_no, err },
+              'import row failed unexpectedly',
+            );
+            outcomes.push({
+              result: 'error',
+              errors: [
+                {
+                  field: null,
+                  code: 'internal',
+                  message:
+                    'The row could not be written (unexpected error). It was skipped; try it again later.',
+                },
+              ],
+            });
+          }
         }
       }
-      outcomes.push({
-        row_no: r.row_no,
+    }
+    const rowOutcomes = works.map((w, i) => {
+      const outcome = outcomes![i]!;
+      return {
+        row_no: w.row_no,
         result: outcome.result,
         result_errors: outcome.errors.length > 0 ? outcome.errors : null,
         created_id: outcome.createdId ?? null,
         before_image: outcome.before ?? null,
         warnings: outcome.warnings ?? [],
-      });
-    }
-    if (outcomes.length > 0) {
-      const json = JSON.stringify(outcomes);
+      };
+    });
+    if (rowOutcomes.length > 0) {
+      const json = JSON.stringify(rowOutcomes);
       await tx.$executeRaw`
         update app.import_row r
            set result = v.result, result_errors = v.result_errors, created_id = v.created_id,
@@ -648,7 +680,7 @@ export class ImportEngine {
                  before_image jsonb, warnings jsonb)
          where r.job_id = ${job.id}::uuid and r.row_no = v.row_no`;
     }
-    const count = (res: string) => outcomes.filter((o) => o.result === res).length;
+    const count = (res: string) => rowOutcomes.filter((o) => o.result === res).length;
     await tx.import_job.update({
       where: { id: job.id },
       data: {

@@ -21,7 +21,8 @@ export type MockModel = Rec<S['AssetModel']>;
 export type MockVendor = Rec<S['Vendor']>;
 export type MockLocation = Rec<S['Location']>;
 export type MockUserRecord = Rec<S['User']> & { invitation_expires_at?: string };
-export type MockPerson = Rec<S['Person']>;
+/** `_system`: the person the system made for a login account (the API's `created_by` null), which linking replaces. */
+export type MockPerson = Rec<S['Person']> & { _system?: boolean };
 export type MockDepartment = Rec<S['Department']>;
 export type MockAssignment = Rec<S['Assignment']>;
 /** An attachment plus what the mock storage and scanner know about it. */

@@ -71,6 +71,24 @@ export const routes = {
     `/stock/view?kind=${kind}&id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
   /** Repair log; `id` opens one repair's drawer. */
   repairs: (id?: string) => (id ? `/repairs?id=${encodeURIComponent(id)}` : '/repairs'),
+  /** Loaner dashboard: pool cards, overdue loans, recent activity. */
+  loaners: '/loaners',
+  /** The loaner desk: `lend` (default) or `return` (bulk return by scan). */
+  loanerDesk: (mode?: 'lend' | 'return') =>
+    mode === 'return' ? '/loaners/desk?mode=return' : '/loaners/desk',
+  /** Pools and the organisation's loan defaults. */
+  loanerPools: '/loaners/pools',
+  /** One pool with its devices; `show` filters them (available, on loan, overdue, due today). */
+  loanerPool: (id: string, show?: 'available' | 'on_loan' | 'overdue' | 'due_today') =>
+    `/loaners/pool?id=${encodeURIComponent(id)}${show ? `&show=${show}` : ''}`,
+  /** Past and running imports (resume one from here). */
+  imports: '/imports',
+  /** The import wizard, step 1; `entity` preselects the kind of data (the Assets page starts it with `asset`). */
+  importNew: (entity?: string) =>
+    entity ? `/imports/new?entity=${encodeURIComponent(entity)}` : '/imports/new',
+  /** One import: the wizard resumes at the step its state calls for (`step` goes back to an earlier one). */
+  importJob: (id: string, step?: 'file' | 'mapping' | 'values') =>
+    `/imports/job?id=${encodeURIComponent(id)}${step ? `&step=${step}` : ''}`,
   notificationSettings: '/account/notifications',
   /** The asset list with the progress of a label batch open (the "labels ready" notification). */
   labelBatch: (id: string) => `/assets?label_batch=${encodeURIComponent(id)}`,

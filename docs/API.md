@@ -129,7 +129,7 @@ The catalogue of codes (generated from the contract):
 
 <!-- problem-codes:start -->
 
-Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch on `code`, not on the title; the set grows over time.
+Generated from the root `x-problem-codes` of the contract: **51 codes**. Branch on `code`, not on the title; the set grows over time.
 
 | Status    | Code                        | Meaning                                                                                                                                                                                                           |
 | --------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -157,10 +157,19 @@ Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch 
 | 409       | `cannot-revoke-current`     | The current session cannot be revoked here; use sign out.                                                                                                                                                         |
 | 409       | `conflict`                  | State conflict: uniqueness violation, or the resource is in the wrong state for this action.                                                                                                                      |
 | 409       | `idempotency-key-in-flight` | A request with the same Idempotency-Key is still running.                                                                                                                                                         |
-| 409       | `import-stale-dry-run`      | The dry run being committed is not the one reviewed. _(emitted once the feature ships)_                                                                                                                           |
+| 409       | `import-stale-dry-run`      | The dry run being committed is not the one reviewed: the file, mapping, options or value mapping changed after it, or a newer dry run exists. _(emitted once the feature ships)_                                  |
+| 409       | `import-wrong-state`        | The import is not in a state that allows this action (for example a commit before a dry run, or editing a running import). `state` and `allowed` say which.                                                       |
 | 409       | `insufficient-stock`        | Not enough quantity on hand.                                                                                                                                                                                      |
+| 409       | `loan-limit-reached`        | The borrower already holds the most open loans the pool allows (`max_loans_per_person`).                                                                                                                          |
+| 409       | `loaner-pool-inactive`      | The loaner pool is switched off (`is_active = false`): it lends nothing until it is switched on again.                                                                                                            |
+| 409       | `login-already-linked`      | The login account is already linked to a person that somebody chose (not the placeholder the system made for it). Unlink that person first.                                                                       |
+| 409       | `login-person-in-use`       | The login account's own person record still holds assets, so it cannot be replaced by the person being linked: check them in or transfer them first (`usage.open_assignments`).                                   |
 | 409       | `mfa-already-enrolled`      | The user already has an active TOTP factor; disable it first.                                                                                                                                                     |
-| 409       | `no-loaner-available`       | The loaner pool has no available member. _(emitted once the feature ships)_                                                                                                                                       |
+| 409       | `no-loaner-available`       | The loaner pool has no available member.                                                                                                                                                                          |
+| 409       | `person-already-linked`     | The person is already linked to a login account (the same or another one). Unlink it first.                                                                                                                       |
+| 409       | `undo-asset-changed`        | The asset changed after the action (another custody action, an edit, a move...), so it can no longer be undone.                                                                                                   |
+| 409       | `undo-expired`              | More than five minutes have passed since the custody action, so it can no longer be undone.                                                                                                                       |
+| 409       | `undo-not-possible`         | The action cannot be undone: it was already undone, the previous holder or status is no longer available, or it is loaner custody.                                                                                |
 | 409       | `upload-missing`            | The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete.                                                                                                           |
 | 410       | `invitation-expired`        | The invitation has expired; ask an administrator to resend it.                                                                                                                                                    |
 | 410       | `token-expired`             | The password-reset token has expired; request a new one. Also: a local-storage file link (`/v1/files/{token}`) whose lifetime ended.                                                                              |
@@ -171,6 +180,7 @@ Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch 
 | 422       | `validation`                | Validation failed; see errors[] (JSON pointer + message + field code).                                                                                                                                            |
 | 428       | `precondition-required`     | `If-Match` is required for this operation.                                                                                                                                                                        |
 | 429       | `account-locked`            | Too many failed sign-in or re-authentication attempts; locked until Retry-After elapses.                                                                                                                          |
+| 429       | `import-quota-exceeded`     | The organisation already runs the maximum number of imports at once; retry after the time in `Retry-After`.                                                                                                       |
 | 429       | `too-many-requests`         | Rate limit exceeded; wait for Retry-After.                                                                                                                                                                        |
 | 500       | `internal`                  | Unexpected server error; quote request_id.                                                                                                                                                                        |
 | 503       | `unavailable`               | A dependency is down or the service is starting.                                                                                                                                                                  |
@@ -195,7 +205,7 @@ The typed client never records or replays ETags for `POST` action paths.
 Every mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) accepts an `Idempotency-Key` header: 8 to 255 printable ASCII
 characters, client generated (a UUID is fine), unique per principal. It is **required** (`400 idempotency-key-required`
 without it) on asset check-out, check-in and transfer, accessory check-out and return, consumable stock movements, label
-batches, loaner quick check-out and import commit; the catalogue marks
+batches, loaner check-out, quick check-out and quick return, and import commit; the catalogue marks
 these with "Idempotency-Key" in the Requires column. Rules:
 
 - Same key, same method, path and body: the stored response is replayed with the original status, `ETag` and `Location`, and
@@ -226,7 +236,8 @@ filters that produced it; changing them or sending a garbled cursor is `400 inva
   Both are listed per endpoint in the contract.
 - **Bulk** operations (for example `POST /v1/assets/bulk-update`, `bulk-archive`, `bulk-restore`, `bulk-move`) take up to
   100 items and answer `200` with a result per item in request order: `{ results: [{ index, status, data | error }], summary }`.
-  The HTTP status is `200` whenever the request itself was well formed; read the item outcomes in the body.
+  The HTTP status is `200` whenever the request itself was well formed; read the item outcomes in the body. The loaner
+  scan flows (`quick-checkout`, `loans/return`, pool `members/bulk-add` and `bulk-remove`) follow the same convention.
 
 ### 3.6 Request ids
 
@@ -243,7 +254,8 @@ What is enforced today:
   from one IP, `429 too-many-requests`. Both send `Retry-After`. Password-reset requests and invitation lookups are throttled the
   same way.
 - **Scan-resolve enumeration guard.** `GET /v1/scan/resolve` answers `429` after 60 lookups that match nothing within the
-  window, per signed-in principal.
+  window, per signed-in principal. The loaner scan flows (`POST /v1/loaner-pools/{id}/quick-checkout`,
+  `POST /v1/loans/return`) count their unknown codes towards the same limit.
 - The client address comes from `X-Forwarded-For` only when the operator sets `TRUST_PROXY` to the proxies in front of the API
   (default: nobody is trusted, so a forged header is ignored).
 
@@ -304,8 +316,8 @@ Authorisation is deny by default: a route without a declared access rule is refu
 | `view:share`          |      yes      |      yes      |     -      |    -    |   -    |
 
 This table is the catalogue in `apps/api/src/auth/permissions.ts`; a unit test fails when it drifts from the contract's
-`x-permission` values and an end-to-end test fails when it drifts from the roles the database seeds. Some permissions
-(`loaner:*`, `import:*`) are already in the catalogue for features that are not built yet.
+`x-permission` values and an end-to-end test fails when it drifts from the roles the database seeds. The permissions
+`import:*` are already in the catalogue for a feature that is not built yet.
 
 - **Grant rules.** Nobody can hand out a role holding permissions they do not hold themselves; a user manager cannot change,
   archive or reset a more privileged user; the last active administrator cannot be demoted, disabled or archived (`409`).
@@ -321,7 +333,7 @@ Grouped by contract tag. Tags marked "contract only" are specified but have no r
 
 <!-- api-catalogue:start -->
 
-Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **179 operations on 117 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
+Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **203 operations on 136 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
 
 "Requires" lists headers that are mandatory for that operation beyond the credential: `If-Match` (stale or missing gives `412` / `428`) and `Idempotency-Key` (missing gives `400 idempotency-key-required`).
 
@@ -418,11 +430,14 @@ The asset registry: CRUD, search, scan resolution and history.
 
 Check-out, check-in and transfer of assets.
 
-| Method | Path                       | Permission       | Requires        | Purpose                           |
-| ------ | -------------------------- | ---------------- | --------------- | --------------------------------- |
-| POST   | `/v1/assets/{id}/checkin`  | `asset:checkin`  | Idempotency-Key | Check in an asset                 |
-| POST   | `/v1/assets/{id}/checkout` | `asset:checkout` | Idempotency-Key | Check out an asset                |
-| POST   | `/v1/assets/{id}/transfer` | `asset:transfer` | Idempotency-Key | Transfer an asset to a new holder |
+| Method | Path                           | Permission       | Requires                  | Purpose                                  |
+| ------ | ------------------------------ | ---------------- | ------------------------- | ---------------------------------------- |
+| POST   | `/v1/assets/{id}/checkin`      | `asset:checkin`  | Idempotency-Key           | Check in an asset                        |
+| POST   | `/v1/assets/{id}/checkout`     | `asset:checkout` | Idempotency-Key           | Check out an asset                       |
+| POST   | `/v1/assets/{id}/transfer`     | `asset:transfer` | Idempotency-Key           | Transfer an asset to a new holder        |
+| POST   | `/v1/assets/{id}/undo-custody` | `asset:checkout` | If-Match, Idempotency-Key | Undo the last custody action of an asset |
+| GET    | `/v1/settings/custody`         | `catalog:read`   | -                         | Get the custody settings                 |
+| PUT    | `/v1/settings/custody`         | `catalog:manage` | If-Match                  | Replace the custody settings             |
 
 ### Categories
 
@@ -512,15 +527,17 @@ Hierarchical locations.
 
 Assignable people (employees, students, contractors), with or without a login.
 
-| Method | Path                          | Permission      | Requires | Purpose                         |
-| ------ | ----------------------------- | --------------- | -------- | ------------------------------- |
-| GET    | `/v1/people`                  | `person:read`   | -        | List people                     |
-| POST   | `/v1/people`                  | `person:manage` | -        | Create person                   |
-| GET    | `/v1/people/{id}`             | `person:read`   | -        | Get person                      |
-| PATCH  | `/v1/people/{id}`             | `person:manage` | If-Match | Update person                   |
-| DELETE | `/v1/people/{id}`             | `person:manage` | If-Match | Archive person                  |
-| GET    | `/v1/people/{id}/assignments` | `person:read`   | -        | What is checked out to a person |
-| GET    | `/v1/people/{id}/history`     | `person:read`   | -        | Chain of custody of a person    |
+| Method | Path                          | Permission      | Requires | Purpose                                |
+| ------ | ----------------------------- | --------------- | -------- | -------------------------------------- |
+| GET    | `/v1/people`                  | `person:read`   | -        | List people                            |
+| POST   | `/v1/people`                  | `person:manage` | -        | Create person                          |
+| GET    | `/v1/people/{id}`             | `person:read`   | -        | Get person                             |
+| PATCH  | `/v1/people/{id}`             | `person:manage` | If-Match | Update person                          |
+| DELETE | `/v1/people/{id}`             | `person:manage` | If-Match | Archive person                         |
+| GET    | `/v1/people/{id}/assignments` | `person:read`   | -        | What is checked out to a person        |
+| GET    | `/v1/people/{id}/history`     | `person:read`   | -        | Chain of custody of a person           |
+| POST   | `/v1/people/{id}/link-user`   | `user:manage`   | -        | Link a person to a login account       |
+| DELETE | `/v1/people/{id}/link-user`   | `user:manage`   | -        | Unlink a person from its login account |
 
 ### Departments
 
@@ -566,22 +583,28 @@ Quantity-tracked items that are used up, with a stock ledger.
 
 ### Loaners
 
-> **Contract only (planned for M2 wave 3, stories LOAN-01..04).** These operations are specified in the contract but have no routes in the running API yet.
-
 Loaner pools: spare devices with quick check-out, due dates and overdue tracking.
 
-| Method | Path                                       | Permission        | Requires        | Purpose                       |
-| ------ | ------------------------------------------ | ----------------- | --------------- | ----------------------------- |
-| GET    | `/v1/loaner-pools`                         | `loaner:read`     | -               | List loaner pools             |
-| POST   | `/v1/loaner-pools`                         | `loaner:manage`   | -               | Create loaner pool            |
-| GET    | `/v1/loaner-pools/{id}`                    | `loaner:read`     | -               | Get loaner pool               |
-| PATCH  | `/v1/loaner-pools/{id}`                    | `loaner:manage`   | If-Match        | Update loaner pool            |
-| DELETE | `/v1/loaner-pools/{id}`                    | `loaner:manage`   | If-Match        | Archive loaner pool           |
-| POST   | `/v1/loaner-pools/{id}/checkout`           | `loaner:checkout` | Idempotency-Key | Quick loan from the pool      |
-| GET    | `/v1/loaner-pools/{id}/members`            | `loaner:read`     | -               | List pool members             |
-| POST   | `/v1/loaner-pools/{id}/members`            | `loaner:manage`   | -               | Add an asset to the pool      |
-| DELETE | `/v1/loaner-pools/{id}/members/{asset_id}` | `loaner:manage`   | -               | Remove an asset from the pool |
-| GET    | `/v1/loans/overdue`                        | `loaner:read`     | -               | Overdue check-outs            |
+| Method | Path                                        | Permission        | Requires        | Purpose                                            |
+| ------ | ------------------------------------------- | ----------------- | --------------- | -------------------------------------------------- |
+| GET    | `/v1/loaner-pools`                          | `loaner:read`     | -               | List loaner pools                                  |
+| POST   | `/v1/loaner-pools`                          | `loaner:manage`   | -               | Create loaner pool                                 |
+| GET    | `/v1/loaner-pools/{id}`                     | `loaner:read`     | -               | Get loaner pool                                    |
+| PATCH  | `/v1/loaner-pools/{id}`                     | `loaner:manage`   | If-Match        | Update loaner pool                                 |
+| DELETE | `/v1/loaner-pools/{id}`                     | `loaner:manage`   | If-Match        | Archive loaner pool                                |
+| POST   | `/v1/loaner-pools/{id}/checkout`            | `loaner:checkout` | Idempotency-Key | Quick loan from the pool                           |
+| GET    | `/v1/loaner-pools/{id}/members`             | `loaner:read`     | -               | List pool members                                  |
+| POST   | `/v1/loaner-pools/{id}/members`             | `loaner:manage`   | -               | Add an asset to the pool                           |
+| DELETE | `/v1/loaner-pools/{id}/members/{asset_id}`  | `loaner:manage`   | -               | Remove an asset from the pool                      |
+| POST   | `/v1/loaner-pools/{id}/members/bulk-add`    | `loaner:manage`   | -               | Add many assets to the pool                        |
+| POST   | `/v1/loaner-pools/{id}/members/bulk-remove` | `loaner:manage`   | -               | Remove many assets from the pool                   |
+| POST   | `/v1/loaner-pools/{id}/quick-checkout`      | `loaner:checkout` | Idempotency-Key | Quick loan by scanning: one borrower, many devices |
+| GET    | `/v1/loaners/dashboard`                     | `loaner:read`     | -               | Loaner dashboard                                   |
+| GET    | `/v1/loans`                                 | `loaner:read`     | -               | List loans                                         |
+| GET    | `/v1/loans/{id}`                            | `loaner:read`     | -               | Get a loan                                         |
+| POST   | `/v1/loans/{id}/extend`                     | `loaner:checkout` | -               | Extend a loan                                      |
+| GET    | `/v1/loans/overdue`                         | `loaner:read`     | -               | Overdue check-outs                                 |
+| POST   | `/v1/loans/return`                          | `loaner:checkout` | Idempotency-Key | Quick return by scanning (one or many devices)     |
 
 ### Repairs
 
@@ -614,18 +637,29 @@ Fixed label templates and PDF label sheets.
 
 > **Contract only (planned for M2 wave 3, stories IMP-01..09).** These operations are specified in the contract but have no routes in the running API yet.
 
-CSV/XLSX/Snipe-IT/Google Admin imports with a mandatory dry run.
+CSV/XLSX imports (assets, people, locations, departments; Google Admin ChromeOS preset) with a mandatory dry run.
 
-| Method | Path                       | Permission    | Requires        | Purpose                        |
-| ------ | -------------------------- | ------------- | --------------- | ------------------------------ |
-| GET    | `/v1/imports`              | `import:read` | -               | List import jobs               |
-| POST   | `/v1/imports`              | `import:run`  | -               | Create an import job           |
-| GET    | `/v1/imports/{id}`         | `import:read` | -               | Get an import job              |
-| PATCH  | `/v1/imports/{id}`         | `import:run`  | If-Match        | Edit mapping and options       |
-| POST   | `/v1/imports/{id}/cancel`  | `import:run`  | -               | Cancel an import job           |
-| POST   | `/v1/imports/{id}/commit`  | `import:run`  | Idempotency-Key | Commit a reviewed dry run      |
-| POST   | `/v1/imports/{id}/dry-run` | `import:run`  | -               | Run the import without writing |
-| GET    | `/v1/imports/{id}/rows`    | `import:read` | -               | Per-row results                |
+| Method | Path                                 | Permission    | Requires        | Purpose                                 |
+| ------ | ------------------------------------ | ------------- | --------------- | --------------------------------------- |
+| GET    | `/v1/import-templates`               | `import:read` | -               | Saved mapping templates                 |
+| POST   | `/v1/import-templates`               | `import:run`  | -               | Save a mapping as a template            |
+| GET    | `/v1/import-templates/{id}`          | `import:read` | -               | Get a mapping template                  |
+| PATCH  | `/v1/import-templates/{id}`          | `import:run`  | If-Match        | Edit a mapping template                 |
+| DELETE | `/v1/import-templates/{id}`          | `import:run`  | If-Match        | Delete a mapping template               |
+| GET    | `/v1/imports`                        | `import:read` | -               | List imports                            |
+| POST   | `/v1/imports`                        | `import:run`  | -               | Create an import                        |
+| GET    | `/v1/imports/{id}`                   | `import:read` | -               | Get an import                           |
+| PATCH  | `/v1/imports/{id}`                   | `import:run`  | If-Match        | Edit mapping, options and value mapping |
+| POST   | `/v1/imports/{id}/analyze`           | `import:run`  | -               | Read and profile the uploaded file      |
+| POST   | `/v1/imports/{id}/apply-template`    | `import:run`  | -               | Apply a saved mapping template          |
+| POST   | `/v1/imports/{id}/cancel`            | `import:run`  | -               | Cancel an import                        |
+| POST   | `/v1/imports/{id}/commit`            | `import:run`  | Idempotency-Key | Commit a reviewed dry run               |
+| POST   | `/v1/imports/{id}/dry-run`           | `import:run`  | -               | Run the import without writing          |
+| GET    | `/v1/imports/{id}/errors.csv`        | `import:run`  | -               | Download the error report               |
+| GET    | `/v1/imports/{id}/rows`              | `import:run`  | -               | Per-row results                         |
+| GET    | `/v1/imports/{id}/values`            | `import:run`  | -               | Distinct values of a reference column   |
+| GET    | `/v1/imports/presets`                | `import:read` | -               | Built-in import presets                 |
+| GET    | `/v1/imports/presets/{key}/template` | `import:read` | -               | Download a template file                |
 
 ### Attachments
 

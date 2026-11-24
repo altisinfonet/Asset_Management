@@ -344,7 +344,9 @@ export class AttachmentsService {
         row.storage_key,
         Math.min(info.sizeBytes, SNIFF_BYTES),
       );
-      const sniffed = type ? await sniffContent(head, type) : null;
+      const sniffed = type
+        ? await sniffContent(head, type, { importFile: row.kind === 'import_file' })
+        : null;
       if (!sniffed || !sniffed.ok) {
         const reason = sniffed && !sniffed.ok ? sniffed.reason : 'This file type is not accepted.';
         return this.reject(

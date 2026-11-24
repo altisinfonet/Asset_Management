@@ -48,12 +48,11 @@ const YAML = await loadYaml();
 // Tags that are in the contract but have no routes in the running API yet. Edit this list when one
 // ships (the route-rules test requires every other tag to be implemented). Value = where it lands.
 const CONTRACT_ONLY = {
-  Loaners: 'planned for M2 wave 3, stories LOAN-01..04',
   Imports: 'planned for M2 wave 3, stories IMP-01..09',
   Audit: 'planned for M5 with the audit log screen, story AUD-01',
 };
 // Problem codes that the running API does not emit yet (their feature is contract only).
-const CODES_NOT_EMITTED = new Set(['no-loaner-available', 'import-stale-dry-run']);
+const CODES_NOT_EMITTED = new Set(['import-stale-dry-run']);
 
 const METHOD_ORDER = ['get', 'post', 'put', 'patch', 'delete'];
 const doc = YAML.parse(fs.readFileSync(SPEC, 'utf8'));

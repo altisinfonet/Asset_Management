@@ -174,6 +174,7 @@ export class DepartmentsService extends RegistryBase {
   async create(
     auth: AuthContext,
     body: DepartmentCreate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -197,6 +198,7 @@ export class DepartmentsService extends RegistryBase {
         await this.record(trx, {
           entity: 'department',
           verb: 'created',
+          ...(meta ? { meta } : {}),
           id: row.id,
           version: row.version,
           before: null,
@@ -214,6 +216,7 @@ export class DepartmentsService extends RegistryBase {
     id: string,
     ifMatch: IfMatch,
     body: DepartmentUpdate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -259,6 +262,7 @@ export class DepartmentsService extends RegistryBase {
         await this.record(trx, {
           entity: 'department',
           verb: 'updated',
+          ...(meta ? { meta } : {}),
           id,
           version: updated.version,
           before: auditView(await this.view(trx, row)),

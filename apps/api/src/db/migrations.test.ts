@@ -45,9 +45,9 @@ describe('shipped migrations', async () => {
     ]) {
       expect(tables).toContain(`app.${wave2}`);
     }
-    // built by the other M2 agents (imports): not in this range
-    for (const later of ['import_job']) {
-      expect(tables).not.toContain(`app.${later}`);
+    // M2 wave 3, imports (migration 0110)
+    for (const imports of ['import_job', 'import_row', 'import_template']) {
+      expect(tables).toContain(`app.${imports}`);
     }
     for (const m1 of [
       'tenant',

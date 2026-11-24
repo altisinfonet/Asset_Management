@@ -42,6 +42,8 @@ export const FACADE_MODULES = [
   'notifications',
   'views',
   'exports',
+  // M2 wave 3 (imports)
+  'importer',
 ];
 /** Platform kernel directories (may import each other's facades, never domain/application code). */
 export const KERNEL_DIRS = [

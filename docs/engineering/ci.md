@@ -137,6 +137,18 @@ PERF_REQUIRE_REGISTRY=1 PERF_BASE_URL=http://127.0.0.1:3000 node scripts/ci/perf
 docker compose -f docker-compose.yml -f docker/compose.ci.yml -p atperf down -v
 ```
 
+### In-process performance suites (apps/api/test/perf): `PERF`
+
+The registry, custody, global search and import suites (`registry-perf.e2e.test.ts`, `import-perf.e2e.test.ts`)
+measure through `app.inject` and run in the ordinary API e2e job too, where six test files share one database
+and a loaded machine can push a p95 to several times its budget while the same test passes alone. They
+therefore **record** their numbers (the table printed at the end of the run, `test-results/registry-perf.json`,
+`import-perf.json`) and assert only a generous sanity ceiling (10 times the budget) unless the environment
+variable `PERF` is set. The nightly `perf.yml` runs `pnpm --filter @assettracker/api test:e2e test/perf` against
+its stack with `PERF=1` (and `IMPORT_PERF_ROWS=100000`), which enforces the real budgets (list < 500 ms, search
+< 200 ms, lookup < 150 ms, custody < 300 ms, import throughput gates). To enforce them locally: `PERF=1 pnpm
+--filter @assettracker/api test:e2e test/perf` on a quiet machine.
+
 ## 5. Compose smoke test (M1-CI-04)
 
 `scripts/ci/compose-smoke.sh` is the same script CI runs. It builds the api image once if missing

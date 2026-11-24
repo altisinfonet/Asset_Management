@@ -23,6 +23,7 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import { findAssetByCode, scanCandidates } from './asset-codes.js';
 import { AssetRefs } from './asset-refs.js';
 import { type AssetAction, assertAssetAction, refuseAssetAction } from './asset-actions.js';
 import { listHistory, writeAssetHistory, type HistoryEventDto } from './asset-history.js';
@@ -37,7 +38,6 @@ import {
   assetListSql,
   assetSortTerms,
   loadAsset,
-  loadAssetRows,
   lockAsset,
   pickFields,
   withStatus,
@@ -80,6 +80,8 @@ type Expandable = 'model' | 'category' | 'vendor' | 'location' | 'department';
 export interface AssetWithVersion {
   asset: AssetDto;
   version: number;
+  /** Dry runs of an update only (M2-IMP-04): the columns the update would change. */
+  changed?: string[];
 }
 
 const toDate = (v: string | null | undefined): Date | null | undefined =>
@@ -153,7 +155,7 @@ export class AssetsFacade extends RegistryBase {
     for (const name of M2_ONLY_ASSET_FILTERS) {
       if (rest[name] !== undefined) {
         throw problem.badRequest(
-          `Query parameter "${name}" needs the loaner pools (a later M2 story) and is not available yet.`,
+          `Query parameter "${name}" needs a table a later M2 story builds and is not available yet.`,
           [{ pointer: `query:${name}`, message: 'not available yet', code: 'not-supported' }],
         );
       }
@@ -327,42 +329,15 @@ export class AssetsFacade extends RegistryBase {
 
   /** `GET /v1/scan/resolve`: the opaque QR `label_code` or a Code128 `asset_tag`. */
   async resolveScan(auth: AuthContext, rawCode: string) {
-    // The whole code first (a tag may contain "/"); a label URL then yields its last path segment.
-    const whole = rawCode.trim();
-    const candidates = [whole];
-    if (/^(https?:\/\/|\/)/i.test(whole)) {
-      const last = whole.split(/[?#]/)[0]!.split('/').filter(Boolean).pop();
-      if (last && last !== whole) candidates.push(last);
-    }
+    const candidates = scanCandidates(rawCode);
     await this.scanThrottle.assertAllowed(auth);
     const found = await this.tx(auth, async (trx) => {
-      let matchType: 'label_code' | 'asset_tag' | 'serial' = 'label_code';
-      let row: AssetRow | undefined;
-      for (const code of candidates) {
-        matchType = 'label_code';
-        [row] = await loadAssetRows(trx, Prisma.sql`a.label_code = ${code}`, 1);
-        if (!row) {
-          matchType = 'asset_tag';
-          [row] = await loadAssetRows(trx, Prisma.sql`a.asset_tag_key = lower(${code})`, 1);
-        }
-        if (!row) {
-          // The serial number printed on the device. Not unique per tenant: an ambiguous one is
-          // refused rather than guessed (a wrong asset must never be checked out by a scan).
-          matchType = 'serial';
-          const bySerial = await loadAssetRows(trx, Prisma.sql`a.serial_key = lower(${code})`, 2);
-          if (bySerial.length > 1) {
-            throw problem.conflict(
-              'Several assets share this serial number. Scan the label or enter the asset tag instead.',
-            );
-          }
-          row = bySerial[0];
-        }
-        if (row) break;
-      }
-      if (!row) {
+      const hit = await findAssetByCode(trx, candidates);
+      if (!hit) {
         // [M2-W2 ACC] labelled records of other modules (accessories, consumables)
         return this.scanResolvers.resolve(auth, trx, candidates);
       }
+      const { row, matchType } = hit;
       // Actions valid in the asset's current state AND for the caller (contract order).
       const allowed: string[] = [];
       const state = {
@@ -409,6 +384,7 @@ export class AssetsFacade extends RegistryBase {
     body: AssetCreate,
     meta?: Record<string, unknown>,
     pointerBase = '',
+    options: { dryRun?: boolean } = {},
   ): Promise<AssetWithVersion> {
     const refs = AssetRefs.for(trx);
     const errors: FieldError[] = [];
@@ -445,17 +421,20 @@ export class AssetsFacade extends RegistryBase {
     if (errors.length > 0) throw problem.validation(errors);
 
     const manual = body.asset_tag !== undefined;
-    let tag: string;
+    let tag = '';
     if (manual) {
       tag = body.asset_tag!;
       if (await tagExists(trx, tag)) throw this.tagTaken(tag, pointerBase);
-    } else {
-      tag = await this.tags.allocate(trx, category!.tag_prefix);
     }
+    // M2-IMP-04: a dry run stops here, after every check and before the first write (an automatic tag is
+    // only allocated on the real path: there is nothing to number).
+    if (options.dryRun) return { asset: undefined as never, version: 0 };
+    if (!manual) tag = await this.tags.allocate(trx, category!.tag_prefix);
 
     const id = uuidv7();
+    let created: Awaited<ReturnType<Tx['asset']['create']>>;
     try {
-      await trx.asset.create({
+      created = await trx.asset.create({
         data: {
           id,
           tenant_id: auth.tenantId,
@@ -490,7 +469,14 @@ export class AssetsFacade extends RegistryBase {
       }
       throw err;
     }
-    const row = (await loadAsset(trx, id))!;
+    // The row just written is the row to answer with: a brand-new asset is in no custody and its status label
+    // is the one validated above, so nothing needs to be read back (three queries saved per created asset).
+    const row = {
+      ...created,
+      status_name: status!.name,
+      status_state_type: status!.state_type,
+      assignment: null,
+    } as unknown as AssetRow;
     const dto = assetDto(row);
     await this.record(trx, {
       entity: 'asset',
@@ -510,6 +496,7 @@ export class AssetsFacade extends RegistryBase {
         status_id: row.status_id,
         location_id: row.location_id,
         ...(meta?.cloned_from ? { cloned_from: meta.cloned_from } : {}),
+        ...(meta?.import_job_id ? { import_job_id: meta.import_job_id } : {}),
       },
     });
     return { asset: dto, version: row.version };
@@ -536,6 +523,7 @@ export class AssetsFacade extends RegistryBase {
     current: AssetRow,
     body: AssetUpdate,
     meta?: Record<string, unknown>,
+    options: { dryRun?: boolean } = {},
   ): Promise<AssetWithVersion> {
     if (current.archived_at) {
       throw problem.conflict('The asset is archived. Restore it before changing it.');
@@ -681,8 +669,13 @@ export class AssetsFacade extends RegistryBase {
     if (body.external_id !== undefined) set('external_id', body.external_id);
     if (body.custom_data !== undefined || categoryChanged) set('custom_data', nextCustom);
 
-    if (Object.keys(data).length === 0)
-      return { asset: assetDto(current), version: current.version };
+    if (Object.keys(data).length === 0) {
+      return { asset: assetDto(current), version: current.version, changed: [] };
+    }
+    // M2-IMP-04: a dry run reports what would change and writes nothing.
+    if (options.dryRun) {
+      return { asset: assetDto(current), version: current.version, changed: Object.keys(data) };
+    }
 
     const result = await trx.asset.updateMany({
       where: { id: current.id, version: current.version },

@@ -1,8 +1,16 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { BulkResultsDialog } from '@/app/(app)/assets/bulk-dialogs';
+import { useUndoToast, type UndoItem } from '@/components/custody/use-undo-toast';
 import { UploadSlot } from '@/components/files/upload-slot';
 import { AssetStatusBadge } from '@/components/registry/asset-details';
 import { LocationPicker } from '@/components/registry/location-picker';
@@ -21,7 +29,6 @@ import { Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -29,13 +36,15 @@ import {
   availableActions,
   CONDITIONS,
   createKeyKeeper,
+  dateAfter,
   holderOf,
   today,
   type Condition,
   type CustodyAction,
 } from '@/lib/custody/helpers';
 import { uiErrorText } from '@/lib/error-text';
-import { assetsApi, custodyApi } from '@/lib/registry/api';
+import { useCustodySettings } from '@/lib/loaners/queries';
+import { assetsApi, custodyApi, type CustodyOutcome } from '@/lib/registry/api';
 import type { BulkResult } from '@/lib/registry/bulk';
 import { useLookups, type Lookups } from '@/lib/registry/queries';
 import type {
@@ -321,10 +330,21 @@ function PhotoField({
   );
 }
 
+/** What Undo needs of one finished action (M2-UX-02). */
+const undoItem = (
+  asset: Asset,
+  done: CustodyOutcome<{ assignment: { id: string } }>,
+): UndoItem => ({
+  assetId: asset.id,
+  assetTag: asset.asset_tag,
+  etag: done.etag,
+  assignmentId: done.result.assignment.id,
+});
+
 /** Shared mechanics of the three forms: submit state, the banner for an error, refresh after success. */
 function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: FormProps) {
   const { t } = useI18n();
-  const { toast } = useToast();
+  const offerUndo = useUndoToast();
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   // The refusal and the version of the asset it was about: a reload (new ETag) makes it obsolete.
@@ -356,10 +376,10 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
    * Run `call` for the asset (or each asset of a bulk action) and report. `describe` is the toast
    * text of one success. Returns after closing the dialog on success.
    */
-  const submit = async <R,>(
+  const submit = async <R extends { assignment: { id: string } }>(
     body: object,
-    call: (asset: Asset, key: string, etag: string | undefined) => Promise<R>,
-    describe: (asset: Asset, result: R) => string,
+    call: (asset: Asset, key: string, etag: string | undefined) => Promise<CustodyOutcome<R>>,
+    describe: (asset: Asset) => string,
     bulkDone: (count: number) => string,
   ) => {
     setBusy(true);
@@ -369,20 +389,22 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
     try {
       if (assets.length === 1) {
         const target = assets[0]!;
-        const result = await call(target, keeper.current.keyFor(body), etag);
+        const done = await call(target, keeper.current.keyFor(body), etag);
         keeper.current.renew();
         await refresh();
-        toast({ variant: 'success', title: describe(target, result) });
+        offerUndo(describe(target), [undoItem(target, done)]);
         onDone?.();
         onClose();
         return;
       }
       const outcome: BulkResult[] = [];
+      const undoable: UndoItem[] = [];
       for (const item of assets) {
         const keyKeeper = bulkKeys.current.get(item.id) ?? createKeyKeeper();
         bulkKeys.current.set(item.id, keyKeeper);
         try {
-          await call(item, keyKeeper.keyFor(body), undefined);
+          const done = await call(item, keyKeeper.keyFor(body), undefined);
+          undoable.push(undoItem(item, done));
           bulkKeys.current.delete(item.id);
           outcome.push({ item: { id: item.id, label: item.asset_tag }, ok: true });
         } catch (err) {
@@ -397,10 +419,12 @@ function useCustodyFlow({ assets, asset, etag, onClose, onDone, onReload }: Form
       const failed = outcome.filter((r) => !r.ok);
       if (outcome.length > failed.length) onDone?.();
       if (failed.length === 0) {
-        toast({ variant: 'success', title: bulkDone(outcome.length) });
+        offerUndo(bulkDone(outcome.length), undoable);
         onClose();
       } else {
         setResults(outcome);
+        // the ones that went through can still be taken back
+        offerUndo(bulkDone(undoable.length), undoable);
       }
     } catch (err) {
       const ui = getApi().toUiError(err);
@@ -554,6 +578,23 @@ function NoteField({
   );
 }
 
+/**
+ * Pre-fills the expected return with the organisation's default (`default_expected_return_days` of
+ * `GET /v1/settings/custody`: today plus N days). Only a hint: the API never applies it, the person
+ * can change or clear the date, and a date typed before the setting arrived is left alone.
+ */
+function useDefaultReturn(expected: string, setExpected: (value: string) => void) {
+  const { can } = useAuth();
+  const settings = useCustodySettings(can('catalog:read'));
+  const days = settings.data?.value.default_expected_return_days ?? null;
+  const applied = useRef(false);
+  useEffect(() => {
+    if (applied.current || !days || expected) return;
+    applied.current = true;
+    setExpected(dateAfter({ days }));
+  }, [days, expected, setExpected]);
+}
+
 // ---- check out -------------------------------------------------------------------------------------
 
 function CheckoutForm(props: FormProps) {
@@ -562,6 +603,7 @@ function CheckoutForm(props: FormProps) {
   const [target, setTarget] = useState<TargetState>(EMPTY_TARGET);
   const single = props.assets.length === 1;
   const [expected, setExpected] = useState('');
+  useDefaultReturn(expected, setExpected);
   const [statusId, setStatusId] = useState('');
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
@@ -596,8 +638,7 @@ function CheckoutForm(props: FormProps) {
           : (target.asset?.label ?? '');
     void flow.submit<CustodyResult>(
       body,
-      (asset, key, etag) =>
-        custodyApi.checkout(asset.id, body, { idempotencyKey: key, etag }).then((o) => o.result),
+      (asset, key, etag) => custodyApi.checkout(asset.id, body, { idempotencyKey: key, etag }),
       (asset) => t('custody.toast.checkedOut', { tag: asset.asset_tag, name: who }),
       (count) => t('custody.toast.bulkCheckedOut', { count, name: who }),
     );
@@ -687,8 +728,7 @@ function CheckinForm(props: FormProps) {
     };
     void flow.submit<CustodyResult>(
       body,
-      (asset, key, etag) =>
-        custodyApi.checkin(asset.id, body, { idempotencyKey: key, etag }).then((o) => o.result),
+      (asset, key, etag) => custodyApi.checkin(asset.id, body, { idempotencyKey: key, etag }),
       (asset) => t('custody.toast.checkedIn', { tag: asset.asset_tag }),
       (count) => t('custody.toast.bulkCheckedIn', { count }),
     );
@@ -775,6 +815,7 @@ function TransferForm(props: FormProps) {
   const [target, setTarget] = useState<TargetState>(EMPTY_TARGET);
   const [toLocation, setToLocation] = useState('');
   const [expected, setExpected] = useState('');
+  useDefaultReturn(expected, setExpected);
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
@@ -807,8 +848,7 @@ function TransferForm(props: FormProps) {
           : (target.asset?.label ?? '');
     void flow.submit<TransferResult>(
       body,
-      (asset, key, etag) =>
-        custodyApi.transfer(asset.id, body, { idempotencyKey: key, etag }).then((o) => o.result),
+      (asset, key, etag) => custodyApi.transfer(asset.id, body, { idempotencyKey: key, etag }),
       (asset) => t('custody.toast.transferred', { tag: asset.asset_tag, name: who }),
       (count) => t('custody.toast.bulkCheckedOut', { count, name: who }),
     );

@@ -9,6 +9,37 @@ async function choose(page: Page, label: RegExp | string, option: RegExp | strin
   await page.getByRole('option', { name: option }).click();
 }
 
+test.describe('login accounts and their people (M2-USR-03)', () => {
+  test('shows the person of each login, links one to a person without a login and unlinks it', async ({
+    page,
+  }) => {
+    await page.goto('/settings/users');
+    const marco = page.getByRole('row', { name: /Marco Secure/ });
+    await expect(marco).toContainText('None');
+    await expect(
+      page.getByRole('row', { name: /Alice Owner/ }).getByRole('link', { name: 'Alice Owner' }),
+    ).toBeVisible();
+
+    await marco.getByRole('button', { name: /Actions for Marco Secure/ }).click();
+    await page.getByRole('menuitem', { name: 'Link to a person' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Link Marco Secure to a person' });
+    await dialog.getByRole('combobox', { name: /Person/ }).fill('Jamie');
+    await page
+      .getByRole('option', { name: /Jamie Okafor/ })
+      .first()
+      .click();
+    await expect(dialog.getByText(/Jamie Okafor will sign in as mfa@example\.org/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Link login' }).click();
+    await expect(marco.getByRole('link', { name: 'Jamie Okafor' })).toBeVisible();
+
+    await marco.getByRole('button', { name: /Actions for Marco Secure/ }).click();
+    await page.getByRole('menuitem', { name: 'Unlink person' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Unlink Jamie Okafor from their login?' });
+    await confirm.getByRole('button', { name: 'Unlink' }).click();
+    await expect(marco.getByRole('link', { name: 'Jamie Okafor' })).toHaveCount(0);
+  });
+});
+
 test.describe('users and invitations', () => {
   test('invites a user, who then waits under Pending invitations', async ({ page }) => {
     await page.goto('/settings/users');

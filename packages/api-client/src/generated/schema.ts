@@ -186,6 +186,8 @@ export interface paths {
          * List and search assets
          * @description The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.
          *
+         *     [M2-REG-03, ED-22] `sort` also takes `location` (the full location path, `HQ > Floor 2 > Room 4`, case-insensitive), `assignee` (the name of whoever holds the asset: person, location or asset tag, case-insensitive) and `due` (the expected return date of the open custody). For these three keys an asset with no value (no location, not checked out, no expected return) is listed **last in both directions**, ordered by `id` among themselves, so a page boundary never splits or repeats rows. The other keys keep sorting an empty value as the smallest. Cursors are bound to the sort: a cursor of another sort is 400 `invalid-cursor`.
+         *
          *     Requires permission `asset:read`.
          */
         get: operations["listAssets"];
@@ -493,6 +495,30 @@ export interface paths {
          *     Requires permission `asset:transfer`.
          */
         post: operations["transferAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assets/{id}/undo-custody": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the last custody action of an asset
+         * @description Reverses the **last** check-out, check-in or transfer of the asset as an inverse action, in one transaction, never as a delete: a check-out is undone by closing its period and restoring the previous status; a check-in by re-opening custody for the same holder (a NEW assignment: a closed period is never re-opened) and restoring the previous status and location; a transfer by moving the asset back to the previous holder (or, for a transfer out of stock, like a check-out). The original event, assignment and audit row stay; the undo adds a `custody_undone` history event, an audit row `asset.custody_undone` and a new version of the asset.
+         *
+         *     Guards: `If-Match` is required and must be the ETag the action answered with (412 when the asset changed in any way since); `assignment_id` must belong to the newest history event of the asset (409 `undo-asset-changed` otherwise, 409 `undo-not-possible` when that event is already an undo); the action is at most five minutes old (409 `undo-expired`); the caller needs the permission of the action it reverses (`asset:checkout`, `asset:checkin` or `asset:transfer`; 403 otherwise); and the previous holder and status must still be valid (409 `undo-not-possible`, for example the person was deactivated meanwhile). Loaner custody is not undone here. Requires an `Idempotency-Key`: a retry replays the stored answer.
+         *
+         *     Requires permission `asset:checkout`.
+         */
+        post: operations["undoAssetCustody"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1377,6 +1403,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/import-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved mapping templates
+         * @description Requires permission `import:read`.
+         */
+        get: operations["listImportTemplates"];
+        put?: never;
+        /**
+         * Save a mapping as a template
+         * @description From an import (`from_import_id`: its mapped columns by header, and its options) or from explicit `columns`. Names are unique per entity type (ignoring case).
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["createImportTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a mapping template
+         * @description Requires permission `import:read`.
+         */
+        get: operations["getImportTemplate"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a mapping template
+         * @description Requires permission `import:run`.
+         */
+        delete: operations["deleteImportTemplate"];
+        options?: never;
+        head?: never;
+        /**
+         * Edit a mapping template
+         * @description Requires permission `import:run`.
+         */
+        patch: operations["updateImportTemplate"];
+        trace?: never;
+    };
     "/v1/imports": {
         parameters: {
             query?: never;
@@ -1385,14 +1465,20 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List import jobs
-         * @description Requires permission `import:read`.
+         * List imports
+         * @description Newest first. Without the heavy members (`profile`, `samples`, `value_map`, `confidence`): fetch one import for those.
+         *
+         *     Requires permission `import:read`.
          */
         get: operations["listImports"];
         put?: never;
         /**
-         * Create an import job
-         * @description Creates a `draft` job. Upload the file first (`POST /v1/attachments` with kind `import_file`), then reference it here. Nothing is written to the registry until a dry run has completed and the job is committed.
+         * Create an import
+         * @description Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252), complete the upload, and call `POST /v1/imports/{id}/analyze`.
+         *
+         *     The caller needs the write permission of the entity type (`asset:create`, `person:manage`, `location:manage`, `department:manage`). `preset_key: google_admin_chromeos` also creates the Chromebook category and its custom fields when missing.
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
@@ -1411,7 +1497,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get an import job
+         * Get an import
          * @description Requires permission `import:read`.
          */
         get: operations["getImport"];
@@ -1421,10 +1507,58 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Edit mapping and options
-         * @description Requires permission `import:run`.
+         * Edit mapping, options and value mapping
+         * @description Unknown or repeated targets are `422`. Missing essentials (no category column and no default category, ...) are reported when the dry run is requested.
+         *
+         *     Requires permission `import:run`.
          */
         patch: operations["updateImport"];
+        trace?: never;
+    };
+    "/v1/imports/{id}/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read and profile the uploaded file
+         * @description Queues the analysis: the file (which must have passed the upload scan) is read once as a stream; its format, encoding, delimiter and header row are detected, every data row is stored, each column is profiled (distinct values, blanks, duplicates, detected type, date order), 50 rows are kept as a sample and a mapping is suggested (or the preset's applied). A malformed file ends the analysis as `failed` with `error` naming the line. At most 100,000 data rows.
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["analyzeImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/apply-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a saved mapping template
+         * @description Maps the columns of the analysed file by header text and takes the template's options. Returns the import in state `mapped`.
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["applyImportTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/imports/{id}/cancel": {
@@ -1437,8 +1571,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel an import job
-         * @description Allowed before commit starts; a running commit finishes its current batch and stops (rows already written stay).
+         * Cancel an import
+         * @description Before a dry run or commit starts: `cancelled` at once. While one runs: `cancel_requested` is set and the job stops after its current batch (rows already written stay). A completed or cancelled import is `409`.
          *
          *     Requires permission `import:run`.
          */
@@ -1460,7 +1594,9 @@ export interface paths {
         put?: never;
         /**
          * Commit a reviewed dry run
-         * @description Only valid in state `dry_run_complete`, and only with the `dry_run_digest` the caller reviewed (409 `import-stale-dry-run` otherwise). Writes through the normal registry services, so validation, history and audit are not bypassed. Rollback of a committed import is v1.1.
+         * @description Only valid in `dry_run_done`, and only with the `dry_run_digest` the user reviewed (`409 import-stale-dry-run` otherwise). The rows classified `create` and `update` are written in batches, one short transaction per batch, through the same services as the API, so validation, history, audit rows and events are never bypassed; every audit entry carries the `import_job_id`. A row that fails is recorded (`result: error`) and does not stop the import; a record edited after the dry run is left alone (`changed-since-dry-run`). The commit can be cancelled between batches and survives a worker restart without creating duplicates. On completion the requester is notified (`import.completed`). Rolling a commit back is v1.1 (the before-image of every update is stored already).
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
@@ -1482,11 +1618,37 @@ export interface paths {
         put?: never;
         /**
          * Run the import without writing
-         * @description Queues a dry run that validates every row, matches existing records and reports per-row outcomes (`create` / `update` / `skip` / `error`) without touching the registry. Poll `GET /v1/imports/{id}` until `state=dry_run_complete`.
+         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
+         *
+         *     The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).
+         *
+         *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
          *     Requires permission `import:run`.
          */
         post: operations["startImportDryRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/errors.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the error report
+         * @description A CSV (UTF-8 with byte order mark) with one line per row that has errors: `Row`, `Line`, `Fields`, `Problems`, `Warnings`, then the original cells under their headers, so it can be corrected and uploaded again. After a commit it lists the rows that failed; before, the rows the dry run rejected. Cells that could be read as formulas get a leading apostrophe (the importer removes it again).
+         *
+         *     Requires permission `import:run`.
+         */
+        get: operations["downloadImportErrors"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1502,9 +1664,77 @@ export interface paths {
         };
         /**
          * Per-row results
-         * @description Requires permission `import:read`.
+         * @description Rows in file order with their errors and warnings (field + message) and the non-empty source cells. Raw file content: needs `import:run`, not just `import:read`.
+         *
+         *     Requires permission `import:run`.
          */
         get: operations["listImportRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Distinct values of a reference column
+         * @description For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry.
+         *
+         *     Requires permission `import:run`.
+         */
+        get: operations["listImportValues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Built-in import presets
+         * @description The templates for assets, people, locations and departments and the Google Admin ChromeOS preset, each with its data dictionary (column, target field, description, example). Pass `preset_key` when creating an import to apply one. Recommended order of imports: locations, departments, people, assets.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["listImportPresets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/presets/{key}/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a template file
+         * @description A CSV (UTF-8 with byte order mark) or XLSX template with the header row of the preset and example rows; the XLSX has the data dictionary on a second sheet. The asset templates also carry one `cf:<key>` column per custom field of the organisation.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["downloadImportTemplate"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1620,15 +1850,13 @@ export interface paths {
         };
         /**
          * List loaner pools
-         * @description Cursor-paginated list.
-         *
-         *     Requires permission `loaner:read`.
+         * @description Cursor-paginated list. `q` matches the name. Every pool carries its live counts (`member_count`, `available_count`, `checked_out_count`, `overdue_count`, `due_today_count`), so the pool list needs one call.
          */
         get: operations["listLoanerPools"];
         put?: never;
         /**
          * Create loaner pool
-         * @description Requires permission `loaner:manage`.
+         * @description Creates a pool. The name is unique among live pools, ignoring case (409 `conflict`, pointer `/name`); `home_location_id` must be a live location and `owner_user_id` an active user (422); `max_loan_days` must be >= `default_loan_days` (422).
          */
         post: operations["createLoanerPool"];
         delete?: never;
@@ -1653,9 +1881,7 @@ export interface paths {
         post?: never;
         /**
          * Archive loaner pool
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `loaner:manage`.
+         * @description Soft delete. `409 conflict` with `usage.open_loans` while a member is checked out; otherwise the pool is archived and its memberships are removed, so the assets can join another pool. Switch a pool off with `is_active: false` instead to keep its members.
          */
         delete: operations["archiveLoanerPool"];
         options?: never;
@@ -1678,7 +1904,7 @@ export interface paths {
         put?: never;
         /**
          * Quick loan from the pool
-         * @description Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment.
+         * @description Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24; never beyond the pool's `max_loan_days`). Without `asset_id` the device is the member that has been idle the longest (earliest return of its last custody period, a device never lent first), ties by the lowest asset tag. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool's limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool's `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.
          *
          *     Requires permission `loaner:checkout`.
          */
@@ -1698,13 +1924,15 @@ export interface paths {
         };
         /**
          * List pool members
-         * @description Requires permission `loaner:read`.
+         * @description The assets of the pool, in asset-tag order, with the full asset (status, location, `current_assignment`) and whether each can be lent right now.
+         *
+         *     Requires permission `loaner:read`.
          */
         get: operations["listLoanerPoolMembers"];
         put?: never;
         /**
          * Add an asset to the pool
-         * @description An asset belongs to at most one pool (409 if it is in another).
+         * @description An asset belongs to at most one pool (409 `conflict` if it is in another one; adding it to the pool it is in answers 200 with the existing member). Archived assets cannot join (422). A member can still be checked out the regular way.
          *
          *     Requires permission `loaner:manage`.
          */
@@ -1727,11 +1955,165 @@ export interface paths {
         post?: never;
         /**
          * Remove an asset from the pool
-         * @description Rejected with 409 while the asset is on loan.
+         * @description Rejected with 409 while the asset is on loan from this pool (`usage.open_loans`); a regular check-out of a member does not block removal.
          *
          *     Requires permission `loaner:manage`.
          */
         delete: operations["removeLoanerPoolMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaner-pools/{id}/members/bulk-add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add many assets to the pool
+         * @description Adds every listed asset (same rules as `POST /v1/loaner-pools/{id}/members`). At most 100 ids; the response is `200` with one result per id, in request order, and a failing item does not roll back the others. Idempotent with `Idempotency-Key`.
+         *
+         *     Requires permission `loaner:manage`.
+         */
+        post: operations["bulkAddLoanerPoolMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaner-pools/{id}/members/bulk-remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove many assets from the pool
+         * @description Removes every listed asset (same rules as `DELETE /v1/loaner-pools/{id}/members/{asset_id}`). At most 100 ids; `200` with one result per id (status 204 on success, no `data`), a failing item does not roll back the others.
+         *
+         *     Requires permission `loaner:manage`.
+         */
+        post: operations["bulkRemoveLoanerPoolMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaner-pools/{id}/quick-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quick loan by scanning: one borrower, many devices
+         * @description The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24). The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower's limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["quickCheckoutLoaners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaners/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Loaner dashboard
+         * @description Per-pool counts (pool size, available, out, overdue, due today, due soon) with their totals, and the latest check-outs and returns. Counts cover live (not archived) pools and members; "today" is the UTC date (`as_of`). Inactive pools are listed (with `is_active: false`) and counted.
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["getLoanerDashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List loans
+         * @description Loans from loaner pools (assignments with a `loaner_pool_id`): the click-through lists behind the dashboard. By default the open ones (`on_loan`, `due_today`, `overdue`); add `returned` to include closed ones. `q` matches the asset tag and name and the borrower's name.
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["listLoans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a loan
+         * @description One loan by its assignment id (open or returned).
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["getLoan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/{id}/extend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extend a loan
+         * @description Moves the due date of an open loan to a later date: not before today (UTC) and within the pool's `max_loan_days` counted from the day the loan started (422 `/expected_return`). A closed loan is `409 conflict`. Extending is a logged action: an audit record (`loan.extended`, with the old and new date and the note), an outbox event and an entry in the asset's history (event type `updated`, `payload.loan_extended`). The asset's ETag changes (its `current_assignment` did). The "due soon" and "overdue" alerts re-arm for the new date.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["extendLoan"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1746,13 +2128,35 @@ export interface paths {
         };
         /**
          * Overdue check-outs
-         * @description Open asset check-outs past `expected_return`, loaner or not (the data behind overdue alerts).
+         * @description Open asset check-outs past `expected_return` (before today, UTC), loaner or not, to anyone or anywhere: the data behind the overdue view. Only loans from a loaner pool raise alerts (see ED-21). `days_overdue` counts whole days.
          *
          *     Requires permission `loaner:read`.
          */
         get: operations["listOverdueCheckouts"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quick return by scanning (one or many devices)
+         * @description The bulk check-in screen in one call: the scanned devices (`codes`, at most 100) are checked in one after the other, answered per item in request order. A device must be a member of a loaner pool (of `loaner_pool_id` when given): else `422` (`not-in-pool`, pointer `/codes/<i>`); not checked out `409 asset-not-checked-out`; unknown code `404`. Each return is a normal check-in (history, audit, outbox, status back to deployable) and moves the device to `checkin_location_id`, or to the pool's `home_location_id`. A failing item does not roll back the others; unknown codes count towards the scan-resolve throttle. Replaying the same `Idempotency-Key` answers the stored result; returning a device twice with different keys is a per-item `409 asset-not-checked-out`.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["returnLoans"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2201,6 +2605,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/people/{id}/link-user": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link a person to a login account
+         * @description Makes the person the person record of the login account (Administrators only, audited as `person.user_linked`). Every login account already has the person the database created for it, so linking **replaces** that placeholder: it is archived (never deleted; its history keeps pointing at it) and a department it headed is headed by the linked person. The linked person keeps all of its assignments and history. One person per login and one login per person: a person that already has a login is 409 `person-already-linked`, a login whose person was chosen by somebody (not the system-made placeholder, which has no `created_by`) is 409 `login-already-linked` (unlink it first), a placeholder that still holds assets is 409 `login-person-in-use` (`usage.open_assignments`). Linking the pair that is already linked changes nothing (200). 422 `/user_id` when the account does not exist in the tenant or is archived. The person's name and email are not changed, but a later rename of the login account renames the person again (ED-15).
+         *
+         *     Requires permission `user:manage`.
+         */
+        post: operations["linkPersonToUser"];
+        /**
+         * Unlink a person from its login account
+         * @description Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.
+         *
+         *     Requires permission `user:manage`.
+         */
+        delete: operations["unlinkPersonFromUser"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/people/{id}/stock-movements": {
         parameters: {
             query?: never;
@@ -2472,6 +2904,34 @@ export interface paths {
          *     Requires permission `catalog:manage`.
          */
         put: operations["putAssetTagTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/custody": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the custody settings
+         * @description Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API never applies it to an ordinary check-out, but a loaner loan whose pool has no `default_loan_days` takes it, ED-24) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).
+         *
+         *     Requires permission `catalog:read`.
+         */
+        get: operations["getCustodySettings"];
+        /**
+         * Replace the custody settings
+         * @description Replaces both settings (an omitted one is reset to its default). `If-Match` is the ETag of `GET` (the tenant settings version). Audited like the other settings.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        put: operations["putCustodySettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3827,6 +4287,7 @@ export interface components {
             data: components["schemas"]["Consumable"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description A loaner pool (ED-20): a named set of spare devices (a Chromebook cart, a laptop trolley) with loan rules. An asset belongs to at most one pool. */
         LoanerPool: {
             /** Format: uuid */
             readonly id: string;
@@ -3836,44 +4297,107 @@ export interface components {
             readonly updated_at?: string;
             /** Format: date-time */
             readonly archived_at?: string | null;
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
-            default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
+            max_loans_per_person?: number | null;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
             is_active?: boolean;
-            readonly member_count?: number;
-            readonly checked_out_count?: number;
-            readonly overdue_count?: number;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login: boolean | null;
+            /** @description The loan length a request without `expected_return` gets right now: `default_loan_days`, else the organisation's `default_expected_return_days`, else 7, cut to `max_loan_days` (ED-24). What the loaner desk pre-fills. */
+            readonly effective_default_loan_days: number;
+            /** @description Live (not archived) assets in the pool. */
+            readonly member_count: number;
+            /** @description Members that can be lent right now: not archived, in a `deployable` state and not checked out. */
+            readonly available_count: number;
+            /** @description Members that are checked out (a loan from the pool or a regular check-out). */
+            readonly checked_out_count: number;
+            /** @description Checked-out members whose `expected_return` is before today (UTC). */
+            readonly overdue_count: number;
+            /** @description Checked-out members whose `expected_return` is today (UTC). */
+            readonly due_today_count: number;
         };
         LoanerPoolCreate: {
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
-            default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
+            max_loans_per_person?: number | null;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
             is_active?: boolean;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login?: boolean | null;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         LoanerPoolUpdate: {
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name?: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
-            default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation's `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`. */
+            default_loan_days?: number | null;
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
+            max_loans_per_person?: number | null;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
             is_active?: boolean;
+            /** @description Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers. */
+            email_borrowers_without_login?: boolean | null;
         };
         LoanerPoolList: {
             data: components["schemas"]["LoanerPool"][];
@@ -4415,7 +4939,7 @@ export interface components {
             /** Format: date-time */
             at: string;
             /** @enum {string} */
-            event_type: "created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported";
+            event_type: "created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported" | "custody_undone";
             /** @enum {string} */
             actor_type: "user" | "api_key" | "integration" | "system";
             /** Format: uuid */
@@ -4440,9 +4964,10 @@ export interface components {
              *     - `updated`: `{fields: string[]}`, the names of the fields that changed
              *     - `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`
              *     - `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)
-             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`
-             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
-             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to, from_id, to_id}, note?, attachment_ids?}`
+             *     - `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to, from_id, to_id}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`
+             *     - `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, status?: {from, to, from_id, to_id} (only for a transfer out of stock), location?: {from, to}, reason?, note?, attachment_ids?}`
+             *     - `custody_undone` ([M2-UX-02, ED-23]): written by `POST /v1/assets/{id}/undo-custody` next to (never instead of) the event it reverses: `{undone: "checkout"|"checkin"|"transfer", undone_event_type, undone_assignment_id, assignment_id?, target_type?, target_id?, target_name?, status: {from, to}, location?: {from, to}}`
              *     - `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`
              *     - `restored`: `{}` or `{was_disposed: true}`
              *     - `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch
@@ -4523,7 +5048,7 @@ export interface components {
             loaner_pool_id: string;
             /** Format: date-time */
             added_at: string;
-            /** @description Not currently checked out. */
+            /** @description Can be lent right now: not archived, in a `deployable` state and not checked out. */
             available: boolean;
             asset?: components["schemas"]["Asset"];
         };
@@ -4531,19 +5056,183 @@ export interface components {
             data: components["schemas"]["LoanerPoolMember"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description Asset ids (at most 100). */
+        LoanerPoolMembersBulk: {
+            ids: string[];
+        };
+        LoanerPoolMemberBulkResult: {
+            results: {
+                index: number;
+                /** @description HTTP status the single-asset operation would have returned (201 added, 204 removed). */
+                status: number;
+                data?: components["schemas"]["LoanerPoolMember"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
         LoanerCheckoutRequest: {
             /** Format: uuid */
             person_id: string;
             /**
              * Format: uuid
-             * @description A specific pool member. If omitted, the next available member is chosen.
+             * @description A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).
              */
             asset_id?: string;
             /**
              * Format: date
-             * @description Defaults to today + pool.default_loan_days; must not exceed pool.max_loan_days.
+             * @description Defaults to today (UTC) + the pool's `default_loan_days`, else + the organisation's `default_expected_return_days`, else + 7 days (ED-24), cut to `max_loan_days`; an explicit date must not exceed the start day + pool.max_loan_days.
              */
             expected_return?: string;
+            note?: string;
+        };
+        /** @description The borrower a scan resolved to. */
+        PersonBrief: {
+            /** Format: uuid */
+            id: string;
+            display_name: string;
+            /** @enum {string} */
+            kind: "employee" | "student" | "contractor" | "external";
+            email?: string | null;
+            employee_ref?: string | null;
+        };
+        /** @description Quick check-out by scanning: one borrower, one or more devices. */
+        QuickLoanRequest: {
+            /**
+             * Format: uuid
+             * @description The borrower by id. Exactly one of `person_id` and `borrower`.
+             */
+            person_id?: string;
+            /** @description The borrower as scanned or typed: the exact email address or the exact `employee_ref` (the badge / student number), matched case-insensitively. Exactly one of `person_id` and `borrower`. 422 (pointer `/borrower`, code `not-found`) when nobody matches, 409 `conflict` when the text matches two different people. */
+            borrower?: string;
+            /** @description The devices: the opaque QR `label_code` (or the whole label URL), the asset tag or the exact serial number, as `GET /v1/scan/resolve` accepts them. Several devices per borrower in one request. */
+            codes: string[];
+            /**
+             * Format: date
+             * @description One due date for every device. Defaults like `LoanerCheckoutRequest.expected_return` (pool default, organisation default, 7 days); must not exceed the start day + pool.max_loan_days.
+             */
+            expected_return?: string;
+            note?: string;
+        } & (unknown | unknown);
+        /** @description Per-device outcome of a quick check-out, in request order. A device that fails (unknown code, not in this pool, already out, borrower at the pool's limit...) does not stop the others. */
+        QuickLoanResult: {
+            person: components["schemas"]["PersonBrief"];
+            /** Format: uuid */
+            loaner_pool_id: string;
+            /**
+             * Format: date
+             * @description The due date that applied (the request's, or the pool default).
+             */
+            expected_return: string;
+            results: {
+                /** @description Position of the code in the request. */
+                index: number;
+                /** @description The code as sent. */
+                code: string;
+                /** @description 201 when the loan was opened, otherwise the status of the problem. */
+                status: number;
+                data?: components["schemas"]["CustodyResult"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
+        /** @description Return by scanning: one or many devices, any borrowers. */
+        LoanReturnRequest: {
+            /** @description The returned devices (label code or URL, asset tag or serial), as for a quick check-out. */
+            codes: string[];
+            /**
+             * Format: uuid
+             * @description Only accept devices of this pool (422 `not-in-pool` for others).
+             */
+            loaner_pool_id?: string;
+            /**
+             * Format: uuid
+             * @description Where the devices are now; default the pool's `home_location_id`.
+             */
+            checkin_location_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Status to set on every device (default: the tenant default deployable status).
+             */
+            status_id?: string | null;
+            /** @enum {string} */
+            condition?: "good" | "fair" | "poor" | "damaged";
+            note?: string;
+        };
+        /** @description Per-device outcome of a quick return, in request order (the per-scan feedback of the bulk check-in screen). Returning a device that is not out is a per-item `409 asset-not-checked-out`. */
+        LoanReturnResult: {
+            results: {
+                /** @description Position of the code in the request. */
+                index: number;
+                /** @description The code as sent. */
+                code: string;
+                /** @description 200 when the device was checked in, otherwise the status of the problem. */
+                status: number;
+                data?: components["schemas"]["CustodyResult"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
+        /** @description A loan: one device out of a pool (an assignment with `loaner_pool_id`). */
+        Loan: {
+            /**
+             * Format: uuid
+             * @description The assignment id.
+             */
+            id: string;
+            /** Format: uuid */
+            asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** Format: uuid */
+            loaner_pool_id: string;
+            pool_name: string;
+            /** Format: uuid */
+            person_id?: string | null;
+            person_name?: string | null;
+            person_email?: string | null;
+            /** @description The borrower's `employee_ref` (badge, student number). */
+            person_ref?: string | null;
+            /** Format: date-time */
+            checked_out_at: string;
+            /** Format: date */
+            expected_return: string;
+            /**
+             * Format: date-time
+             * @description When the device came back; null while it is out.
+             */
+            returned_at?: string | null;
+            /**
+             * @description `on_loan` = out and due after today, `due_today`, `overdue` = out and due before today, `returned`. "Today" is the UTC date.
+             * @enum {string}
+             */
+            state: "on_loan" | "due_today" | "overdue" | "returned";
+            /** @description Whole days past the due date while `overdue`; 0 otherwise. */
+            days_overdue: number;
+            note?: string | null;
+        };
+        LoanList: {
+            data: components["schemas"]["Loan"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        LoanExtendRequest: {
+            /**
+             * Format: date
+             * @description The new due date: later than the current one, not before today (UTC) and within the pool's `max_loan_days` counted from the day the loan started.
+             */
+            expected_return: string;
+            /** @description Why (audit trail and history). */
             note?: string;
         };
         OverdueCheckout: {
@@ -4551,14 +5240,19 @@ export interface components {
             assignment_id: string;
             /** Format: uuid */
             asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
             /** Format: uuid */
             person_id?: string | null;
             /** Format: uuid */
             location_id?: string | null;
             /** Format: uuid */
             target_asset_id?: string | null;
+            /** @description Display name of the person, location or asset the device is with. */
+            holder_name?: string | null;
             /** Format: uuid */
             loaner_pool_id?: string | null;
+            pool_name?: string | null;
             /** Format: date */
             expected_return: string;
             days_overdue: number;
@@ -4566,6 +5260,74 @@ export interface components {
         OverdueCheckoutList: {
             data: components["schemas"]["OverdueCheckout"][];
             page: components["schemas"]["PageInfo"];
+        };
+        LoanerDashboardPool: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            is_active: boolean;
+            member_count: number;
+            available_count: number;
+            /** @description Members that are checked out (includes the overdue ones and those due today). */
+            checked_out_count: number;
+            overdue_count: number;
+            due_today_count: number;
+            /** @description Checked-out members due after today but within the tenant's `loan_reminder_days`. */
+            due_soon_count: number;
+        };
+        LoanerActivity: {
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            kind: "checked_out" | "checked_in";
+            /** Format: uuid */
+            assignment_id: string;
+            /** Format: uuid */
+            asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** Format: uuid */
+            person_id?: string | null;
+            person_name?: string | null;
+            /** Format: uuid */
+            loaner_pool_id: string;
+            pool_name: string;
+            /** Format: date */
+            expected_return: string;
+        };
+        /** @description Everything the loaner dashboard page shows, in one call. Each count has a list behind it: `GET /v1/loans` (`loaner_pool_id`, `state`) for out / overdue / due today, `GET /v1/loaner-pools/{id}/members?available=true` for available. */
+        LoanerDashboard: {
+            /**
+             * Format: date
+             * @description The UTC date the counts are for.
+             */
+            as_of: string;
+            totals: {
+                pools: number;
+                members: number;
+                available: number;
+                checked_out: number;
+                overdue: number;
+                due_today: number;
+                due_soon: number;
+            };
+            pools: components["schemas"]["LoanerDashboardPool"][];
+            /** @description The latest check-outs and returns of loans from the pools, newest first (at most 20). */
+            recent: components["schemas"]["LoanerActivity"][];
+        };
+        CustodySettings: {
+            /** @description Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API never applies it to an ordinary check-out (one without `expected_return` stays open-ended); a loaner loan whose pool has no `default_loan_days` takes it (ED-24). */
+            default_expected_return_days: number | null;
+            /**
+             * @description How many days before the due date a borrower of a loaner pool gets the "due soon" reminder; 0 = no reminder.
+             * @default 2
+             */
+            loan_reminder_days: number;
+        };
+        /** @description Replaces the settings; an omitted member is reset to its default (`null` / 2). */
+        CustodySettingsUpdate: {
+            default_expected_return_days?: number | null;
+            loan_reminder_days?: number;
         };
         RepairCompleteRequest: {
             /**
@@ -4845,119 +5607,6 @@ export interface components {
         FilesSettingsUpdate: {
             strip_exif_original: boolean;
             max_upload_bytes: number | null;
-        };
-        ImportJob: {
-            /** Format: uuid */
-            readonly id: string;
-            /** @enum {string} */
-            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
-            /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
-            /** @enum {string} */
-            readonly state: "draft" | "dry_run_queued" | "dry_run_running" | "dry_run_complete" | "commit_queued" | "committing" | "committed" | "failed" | "cancelled";
-            /**
-             * Format: uuid
-             * @description Uploaded file (kind `import_file`).
-             */
-            file_attachment_id?: string | null;
-            original_filename?: string | null;
-            /** @description Source column -> target field key (use `custom_data.<key>` for custom fields). */
-            mapping: {
-                [key: string]: string;
-            };
-            options: {
-                /**
-                 * @default asset_tag
-                 * @enum {string}
-                 */
-                match_on?: "asset_tag" | "serial" | "external_id";
-                /**
-                 * @default skip
-                 * @enum {string}
-                 */
-                on_duplicate?: "skip" | "update" | "error";
-                /**
-                 * @description Create missing categories, manufacturers, models, locations referenced by name.
-                 * @default true
-                 */
-                create_missing_references?: boolean;
-                /** @default , */
-                delimiter?: string;
-                /** @default YYYY-MM-DD */
-                date_format?: string;
-            } & {
-                [key: string]: unknown;
-            };
-            readonly rows_total?: number;
-            readonly rows_create?: number;
-            readonly rows_update?: number;
-            readonly rows_skip?: number;
-            readonly rows_error?: number;
-            /** @description Hash of file + mapping + options at dry-run time; quote it in the commit request. */
-            readonly dry_run_digest?: string | null;
-            /** Format: date-time */
-            readonly dry_run_completed_at?: string | null;
-            /** Format: date-time */
-            readonly committed_at?: string | null;
-            readonly error?: string | null;
-            /** Format: date-time */
-            readonly created_at?: string;
-            /** Format: date-time */
-            readonly updated_at?: string;
-            /** Format: uuid */
-            readonly created_by?: string | null;
-        };
-        ImportJobCreate: {
-            /** @enum {string} */
-            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
-            /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
-            /**
-             * Format: uuid
-             * @description Required for file sources; omit for `snipe_it` (credentials are passed in `options.snipe_it`).
-             */
-            file_attachment_id?: string;
-            mapping?: {
-                [key: string]: string;
-            };
-            options?: {
-                [key: string]: unknown;
-            };
-        };
-        /** @description Editing mapping/options is allowed in `draft` and `dry_run_complete` (the latter returns the job to `draft` and invalidates the digest). */
-        ImportJobUpdate: {
-            mapping?: {
-                [key: string]: string;
-            };
-            options?: {
-                [key: string]: unknown;
-            };
-        };
-        ImportJobList: {
-            data: components["schemas"]["ImportJob"][];
-            page: components["schemas"]["PageInfo"];
-        };
-        ImportCommitRequest: {
-            /** @description Digest of the reviewed dry run; if the file, mapping or options changed since, commit fails with 409. */
-            dry_run_digest: string;
-        };
-        ImportRow: {
-            row_no: number;
-            /** @enum {string} */
-            phase: "dry_run" | "commit";
-            /** @enum {string} */
-            outcome: "create" | "update" | "skip" | "error";
-            /** Format: uuid */
-            entity_id?: string | null;
-            errors: components["schemas"]["FieldError"][];
-            warnings: components["schemas"]["FieldError"][];
-            source_data?: {
-                [key: string]: unknown;
-            } | null;
-        };
-        ImportRowList: {
-            data: components["schemas"]["ImportRow"][];
-            page: components["schemas"]["PageInfo"];
         };
         AuditEntry: {
             /** Format: uuid */
@@ -5243,7 +5892,10 @@ export interface components {
             readonly mfa_enabled?: boolean;
             /** Format: date-time */
             readonly last_login_at?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description [M2-USR-03] The person record of this login account (every login has exactly one; see `POST /v1/people/{id}/link-user`). Filled by `/v1/users` and `/v1/me`; null in login responses.
+             */
             readonly person_id?: string | null;
         };
         UserCreate: {
@@ -5326,6 +5978,27 @@ export interface components {
         ApiKeyList: {
             data: components["schemas"]["ApiKey"][];
             page: components["schemas"]["PageInfo"];
+        };
+        PersonLinkUserRequest: {
+            /**
+             * Format: uuid
+             * @description The login account (`User.id`) to link: live, in this tenant.
+             */
+            user_id: string;
+        };
+        UndoCustodyRequest: {
+            /**
+             * Format: uuid
+             * @description The `assignment.id` the action answered with: the new assignment of a check-out or transfer, the closed one of a check-in.
+             */
+            assignment_id: string;
+        };
+        /** @description Result of an undo: the **updated asset** (new `ETag` also in the header), the assignment that is now in effect (the closed one after undoing a check-out or a transfer from stock, the re-opened one after undoing a check-in or a transfer between holders) and what was undone. */
+        UndoResult: {
+            asset: components["schemas"]["Asset"];
+            assignment: components["schemas"]["Assignment"];
+            /** @enum {string} */
+            undone: "checkout" | "checkin" | "transfer";
         };
         /** @description Moves an asset to a location. */
         MoveRequest: {
@@ -5617,6 +6290,420 @@ export interface components {
         ExportList: {
             data: components["schemas"]["Export"][];
             page: components["schemas"]["PageInfo"];
+        };
+        ImportOptions: {
+            /**
+             * @description Assets: how an existing asset is found. `auto` = the tag when the row has one, else the serial number (a tag and a serial that name different assets is a row error).
+             * @default auto
+             * @enum {string}
+             */
+            match_on?: "auto" | "asset_tag" | "serial" | "external_id";
+            /**
+             * @description What to do with a row whose record exists already, and with a row that repeats an earlier row of the file (same tag, serial, email, path or name): leave it, update it with the cells of the file, or report an error.
+             * @default skip
+             * @enum {string}
+             */
+            on_match?: "skip" | "update" | "error";
+            /**
+             * @description Update only: an empty cell leaves the field alone, or empties it.
+             * @default ignore
+             * @enum {string}
+             */
+            blank_cells?: "ignore" | "clear";
+            /**
+             * @description `auto` reads ISO dates, month names and unambiguous day/month dates; `03/04/2024` needs `dmy` or `mdy`.
+             * @default auto
+             * @enum {string}
+             */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+            /**
+             * @description The decimal separator of numbers in the file; `auto` decides where the text is unambiguous (`1.234,50`, `1,234.50`) and reads `1,234` as a thousand.
+             * @default auto
+             * @enum {string}
+             */
+            number_format?: "auto" | "dot" | "comma";
+            /** @description Currency of costs that name none; else the organisation's base currency. */
+            default_currency?: string;
+            /** @description Source recorded with a mapped external id (default `import`; the Google preset uses `google_admin`). */
+            external_source?: string;
+            /** @description Per reference kind (`category`, `manufacturer`, `model`, `status`, `location`, `department`, `vendor`, `person`): create what is missing, or require it to exist. Defaults: `create`, except `status` and `person` (`must_exist`; a status label is never created). */
+            references?: {
+                [key: string]: "create" | "must_exist";
+            };
+            /** @description Ids used when a row's own cell is empty. */
+            defaults?: {
+                /** Format: uuid */
+                category?: string;
+                /** Format: uuid */
+                status?: string;
+                /** Format: uuid */
+                location?: string;
+                /** Format: uuid */
+                department?: string;
+                /** Format: uuid */
+                vendor?: string;
+            };
+            /**
+             * @description Kind of the locations the import creates.
+             * @default other
+             * @enum {string}
+             */
+            location_kind?: "site" | "building" | "floor" | "room" | "storage" | "vehicle" | "other";
+            /**
+             * @description Assets: check an asset out to the person in `assigned_to` (only when it can be checked out; otherwise a warning).
+             * @default true
+             */
+            assign?: boolean;
+            /**
+             * @description Update only: a record edited after the dry run is not touched (row error `changed-since-dry-run`).
+             * @default true
+             */
+            detect_changes?: boolean;
+        };
+        ImportMappingColumn: {
+            /** @description 0-based column of the file. */
+            index: number;
+            /** @description A field of the entity (`GET /v1/imports/presets` lists them), `cf:<custom field key>` for an asset custom field, or null to ignore the column. */
+            target: string | null;
+            /**
+             * @description Overrides the job's date format for this column.
+             * @enum {string}
+             */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+        };
+        ImportMapping: {
+            columns: components["schemas"]["ImportMappingColumn"][];
+            /** @description Text for a target that has no column (`{"category": "Chromebook"}`), used for every row whose own cell is empty. */
+            constants?: {
+                [key: string]: string;
+            };
+        };
+        ImportValueEntry: {
+            /** Format: uuid */
+            id: string;
+        } | {
+            /** @constant */
+            create: true;
+            name?: string;
+        } | {
+            /** @constant */
+            skip: true;
+        };
+        /** @description By reference kind, then by the NORMALISED source value (trimmed, spaces collapsed, lower case): what that value of the file means. */
+        ImportValueMap: {
+            [key: string]: {
+                [key: string]: components["schemas"]["ImportValueEntry"];
+            };
+        };
+        ImportParse: {
+            /** @description `csv` or `xlsx`. */
+            format: string | null;
+            /** @description CSV: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252` (detected). */
+            encoding: string | null;
+            /** @description CSV: `,` `;` tab or `|` (detected). */
+            delimiter: string | null;
+            /** @description XLSX: the sheet that is read (default: the first visible one). */
+            sheet: string | null;
+            /** @description XLSX: the visible sheets. */
+            sheets: string[] | null;
+            /** @description Row (XLSX) or line (CSV) number of the header row. */
+            header_line: number | null;
+        };
+        ImportColumnProfile: {
+            index: number;
+            header: string;
+            non_blank: number;
+            blank: number;
+            distinct: number;
+            /** @description More than 10,000 distinct values: `distinct` is a lower bound. */
+            distinct_capped: boolean;
+            /** @description Non-blank cells that repeat an earlier value. */
+            duplicates: number;
+            /** @enum {string} */
+            type: "empty" | "integer" | "number" | "date" | "boolean" | "email" | "text";
+            /**
+             * @description Date columns: the order the data allows; `ambiguous` needs an explicit date format.
+             * @enum {string|null}
+             */
+            date_order: "iso" | "dmy" | "mdy" | "ambiguous" | "mixed" | null;
+            max_length: number;
+            /** @description Up to five distinct values. */
+            samples: string[];
+        };
+        RowIssue: {
+            /** @description The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole. */
+            field: string | null;
+            message: string;
+            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`... */
+            code: string;
+        };
+        ImportJob: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @enum {string} */
+            source: "csv" | "xlsx" | "google_admin_csv";
+            /** @description The built-in preset the import was created from (`GET /v1/imports/presets`). */
+            preset_key: string | null;
+            /**
+             * @description draft (no file yet) -> uploaded -> analyzing -> analyzed -> mapped -> dry_running -> dry_run_done -> committing -> completed; `failed` and `cancelled` end it. Editing the mapping or options returns `dry_run_done` to `mapped`.
+             * @enum {string}
+             */
+            state: "draft" | "uploaded" | "analyzing" | "analyzed" | "mapped" | "dry_running" | "dry_run_done" | "committing" | "completed" | "failed" | "cancelled";
+            filename: string | null;
+            /**
+             * Format: uuid
+             * @description The uploaded file: an attachment of kind `import_file` owned by this import.
+             */
+            file_attachment_id: string | null;
+            parse: components["schemas"]["ImportParse"];
+            /** @description Header names of the file, after analysis. */
+            headers: string[] | null;
+            mapping: components["schemas"]["ImportMapping"];
+            options: components["schemas"]["ImportOptions"];
+            /** @description Data rows of the file. */
+            rows_total: number;
+            counts: {
+                dry_run: {
+                    create: number;
+                    update: number;
+                    skip: number;
+                    error: number;
+                };
+                commit: {
+                    created: number;
+                    updated: number;
+                    skipped: number;
+                    error: number;
+                };
+            };
+            progress: {
+                /** @enum {string|null} */
+                phase: "analyze" | "dry_run" | "commit" | null;
+                processed: number;
+                total: number;
+                percent: number;
+            };
+            /** @description Digest of the reviewed dry run (file, parse settings, mapping, options, value map and every row's outcome). Quote it in the commit request. */
+            dry_run_digest: string | null;
+            /** Format: date-time */
+            dry_run_at: string | null;
+            /** Format: date-time */
+            committed_at: string | null;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.
+             */
+            data_purged_at: string | null;
+            cancel_requested: boolean;
+            /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
+            error: string | null;
+            /** @description After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created). */
+            summary: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: uuid */
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty. */
+            profile?: components["schemas"]["ImportColumnProfile"][] | null;
+            /** @description The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file). */
+            samples?: string[][] | null;
+            /** @description How sure the suggested mapping is per column index (1 = exact header match). */
+            confidence?: {
+                [key: string]: number;
+            } | null;
+            /** @description Empty without `import:run` (its keys are values of the file). */
+            value_map?: components["schemas"]["ImportValueMap"];
+        };
+        ImportList: {
+            data: components["schemas"]["ImportJob"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        ImportCreate: {
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then). */
+            preset_key?: string;
+            options?: components["schemas"]["ImportOptions"];
+        };
+        /** @description Any change returns a `dry_run_done` import to `mapped` and invalidates the digest. Allowed in `draft`, `uploaded`, `analyzed`, `mapped` and `dry_run_done`. */
+        ImportUpdate: {
+            mapping?: components["schemas"]["ImportMapping"];
+            /** @description Only the options to change; `references` and `defaults` are merged by key. */
+            options?: components["schemas"]["ImportOptions"];
+            /** @description Replaces the entries of each reference kind given (send `{}` for a kind to clear it). */
+            value_map?: components["schemas"]["ImportValueMap"];
+        };
+        ImportAnalyze: {
+            /**
+             * Format: uuid
+             * @description Attachment of kind `import_file` owned by this import, uploaded and completed. Omit to analyse the file again.
+             */
+            file_attachment_id?: string;
+            /** @description Overrides of what the analysis detects. */
+            parse?: {
+                /** @enum {string} */
+                encoding?: "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
+                /** @enum {string} */
+                delimiter?: "," | ";" | "\t" | "|";
+                sheet?: string;
+                header_line?: number;
+            };
+        };
+        ImportCommit: {
+            /** @description The `dry_run_digest` of the dry run the user reviewed. */
+            dry_run_digest: string;
+        };
+        ImportRow: {
+            /** @description Position among the data rows. */
+            row_no: number;
+            /** @description Line (CSV) or row (XLSX) of the file; shown in error messages. */
+            line_no: number;
+            /** @enum {string} */
+            phase: "dry_run" | "commit";
+            /** @description Dry run: `create` / `update` / `skip` / `error`. Commit: `created` / `updated` / `skipped` / `error`. */
+            outcome: string | null;
+            /** @enum {string|null} */
+            plan: "create" | "update" | "skip" | "error" | null;
+            /** @enum {string|null} */
+            result: "created" | "updated" | "skipped" | "error" | null;
+            /**
+             * Format: uuid
+             * @description The existing record an update changes.
+             */
+            entity_id: string | null;
+            /**
+             * Format: uuid
+             * @description The record the commit created.
+             */
+            created_id: string | null;
+            /** @description Row number of the first row of the file with the same key. */
+            duplicate_of: number | null;
+            errors: components["schemas"]["RowIssue"][];
+            warnings: components["schemas"]["RowIssue"][];
+            /** @description The non-empty cells of the row by header. */
+            source: {
+                [key: string]: string;
+            };
+            /** @description The typed record the mapping produced (`f` fields, `r` references, `c` custom fields). */
+            mapped: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Commit of an update: the values it replaced (kept for import undo, v1.1). */
+            before_image: {
+                [key: string]: unknown;
+            } | null;
+        };
+        ImportRowList: {
+            data: components["schemas"]["ImportRow"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        ImportValue: {
+            /** @description A distinct value of the column (trimmed). */
+            value: string;
+            count: number;
+            /** @description The existing record with that name, if exactly one. */
+            suggestion: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            } | null;
+            /** @description What the value map says now. */
+            entry: components["schemas"]["ImportValueEntry"] | null;
+        };
+        ImportValues: {
+            /** @enum {string} */
+            field: "category" | "manufacturer" | "model" | "status" | "location" | "department" | "vendor" | "person";
+            column: string | null;
+            /** @description Distinct values in the column (`data` is capped by `limit`). */
+            distinct: number;
+            data: components["schemas"]["ImportValue"][];
+        };
+        ImportPresetColumn: {
+            column: string;
+            target: string;
+            description: string;
+            required: string;
+            example: string;
+        };
+        ImportPreset: {
+            key: string;
+            label: string;
+            description: string;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            /** @enum {string} */
+            source: "csv" | "google_admin_csv";
+            notes: string[];
+            /** @description Reference data creating an import from this preset creates when it is missing. */
+            sets_up: {
+                category: string;
+                custom_fields: string[];
+            } | null;
+            /** @description The columns of the template with their data dictionary. */
+            columns: components["schemas"]["ImportPresetColumn"][];
+        };
+        ImportPresetList: {
+            data: components["schemas"]["ImportPreset"][];
+        };
+        ImportTemplateColumn: {
+            header: string;
+            target: string | null;
+            /** @enum {string} */
+            date_format?: "auto" | "iso" | "dmy" | "mdy";
+        };
+        ImportTemplate: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string | null;
+            /** @enum {string} */
+            entity_type: "asset" | "person" | "location" | "department";
+            columns: components["schemas"]["ImportTemplateColumn"][];
+            options: components["schemas"]["ImportOptions"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            created_by: string | null;
+        };
+        ImportTemplateList: {
+            data: components["schemas"]["ImportTemplate"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description Either `from_import_id`, or `entity_type` and `columns`. */
+        ImportTemplateCreate: {
+            name: string;
+            description?: string | null;
+            /** @enum {string} */
+            entity_type?: "asset" | "person" | "location" | "department";
+            columns?: components["schemas"]["ImportTemplateColumn"][];
+            options?: components["schemas"]["ImportOptions"];
+            /**
+             * Format: uuid
+             * @description Copy the mapping (by header) and the options of this import instead of `entity_type` and `columns`.
+             */
+            from_import_id?: string;
+        };
+        ImportTemplateUpdate: {
+            name?: string;
+            description?: string | null;
+            columns?: components["schemas"]["ImportTemplateColumn"][];
+            options?: components["schemas"]["ImportOptions"];
+        };
+        ImportTemplateApply: {
+            /** Format: uuid */
+            template_id: string;
         };
     };
     responses: {
@@ -6368,8 +7455,10 @@ export interface operations {
                 assigned?: boolean;
                 /** @description [M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset. */
                 overdue?: boolean;
-                /** @description Members of this loaner pool. */
+                /** @description [LOAN] Members of this loaner pool (ED-20). */
                 loaner_pool_id?: string;
+                /** @description [LOAN] true = member of any loaner pool, false = in none. */
+                in_loaner_pool?: boolean;
                 /** @description Warranty ends on or before. */
                 warranty_end_before?: string;
                 /** @description Warranty ends on or after. */
@@ -6388,8 +7477,8 @@ export interface operations {
                 expand?: ("model" | "category" | "location" | "vendor" | "department")[];
                 /** @description Sparse fieldset: return only these top-level properties (`id` is always included). */
                 fields?: string[];
-                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at, updated_at, asset_tag, name, purchase_date, warranty_end. A unique tiebreaker (`id`) is always appended. */
-                sort?: ("created_at" | "-created_at" | "updated_at" | "-updated_at" | "asset_tag" | "-asset_tag" | "name" | "-name" | "purchase_date" | "-purchase_date" | "warranty_end" | "-warranty_end")[];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at, updated_at, asset_tag, name, purchase_date, warranty_end, location, assignee, due. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("created_at" | "-created_at" | "updated_at" | "-updated_at" | "asset_tag" | "-asset_tag" | "name" | "-name" | "purchase_date" | "-purchase_date" | "warranty_end" | "-warranty_end" | "location" | "-location" | "assignee" | "-assignee" | "due" | "-due")[];
             };
             header?: never;
             path?: never;
@@ -6896,7 +7985,7 @@ export interface operations {
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
                 /** @description Filter by event type. */
-                event_type?: ("created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported")[];
+                event_type?: ("created" | "updated" | "status_changed" | "location_changed" | "checked_out" | "checked_in" | "transferred" | "repair_opened" | "repair_completed" | "archived" | "restored" | "label_printed" | "imported" | "custody_undone")[];
                 /** @description Events at or after. */
                 from?: string;
                 /** @description Events before. */
@@ -7273,6 +8362,78 @@ export interface operations {
             };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    undoAssetCustody: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "assignment_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d93"
+                 *     }
+                 */
+                "application/json": components["schemas"]["UndoCustodyRequest"];
+            };
+        };
+        responses: {
+            /** @description Undone. Returns the updated asset and the assignment now in effect; `ETag` is the new version of the asset. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Too late, the asset changed meanwhile, already undone, or the previous holder / status is gone. Codes: `undo-expired`, `undo-asset-changed`, `undo-not-possible`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/undo-expired",
+                     *       "title": "undo expired",
+                     *       "status": 409,
+                     *       "code": "undo-expired",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10421,17 +11582,15 @@ export interface operations {
             };
         };
     };
-    listImports: {
+    listImportTemplates: {
         parameters: {
             query?: {
                 /** @description Opaque cursor from `page.next_cursor` of the previous page. */
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description Filter by state. */
-                state?: ("draft" | "dry_run_queued" | "dry_run_running" | "dry_run_complete" | "commit_queued" | "committing" | "committed" | "failed" | "cancelled")[];
                 /** @description Filter by entity type. */
-                entity_type?: string;
+                entity_type?: "asset" | "person" | "location" | "department";
             };
             header?: never;
             path?: never;
@@ -10439,7 +11598,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A page of import jobs, newest first. */
+            /** @description A page of templates, by name. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10449,7 +11608,205 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImportJobList"];
+                    "application/json": components["schemas"]["ImportTemplateList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description The template. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteImportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateImportTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateUpdate"];
+            };
+        };
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImports: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Filter by state. */
+                state?: ("draft" | "uploaded" | "analyzing" | "analyzed" | "mapped" | "dry_running" | "dry_run_done" | "committing" | "completed" | "failed" | "cancelled")[];
+                /** @description Filter by entity type. */
+                entity_type?: "asset" | "person" | "location" | "department";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of imports. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportList"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -10472,11 +11829,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportJobCreate"];
+                "application/json": components["schemas"]["ImportCreate"];
             };
         };
         responses: {
-            /** @description Job created. */
+            /** @description The import. */
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10485,7 +11842,6 @@ export interface operations {
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
                     ETag: components["headers"]["ETag"];
                     Location: components["headers"]["Location"];
-                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10512,7 +11868,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The job. */
+            /** @description The import, with column profile, sample rows, mapping and value map. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10551,11 +11907,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportJobUpdate"];
+                "application/json": components["schemas"]["ImportUpdate"];
             };
         };
         responses: {
-            /** @description Updated job. */
+            /** @description The import. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -10574,10 +11930,169 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             412: components["responses"]["PreconditionFailed"];
             422: components["responses"]["Unprocessable"];
             428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    analyzeImport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ImportAnalyze"];
+            };
+        };
+        responses: {
+            /** @description Analysis queued. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    Location: components["headers"]["Location"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    applyImportTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportTemplateApply"];
+            };
+        };
+        responses: {
+            /** @description The import. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10587,8 +12102,6 @@ export interface operations {
             header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
-                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -10598,14 +12111,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cancelled job. */
+            /** @description The import. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
                     "RateLimit-Limit": components["headers"]["RateLimitLimit"];
                     "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
                     "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10615,7 +12127,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -10636,7 +12166,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImportCommitRequest"];
+                "application/json": components["schemas"]["ImportCommit"];
             };
         };
         responses: {
@@ -10655,11 +12185,69 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description The import needs permissions the caller does not hold. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
-            429: components["responses"]["TooManyRequests"];
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     startImportDryRun: {
@@ -10668,8 +12256,6 @@ export interface operations {
             header?: {
                 /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
                 "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
-                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
             path: {
                 /** @description Resource id (UUIDv7). */
@@ -10692,23 +12278,114 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            /** @description The import needs permissions the caller does not hold. Codes: `forbidden`. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/forbidden",
+                     *       "title": "forbidden",
+                     *       "status": 403,
+                     *       "code": "forbidden",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`). Codes: `import-wrong-state`, `import-stale-dry-run`, `conflict`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-wrong-state",
+                     *       "title": "import wrong state",
+                     *       "status": 409,
+                     *       "code": "import-wrong-state",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: components["responses"]["Unprocessable"];
+            /** @description Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit. Codes: `import-quota-exceeded`, `too-many-requests`. */
+            429: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/import-quota-exceeded",
+                     *       "title": "import quota exceeded",
+                     *       "status": 429,
+                     *       "code": "import-quota-exceeded",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downloadImportErrors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description attachment */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
         };
     };
     listImportRows: {
         parameters: {
             query?: {
-                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
-                cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
                 /** @description Defaults to the latest phase. */
                 phase?: "dry_run" | "commit";
-                /** @description Filter by outcome. */
-                outcome?: ("create" | "update" | "skip" | "error")[];
+                /** @description Filter by outcome (dry run: create/update/skip/error; commit: created/updated/skipped/error). */
+                outcome?: ("create" | "update" | "skip" | "error" | "created" | "updated" | "skipped")[];
+                /** @description Only rows with (or without) warnings. */
+                has_warnings?: boolean;
             };
             header?: never;
             path: {
@@ -10730,6 +12407,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportRowList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportValues: {
+        parameters: {
+            query: {
+                /** @description The reference kind (the column mapped to it, or the preset constant). */
+                field: "category" | "manufacturer" | "model" | "status" | "location" | "department" | "vendor" | "person";
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Free-text search (trigram / prefix match). */
+                q?: components["parameters"]["Q"];
+            };
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The values. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportValues"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The presets. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPresetList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    downloadImportTemplate: {
+        parameters: {
+            query?: {
+                /** @description File format. */
+                format?: "csv" | "xlsx";
+            };
+            header?: never;
+            path: {
+                /** @description Preset key. */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template file. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description attachment */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -10991,6 +12770,8 @@ export interface operations {
                 archived?: components["parameters"]["Archived"];
                 /** @description Only active / inactive pools. */
                 is_active?: boolean;
+                /** @description Pools whose home is this location. */
+                home_location_id?: string;
                 /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: name, created_at. A unique tiebreaker (`id`) is always appended. */
                 sort?: ("name" | "-name" | "created_at" | "-created_at")[];
             };
@@ -11223,7 +13004,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The pool has nothing to lend, is switched off, or the borrower is at the limit; or (with `asset_id`) the device is out or not deployable. Codes: `no-loaner-available`, `loaner-pool-inactive`, `loan-limit-reached`, `asset-already-checked-out`, `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/no-loaner-available",
+                     *       "title": "no loaner available",
+                     *       "status": 409,
+                     *       "code": "no-loaner-available",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -11235,7 +13034,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description true = not currently checked out. */
+                /** @description true = can be lent right now (not archived, `deployable`, not checked out); false = every other member. */
                 available?: boolean;
             };
             header?: never;
@@ -11291,6 +13090,20 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Already a member of this pool. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMember"];
+                };
+            };
             /** @description Added. */
             201: {
                 headers: {
@@ -11309,7 +13122,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset is a member of another pool. Codes: `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -11352,6 +13183,341 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    bulkAddLoanerPoolMembers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanerPoolMembersBulk"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMemberBulkResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    bulkRemoveLoanerPoolMembers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanerPoolMembersBulk"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMemberBulkResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    quickCheckoutLoaners: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuickLoanRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-device results (HTTP 200 whenever the request itself was valid). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickLoanResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such pool. Codes: `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/not-found",
+                     *       "title": "not found",
+                     *       "status": 404,
+                     *       "code": "not-found",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The pool is switched off, the borrower text matches two people, or a request with the same Idempotency-Key is still running. Codes: `loaner-pool-inactive`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/loaner-pool-inactive",
+                     *       "title": "loaner pool inactive",
+                     *       "status": 409,
+                     *       "code": "loaner-pool-inactive",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad body, unknown / inactive / ineligible borrower, or due date past the pool's maximum. Codes: `validation`, `idempotency-key-reuse`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLoanerDashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dashboard. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerDashboard"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listLoans: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Also return `page.total` (an extra count query; avoid on large lists). */
+                include_total?: components["parameters"]["IncludeTotal"];
+                /** @description Free-text search (trigram / prefix match). */
+                q?: components["parameters"]["Q"];
+                /** @description Only this pool. */
+                loaner_pool_id?: string;
+                /** @description Only this borrower. */
+                person_id?: string;
+                /** @description Only this device. */
+                asset_id?: string;
+                /** @description Only these states. Default: `on_loan,due_today,overdue`. */
+                state?: ("on_loan" | "due_today" | "overdue" | "returned")[];
+                /** @description Open loans due on or before today + N days (0 = due today or earlier). */
+                due_within_days?: number;
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: expected_return, checked_out_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("expected_return" | "-expected_return" | "checked_out_at" | "-checked_out_at")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of loans. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLoan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The loan. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Loan"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    extendLoan: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanExtendRequest"];
+            };
+        };
+        responses: {
+            /** @description The loan with its new due date. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Loan"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listOverdueCheckouts: {
         parameters: {
             query?: {
@@ -11388,6 +13554,82 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    returnLoans: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanReturnRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-device results (HTTP 200 whenever the request itself was valid). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanReturnResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A request with the same Idempotency-Key is still running. Codes: `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/idempotency-key-in-flight",
+                     *       "title": "idempotency key in flight",
+                     *       "status": 409,
+                     *       "code": "idempotency-key-in-flight",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad body, unknown location or status. Codes: `validation`, `idempotency-key-reuse`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -12734,6 +14976,137 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    linkPersonToUser: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "user_id": "0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PersonLinkUserRequest"];
+            };
+        };
+        responses: {
+            /** @description Linked. The person (`user_id` set); `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The person already has a login, the login already has a chosen person, or the login's own placeholder person still holds assets. Codes: `person-already-linked`, `login-already-linked`, `login-person-in-use`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/person-already-linked",
+                     *       "title": "person already linked",
+                     *       "status": 409,
+                     *       "code": "person-already-linked",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    unlinkPersonFromUser: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the asset the client acted on; if it changed, the request fails with `412` and the client should refresh. */
+                "If-Match"?: components["parameters"]["IfMatchOptional"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked. The person (`user_id` null); `ETag` is its new version. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The person has no login account to unlink. Codes: `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            412: components["responses"]["PreconditionFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listPersonStockMovements: {
         parameters: {
             query?: {
@@ -13566,6 +15939,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetTagTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getCustodySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustodySettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    putCustodySettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustodySettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The new settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustodySettings"];
                 };
             };
             400: components["responses"]["BadRequest"];

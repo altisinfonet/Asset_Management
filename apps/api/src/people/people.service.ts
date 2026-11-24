@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
+  ApiProblem,
   type FieldError,
   type IfMatch,
   type ListSpec,
@@ -25,7 +26,7 @@ import {
   stalePrecondition,
 } from '../registry/index.js';
 import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
-import type { PersonCreate, PersonListQuery, PersonUpdate } from './schemas.js';
+import type { PersonCreate, PersonLinkUser, PersonListQuery, PersonUpdate } from './schemas.js';
 
 type PersonRow = NonNullable<Awaited<ReturnType<Tx['person']['findUnique']>>>;
 
@@ -204,6 +205,7 @@ export class PeopleService extends RegistryBase {
   async create(
     auth: AuthContext,
     body: PersonCreate,
+    meta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -239,6 +241,7 @@ export class PeopleService extends RegistryBase {
         await this.record(trx, {
           entity: 'person',
           verb: 'created',
+          ...(meta ? { meta } : {}),
           id: row.id,
           version: row.version,
           before: null,
@@ -256,6 +259,7 @@ export class PeopleService extends RegistryBase {
     id: string,
     ifMatch: IfMatch,
     body: PersonUpdate,
+    importMeta?: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
@@ -340,11 +344,11 @@ export class PeopleService extends RegistryBase {
         await this.record(trx, {
           entity: 'person',
           verb: 'updated',
+          ...(meta || importMeta ? { meta: { ...importMeta, ...meta } } : {}),
           id,
           version: updated.version,
           before: auditView(personDto(row)),
           after: auditView(personDto(updated)),
-          ...(meta ? { meta } : {}),
         });
         return { data: await this.view(trx, updated), version: updated.version };
       });
@@ -379,6 +383,182 @@ export class PeopleService extends RegistryBase {
         after: auditView(personDto(updated)),
       });
     });
+  }
+
+  // ------------------------------------------------------------------- login link (M2-USR-03)
+
+  /**
+   * Links an existing person to an existing login account of the tenant (ED-22). Every login
+   * already has the person the system created for it (ED-15; `created_by` is null), so linking
+   * REPLACES that placeholder: it is archived (never deleted: its history keeps pointing at it)
+   * and the login moves to the chosen person, who keeps every assignment and history entry.
+   * Refused (409) while the placeholder still holds assets, when the chosen person already has a
+   * login, and when the login's person was chosen by somebody (unlink it first).
+   */
+  async linkUser(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: PersonLinkUser,
+  ): Promise<{ data: Record<string, unknown>; version: number }> {
+    try {
+      return await this.tx(auth, async (trx) => {
+        const person = await trx.person.findUnique({ where: { id } });
+        if (!person || person.archived_at) throw problem.notFound('Person not found.');
+        assertIfMatch(ifMatch, person.version);
+        const user = await trx.user_account.findUnique({ where: { id: body.user_id } });
+        if (!user) throw problem.validation([invalidRef('/user_id', 'No such login account.')]);
+        if (user.archived_at) {
+          throw problem.validation([
+            { pointer: '/user_id', message: 'the login account is archived', code: 'archived' },
+          ]);
+        }
+        if (person.user_id === user.id) {
+          return { data: await this.view(trx, person), version: person.version }; // already done
+        }
+        if (person.user_id) {
+          throw new ApiProblem({
+            code: 'person-already-linked',
+            detail: `${person.display_name} is already linked to another login account. Unlink it first.`,
+            errors: [{ pointer: '/user_id', message: 'the person has a login', code: 'taken' }],
+          });
+        }
+
+        // the placeholder person of the login (at most one: `unique (tenant_id, user_id)`)
+        const placeholder = await trx.person.findFirst({ where: { user_id: user.id } });
+        if (placeholder && placeholder.created_by !== null) {
+          // a person somebody made or linked on purpose is never replaced silently
+          throw new ApiProblem({
+            code: 'login-already-linked',
+            detail: `The login account is already linked to ${placeholder.display_name}. Unlink that person first.`,
+            errors: [{ pointer: '/user_id', message: 'the login has a person', code: 'taken' }],
+          });
+        }
+        if (placeholder) {
+          const open = await trx.assignment.count({
+            where: { person_id: placeholder.id, checked_in_at: null },
+          });
+          if (open > 0) {
+            throw new ApiProblem({
+              code: 'login-person-in-use',
+              detail: `The login's own person record (${placeholder.display_name}) still holds ${open} asset${open === 1 ? '' : 's'}. Check them in or transfer them first.`,
+              extensions: { usage: { open_assignments: open } },
+            });
+          }
+          await trx.person.update({
+            where: { id: placeholder.id },
+            data: { user_id: null, archived_at: new Date(), updated_by: auth.userId },
+          });
+          // a department headed by the placeholder is now headed by the person the login is
+          await trx.department.updateMany({
+            where: { manager_person_id: placeholder.id },
+            data: { manager_person_id: person.id, updated_by: auth.userId },
+          });
+        }
+        const result = await trx.person.updateMany({
+          where: { id, version: person.version },
+          data: { user_id: user.id, updated_by: auth.userId },
+        });
+        if (result.count === 0) {
+          return stalePrecondition(() => trx.person.findUnique({ where: { id } }), 'Person');
+        }
+        const updated = (await trx.person.findUnique({ where: { id } }))!;
+        await this.record(trx, {
+          entity: 'person',
+          verb: 'user_linked',
+          id,
+          version: updated.version,
+          before: { user_id: null },
+          after: { user_id: user.id },
+          meta: {
+            user_id: user.id,
+            user_email: user.email,
+            ...(placeholder
+              ? {
+                  replaced_person_id: placeholder.id,
+                  replaced_person_name: placeholder.display_name,
+                }
+              : {}),
+          },
+          refs: { userId: user.id },
+        });
+        return { data: await this.view(trx, updated), version: updated.version };
+      });
+    } catch (err) {
+      throw this.translate(err);
+    }
+  }
+
+  /**
+   * Removes the login from a person (ED-22). The person stays, with its assignments and history,
+   * as a person without a login. The login keeps exactly one person (ED-15): a fresh one is made
+   * from its name and email (the email is left empty while a live person already uses it, which is
+   * the case of the person just unlinked), the same as the trigger does for a new account.
+   */
+  async unlinkUser(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+  ): Promise<{ data: Record<string, unknown>; version: number }> {
+    try {
+      return await this.tx(auth, async (trx) => {
+        const person = await trx.person.findUnique({ where: { id } });
+        if (!person || person.archived_at) throw problem.notFound('Person not found.');
+        assertIfMatch(ifMatch, person.version);
+        if (!person.user_id) {
+          throw problem.conflict('This person has no login account to unlink.');
+        }
+        const user = await trx.user_account.findUnique({ where: { id: person.user_id } });
+        const result = await trx.person.updateMany({
+          where: { id, version: person.version },
+          data: { user_id: null, updated_by: auth.userId },
+        });
+        if (result.count === 0) {
+          return stalePrecondition(() => trx.person.findUnique({ where: { id } }), 'Person');
+        }
+        let newPersonId: string | null = null;
+        if (user && !user.archived_at) {
+          const emailTaken = await trx.person.findFirst({
+            where: { email_key: user.email.toLowerCase(), archived_at: null },
+            select: { id: true },
+          });
+          const company =
+            (await trx.company.findFirst({ where: { is_default: true } })) ??
+            (await trx.company.findUnique({ where: { id: person.company_id } }));
+          const created = await trx.person.create({
+            data: {
+              id: uuidv7(),
+              tenant_id: auth.tenantId,
+              company_id: company!.id,
+              user_id: user.id,
+              kind: 'employee',
+              display_name: user.display_name,
+              email: emailTaken ? null : user.email,
+              created_by: null, // a placeholder, like the one the database trigger makes
+            },
+          });
+          newPersonId = created.id;
+        }
+        const updated = (await trx.person.findUnique({ where: { id } }))!;
+        await this.record(trx, {
+          entity: 'person',
+          verb: 'user_unlinked',
+          id,
+          version: updated.version,
+          before: { user_id: person.user_id },
+          after: { user_id: null },
+          meta: {
+            user_id: person.user_id,
+            ...(user ? { user_email: user.email } : {}),
+            ...(newPersonId ? { new_person_id: newPersonId } : {}),
+          },
+          refs: { userId: person.user_id },
+        });
+        return { data: await this.view(trx, updated), version: updated.version };
+      });
+    } catch (err) {
+      throw this.translate(err);
+    }
   }
 
   // ------------------------------------------------------------------------------------ helpers

@@ -8,8 +8,10 @@ import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
   ACC_TAGS,
   DEPT_TAGS,
+  LOANER_TAGS,
   M2_OPERATIONS,
   FILES_TAGS,
+  IMPORT_TAGS,
   LABELS_TAGS,
   REGISTRY_TAGS,
   WAVE1_TAGS,
@@ -111,6 +113,16 @@ describe('route access rules', async () => {
     expect(missing).toEqual([]);
   });
 
+  it('implements every Loaners operation of the contract (ED-20)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const loaners = operations.filter((o) => LOANER_TAGS.has(o.tag));
+    expect(loaners.length).toBe(18);
+    const missing = loaners
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
   it('implements every registry operation of the contract (M1-REG and the wave-1 additions)', () => {
     const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
     const registry = operations.filter(
@@ -172,6 +184,16 @@ describe('route access rules', async () => {
     const wave2 = operations.filter((o) => WAVE2_NOT_TAGS.has(o.tag));
     expect(wave2.length).toBeGreaterThanOrEqual(25);
     const missing = wave2
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every Imports operation of the contract (M2-IMP-01..07)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const imports = operations.filter((o) => IMPORT_TAGS.has(o.tag));
+    expect(imports.length).toBeGreaterThanOrEqual(18);
+    const missing = imports
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

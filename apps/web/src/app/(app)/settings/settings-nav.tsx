@@ -5,11 +5,29 @@ import { usePathname } from 'next/navigation';
 import { normalizePathname } from '@/components/app-shell/nav-config';
 import { PageHeader } from '@/components/page-header';
 import { useT } from '@/i18n';
+import { useAuth } from '@/lib/auth/auth-context';
 import { cn } from '@/lib/cn';
 import { routes, SETTINGS_SECTIONS } from '@/lib/routes';
 
+/** Areas that have their own screens but belong with the organisation's settings. */
+const LINKS = [
+  {
+    id: 'imports',
+    href: routes.imports,
+    labelKey: 'settings.links.imports',
+    permission: 'import:read',
+  },
+  {
+    id: 'loan-defaults',
+    href: routes.loanerPools,
+    labelKey: 'settings.links.loanerPools',
+    permission: 'loaner:read',
+  },
+] as const;
+
 export function SettingsNav() {
   const t = useT();
+  const { can } = useAuth();
   const pathname = normalizePathname(usePathname());
   return (
     <div className="lg:w-56 lg:shrink-0">
@@ -28,6 +46,22 @@ export function SettingsNav() {
               )}
             >
               {t(`settings.sections.${section}`)}
+            </Link>
+          );
+        })}
+        {LINKS.filter((link) => can(link.permission)).map((link) => {
+          const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+          return (
+            <Link
+              key={link.id}
+              href={link.href}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex min-h-(--size-control) items-center rounded-md px-2.5 text-base whitespace-nowrap hover:bg-sunken',
+                active && 'bg-primary-subtle font-medium text-primary-text hover:bg-primary-subtle',
+              )}
+            >
+              {t(link.labelKey)}
             </Link>
           );
         })}

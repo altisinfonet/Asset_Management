@@ -1140,10 +1140,12 @@ describe.skipIf(!dbEnabled)('registry assets', () => {
       expect((await a().get('/v1/assets?limit=201')).status).toBe(400);
       expect((await a().get('/v1/assets?sort=serial')).status).toBe(400);
       expect((await a().get('/v1/assets?category_id=nope')).status).toBe(400);
-      // the custody filters are live since M2 wave 1; the loaner-pool filter waits for the loaner story
+      // the custody filters are live since M2 wave 1, the loaner-pool filters since ED-20
       expect((await a().get('/v1/assets?assigned=true')).status).toBe(200);
       expect((await a().get('/v1/assets?assigned=maybe')).status).toBe(400);
-      expect((await a().get(`/v1/assets?loaner_pool_id=${crypto.randomUUID()}`)).status).toBe(400);
+      expect((await a().get(`/v1/assets?loaner_pool_id=${crypto.randomUUID()}`)).status).toBe(200);
+      expect((await a().get('/v1/assets?loaner_pool_id=nope')).status).toBe(400);
+      expect((await a().get('/v1/assets?in_loaner_pool=maybe')).status).toBe(400);
       expect((await a().get('/v1/assets?cursor=garbage')).body.code).toBe('invalid-cursor');
       const page = await a().get(`/v1/assets?category_id=${cat.id}&limit=2`);
       const cursor = page.body.page.next_cursor;

@@ -9,9 +9,11 @@ import {
   Menu,
   Package,
   Plus,
+  Repeat,
   ScanLine,
   Search,
   ShieldCheck,
+  Upload,
   User,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -88,6 +90,8 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const scanRef = useRef<HTMLInputElement>(null);
   const canCreateAsset = auth.can('asset:create');
+  const canImport = auth.can('import:run');
+  const canLoanerDesk = auth.can('loaner:checkout');
   // Live search (GET /v1/search) while the palette is open, debounced so typing does not flood it.
   const liveQuery = useDebounced(paletteSearch.trim(), 250);
   const live = useQuery({
@@ -251,6 +255,28 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
                 },
               ]
             : []),
+          ...(canImport
+            ? [
+                {
+                  id: 'import-data',
+                  label: t('palette.importData'),
+                  icon: Upload,
+                  keywords: ['import', 'csv', 'spreadsheet', 'upload', 'google admin'],
+                  onSelect: () => router.push(routes.importNew()),
+                },
+              ]
+            : []),
+          ...(canLoanerDesk
+            ? [
+                {
+                  id: 'loaner-desk',
+                  label: t('palette.loanerDesk'),
+                  icon: Repeat,
+                  keywords: ['loan', 'loaner', 'borrow', 'return', 'lend'],
+                  onSelect: () => router.push(routes.loanerDesk()),
+                },
+              ]
+            : []),
           {
             id: 'batch-scan',
             label: t('palette.batchScan'),
@@ -361,6 +387,8 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
     live.data,
     liveQuery,
     canCreateAsset,
+    canImport,
+    canLoanerDesk,
     scan.openPanel,
   ]);
 

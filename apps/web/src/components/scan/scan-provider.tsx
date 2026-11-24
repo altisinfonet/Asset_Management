@@ -45,9 +45,17 @@ export interface ScanBatch {
   log: ScanLogEntry[];
 }
 
+/** A page that takes over wedge scans (the loaner desk): it gets the scanned text instead of the default handling. */
+export type ScanTarget = (code: string) => void | Promise<void>;
+
 interface ScanContextValue {
   /** Handle scanned or typed text: open the asset, or apply the batch action. */
   scan: (raw: string, source: ScanSource) => Promise<void>;
+  /**
+   * Route wedge scans to `target` while a page is mounted (pass null to release). Scans typed into a
+   * field never reach it; only the bursts of a scanner while nothing editable has focus.
+   */
+  setScanTarget: (target: ScanTarget | null) => void;
   panelOpen: boolean;
   openPanel: () => void;
   closePanel: () => void;
@@ -68,6 +76,24 @@ export function useScan(): ScanContextValue {
 
 export function useHasScan(): boolean {
   return useContext(ScanContext) !== null;
+}
+
+/**
+ * While the calling page is mounted, wedge scans go to `handler` (kept current without
+ * re-registering). A no-op without a `ScanProvider` (tests that render a screen alone).
+ */
+export function useScanTarget(handler: ScanTarget): void {
+  const context = useContext(ScanContext);
+  const ref = useRef(handler);
+  useEffect(() => {
+    ref.current = handler;
+  });
+  const setScanTarget = context?.setScanTarget;
+  useEffect(() => {
+    if (!setScanTarget) return;
+    setScanTarget((code) => ref.current(code));
+    return () => setScanTarget(null);
+  }, [setScanTarget]);
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -108,6 +134,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     batchRef.current = batch;
   });
   const queue = useRef<Promise<void>>(Promise.resolve());
+  const target = useRef<ScanTarget | null>(null);
   const last = useRef<{ code: string; at: number } | null>(null);
   const counter = useRef(0);
 
@@ -219,6 +246,10 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     [log, refresh, router, t, toast],
   );
 
+  const setScanTarget = useCallback((next: ScanTarget | null) => {
+    target.current = next;
+  }, []);
+
   /** Scans are handled one at a time, in the order they arrived (a scanner can outrun the API). */
   const scan = useCallback(
     (raw: string, source: ScanSource) => {
@@ -248,7 +279,15 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       } else if (result.type === 'scan') {
         event.preventDefault();
         event.stopPropagation();
-        void scan(result.code, 'wedge');
+        if (target.current) {
+          const text = result.code.trim();
+          const now = Date.now();
+          // a label read twice is one scan, for the page that took the scans over as well
+          if (last.current && last.current.code === text && now - last.current.at < DUPLICATE_MS)
+            return;
+          last.current = { code: text, at: now };
+          void target.current(text);
+        } else void scan(result.code, 'wedge');
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
@@ -258,6 +297,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ScanContextValue>(
     () => ({
       scan,
+      setScanTarget,
       panelOpen,
       openPanel: () => setPanelOpen(true),
       closePanel: () => {
@@ -271,7 +311,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       setSound: (sound) => setBatch((current) => ({ ...current, sound })),
       clearLog: () => setBatch((current) => ({ ...current, log: [] })),
     }),
-    [scan, panelOpen, batch],
+    [scan, setScanTarget, panelOpen, batch],
   );
 
   return (

@@ -65,6 +65,14 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     ownDepartmentId: string;
     /** an asset of tenant B (so B can try to hand it to A's person / A's location) */
     ownAssetId: string;
+    // [LOAN] A's loaner pool with a device on loan to A's person; a pool, a device and a person of B
+    loanerPoolId: string;
+    loanerPoolName: string;
+    loanerAssetId: string;
+    loanId: string;
+    ownPoolId: string;
+    ownPersonId: string;
+    ownLoanerAssetId: string;
     // [M2-W2 ACC]
     accessoryId: string;
     accessoryName: string;
@@ -88,6 +96,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     sharedViewId: string;
     privateViewId: string;
     exportId: string;
+    // M2 wave 3: an import and a saved mapping template of A
+    importId: string;
+    importTemplateId: string;
     /** strings that must never show up in a response to tenant B */
     markers: string[];
   }
@@ -380,6 +391,114 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         refused('POST', '/v1/departments', { name: unique('X'), manager_person_id: c.personId }),
         { method: 'POST', url: '/v1/departments', body: { name: unique('B-own') }, expect: [201] },
       ],
+      // ---- [LOAN] loaner pools, loans and the custody settings (ED-20, ED-21)
+      ...crud('loaner-pools', c.loanerPoolId, { description: 'b was here' }),
+      'get /v1/loaner-pools': [
+        list(`/v1/loaner-pools?q=${c.loanerPoolName}`),
+        list(`/v1/loaner-pools?home_location_id=${c.locationId}`),
+        list('/v1/loaner-pools?limit=200&archived=include'),
+      ],
+      'post /v1/loaner-pools': [
+        // A's location as home, A's user as owner: refused, nothing created in A
+        refused('POST', '/v1/loaner-pools', { name: unique('X'), home_location_id: c.locationId }),
+        refused('POST', '/v1/loaner-pools', { name: unique('X'), owner_user_id: c.userId }),
+        { method: 'POST', url: '/v1/loaner-pools', body: { name: unique('B-own') }, expect: [201] },
+      ],
+      'get /v1/loaner-pools/:id/members': [
+        notFound('GET', `/v1/loaner-pools/${c.loanerPoolId}/members`),
+        list(`/v1/assets?loaner_pool_id=${c.loanerPoolId}`),
+        list('/v1/assets?in_loaner_pool=true&limit=200'),
+      ],
+      'post /v1/loaner-pools/:id/members': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members`, { asset_id: c.ownAssetId }),
+        refused('POST', `/v1/loaner-pools/${c.ownPoolId}/members`, { asset_id: c.loanerAssetId }),
+      ],
+      'post /v1/loaner-pools/:id/members/bulk-add': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members/bulk-add`, {
+          ids: [c.ownAssetId],
+        }),
+        // A's device in B's own pool: that item fails, the request itself is fine
+        {
+          method: 'POST',
+          url: `/v1/loaner-pools/${c.ownPoolId}/members/bulk-add`,
+          body: { ids: [c.loanerAssetId] },
+          expect: [200],
+        },
+      ],
+      'post /v1/loaner-pools/:id/members/bulk-remove': [
+        notFound('POST', `/v1/loaner-pools/${c.loanerPoolId}/members/bulk-remove`, {
+          ids: [c.ownAssetId],
+        }),
+        {
+          method: 'POST',
+          url: `/v1/loaner-pools/${c.ownPoolId}/members/bulk-remove`,
+          body: { ids: [c.loanerAssetId] },
+          expect: [200],
+        },
+      ],
+      'delete /v1/loaner-pools/:id/members/:asset_id': [
+        notFound('DELETE', `/v1/loaner-pools/${c.loanerPoolId}/members/${c.loanerAssetId}`),
+        notFound('DELETE', `/v1/loaner-pools/${c.ownPoolId}/members/${c.loanerAssetId}`),
+      ],
+      'post /v1/loaner-pools/:id/checkout': [
+        custody(`/v1/loaner-pools/${c.loanerPoolId}/checkout`, { person_id: c.ownPersonId }),
+        // B's own pool to A's person: refused
+        custody(`/v1/loaner-pools/${c.ownPoolId}/checkout`, { person_id: c.personId }, [422]),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/checkout`,
+          { person_id: c.ownPersonId, asset_id: c.loanerAssetId },
+          [422],
+        ),
+      ],
+      'post /v1/loaner-pools/:id/quick-checkout': [
+        custody(`/v1/loaner-pools/${c.loanerPoolId}/quick-checkout`, {
+          person_id: c.ownPersonId,
+          codes: ['no-such-code'],
+        }),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { person_id: c.personId, codes: ['no-such-code'] },
+          [422],
+        ),
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { borrower: c.personEmail, codes: ['no-such-code'] },
+          [422],
+        ),
+        // B scans a code that does not exist in B: the item is a 404, the request is fine
+        custody(
+          `/v1/loaner-pools/${c.ownPoolId}/quick-checkout`,
+          { person_id: c.ownPersonId, codes: ['no-such-code'] },
+          [200],
+        ),
+      ],
+      'get /v1/loans': [
+        list(`/v1/loans?loaner_pool_id=${c.loanerPoolId}`),
+        list(`/v1/loans?person_id=${c.personId}&state=on_loan,due_today,overdue,returned`),
+        list(`/v1/loans?asset_id=${c.loanerAssetId}&state=returned`),
+        list('/v1/loans?limit=200&include_total=true&state=on_loan,due_today,overdue,returned'),
+      ],
+      'get /v1/loans/overdue': [
+        list('/v1/loans/overdue?limit=200'),
+        list(`/v1/loans/overdue?person_id=${c.personId}`),
+        list(`/v1/loans/overdue?loaner_pool_id=${c.loanerPoolId}`),
+      ],
+      'post /v1/loans/return': [custody('/v1/loans/return', { codes: ['no-such-code'] }, [200])],
+      'get /v1/loans/:id': [notFound('GET', `/v1/loans/${c.loanId}`)],
+      'post /v1/loans/:id/extend': [
+        notFound('POST', `/v1/loans/${c.loanId}/extend`, { expected_return: '2099-01-01' }),
+      ],
+      'get /v1/loaners/dashboard': [list('/v1/loaners/dashboard')],
+      'get /v1/settings/custody': [list('/v1/settings/custody')],
+      'put /v1/settings/custody': [
+        // B changes ITS settings; A's are checked untouched at the end
+        {
+          method: 'PUT',
+          url: '/v1/settings/custody',
+          body: { default_expected_return_days: 30, loan_reminder_days: 7 },
+          expect: [200],
+        },
+      ],
       // ---- M2 wave 1: people
       ...crud('people', c.personId, { notes: 'b was here' }),
       'get /v1/people': [
@@ -398,6 +517,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
           expect: [201],
         },
       ],
+      // ---- M2-USR-03: link and unlink a person and a login account (ED-22)
+      'post /v1/people/:id/link-user': [
+        notFound('POST', `/v1/people/${c.personId}/link-user`, { user_id: c.userId }),
+        // B's own person to A's login account: there is no such account in B
+        refused('POST', `/v1/people/${c.ownPersonId}/link-user`, { user_id: c.userId }),
+      ],
+      'delete /v1/people/:id/link-user': [notFound('DELETE', `/v1/people/${c.personId}/link-user`)],
       'get /v1/people/:id/assignments': [
         notFound('GET', `/v1/people/${c.personId}/assignments?state=all`),
       ],
@@ -514,6 +640,18 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       'post /v1/assets/:id/transfer': [
         custody(`/v1/assets/${c.assetId}/transfer`, { person_id: c.personId }),
         custody(`/v1/assets/${c.ownAssetId}/transfer`, { person_id: c.personId }, [422]),
+      ],
+      // M2-UX-02: undo of a custody action (ED-23): A's asset is a 404 for B whatever the headers
+      'post /v1/assets/:id/undo-custody': [
+        {
+          ...custody(`/v1/assets/${c.assetId}/undo-custody`, {
+            assignment_id: c.accessoryAssignmentId,
+          }),
+          headers: {
+            'idempotency-key': `replay-undo-${Date.now()}-${keyN++}`,
+            'if-match': 'W/"1"',
+          },
+        },
       ],
       'get /v1/assets/:id/assignments': [notFound('GET', `/v1/assets/${c.assetId}/assignments`)],
       'get /v1/assets/:id/history': [notFound('GET', `/v1/assets/${c.assetId}/history`)],
@@ -632,6 +770,66 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         },
       ],
       'get /v1/exports/:id': [notFound('GET', `/v1/exports/${c.exportId}`)],
+      // ---- M2 wave 3: imports (M2-IMP-01..07)
+      'get /v1/imports/presets': [list('/v1/imports/presets')],
+      'get /v1/imports/presets/:key/template': [
+        list('/v1/imports/presets/assets/template?format=csv'),
+        list('/v1/imports/presets/google_admin_chromeos/template?format=xlsx'),
+      ],
+      'get /v1/imports': [list('/v1/imports?limit=200')],
+      'post /v1/imports': [
+        { method: 'POST', url: '/v1/imports', body: { entity_type: 'person' }, expect: [201] },
+      ],
+      'get /v1/imports/:id': [notFound('GET', `/v1/imports/${c.importId}`)],
+      'patch /v1/imports/:id': [
+        notFound('PATCH', `/v1/imports/${c.importId}`, { options: { on_match: 'update' } }),
+      ],
+      'post /v1/imports/:id/analyze': [
+        notFound('POST', `/v1/imports/${c.importId}/analyze`, {
+          file_attachment_id: c.attachmentId,
+        }),
+      ],
+      'post /v1/imports/:id/apply-template': [
+        notFound('POST', `/v1/imports/${c.importId}/apply-template`, {
+          template_id: c.importTemplateId,
+        }),
+      ],
+      'get /v1/imports/:id/values': [
+        notFound('GET', `/v1/imports/${c.importId}/values?field=category`),
+      ],
+      'post /v1/imports/:id/dry-run': [notFound('POST', `/v1/imports/${c.importId}/dry-run`, {})],
+      'get /v1/imports/:id/rows': [notFound('GET', `/v1/imports/${c.importId}/rows`)],
+      'get /v1/imports/:id/errors.csv': [notFound('GET', `/v1/imports/${c.importId}/errors.csv`)],
+      'post /v1/imports/:id/commit': [
+        custody(`/v1/imports/${c.importId}/commit`, { dry_run_digest: 'a'.repeat(64) }),
+      ],
+      'post /v1/imports/:id/cancel': [notFound('POST', `/v1/imports/${c.importId}/cancel`, {})],
+      'get /v1/import-templates': [list('/v1/import-templates?limit=200')],
+      'post /v1/import-templates': [
+        {
+          method: 'POST',
+          url: '/v1/import-templates',
+          body: {
+            name: unique('B-tpl'),
+            entity_type: 'asset',
+            columns: [{ header: 'Serial', target: 'serial' }],
+          },
+          expect: [201],
+        },
+        refused('POST', '/v1/import-templates', {
+          name: unique('B-from'),
+          from_import_id: c.importId,
+        }),
+      ],
+      'get /v1/import-templates/:id': [
+        notFound('GET', `/v1/import-templates/${c.importTemplateId}`),
+      ],
+      'patch /v1/import-templates/:id': [
+        notFound('PATCH', `/v1/import-templates/${c.importTemplateId}`, { name: 'b was here' }),
+      ],
+      'delete /v1/import-templates/:id': [
+        notFound('DELETE', `/v1/import-templates/${c.importTemplateId}`),
+      ],
       // ---- access
       'get /v1/users': [list('/v1/users?limit=200')],
       'post /v1/users': [
@@ -778,6 +976,31 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     // [DEPT] END
     const bCategory = (await b().post('/v1/categories', { name: unique('B-cat') })).body;
     const bAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
+    // [LOAN] BEGIN A's pool with a device on loan to A's person; a pool, a person and a device of B
+    const loanerPoolName = `${marker} pool`;
+    const loanerPool = (
+      await a.post('/v1/loaner-pools', { name: loanerPoolName, home_location_id: location.id })
+    ).body;
+    const loanerAsset = (
+      await a.post('/v1/assets', {
+        category_id: category.id,
+        asset_tag: `${marker}-LOAN`,
+        serial: `${marker}-loan-sn`,
+      })
+    ).body;
+    await a.post(`/v1/loaner-pools/${loanerPool.id}/members`, { asset_id: loanerAsset.id });
+    const loan = (
+      await a.post(
+        `/v1/loaner-pools/${loanerPool.id}/checkout`,
+        { person_id: person.id, asset_id: loanerAsset.id },
+        { headers: { 'idempotency-key': `seed-loan-${marker}` } },
+      )
+    ).body;
+    const bPool = (await b().post('/v1/loaner-pools', { name: unique('B-pool') })).body;
+    const bPerson = (await b().post('/v1/people', { display_name: unique('B-kid') })).body;
+    const bLoanerAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
+    await b().post(`/v1/loaner-pools/${bPool.id}/members`, { asset_id: bLoanerAsset.id });
+    // [LOAN] END
     await a.post(
       `/v1/assets/${asset.id}/checkout`,
       { person_id: person.id, note: `${marker} note` },
@@ -869,9 +1092,12 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     ).body;
     // M2 wave 2: a repair (with A's vendor and status), two saved views (one shared with all of A),
     // a notification of A's administrator, and an export request
-    const repairAsset = (
-      await a.post('/v1/assets', { category_id: category.id, name: `${marker} repairable` })
-    ).body;
+    const repairAssetRes = await a.post('/v1/assets', {
+      category_id: category.id,
+      name: `${marker} repairable`,
+    });
+    expect(repairAssetRes.status, repairAssetRes.raw).toBe(201);
+    const repairAsset = repairAssetRes.body;
     const repair = await a.post('/v1/repairs', {
       asset_id: repairAsset.id,
       title: `${marker} repair`,
@@ -903,6 +1129,14 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     );
     const exportJob = await a.post('/v1/exports', { resource: 'assets' });
     expect(exportJob.status, exportJob.raw).toBe(202);
+    const importJob = await a.post('/v1/imports', { entity_type: 'asset' });
+    expect(importJob.status, importJob.raw).toBe(201);
+    const importTemplate = await a.post('/v1/import-templates', {
+      name: `${marker} template`,
+      entity_type: 'asset',
+      columns: [{ header: 'Serial', target: 'serial' }],
+    });
+    expect(importTemplate.status, importTemplate.raw).toBe(201);
     fx = {
       repairId: repair.body.id,
       repairAssetId: repairAsset.id,
@@ -910,6 +1144,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       sharedViewId: sharedView.body.id,
       privateViewId: privateView.body.id,
       exportId: exportJob.body.id,
+      importId: importJob.body.id,
+      importTemplateId: importTemplate.body.id,
       categoryId: category.id,
       manufacturerId: manufacturer.id,
       modelId: model.id,
@@ -935,6 +1171,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       departmentName,
       ownDepartmentId: ownDepartment.id,
       ownAssetId: bAsset.id,
+      loanerPoolId: loanerPool.id,
+      loanerPoolName,
+      loanerAssetId: loanerAsset.id,
+      loanId: loan.assignment.id,
+      ownPoolId: bPool.id,
+      ownPersonId: bPerson.id,
+      ownLoanerAssetId: bLoanerAsset.id,
       // [M2-W2 ACC]
       accessoryId: accessory.id,
       accessoryName: accessory.name,
@@ -986,6 +1229,14 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         privateView.body.id,
         department.id,
         exportJob.body.id,
+        importJob.body.id,
+        importTemplate.body.id,
+        loanerPool.id,
+        loanerPoolName,
+        loanerAsset.id,
+        loanerAsset.asset_tag,
+        loanerAsset.label_code,
+        loan.assignment.id,
       ],
     };
   });
@@ -1010,6 +1261,24 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       person: await etag(`/v1/people/${fx.personId}`),
       department: await etag(`/v1/departments/${fx.departmentId}`),
       departments: String((await A.admin.get('/v1/departments?limit=200')).body.data.length),
+      // [LOAN] A's pool, its members and its loan are untouched
+      loanerPool: await etag(`/v1/loaner-pools/${fx.loanerPoolId}`),
+      loanerPools: String((await A.admin.get('/v1/loaner-pools?limit=200')).body.data.length),
+      loanerMembers: JSON.stringify(
+        (await A.admin.get(`/v1/loaner-pools/${fx.loanerPoolId}/members`)).body.data.map(
+          (m: { asset_id: string; available: boolean }) => [m.asset_id, m.available],
+        ),
+      ),
+      loans: JSON.stringify(
+        (await A.admin.get('/v1/loans?state=on_loan,due_today,overdue,returned')).body.data.map(
+          (l: { id: string; expected_return: string; state: string }) => [
+            l.id,
+            l.expected_return,
+            l.state,
+          ],
+        ),
+      ),
+      custodySettings: await etag('/v1/settings/custody'),
       // custody of A's asset is untouched: the same open assignment and the same history
       assignments: JSON.stringify(
         (await A.admin.get(`/v1/assets/${fx.assetId}/assignments`)).body.data.map(
@@ -1087,6 +1356,13 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         (await A.admin.get('/v1/notification-rules')).body.data.map(
           (r: { type: string; enabled: boolean }) => [r.type, r.enabled],
         ),
+      ),
+      // M2 wave 3: A's import and template are untouched
+      import: await etag(`/v1/imports/${fx.importId}`),
+      imports: String((await A.admin.get('/v1/imports?limit=200')).body.data.length),
+      importTemplate: await etag(`/v1/import-templates/${fx.importTemplateId}`),
+      importTemplates: String(
+        (await A.admin.get('/v1/import-templates?limit=200')).body.data.length,
       ),
       exports: JSON.stringify(
         (await A.admin.get('/v1/exports?limit=200')).body.data.map(

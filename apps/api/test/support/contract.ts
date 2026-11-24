@@ -142,6 +142,8 @@ export const REGISTRY_TAGS = new Set([
  * the registry tag and are walked there.
  */
 export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
+/** [LOAN] Loaner pools (ED-20): every operation is implemented by the loaners module. */
+export const LOANER_TAGS = new Set(['Loaners']);
 /** [DEPT] Managed departments (ED-17): every operation is implemented by the departments module. */
 export const DEPT_TAGS = new Set(['Departments']);
 /**
@@ -155,6 +157,8 @@ export const FILES_TAGS = new Set(['Attachments']);
 export const ACC_TAGS = new Set(['Accessories', 'Consumables']);
 /** [M2-W2 LABELS] Tags whose operations the tagging module (M2-TAG-02) owns: every one must be implemented. */
 export const LABELS_TAGS = new Set(['Labels']);
+/** [M2-W3 IMP] The importer (M2-IMP-01..07): every operation is implemented and walked by `test/importer`. */
+export const IMPORT_TAGS = new Set(['Imports']);
 
 /** Statuses any operation may answer with (transport, authentication, throttling, server faults). */
 export const UNIVERSAL_STATUSES = [400, 401, 403, 429, 500, 503];

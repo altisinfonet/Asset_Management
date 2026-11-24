@@ -192,6 +192,19 @@ export interface NotifyResult {
  */
 export interface Notifier {
   notify(tx: Tx, request: NotificationRequest): Promise<NotifyResult>;
+  /**
+   * Mail only, for people who have no login account (ED-24: a borrower without a login). No in-app row
+   * and no preference: the type's tenant rule still applies (a type switched off sends nothing). Runs
+   * in the caller's tenant transaction like {@link Notifier.notify}.
+   */
+  notifyEmail(tx: Tx, request: EmailNotificationRequest): Promise<NotifyResult>;
+}
+
+/** Mail to addresses that are not login accounts. */
+export interface EmailNotificationRequest {
+  type: string;
+  recipients: ReadonlyArray<{ email: string; locale?: string | null }>;
+  vars: Readonly<Record<string, string | number>>;
 }
 
 export const AUDIT_WRITER = Symbol('AUDIT_WRITER');

@@ -5,6 +5,7 @@ import type { AppConfig } from '../config/env.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
   MAIL_SENDER,
+  type EmailNotificationRequest,
   type MailSender,
   type NotificationRequest,
   type Notifier,
@@ -157,6 +158,40 @@ export class NotificationService implements Notifier {
     }
     await this.writeDeliveries(tx, tenantId, deliveries);
     return { created, skipped };
+  }
+
+  /**
+   * Mail to addresses that belong to no login account (ED-24: a borrower without a login). There is
+   * no in-app row and no per-user preference; the tenant rule of the type (switched off = nothing
+   * sent) still applies. The caller guarantees "once" (the loan alert ledger); the mail carries no
+   * link because the recipient cannot sign in.
+   */
+  async notifyEmail(tx: Tx, request: EmailNotificationRequest): Promise<NotifyResult> {
+    const def = typeDef(request.type);
+    if (!def || !isNotificationType(request.type)) {
+      throw new Error(`unknown notification type "${request.type}" (src/notifications/types.ts)`);
+    }
+    const seen = new Set<string>();
+    const targets = request.recipients.filter((r) => {
+      const key = r.email.trim().toLowerCase();
+      if (seen.has(key) || !emailAddress.safeParse(r.email.trim()).success) return false;
+      seen.add(key);
+      return true;
+    });
+    const skipped = request.recipients.length - targets.length;
+    if (targets.length === 0) return { created: 0, skipped };
+    const rule = await tx.notification_rule.findFirst({ where: { type: request.type } });
+    if (rule && !rule.enabled) return { created: 0, skipped: request.recipients.length };
+    for (const target of targets) {
+      const { title, body } = renderNotification(request.type, target.locale, request.vars);
+      await this.mail.send({
+        to: target.email.trim(),
+        template: 'notification.message',
+        ...(target.locale ? { locale: target.locale } : {}),
+        data: { title, ...(body ? { body } : {}) },
+      });
+    }
+    return { created: targets.length, skipped };
   }
 
   /** Immediate emails queued for the user during the last hour (the throttle). */

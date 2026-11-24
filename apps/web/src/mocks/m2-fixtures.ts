@@ -107,7 +107,9 @@ export function seedCustody(input: {
   // ---- people ---------------------------------------------------------------------------------
   const people: MockPerson[] = [];
   let n = 0;
-  const add = (extra: Partial<S['Person']> & { display_name: string }): MockPerson => {
+  const add = (
+    extra: Partial<S['Person']> & { display_name: string; _system?: boolean },
+  ): MockPerson => {
     n += 1;
     const person: MockPerson = {
       id: uid('person', n),
@@ -145,7 +147,8 @@ export function seedCustody(input: {
       department_id: departmentId(n === 0 ? 'Administration' : n === 3 ? 'Library' : 'IT'),
       job_title: n === 2 ? 'Technician' : null,
       user_id: userId,
-    });
+      _system: true,
+    } as Partial<S['Person']> & { display_name: string });
   }
   add({
     display_name: 'Jamie Okafor',

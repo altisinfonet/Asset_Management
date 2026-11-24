@@ -28,6 +28,8 @@ export interface PersonPickerProps {
   clearable?: boolean;
   /** Also offer inactive people (filters); assignees must be active, so check-out leaves it off. */
   includeInactive?: boolean;
+  /** Only people that have (`true`) or lack (`false`) a login account (M2-USR-03). */
+  hasLogin?: boolean;
   className?: string;
 }
 
@@ -44,6 +46,7 @@ export function PersonPicker({
   onChange,
   clearable = false,
   includeInactive = false,
+  hasLogin,
   placeholder,
   ...rest
 }: PersonPickerProps) {
@@ -54,7 +57,7 @@ export function PersonPicker({
   const q = useDebounced(query.trim(), 200);
 
   const people = useQuery({
-    queryKey: ['people-picker', q, includeInactive],
+    queryKey: ['people-picker', q, includeInactive, hasLogin ?? null],
     queryFn: ({ signal }) =>
       peopleApi.list(
         {
@@ -62,6 +65,7 @@ export function PersonPicker({
           sort: ['display_name'],
           ...(q ? { q } : {}),
           ...(includeInactive ? {} : { status: 'active' as const }),
+          ...(hasLogin === undefined ? {} : { has_login: hasLogin }),
         },
         signal,
       ),

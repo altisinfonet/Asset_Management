@@ -689,7 +689,7 @@ Assignable-only people share the user model with login users (decision to be rec
 
 #### M2-USR-02 - People UI
 Size: M - Owner: Both - Deps: M2-USR-01, M1-WEB-02
-Status: partial (M2 wave 1) - people list and detail with assets held and a server-side history tab, create / edit, archive with the force + reason path, person picker; the link-to-login action is deferred to M2-USR-03.
+Status: partial (M2 wave 1) - people list and detail with assets held and a server-side history tab, create / edit, archive with the force + reason path, person picker; the link-to-login action was added by M2-USR-03 (2026-11-24, ED-22).
 - [ ] People list/detail with "assets currently held" and a history tab; create/edit; link-to-login action for Admins.
 - [ ] Person picker component (type-ahead, used by check-out dialogs) with keyboard selection.
 
@@ -815,24 +815,28 @@ Modelled with the existing asset and assignment tables; no new entity (plan 5.3)
 
 #### M2-LOAN-01 - Loaner pool model and defaults
 Size: M - Owner: Both - Deps: M2-LIFE-02
-- [ ] An asset can belong to the loaner pool (flag or pool membership defined by ADR; filterable and bulk-assignable); tenant settings: default loan length, maximum loan length, reminder lead time.
-- [ ] Loaner check-out applies the default due date automatically; extending a loan is a logged action.
-- [ ] Founder confirms the K-12 workflow vocabulary (borrower, homeroom, device number) so UI labels match.
+Status: API done (2026-11-24, ADR 0011, ED-20, ED-21, migration 0120, contract tag Loaners): pools with rules, membership (single and bulk), the `loaner_pool_id` / `in_loaner_pool` asset filters, extension, the tenant custody settings. Done (integrated, unreleased): the pool admin screens (Loaners > Pools). Loan length (ED-24, migration 0140): request, else the pool's optional `default_loan_days`, else the organisation default, else 7 days, cut to the pool's `max_loan_days`; the reminder lead time is the tenant setting `loan_reminder_days`. Per-pool `email_borrowers_without_login` (default: every kind except students). "Next available" is the device idle the longest. Founder vocabulary (2026-11-24): no new fields, student ID = employee ref, homeroom = department or room, device / cart number = asset tag or custom field (documented in getting-started.md).
+- [x] An asset can belong to the loaner pool (flag or pool membership defined by ADR; filterable and bulk-assignable); tenant settings: default loan length, maximum loan length, reminder lead time.
+- [x] Loaner check-out applies the default due date automatically; extending a loan is a logged action.
+- [x] Founder confirms the K-12 workflow vocabulary (borrower, homeroom, device number) so UI labels match: confirmed 2026-11-24, mapped onto existing fields (ED-24).
 
 #### M2-LOAN-02 - Quick loaner flows (web)
 Size: M - Owner: Both - Deps: M2-LOAN-01, M2-LIFE-08
+Status: API done (2026-11-24, ADR 0011): `POST /v1/loaner-pools/{id}/quick-checkout` (one borrower found by email or badge, many devices, per-item results, due date from the pool), `POST /v1/loans/return` (scan many, per-scan results, summary), both idempotent; covered by an API test that checks 10 devices out and in. Done (integrated, unreleased): the loaner desk (`/loaners/desk`) with the mock Playwright script (10 devices out and in) and a real-stack script (3 out, 3 back).
 - [ ] Quick check-out screen: scan/type person, scan device(s), confirm; due date defaults; multiple devices per borrower supported.
 - [ ] Bulk check-in screen: scan many devices in a row with per-scan success/failure feedback and a summary.
 - [ ] Covered by a Playwright script that checks 10 devices out and in.
 
 #### M2-LOAN-03 - Overdue alerts
 Size: M - Owner: Claude - Deps: M2-LOAN-01, M2-NOT-01, M1-PLAT-07
-- [ ] Scheduler job (per tenant, daily, singleton-keyed) detects overdue loans and emits `loan.overdue` once per loan per day with escalating copy; due-soon reminder before expiry.
-- [ ] Recipients configurable (borrower if they have an email, manager, pool owner); in-app plus email; opt-out per user preference.
-- [ ] Test advances the clock and asserts exactly one notification per overdue loan per day.
+Status: done (2026-11-24, ADR 0011, ED-21): queue `loan.alerts` (daily per tenant), ledger `app.loan_alert`, subscriptions for `loan.overdue` and `loan.due_soon`; the tenant day is UTC (no tenant time zone yet). Recipients are the borrower when they have a login (a person without a login cannot be notified) and the pool owner or the `loaner:manage` holders; only loans of loaner pools are alerted.
+- [x] Scheduler job (per tenant, daily, singleton-keyed) detects overdue loans and emits `loan.overdue` once per loan per day with escalating copy; due-soon reminder before expiry.
+- [x] Recipients configurable (borrower if they have an email, manager, pool owner); in-app plus email; opt-out per user preference.
+- [x] Test advances the clock and asserts exactly one notification per overdue loan per day.
 
 #### M2-LOAN-04 - Loaner dashboard page
 Size: S - Owner: Both - Deps: M2-LOAN-02
+Status: API done (2026-11-24, ADR 0011): `GET /v1/loaners/dashboard` (per-pool and total counts, recent activity) and the lists behind each count (`GET /v1/loans`, `GET /v1/loaner-pools/{id}/members?available=true`). Done (integrated, unreleased): the dashboard page (`/loaners`).
 - [ ] Page showing pool size, available, out, overdue and due today, with click-through lists.
 
 ### E2.6 Repair log
@@ -882,6 +886,7 @@ Size: S - Owner: Founder - Deps: M2-TAG-03, F-02
 
 #### M2-IMP-01 - Import framework
 Size: L - Owner: Claude - Deps: M2-FILE-01, M1-PLAT-06, M1-REG-05
+Status: done (M2 wave 3, ADR 0010, ED-18; API side) - tables `import_job`, `import_row` (one row per file row, both phases, before-image included) and `import_template` (migration 0110); states draft, uploaded, analyzing, analyzed, mapped, dry_running, dry_run_done, committing, completed, failed, cancelled; writes only through the assets facade and the people, location, department, catalogue and custody services, audit entries carry `meta.import_job_id`; quotas `IMPORT_MAX_ROWS` (100,000) and `IMPORT_MAX_CONCURRENT` (2, `429 import-quota-exceeded`), `bulk` queue class; polling `GET /v1/imports/{id}` (state, progress, counts); one worker job per batch with the cursor on the job, so a step that dies rolls back whole and is retried: tests roll a batch back mid-way and finish it with no duplicates, and the worker container was SIGKILLed during a 100,000-row commit on the compose stack: the import resumed and ended with exactly 100,000 assets. Retention of old `import_row` data: done (ED-25, `IMPORT_ROW_RETENTION_DAYS`, 30 days, migration 0141); the sweep's six-hour give-up is tested with an injected clock. The wizard (M2-IMP-08): done.
 - [ ] `import_job` and `import_row` tenant tables (state machine: uploaded, analyzed, mapped, dry_run_done, committing, completed, failed, cancelled); rows keep raw values, mapped values, outcome, error, created ids and before-image (recorded now so v1.1 undo needs no migration).
 - [ ] Writes go only through registry/people/location facades so validation, audit and events are never bypassed; each commit batch audit entry carries the `import_job_id`.
 - [ ] Per-tenant import quotas (rows, concurrent jobs) and the low-priority `bulk` queue class; status polling endpoint with counts.
@@ -889,12 +894,14 @@ Size: L - Owner: Claude - Deps: M2-FILE-01, M1-PLAT-06, M1-REG-05
 
 #### M2-IMP-02 - File parsing and analysis
 Size: M - Owner: Claude - Deps: M2-IMP-01
+Status: done (M2 wave 3, ADR 0010) - own streaming CSV reader (BOM, UTF-8 / UTF-16 / Windows-1252 detection, delimiter sniffing, quoted newlines, blank lines, line numbers in errors), XLSX through `yauzl` + `saxes` over a temporary file (shared strings after the sheets, styled dates, hidden sheets, zip-bomb caps; libraries compared in ADR 0010), header-row detection, per-column profile (distinct, blanks, duplicates, type, date order, samples) and 50 sample rows; uploads of kind `import_file` may be UTF-16 or Windows-1252 CSV; the file goes through the attachments / ClamAV pipeline first. Measured: 100,000 CSV rows analysed and stored in about 14 s on the compose stack; a 100,000-row XLSX (5 MB zipped, 70 MB of sheet XML) is read in 1.5 s with 49 MB of heap growth.
 - [ ] Streaming CSV and XLSX readers handle BOM, UTF-8/UTF-16/Windows-1252 detection, delimiter sniffing, quoted newlines, empty trailing rows and 100,000-row files without loading the file into memory.
 - [ ] Analysis job stores headers, 50 sample rows and basic column statistics (distinct count, date/number detection).
 - [ ] Malformed files produce an actionable error (line number and reason), never a stack trace.
 
 #### M2-IMP-03 - Column and value mapping
 Size: L - Owner: Claude - Deps: M2-IMP-02, M1-REG-04
+Status: done (M2 wave 3; API side) - suggested mapping from synonyms (case- and punctuation-insensitive, custom fields by key or label, `cf:<key>` exports), editable through `PATCH /v1/imports/{id}`; value mapping per reference kind (`GET /v1/imports/{id}/values`: distinct values with counts and the matching record, entries `{id}` / `{create}` / `{skip}`), find-or-create versus must-exist per kind (category, manufacturer, model, location, department, vendor, person; status labels are never created); dates (ISO, month names, day/month with an explicit or inferred order; an ambiguous one is an error that says so), numbers and money (`1.234,50`, `1,234.50`, currency from column, symbol, option or tenant); saved templates per tenant (`/v1/import-templates`, applied by header text). AI-assisted mapping stays out (Could).
 - [ ] Heuristic suggestions (synonyms such as "Serial No", "S/N", "Service Tag"; case/punctuation-insensitive) map columns to core fields and category custom fields; the mapping is editable and can be saved as a named template per tenant.
 - [ ] Value mapping for status names to status labels, and a find-or-create vs must-exist policy per reference (category, manufacturer, model, location, person, vendor).
 - [ ] Date, number and currency parsing with a tenant locale hint and a preview of parsed values; ambiguous dates require an explicit format choice.
@@ -902,6 +909,7 @@ Size: L - Owner: Claude - Deps: M2-IMP-02, M1-REG-04
 
 #### M2-IMP-04 - Validation and dry run
 Size: L - Owner: Claude - Deps: M2-IMP-03
+Status: done (M2 wave 3, ADR 0010) - assets are validated by `AssetsFacade` in its `dryRun` mode (every check of the API, no write), people / locations / departments by their service inside a savepoint that is always rolled back; rows are classified create / update / skip / error with field + message, de-duplicated inside the file (first row wins) and against the registry with `on_match` skip / update / error; a test asserts that no registry table, audit row or event changes; counts, `errors_by_code`, `will_create` and the digest on the job; `GET /v1/imports/{id}/rows` and the formula-safe `errors.csv`. Measured on the compose stack: dry run of 100,000 rows in 55 s with every reference present (109,000 rows/min; the target is 10 minutes), 72 s when every category, model and location is new.
 The invariant: a dry run touches no registry data.
 - [ ] Every row is validated against the same rules as the API (including custom fields) and classified create / update / skip / error; de-duplication on serial and tag both within the file and against existing assets, with a configurable policy (skip, update, error).
 - [ ] A test asserts zero changes in registry tables (and no audit rows other than the import job's) after a dry run.
@@ -910,6 +918,7 @@ The invariant: a dry run touches no registry data.
 
 #### M2-IMP-05 - Commit
 Size: L - Owner: Claude - Deps: M2-IMP-04
+Status: done (M2 wave 3, ADR 0010) - batches of 1,000 rows, one transaction each, the batch in one savepoint and re-run row by row only when a row fails; failed rows are recorded; cancel between batches; idempotent and resumable (cursor on the job, results on the rows, `import.sweep`; `Idempotency-Key` required on commit); records edited after the dry run are left alone (`changed-since-dry-run`); `import.completed` reaches the requester in the bell and by e-mail with the counts (the error report is one click away on the import). Measured on the compose stack (worker container, PgBouncer, Postgres 18, a developer machine shared with another stack): **100,000 assets committed in 269 s = 22,300 rows/min** (target 10,000), list p95 20 ms idle versus 23 ms during the commit; in process 20,000 rows/min on the same machine. A recovery after a SIGKILLed worker took about seven minutes with the queue defaults of the day; the active job now expires after one minute.
 - [ ] Commit runs in batches of N rows, one short transaction per batch with the tenant context re-set each time; failed rows are recorded without aborting the job; the job can be cancelled between batches.
 - [ ] Idempotent and resumable: re-running commit after a crash does not create duplicates (keyed by row id and de-dupe keys).
 - [ ] Throughput at least 10,000 rows per minute on the CI perf runner; interactive p95 is unaffected in a mixed-load test.
@@ -917,17 +926,20 @@ Size: L - Owner: Claude - Deps: M2-IMP-04
 
 #### M2-IMP-06 - Google Admin ChromeOS CSV template
 Size: M - Owner: Both - Deps: M2-IMP-03, F-09
+Status: partial (M2 wave 3, ADR 0010) - preset `google_admin_chromeos` (`GET /v1/imports/presets`, `preset_key` on create): serial, asset ID (tag), status (mapped to labels by state type), model, OS / platform / firmware versions, last sync, annotated user (person; the device is checked out to them), annotated location, notes, org unit path (location), MAC / ethernet MAC / IP, device id, boot mode, auto-update expiration; the Chromebook category and its custom fields are created with the import; matches by serial and updates, so a second import of the same file changes nothing (tested on a synthetic 48-device export in `apps/api/test/importer/fixtures`). Open: validation against the founder-supplied real export (F-09); the column set is a reconstruction of the Admin console export.
 - [ ] Downloadable template and a one-click mapping preset for the Google Admin device export: serial number, asset ID (to tag), annotated user (person lookup), annotated location and organisational unit (location), status (status label), model, OS version, last sync, MAC/IP optional (custom fields).
 - [ ] Created ChromeOS devices map to a "Chromebook" category with defined custom fields; re-importing the same file updates by serial and creates no duplicates.
 - [ ] Validated against the founder-supplied real export (anonymised) with results recorded.
 
 #### M2-IMP-07 - Generic templates (assets, people, locations)
 Size: M - Owner: Claude - Deps: M2-IMP-03, M2-USR-01, M2-LOC-01
+Status: done (M2 wave 3; API side) - presets and downloadable CSV / XLSX templates with example rows and a data dictionary (second sheet of the workbook) for assets (with the tenant's custom fields), people, locations (paths `Site > Building > Room`, parents created from the path in any row order) and departments; a missing reference is a row error that says "create it first" or a warning, and the recommended order (locations, departments, people, assets) is in the template notes.
 - [ ] Downloadable CSV/XLSX templates with example rows and a data dictionary for assets, people and locations; the importer supports each entity type, including parent resolution for locations.
 - [ ] A recommended import order (locations, people, models, assets) is documented and surfaced as a warning when references are missing.
 
 #### M2-IMP-08 - Import wizard UI
 Size: L - Owner: Both - Deps: M2-IMP-05, M2-IMP-06, M1-WEB-02
+Status: done (M2 wave 3, integrated, unreleased) - Assets > Import and Settings > Imports: type and file (CSV or XLSX), mapping (profile, confidence, date formats, saved templates), value mapping, dry run with filters and paging, commit with progress and cancel, results with the error report, resume from the list; mock Playwright (axe in light and dark) and a real-stack run of the Google Admin sample (dry run, commit, assets visible). Waiting for the founder's real-data run (M2-UX-01).
 - [ ] Steps: choose type and file, review mapping, dry-run preview, commit, results; progress bars from polling; leave and resume from an import list.
 - [ ] Error report download and a "fix and re-upload" loop; clear copy that dry run changes nothing.
 - [ ] Founder runs the wizard on real data and accepts it in M2-UX-01.
@@ -980,6 +992,7 @@ Status: done (M2 wave 1) - type sniffing against the declared type, SVG / HTML r
 
 #### M2-OPS-01 - Performance harness extension
 Size: S - Owner: Claude - Deps: M1-CI-05, M2-IMP-05, M2-TAG-02
+Status: partial - the import part is done (`apps/api/test/perf/import-perf.e2e.test.ts`, IMPORT_PERF_ROWS, writes `test-results/import-perf.json`): commit throughput gate 10,000 rows/min and a projected dry run of 100k rows < 10 min, a list p95 check while an import commits, and the XLSX reader's time and heap; measured numbers in M2-IMP-04 and M2-IMP-05. The other budgets of the story are open.
 - [ ] Nightly job adds: check-out p95 < 300 ms, scan resolve p95 < 150 ms, 500-label PDF < 30 s, import commit throughput >= 10,000 rows/min, dry run of 100k rows < 10 min.
 
 #### M2-DOC-01 - User guides (drafts)
@@ -1007,26 +1020,30 @@ Found while integrating locations, people, custody and files; each was judged bi
 #### M2-LIFE-09 - Tenant default for the expected return
 Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Should
 Deferred from wave 1 integration. The check-out dialog leaves the expected return empty; schools want "end of term" or "+14 days" pre-filled.
-- [ ] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:write` to change it; ETag and audit like the other settings.
-- [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently.
+Status: API done (2026-11-24, ED-21): `GET/PUT /v1/settings/custody` with `default_expected_return_days` and `loan_reminder_days`; the check-out and transfer dialogs pre-fill it (integrated, unreleased); a loaner pool without its own loan length takes it too (ED-24).
+- [x] Organisation setting (`GET/PUT /v1/settings/custody`) with a default number of days (or none); `catalog:manage` (the catalogue permission; `catalog:write` does not exist) to change it; ETag and audit like the other settings.
+- [ ] The check-out and transfer dialogs pre-fill the expected return from it; the API itself never applies a default silently (it does not: a check-out without a date stays open-ended, tested).
 
 #### M2-REG-03 - Sort the asset list by location, assignee and due date
 Size: M - Owner: Both - Deps: M2-LOC-02, M2-LIFE-01 - Priority: Should
 Deferred from wave 1 integration. The list sorts by columns of the asset row only.
-- [ ] `sort` accepts `location`, `assignee` and `due` with keyset paging (stable ordering, indexes that serve them under RLS, see ADR 0005); documented in the contract.
-- [ ] The asset table headers for the three columns become sortable; perf budget on 100k assets unchanged.
+Status: done (2026-11-24, ED-22) - the three keys sort with empty values last in both directions through an extra leading `<key>.null` cursor term; the sort is computed on narrow rows (index-only scan of the existing partial indexes, then a top-N heapsort, then the page of ids is joined back), p95 between 40 and 85 ms on 50,000 assets with about 20,000 open assignments, budget 500 ms (numbers in ED-22).
+- [x] `sort` accepts `location`, `assignee` and `due` with keyset paging (stable ordering, NULLs last, see ADR 0005 and ED-22); documented in the contract.
+- [x] The asset table headers for the three columns become sortable; perf budget unchanged (measured on 50,000 assets per tenant, two tenants; 100k in one tenant is about double: the sorts are linear in the tenant's assets).
 
 #### M2-USR-03 - Link and unlink a person and a login account
 Size: M - Owner: Both - Deps: M2-USR-01, M2-USR-02 - Priority: Should
 Deferred from wave 1 integration. People are linked to a login by e-mail when the account is created; an Admin cannot link or unlink by hand.
-- [ ] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
-- [ ] The person page offers "Link to a login" and "Unlink"; mock, unit and real-stack tests.
+Status: done (2026-11-24, ED-22) - linking replaces the system-made placeholder person of the login (archived, history kept); unlinking leaves the person as it is and gives the login a new placeholder; the Users page got a Person column and the same actions.
+- [x] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
+- [x] The person page offers "Link to a login" and "Unlink" (and Settings -> Users "Link to a person" / "Unlink person"); mock, unit and real-stack tests.
 
 #### M2-UX-02 - Undo toast after a custody action
 Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Could
 Deferred from wave 1 integration. A mistaken check-out needs a second dialog today.
-- [ ] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
-- [ ] Keyboard reachable, announced to screen readers, and absent when the inverse is no longer valid (the asset changed meanwhile).
+Status: done (2026-11-24, ED-23) - one server operation `POST /v1/assets/{id}/undo-custody` performs the inverse action atomically, guarded by the ETag of the action; single and bulk actions of the custody dialog.
+- [x] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
+- [x] Keyboard reachable (F8, then Tab), announced to screen readers, and refused with a clear message when the inverse is no longer valid (the asset changed meanwhile; the API answers 412 / 409 and the toast says so).
 
 ### E2.12 Founder requests 2026-11-24
 

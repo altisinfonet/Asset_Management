@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { custodySettingsApi } from '@/lib/loaners/api';
 import { assetsApi } from '@/lib/registry/api';
 import type { Asset } from '@/lib/registry/types';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
@@ -56,6 +57,19 @@ describe('CustodyDialog', () => {
   beforeEach(() => {
     resetRouter();
     seedSession(MOCK_ACCOUNTS.owner);
+  });
+
+  it('starts the expected return at the organisation default and lets the person clear it', async () => {
+    await custodySettingsApi.put({ default_expected_return_days: 14, loan_reminder_days: 2 });
+    const [asset] = await ready();
+    const { user } = await openDialog([asset!], 'checkout');
+    const dialog = await screen.findByRole('dialog', { name: `Check out ${asset!.asset_tag}` });
+    const expected = within(dialog).getByLabelText(/^Expected return/);
+    const inTwoWeeks = new Date(Date.now() + 14 * 86_400_000);
+    const iso = `${inTwoWeeks.getFullYear()}-${String(inTwoWeeks.getMonth() + 1).padStart(2, '0')}-${String(inTwoWeeks.getDate()).padStart(2, '0')}`;
+    await waitFor(() => expect(expected).toHaveValue(iso));
+    await user.clear(expected);
+    expect(expected).toHaveValue('');
   });
 
   it('checks an asset out to a person, closes and leaves the asset with them', async () => {

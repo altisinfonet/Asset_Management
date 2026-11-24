@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 not started |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 integrated and unreleased (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping, isolation harness extension and user guides to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -75,15 +75,22 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | "Location edit for a site: an error at edit time, none later" (LOC-05, ED-16): the error was an address value over its limit (typically a country name instead of the two-letter code) that the dialog could not place on a field. Now named on its field with the fix, limits checked before saving, a "Reload latest" action after a stale save, the address kept when the type changes, address line 2 no longer dropped. The type of a location stays freely editable | ✅ |
 | "Free text causes mistakes": managed departments (ORG-01, ORG-02, ED-17): Settings → Departments (create, rename, archive, merge), a department picker on people and assets (also in bulk edit), department column and filter on both lists, optional owning department on assets, existing free text migrated to departments, demo departments seeded | ✅ |
 
-### Wave 3 — not started ⏳
+### Deferred wave-1 stories done early (Unreleased) ✅
+
+| What | Stories |
+| ---- | ------- |
+| Sort the assets list by location, assignee and due date (empty values last, paging exact; ED-22) | REG-03 ✅ |
+| Link and unlink a person and a login account from the person page and Settings → Users (ED-22) | USR-03 ✅ |
+| Undo toast after a check-out, check-in or transfer, single and bulk (ED-23) | UX-02 ✅ |
+
+### Wave 3 — part 1 integrated 🟡 (2026-11-24, unreleased)
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
-| CSV import wizard with dry run, Google Admin ChromeOS template   | IMP-01…09 |
-| Loaner pool, quick loaner flows, overdue alerts, loaner dashboard | LOAN-01…04 |
+| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 open |
+| Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 | Location scoping for roles                                       | LOC-03 |
 | Isolation-harness extension, performance harness, user guides    | SEC-01, OPS-01, DOC-01 |
-| Deferred small items: default return date, sort by location/assignee/due, link person ↔ login, undo toast | LIFE-09, REG-03, USR-03, UX-02 |
 | M2 founder acceptance walk-through 👤                            | UX-01 |
 
 ## 4. Waiting on the founder 👤
@@ -92,7 +99,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 
 - [ ] ADRs still marked PROPOSED: 0003 (module boundaries & API conventions), 0004 (platform services),
       0005 (asset registry), 0006 (files & scanning), 0007 (labels), 0008 (accessories & consumables),
-      0009 (repairs, notifications, views, export). ADR 0001 and 0002 are accepted.
+      0009 (repairs, notifications, views, export), 0011 (loaner pools). ADR 0001 and 0002 are accepted.
 - [ ] Product name and primary colour (placeholders "Asset Tracker", blue) — before M3 store testing (F-30).
 
 **Hardware / data for M2 acceptance**
@@ -118,7 +125,9 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 ## 5. Known gaps carried forward
 
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
-- Notification types for loans and imports exist but are wired only when those features land (wave 3).
+- Loan and import notifications are wired. The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
+- Finished imports lose their rows, samples and file after 30 days (ED-25): download the error report first. The before-images for a v1.1 rollback go with them.
+- API details the web works around (found while integrating the wizard): a draft import's `mapping` is `{}` although the contract lists `columns` as required; `import-wrong-state` / `import-stale-dry-run` / `import-quota-exceeded` carry `state`, `allowed`, `current_digest` as top-level members that the `Problem` schema does not list; a commit's `progress.total` counts every row but `processed` only the rows to write; `.csv` files that Windows reports as `application/vnd.ms-excel` are refused by the attachment type check (the web declares `text/csv`); a saved default of a mapping cannot be cleared; the values endpoint has no entries for location imports.
 - Some API-only options have no UI yet: label copies/outlines/logo, force check-in when opening a repair,
   notification delivery log.
 - Timeline: will be re-estimated now that M1 and most of M2 show the real pace (decision 22).

@@ -42,17 +42,28 @@ export class NotificationSubscribers implements OnModuleInit {
     const roles =
       def.roleConfigurable && rule && rule.recipient_roles.length > 0 ? rule.recipient_roles : null;
     const recipients = roles ? await usersWithRoles(tx, roles) : await sub.recipients(event, tx);
-    if (recipients.length === 0) return;
+    // Addresses without a login (ED-24); an administrator who re-addressed the type to roles wants only those.
+    const emails = !roles && sub.emailRecipients ? await sub.emailRecipients(event, tx) : [];
+    if (recipients.length === 0 && emails.length === 0) return;
 
     const described = await sub.describe(event, tx);
     if (!described) return;
-    await this.notifier.notify(tx, {
-      type: sub.type,
-      recipients,
-      vars: described.vars,
-      ...(described.entity ? { entity: described.entity } : {}),
-      ...(described.link ? { link: described.link } : {}),
-      dedupeKey: sub.dedupe ? sub.dedupe(event) : event.id,
-    });
+    if (recipients.length > 0) {
+      await this.notifier.notify(tx, {
+        type: sub.type,
+        recipients,
+        vars: described.vars,
+        ...(described.entity ? { entity: described.entity } : {}),
+        ...(described.link ? { link: described.link } : {}),
+        dedupeKey: sub.dedupe ? sub.dedupe(event) : event.id,
+      });
+    }
+    if (emails.length > 0) {
+      await this.notifier.notifyEmail(tx, {
+        type: sub.type,
+        recipients: emails,
+        vars: described.vars,
+      });
+    }
   }
 }

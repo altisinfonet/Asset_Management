@@ -1,9 +1,13 @@
 import { departmentsMessages } from './departments';
+import { importsMessages } from './imports';
 import { labelsMessages } from './labels';
+import { loginLinkMessages } from './loginlink';
+import { loanersMessages } from './loaners';
 import { m2Messages } from './m2';
 import { notificationsMessages } from './notifications';
 import { repairsMessages } from './repairs';
 import { stockMessages } from './stock';
+import { undoMessages } from './undo';
 import { viewsMessages } from './views';
 import { registryMessages } from './registry';
 
@@ -71,7 +75,7 @@ export const en = {
     locations: 'Locations',
     people: 'People',
     stock: 'Stock',
-    loanerPool: 'Loaner pool',
+    loanerPool: 'Loaners',
     repairs: 'Repairs',
     stocktake: 'Stocktake',
     labels: 'Labels',
@@ -118,6 +122,8 @@ export const en = {
     categories: 'Categories',
     openAsset: 'Open asset {code}',
     batchScan: 'Scan assets (check out or in many)',
+    importData: 'Import data from a file',
+    loanerDesk: 'Loaner desk: lend and return devices',
     security: 'Account security',
     notificationSettings: 'Notification settings',
     shortcuts: 'Keyboard shortcuts',
@@ -210,6 +216,7 @@ export const en = {
       due: 'Due {date}',
       heldBy: 'Held by {name}',
       noHolder: 'Holder not shown',
+      loanerLink: 'Loaner dashboard',
     },
     stockPanel: {
       title: 'Low stock',
@@ -240,6 +247,7 @@ export const en = {
       notifications: 'Notification rules',
       departments: 'Departments',
     },
+    links: { imports: 'Imports', loanerPools: 'Loaner pools' },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',
   },
@@ -453,6 +461,7 @@ export const en = {
     help: 'Show this help',
     newAsset: 'Create a new asset',
     close: 'Close a dialog or menu',
+    notifications: 'Jump to notifications (the Undo of a check-out)',
     goDashboard: 'Dashboard',
     goAssets: 'Assets',
     goSettings: 'Settings',
@@ -470,11 +479,15 @@ export const en = {
   ...registryMessages,
   ...m2Messages,
   ...departmentsMessages,
+  ...loginLinkMessages,
+  ...undoMessages,
   ...labelsMessages,
   ...stockMessages,
   ...repairsMessages,
   ...notificationsMessages,
   ...viewsMessages,
+  ...loanersMessages,
+  ...importsMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

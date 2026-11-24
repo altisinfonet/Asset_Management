@@ -114,7 +114,7 @@ const tagDefs = {
   Loaners: 'Loaner pools: spare devices with quick check-out, due dates and overdue tracking.',
   Repairs: 'Repair and maintenance log.',
   Labels: 'Fixed label templates and PDF label sheets.',
-  Imports: 'CSV/XLSX/Snipe-IT/Google Admin imports with a mandatory dry run.',
+  Imports: 'CSV/XLSX imports (assets, people, locations, departments; Google Admin ChromeOS preset) with a mandatory dry run.',
   Attachments: 'File metadata and presigned upload/download.',
   Audit: 'Append-only audit log.',
 };
@@ -175,11 +175,24 @@ const PROBLEM_CODES = {
   'mfa-already-enrolled': [[409], 'The user already has an active TOTP factor; disable it first.'],
   'asset-already-checked-out': [[409], 'The asset is already checked out.'],
   'asset-not-checked-out': [[409], 'The asset has no open check-out to return.'],
+  // [M2-USR-03, ED-22] link a person and a login account
+  'person-already-linked': [[409], 'The person is already linked to a login account (the same or another one). Unlink it first.'],
+  'login-already-linked': [[409], 'The login account is already linked to a person that somebody chose (not the placeholder the system made for it). Unlink that person first.'],
+  'login-person-in-use': [[409], 'The login account\'s own person record still holds assets, so it cannot be replaced by the person being linked: check them in or transfer them first (`usage.open_assignments`).'],
+  // [M2-UX-02, ED-23] undo of a custody action
+  'undo-expired': [[409], 'More than five minutes have passed since the custody action, so it can no longer be undone.'],
+  'undo-asset-changed': [[409], 'The asset changed after the action (another custody action, an edit, a move...), so it can no longer be undone.'],
+  'undo-not-possible': [[409], 'The action cannot be undone: it was already undone, the previous holder or status is no longer available, or it is loaner custody.'],
   // [M2-W1 locations, people, custody]
   'asset-not-deployable': [[409], 'The asset\'s status does not allow this custody action: check-out (and a transfer out of stock) need a `deployable` state, so lost, archived, in-repair and pending assets cannot be checked out.'],
   'insufficient-stock': [[409], 'Not enough quantity on hand.'],
   'no-loaner-available': [[409], 'The loaner pool has no available member.'],
-  'import-stale-dry-run': [[409], 'The dry run being committed is not the one reviewed.'],
+  'import-stale-dry-run': [[409], 'The dry run being committed is not the one reviewed: the file, mapping, options or value mapping changed after it, or a newer dry run exists.'],
+  'import-wrong-state': [[409], 'The import is not in a state that allows this action (for example a commit before a dry run, or editing a running import). `state` and `allowed` say which.'],
+  'import-quota-exceeded': [[429], 'The organisation already runs the maximum number of imports at once; retry after the time in `Retry-After`.'],
+  // [LOAN] ED-20 loaner pools
+  'loan-limit-reached': [[409], 'The borrower already holds the most open loans the pool allows (`max_loans_per_person`).'],
+  'loaner-pool-inactive': [[409], 'The loaner pool is switched off (`is_active = false`): it lends nothing until it is switched on again.'],
   // M2 wave 1b (files): BEGIN
   'upload-missing': [[409], 'The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete.'],
   // M2 wave 1b (files): END
@@ -521,17 +534,30 @@ defineResource('Consumable', {
 });
 S_.Consumable.required.push('qty_on_hand', 'low_stock', 'label_code');
 defineResource('LoanerPool', {
+  description: 'A loaner pool (ED-20): a named set of spare devices (a Chromebook cart, a laptop trolley) with loan rules. An asset belongs to at most one pool.',
   props: {
-    name: str({ minLength: 1, maxLength: 200 }),
+    name: str({ minLength: 1, maxLength: 200, description: 'Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).' }),
     description: nstr(),
-    home_location_id: nuuid(),
-    default_loan_days: int({ minimum: 1, default: 7 }),
-    max_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Must be >= default_loan_days.' },
-    is_active: bool({ default: true }),
+    home_location_id: nuuid('Where returned devices go back to: a quick return moves the asset here unless the request names another location.'),
+    default_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Length of a loan when the request has no `expected_return`: today (UTC) + this many days. null (the default) = the organisation\'s `default_expected_return_days` (`GET /v1/settings/custody`), else 7 (ED-24); the result is never longer than `max_loan_days`.' },
+    max_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days when that is set; null = no limit.' },
+    max_loans_per_person: { type: ['integer', 'null'], minimum: 1, description: 'Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit.' },
+    eligible_person_kinds: { type: ['array', 'null'], items: en(['employee', 'student', 'contractor', 'external']), minItems: 1, uniqueItems: true, description: 'Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind.' },
+    owner_user_id: nuuid('The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.'),
+    is_active: bool({ default: true, description: 'false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.' }),
+    email_borrowers_without_login: { type: ['boolean', 'null'], description: 'Whether a borrower who has no login account but has an e-mail address gets the due-soon and overdue e-mails (no in-app notification, there is no account). null (the default) = automatic: every kind of person except students; true = every borrower with an address; false = nobody (ED-24). Overdue loans are always also reported to the pool owner or the loaner managers.' },
   },
   required: ['name'],
-  readOnly: { member_count: ro(int()), checked_out_count: ro(int()), overdue_count: ro(int()) },
+  readOnly: {
+    effective_default_loan_days: ro(int({ minimum: 1, description: 'The loan length a request without `expected_return` gets right now: `default_loan_days`, else the organisation\'s `default_expected_return_days`, else 7, cut to `max_loan_days` (ED-24). What the loaner desk pre-fills.' })),
+    member_count: ro(int({ minimum: 0, description: 'Live (not archived) assets in the pool.' })),
+    available_count: ro(int({ minimum: 0, description: 'Members that can be lent right now: not archived, in a `deployable` state and not checked out.' })),
+    checked_out_count: ro(int({ minimum: 0, description: 'Members that are checked out (a loan from the pool or a regular check-out).' })),
+    overdue_count: ro(int({ minimum: 0, description: 'Checked-out members whose `expected_return` is before today (UTC).' })),
+    due_today_count: ro(int({ minimum: 0, description: 'Checked-out members whose `expected_return` is today (UTC).' })),
+  },
 });
+S_.LoanerPool.required.push('effective_default_loan_days', 'email_borrowers_without_login', 'member_count', 'available_count', 'checked_out_count', 'overdue_count', 'due_today_count');
 defineResource('Repair', {
   description: 'Repair / maintenance log entry (table `maintenance_record`).',
   props: {
@@ -732,7 +758,7 @@ S_.HistoryEvent = obj({
   id: uuid(),
   asset_id: uuid(),
   at: dt(),
-  event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']),
+  event_type: en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported', 'custody_undone']),
   actor_type: en(['user', 'api_key', 'integration', 'system']),
   actor_id: nuuid(),
   actor: { oneOf: [obj({ id: uuid(), display_name: str() }, ['id', 'display_name']), { type: 'null' }], description: 'Who did it, resolved for display (the user, or the API key name for `actor_type: api_key`); null for system events or when the user no longer exists.' },
@@ -748,9 +774,10 @@ S_.HistoryEvent = obj({
     '- `updated`: `{fields: string[]}`, the names of the fields that changed',
     '- `status_changed`: `{from, to, from_name, to_name}` (status label ids and names); a lost/found mark adds `action: "lost" | "found"` and `note?`',
     '- `location_changed`: `{from, to, from_name, to_name, note?}` (location ids, `null` when unknown)',
-    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to}, note?, attachment_ids?}`',
-    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
-    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `checked_out`: `{assignment_id, target_type: "person"|"location"|"asset", target_id, target_name, expected_return, status: {from, to, from_id, to_id}, note?, attachment_ids?}`',
+    '- `checked_in`: `{assignment_id, target_type, target_id, target_name, status: {from, to, from_id, to_id}, location?: {from, to}, condition?: "good"|"fair"|"poor"|"damaged", note?, attachment_ids?}`',
+    '- `transferred`: `{from: {type, id, name} | null, to: {type, id, name}, from_assignment_id, to_assignment_id, status?: {from, to, from_id, to_id} (only for a transfer out of stock), location?: {from, to}, reason?, note?, attachment_ids?}`',
+    '- `custody_undone` ([M2-UX-02, ED-23]): written by `POST /v1/assets/{id}/undo-custody` next to (never instead of) the event it reverses: `{undone: "checkout"|"checkin"|"transfer", undone_event_type, undone_assignment_id, assignment_id?, target_type?, target_id?, target_name?, status: {from, to}, location?: {from, to}}`',
     '- `archived`: `{}`; when the asset was disposed of: `{disposal: {disposed_on, reason, note}, from, to, from_name, to_name}`',
     '- `restored`: `{}` or `{was_disposed: true}`',
     '- `label_printed` ([M2-W2 LABELS]): `{batch_id, template_key, copies}`; the actor is the user (or API key) that requested the label batch',
@@ -795,25 +822,159 @@ S_.StockMovementCreate = obj({
 S_.StockMovementList = obj({ data: arr(S('StockMovement')), page: S('PageInfo') }, ['data', 'page']);
 
 // loaners
-S_.LoanerPoolMember = obj({ asset_id: uuid(), loaner_pool_id: uuid(), added_at: dt(), available: bool({ description: 'Not currently checked out.' }), asset: S('Asset') }, ['asset_id', 'loaner_pool_id', 'added_at', 'available']);
+// [LOAN] BEGIN - loaner pools, quick loans, overdue, dashboard (ED-20, ED-21, ADR 0011)
+S_.LoanerPoolMember = obj({ asset_id: uuid(), loaner_pool_id: uuid(), added_at: dt(), available: bool({ description: 'Can be lent right now: not archived, in a `deployable` state and not checked out.' }), asset: S('Asset') }, ['asset_id', 'loaner_pool_id', 'added_at', 'available']);
 S_.LoanerPoolMemberList = obj({ data: arr(S('LoanerPoolMember')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanerPoolMembersBulk = obj({ ids: bulkIds() }, ['ids'], { additionalProperties: false, description: 'Asset ids (at most 100).' });
+S_.LoanerPoolMemberBulkResult = obj({
+  results: arr(obj({
+    index: int(),
+    status: int({ description: 'HTTP status the single-asset operation would have returned (201 added, 204 removed).' }),
+    data: S('LoanerPoolMember'),
+    error: S('Problem'),
+  }, ['index', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary']);
 S_.LoanerCheckoutRequest = obj({
   person_id: uuid(),
-  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen.'),
-  expected_return: date({ description: 'Defaults to today + pool.default_loan_days; must not exceed pool.max_loan_days.' }),
+  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).'),
+  expected_return: date({ description: 'Defaults to today (UTC) + the pool\'s `default_loan_days`, else + the organisation\'s `default_expected_return_days`, else + 7 days (ED-24), cut to `max_loan_days`; an explicit date must not exceed the start day + pool.max_loan_days.' }),
   note: str({ maxLength: 2000 }),
 }, ['person_id'], { additionalProperties: false });
+S_.PersonBrief = obj({
+  id: uuid(),
+  display_name: str(),
+  kind: en(['employee', 'student', 'contractor', 'external']),
+  email: nstr(),
+  employee_ref: nstr(),
+}, ['id', 'display_name', 'kind'], { description: 'The borrower a scan resolved to.' });
+S_.QuickLoanRequest = obj({
+  person_id: uuid('The borrower by id. Exactly one of `person_id` and `borrower`.'),
+  borrower: str({ minLength: 1, maxLength: 254, description: 'The borrower as scanned or typed: the exact email address or the exact `employee_ref` (the badge / student number), matched case-insensitively. Exactly one of `person_id` and `borrower`. 422 (pointer `/borrower`, code `not-found`) when nobody matches, 409 `conflict` when the text matches two different people.' }),
+  codes: arr(str({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 50, description: 'The devices: the opaque QR `label_code` (or the whole label URL), the asset tag or the exact serial number, as `GET /v1/scan/resolve` accepts them. Several devices per borrower in one request.' }),
+  expected_return: date({ description: 'One due date for every device. Defaults like `LoanerCheckoutRequest.expected_return` (pool default, organisation default, 7 days); must not exceed the start day + pool.max_loan_days.' }),
+  note: str({ maxLength: 2000 }),
+}, ['codes'], {
+  additionalProperties: false,
+  oneOf: [{ required: ['person_id'] }, { required: ['borrower'] }],
+  description: 'Quick check-out by scanning: one borrower, one or more devices.',
+});
+S_.QuickLoanResult = obj({
+  person: S('PersonBrief'),
+  loaner_pool_id: uuid(),
+  expected_return: date({ description: 'The due date that applied (the request\'s, or the pool default).' }),
+  results: arr(obj({
+    index: int({ description: 'Position of the code in the request.' }),
+    code: str({ description: 'The code as sent.' }),
+    status: int({ description: '201 when the loan was opened, otherwise the status of the problem.' }),
+    data: S('CustodyResult'),
+    error: S('Problem'),
+  }, ['index', 'code', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['person', 'loaner_pool_id', 'expected_return', 'results', 'summary'], { description: 'Per-device outcome of a quick check-out, in request order. A device that fails (unknown code, not in this pool, already out, borrower at the pool\'s limit...) does not stop the others.' });
+S_.LoanReturnRequest = obj({
+  codes: arr(str({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 100, description: 'The returned devices (label code or URL, asset tag or serial), as for a quick check-out.' }),
+  loaner_pool_id: uuid('Only accept devices of this pool (422 `not-in-pool` for others).'),
+  checkin_location_id: nuuid('Where the devices are now; default the pool\'s `home_location_id`.'),
+  status_id: nuuid('Status to set on every device (default: the tenant default deployable status).'),
+  condition: en(['good', 'fair', 'poor', 'damaged']),
+  note: str({ maxLength: 2000 }),
+}, ['codes'], { additionalProperties: false, description: 'Return by scanning: one or many devices, any borrowers.' });
+S_.LoanReturnResult = obj({
+  results: arr(obj({
+    index: int({ description: 'Position of the code in the request.' }),
+    code: str({ description: 'The code as sent.' }),
+    status: int({ description: '200 when the device was checked in, otherwise the status of the problem.' }),
+    data: S('CustodyResult'),
+    error: S('Problem'),
+  }, ['index', 'code', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary'], { description: 'Per-device outcome of a quick return, in request order (the per-scan feedback of the bulk check-in screen). Returning a device that is not out is a per-item `409 asset-not-checked-out`.' });
+S_.Loan = obj({
+  id: uuid('The assignment id.'),
+  asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
+  loaner_pool_id: uuid(),
+  pool_name: str(),
+  person_id: nuuid(),
+  person_name: nstr(),
+  person_email: nstr(),
+  person_ref: nstr({ description: 'The borrower\'s `employee_ref` (badge, student number).' }),
+  checked_out_at: dt(),
+  expected_return: date(),
+  returned_at: ndt({ description: 'When the device came back; null while it is out.' }),
+  state: en(['on_loan', 'due_today', 'overdue', 'returned'], { description: '`on_loan` = out and due after today, `due_today`, `overdue` = out and due before today, `returned`. "Today" is the UTC date.' }),
+  days_overdue: int({ minimum: 0, description: 'Whole days past the due date while `overdue`; 0 otherwise.' }),
+  note: nstr(),
+}, ['id', 'asset_id', 'asset_tag', 'loaner_pool_id', 'pool_name', 'checked_out_at', 'expected_return', 'state', 'days_overdue'], { description: 'A loan: one device out of a pool (an assignment with `loaner_pool_id`).' });
+S_.LoanList = obj({ data: arr(S('Loan')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanExtendRequest = obj({
+  expected_return: date({ description: 'The new due date: later than the current one, not before today (UTC) and within the pool\'s `max_loan_days` counted from the day the loan started.' }),
+  note: str({ maxLength: 500, description: 'Why (audit trail and history).' }),
+}, ['expected_return'], { additionalProperties: false });
 S_.OverdueCheckout = obj({
   assignment_id: uuid(),
   asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
   person_id: nuuid(),
   location_id: nuuid(),
   target_asset_id: nuuid(),
+  holder_name: nstr({ description: 'Display name of the person, location or asset the device is with.' }),
   loaner_pool_id: nuuid(),
+  pool_name: nstr(),
   expected_return: date(),
   days_overdue: int({ minimum: 1 }),
-}, ['assignment_id', 'asset_id', 'expected_return', 'days_overdue']);
+}, ['assignment_id', 'asset_id', 'asset_tag', 'expected_return', 'days_overdue']);
 S_.OverdueCheckoutList = obj({ data: arr(S('OverdueCheckout')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanerDashboardPool = obj({
+  id: uuid(),
+  name: str(),
+  is_active: bool(),
+  member_count: int({ minimum: 0 }),
+  available_count: int({ minimum: 0 }),
+  checked_out_count: int({ minimum: 0, description: 'Members that are checked out (includes the overdue ones and those due today).' }),
+  overdue_count: int({ minimum: 0 }),
+  due_today_count: int({ minimum: 0 }),
+  due_soon_count: int({ minimum: 0, description: 'Checked-out members due after today but within the tenant\'s `loan_reminder_days`.' }),
+}, ['id', 'name', 'is_active', 'member_count', 'available_count', 'checked_out_count', 'overdue_count', 'due_today_count', 'due_soon_count']);
+S_.LoanerActivity = obj({
+  at: dt(),
+  kind: en(['checked_out', 'checked_in']),
+  assignment_id: uuid(),
+  asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
+  person_id: nuuid(),
+  person_name: nstr(),
+  loaner_pool_id: uuid(),
+  pool_name: str(),
+  expected_return: date(),
+}, ['at', 'kind', 'assignment_id', 'asset_id', 'asset_tag', 'loaner_pool_id', 'pool_name', 'expected_return']);
+S_.LoanerDashboard = obj({
+  as_of: date({ description: 'The UTC date the counts are for.' }),
+  totals: obj({
+    pools: int({ minimum: 0 }),
+    members: int({ minimum: 0 }),
+    available: int({ minimum: 0 }),
+    checked_out: int({ minimum: 0 }),
+    overdue: int({ minimum: 0 }),
+    due_today: int({ minimum: 0 }),
+    due_soon: int({ minimum: 0 }),
+  }, ['pools', 'members', 'available', 'checked_out', 'overdue', 'due_today', 'due_soon']),
+  pools: arr(S('LoanerDashboardPool')),
+  recent: arr(S('LoanerActivity'), { maxItems: 20, description: 'The latest check-outs and returns of loans from the pools, newest first (at most 20).' }),
+}, ['as_of', 'totals', 'pools', 'recent'], { description: 'Everything the loaner dashboard page shows, in one call. Each count has a list behind it: `GET /v1/loans` (`loaner_pool_id`, `state`) for out / overdue / due today, `GET /v1/loaner-pools/{id}/members?available=true` for available.' });
+S_.CustodySettings = obj({
+  default_expected_return_days: { type: ['integer', 'null'], minimum: 1, maximum: 366, description: 'Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API never applies it to an ordinary check-out (one without `expected_return` stays open-ended); a loaner loan whose pool has no `default_loan_days` takes it (ED-24).' },
+  loan_reminder_days: int({ minimum: 0, maximum: 30, default: 2, description: 'How many days before the due date a borrower of a loaner pool gets the "due soon" reminder; 0 = no reminder.' }),
+}, ['default_expected_return_days', 'loan_reminder_days']);
+S_.CustodySettingsUpdate = obj({
+  default_expected_return_days: { type: ['integer', 'null'], minimum: 1, maximum: 366 },
+  loan_reminder_days: int({ minimum: 0, maximum: 30 }),
+}, [], { additionalProperties: false, description: 'Replaces the settings; an omitted member is reset to its default (`null` / 2).' });
+// [LOAN] END
 
 // repairs
 S_.RepairCompleteRequest = obj({
@@ -954,55 +1115,6 @@ S_.FilesSettingsUpdate = obj({
   max_upload_bytes: { type: ['integer', 'null'], minimum: 1024 },
 }, ['strip_exif_original', 'max_upload_bytes'], { additionalProperties: false });
 // M2 wave 1b (files): END
-
-// imports
-S_.ImportJob = obj({
-  id: ro(uuid()),
-  source: en(['csv', 'xlsx', 'snipe_it', 'google_admin_csv']),
-  entity_type: en(['asset', 'accessory', 'consumable', 'location', 'person', 'manufacturer', 'asset_model', 'category']),
-  state: ro(en(['draft', 'dry_run_queued', 'dry_run_running', 'dry_run_complete', 'commit_queued', 'committing', 'committed', 'failed', 'cancelled'])),
-  file_attachment_id: nuuid('Uploaded file (kind `import_file`).'),
-  original_filename: nstr(),
-  mapping: { type: 'object', additionalProperties: str(), description: 'Source column -> target field key (use `custom_data.<key>` for custom fields).' },
-  options: obj({
-    match_on: en(['asset_tag', 'serial', 'external_id'], { default: 'asset_tag' }),
-    on_duplicate: en(['skip', 'update', 'error'], { default: 'skip' }),
-    create_missing_references: bool({ default: true, description: 'Create missing categories, manufacturers, models, locations referenced by name.' }),
-    delimiter: str({ maxLength: 1, default: ',' }),
-    date_format: str({ default: 'YYYY-MM-DD' }),
-  }, [], { additionalProperties: true }),
-  rows_total: ro(int()), rows_create: ro(int()), rows_update: ro(int()), rows_skip: ro(int()), rows_error: ro(int()),
-  dry_run_digest: ro(nstr({ description: 'Hash of file + mapping + options at dry-run time; quote it in the commit request.' })),
-  dry_run_completed_at: ro(ndt()),
-  committed_at: ro(ndt()),
-  error: ro(nstr()),
-  created_at: ro(dt()),
-  updated_at: ro(dt()),
-  created_by: ro(nuuid()),
-}, ['id', 'source', 'entity_type', 'state', 'mapping', 'options']);
-S_.ImportJobCreate = obj({
-  source: en(['csv', 'xlsx', 'snipe_it', 'google_admin_csv']),
-  entity_type: en(['asset', 'accessory', 'consumable', 'location', 'person', 'manufacturer', 'asset_model', 'category']),
-  file_attachment_id: uuid('Required for file sources; omit for `snipe_it` (credentials are passed in `options.snipe_it`).'),
-  mapping: { type: 'object', additionalProperties: str() },
-  options: { type: 'object', additionalProperties: true },
-}, ['source', 'entity_type'], { additionalProperties: false });
-S_.ImportJobUpdate = obj({
-  mapping: { type: 'object', additionalProperties: str() },
-  options: { type: 'object', additionalProperties: true },
-}, [], { additionalProperties: false, description: 'Editing mapping/options is allowed in `draft` and `dry_run_complete` (the latter returns the job to `draft` and invalidates the digest).' });
-S_.ImportJobList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
-S_.ImportCommitRequest = obj({ dry_run_digest: str({ description: 'Digest of the reviewed dry run; if the file, mapping or options changed since, commit fails with 409.' }) }, ['dry_run_digest'], { additionalProperties: false });
-S_.ImportRow = obj({
-  row_no: int({ minimum: 1 }),
-  phase: en(['dry_run', 'commit']),
-  outcome: en(['create', 'update', 'skip', 'error']),
-  entity_id: nuuid(),
-  errors: arr(S('FieldError')),
-  warnings: arr(S('FieldError')),
-  source_data: { type: ['object', 'null'], additionalProperties: true },
-}, ['row_no', 'phase', 'outcome', 'errors', 'warnings']);
-S_.ImportRowList = obj({ data: arr(S('ImportRow')), page: S('PageInfo') }, ['data', 'page']);
 
 // audit
 S_.AuditEntry = obj({
@@ -1150,7 +1262,7 @@ defineResource('User', {
   },
   required: ['email', 'display_name', 'role_assignments'],
   createOnly: { send_invite: bool({ default: true }) },
-  readOnly: { mfa_enabled: ro(bool()), last_login_at: ro(ndt()), person_id: ro(nuuid()) },
+  readOnly: { mfa_enabled: ro(bool()), last_login_at: ro(ndt()), person_id: ro(nuuid('[M2-USR-03] The person record of this login account (every login has exactly one; see `POST /v1/people/{id}/link-user`). Filled by `/v1/users` and `/v1/me`; null in login responses.')) },
 });
 S_.Role = obj({ id: uuid(), key: str(), name: str(), description: nstr(), permissions: arr(str()), is_builtin: bool() }, ['id', 'key', 'name', 'permissions', 'is_builtin']);
 S_.RoleList = obj({ data: arr(S('Role')) }, ['data']);
@@ -1521,6 +1633,22 @@ crud({
 doc.paths['/v1/people'].post.description = 'Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].patch.description = 'Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.';
+// [M2-USR-03] BEGIN - link and unlink a person and a login account (ED-22)
+S_.PersonLinkUserRequest = obj({ user_id: uuid('The login account (`User.id`) to link: live, in this tenant.') }, ['user_id'], { additionalProperties: false });
+addOp('/v1/people/{id}/link-user', 'post', {
+  tag: 'People', id: 'linkPersonToUser', summary: 'Link a person to a login account', perm: 'user:manage', params: [ID], ifMatchOptional: true,
+  description: 'Makes the person the person record of the login account (Administrators only, audited as `person.user_linked`). Every login account already has the person the database created for it, so linking **replaces** that placeholder: it is archived (never deleted; its history keeps pointing at it) and a department it headed is headed by the linked person. The linked person keeps all of its assignments and history. One person per login and one login per person: a person that already has a login is 409 `person-already-linked`, a login whose person was chosen by somebody (not the system-made placeholder, which has no `created_by`) is 409 `login-already-linked` (unlink it first), a placeholder that still holds assets is 409 `login-person-in-use` (`usage.open_assignments`). Linking the pair that is already linked changes nothing (200). 422 `/user_id` when the account does not exist in the tenant or is archived. The person\'s name and email are not changed, but a later rename of the login account renames the person again (ED-15).',
+  body: jsonBody(S('PersonLinkUserRequest'), true, { user_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d92' }),
+  problems: { 409: { codes: ['person-already-linked', 'login-already-linked', 'login-person-in-use', 'conflict', 'idempotency-key-in-flight'], text: 'The person already has a login, the login already has a chosen person, or the login\'s own placeholder person still holds assets.' } },
+  success: { 200: okResp(200, 'Linked. The person (`user_id` set); `ETag` is its new version.', S('Person'), { etag: true }) },
+});
+addOp('/v1/people/{id}/link-user', 'delete', {
+  tag: 'People', id: 'unlinkPersonFromUser', summary: 'Unlink a person from its login account', perm: 'user:manage', params: [ID], ifMatchOptional: true,
+  description: 'Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.',
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The person has no login account to unlink.' } },
+  success: { 200: okResp(200, 'Unlinked. The person (`user_id` null); `ETag` is its new version.', S('Person'), { etag: true }) },
+});
+// [M2-USR-03] END
 // [DEPT] BEGIN - departments (ED-17)
 crud({
   tag: 'Departments', base: 'departments', name: 'Department', plural: 'Departments', singular: 'department', readPerm: 'department:read', writePerm: 'department:manage',
@@ -1560,7 +1688,8 @@ const assetFilters = [
   qp('assigned_person_id', uuid(), 'Currently checked out to this person.'),
   qp('assigned', bool(), 'true = checked out, false = in stock.'),
   qp('overdue', bool(), '[M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset.'),
-  qp('loaner_pool_id', uuid(), 'Members of this loaner pool.'),
+  qp('loaner_pool_id', uuid(), '[LOAN] Members of this loaner pool (ED-20).'),
+  qp('in_loaner_pool', bool(), '[LOAN] true = member of any loaner pool, false = in none.'),
   qp('warranty_end_before', date(), 'Warranty ends on or before.'),
   qp('warranty_end_after', date(), 'Warranty ends on or after.'),
   qp('purchase_date_from', date(), 'Purchased on or after.'),
@@ -1572,8 +1701,8 @@ const assetFilters = [
 ];
 addOp('/v1/assets', 'get', {
   tag: 'Assets', id: 'listAssets', summary: 'List and search assets', perm: 'asset:read',
-  description: 'The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.',
-  params: listParams([...assetFilters, sortParam(['created_at', 'updated_at', 'asset_tag', 'name', 'purchase_date', 'warranty_end'], ['-created_at'])]),
+  description: 'The main registry query. `q` searches tag, serial and name (trigram); `tag` / `serial` are exact. Soft-deleted assets are excluded unless `archived` says otherwise.\n\n[M2-REG-03, ED-22] `sort` also takes `location` (the full location path, `HQ > Floor 2 > Room 4`, case-insensitive), `assignee` (the name of whoever holds the asset: person, location or asset tag, case-insensitive) and `due` (the expected return date of the open custody). For these three keys an asset with no value (no location, not checked out, no expected return) is listed **last in both directions**, ordered by `id` among themselves, so a page boundary never splits or repeats rows. The other keys keep sorting an empty value as the smallest. Cursors are bound to the sort: a cursor of another sort is 400 `invalid-cursor`.',
+  params: listParams([...assetFilters, sortParam(['created_at', 'updated_at', 'asset_tag', 'name', 'purchase_date', 'warranty_end', 'location', 'assignee', 'due'], ['-created_at'])]),
   success: { 200: okResp(200, 'A page of assets.', S('AssetList'), { replay: false }) },
 });
 addOp('/v1/assets', 'post', {
@@ -1657,7 +1786,7 @@ addOp('/v1/settings/asset-tag-template', 'put', {
 addOp('/v1/assets/{id}/history', 'get', {
   tag: 'Assets', id: 'listAssetHistory', summary: 'Chain of custody and lifecycle events', perm: 'asset:read',
   description: 'Newest first. Includes custody changes, status/location changes, repairs and imports.',
-  params: [ID, P('Cursor'), P('Limit'), arrQ('event_type', en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported']), 'Filter by event type.'), qp('from', dt(), 'Events at or after.'), qp('to', dt(), 'Events before.')],
+  params: [ID, P('Cursor'), P('Limit'), arrQ('event_type', en(['created', 'updated', 'status_changed', 'location_changed', 'checked_out', 'checked_in', 'transferred', 'repair_opened', 'repair_completed', 'archived', 'restored', 'label_printed', 'imported', 'custody_undone']), 'Filter by event type.'), qp('from', dt(), 'Events at or after.'), qp('to', dt(), 'Events before.')],
   success: { 200: okResp(200, 'A page of events.', S('HistoryEventList'), { replay: false }) },
 });
 addOp('/v1/assets/{id}/assignments', 'get', {
@@ -1697,6 +1826,22 @@ addOp('/v1/assets/{id}/transfer', 'post', {
   problems: { 409: { codes: ['asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'The asset cannot be handed out in its current state, or a request with the same Idempotency-Key is still running.' } },
   success: { 201: okResp(201, 'Transferred. Returns the updated asset, the transfer record and the new assignment; `ETag` is the new version of the asset.', S('TransferResult'), { etag: true, location: true }) },
 });
+
+// [M2-UX-02] BEGIN - undo of a custody action (ED-23)
+S_.UndoCustodyRequest = obj({ assignment_id: uuid('The `assignment.id` the action answered with: the new assignment of a check-out or transfer, the closed one of a check-in.') }, ['assignment_id'], { additionalProperties: false });
+S_.UndoResult = obj({
+  asset: S('Asset'),
+  assignment: S('Assignment'),
+  undone: en(['checkout', 'checkin', 'transfer']),
+}, ['asset', 'assignment', 'undone'], { description: 'Result of an undo: the **updated asset** (new `ETag` also in the header), the assignment that is now in effect (the closed one after undoing a check-out or a transfer from stock, the re-opened one after undoing a check-in or a transfer between holders) and what was undone.' });
+addOp('/v1/assets/{id}/undo-custody', 'post', {
+  tag: 'Custody', id: 'undoAssetCustody', summary: 'Undo the last custody action of an asset', perm: 'asset:checkout', params: [ID], ifMatch: true, idem: 'required',
+  description: 'Reverses the **last** check-out, check-in or transfer of the asset as an inverse action, in one transaction, never as a delete: a check-out is undone by closing its period and restoring the previous status; a check-in by re-opening custody for the same holder (a NEW assignment: a closed period is never re-opened) and restoring the previous status and location; a transfer by moving the asset back to the previous holder (or, for a transfer out of stock, like a check-out). The original event, assignment and audit row stay; the undo adds a `custody_undone` history event, an audit row `asset.custody_undone` and a new version of the asset.\n\nGuards: `If-Match` is required and must be the ETag the action answered with (412 when the asset changed in any way since); `assignment_id` must belong to the newest history event of the asset (409 `undo-asset-changed` otherwise, 409 `undo-not-possible` when that event is already an undo); the action is at most five minutes old (409 `undo-expired`); the caller needs the permission of the action it reverses (`asset:checkout`, `asset:checkin` or `asset:transfer`; 403 otherwise); and the previous holder and status must still be valid (409 `undo-not-possible`, for example the person was deactivated meanwhile). Loaner custody is not undone here. Requires an `Idempotency-Key`: a retry replays the stored answer.',
+  body: jsonBody(S('UndoCustodyRequest'), true, { assignment_id: '0197a3c2-1b6e-7c3a-8d41-2f5b6a7c8d93' }),
+  problems: { 409: { codes: ['undo-expired', 'undo-asset-changed', 'undo-not-possible', 'conflict', 'idempotency-key-in-flight'], text: 'Too late, the asset changed meanwhile, already undone, or the previous holder / status is gone.' } },
+  success: { 200: okResp(200, 'Undone. Returns the updated asset and the assignment now in effect; `ETag` is the new version of the asset.', S('UndoResult'), { etag: true }) },
+});
+// [M2-UX-02] END
 
 // ---------------------------------------------------------------- [M2-W1] moves, disposal, lost and found, person history
 // Added by the wave-1 backend (M2-LOC-02, M2-LIFE-05, M2-LIFE-06): not part of the first contract draft.
@@ -1833,38 +1978,110 @@ addOp('/v1/people/{id}/stock-movements', 'get', {
 // [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- LOANERS
+// [LOAN] BEGIN - loaner pools (M2-LOAN-01, ED-20, ED-21, ADR 0011)
 crud({
   tag: 'Loaners', base: 'loaner-pools', name: 'LoanerPool', plural: 'LoanerPools', singular: 'loaner pool', readPerm: 'loaner:read', writePerm: 'loaner:manage',
-  filters: [qp('is_active', bool(), 'Only active / inactive pools.')], sorts: ['name', 'created_at'], defSort: ['name'],
+  filters: [qp('is_active', bool(), 'Only active / inactive pools.'), qp('home_location_id', uuid(), 'Pools whose home is this location.')], sorts: ['name', 'created_at'], defSort: ['name'],
 });
+doc.paths['/v1/loaner-pools'].get.description = 'Cursor-paginated list. `q` matches the name. Every pool carries its live counts (`member_count`, `available_count`, `checked_out_count`, `overdue_count`, `due_today_count`), so the pool list needs one call.';
+doc.paths['/v1/loaner-pools'].post.description = 'Creates a pool. The name is unique among live pools, ignoring case (409 `conflict`, pointer `/name`); `home_location_id` must be a live location and `owner_user_id` an active user (422); `max_loan_days` must be >= `default_loan_days` (422).';
+doc.paths['/v1/loaner-pools/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_loans` while a member is checked out; otherwise the pool is archived and its memberships are removed, so the assets can join another pool. Switch a pool off with `is_active: false` instead to keep its members.';
 addOp('/v1/loaner-pools/{id}/members', 'get', {
   tag: 'Loaners', id: 'listLoanerPoolMembers', summary: 'List pool members', perm: 'loaner:read',
-  params: [ID, P('Cursor'), P('Limit'), qp('available', bool(), 'true = not currently checked out.')],
+  description: 'The assets of the pool, in asset-tag order, with the full asset (status, location, `current_assignment`) and whether each can be lent right now.',
+  params: [ID, P('Cursor'), P('Limit'), qp('available', bool(), 'true = can be lent right now (not archived, `deployable`, not checked out); false = every other member.')],
   success: { 200: okResp(200, 'A page of pool members.', S('LoanerPoolMemberList'), { replay: false }) },
 });
 addOp('/v1/loaner-pools/{id}/members', 'post', {
   tag: 'Loaners', id: 'addLoanerPoolMember', summary: 'Add an asset to the pool', perm: 'loaner:manage', params: [ID],
-  description: 'An asset belongs to at most one pool (409 if it is in another).',
+  description: 'An asset belongs to at most one pool (409 `conflict` if it is in another one; adding it to the pool it is in answers 200 with the existing member). Archived assets cannot join (422). A member can still be checked out the regular way.',
   body: jsonBody(obj({ asset_id: uuid() }, ['asset_id'], { additionalProperties: false })),
-  success: { 201: okResp(201, 'Added.', S('LoanerPoolMember')) },
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The asset is a member of another pool.' } },
+  success: { 201: okResp(201, 'Added.', S('LoanerPoolMember')), 200: okResp(200, 'Already a member of this pool.', S('LoanerPoolMember')) },
 });
 addOp('/v1/loaner-pools/{id}/members/{asset_id}', 'delete', {
   tag: 'Loaners', id: 'removeLoanerPoolMember', summary: 'Remove an asset from the pool', perm: 'loaner:manage', params: [ID, P('AssetIdPath')],
-  description: 'Rejected with 409 while the asset is on loan.',
+  description: 'Rejected with 409 while the asset is on loan from this pool (`usage.open_loans`); a regular check-out of a member does not block removal.',
   success: { 204: okResp(204, 'Removed.') },
+});
+addOp('/v1/loaner-pools/{id}/members/bulk-add', 'post', {
+  tag: 'Loaners', id: 'bulkAddLoanerPoolMembers', summary: 'Add many assets to the pool', perm: 'loaner:manage', params: [ID], conflict: false,
+  description: 'Adds every listed asset (same rules as `POST /v1/loaner-pools/{id}/members`). At most 100 ids; the response is `200` with one result per id, in request order, and a failing item does not roll back the others. Idempotent with `Idempotency-Key`.',
+  body: jsonBody(S('LoanerPoolMembersBulk')),
+  success: { 200: okResp(200, 'Per-item results.', S('LoanerPoolMemberBulkResult')) },
+});
+addOp('/v1/loaner-pools/{id}/members/bulk-remove', 'post', {
+  tag: 'Loaners', id: 'bulkRemoveLoanerPoolMembers', summary: 'Remove many assets from the pool', perm: 'loaner:manage', params: [ID], conflict: false,
+  description: 'Removes every listed asset (same rules as `DELETE /v1/loaner-pools/{id}/members/{asset_id}`). At most 100 ids; `200` with one result per id (status 204 on success, no `data`), a failing item does not roll back the others.',
+  body: jsonBody(S('LoanerPoolMembersBulk')),
+  success: { 200: okResp(200, 'Per-item results.', S('LoanerPoolMemberBulkResult')) },
 });
 addOp('/v1/loaner-pools/{id}/checkout', 'post', {
   tag: 'Loaners', id: 'checkoutLoaner', summary: 'Quick loan from the pool', perm: 'loaner:checkout', params: [ID], idem: 'required',
-  description: 'Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment.',
+  description: 'Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool\'s `default_loan_days`, else + the organisation\'s `default_expected_return_days`, else + 7 days (ED-24; never beyond the pool\'s `max_loan_days`). Without `asset_id` the device is the member that has been idle the longest (earliest return of its last custody period, a device never lent first), ties by the lowest asset tag. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool\'s limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool\'s `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.',
   body: jsonBody(S('LoanerCheckoutRequest')),
+  problems: { 409: { codes: ['no-loaner-available', 'loaner-pool-inactive', 'loan-limit-reached', 'asset-already-checked-out', 'asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'The pool has nothing to lend, is switched off, or the borrower is at the limit; or (with `asset_id`) the device is out or not deployable.' } },
   success: { 201: okResp(201, 'Loan opened. Returns the updated asset and the new assignment; `ETag` is the new version of the asset.', S('CustodyResult'), { etag: true, location: true }) },
+});
+addOp('/v1/loaner-pools/{id}/quick-checkout', 'post', {
+  tag: 'Loaners', id: 'quickCheckoutLoaners', summary: 'Quick loan by scanning: one borrower, many devices', perm: 'loaner:checkout', params: [ID], idem: 'required', conflict: false,
+  description: 'The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool\'s `default_loan_days`, else + the organisation\'s `default_expected_return_days`, else + 7 days (ED-24). The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower\'s limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.',
+  body: jsonBody(S('QuickLoanRequest')),
+  problems: { 404: { codes: ['not-found'], text: 'No such pool.' }, 409: { codes: ['loaner-pool-inactive', 'conflict', 'idempotency-key-in-flight'], text: 'The pool is switched off, the borrower text matches two people, or a request with the same Idempotency-Key is still running.' }, 422: { codes: ['validation', 'idempotency-key-reuse'], text: 'Bad body, unknown / inactive / ineligible borrower, or due date past the pool\'s maximum.' } },
+  success: { 200: okResp(200, 'Per-device results (HTTP 200 whenever the request itself was valid).', S('QuickLoanResult')) },
+});
+// [LOAN] END
+
+// [LOAN] BEGIN - loans: list, return, extend, overdue, dashboard (M2-LOAN-02..04)
+addOp('/v1/loans', 'get', {
+  tag: 'Loaners', id: 'listLoans', summary: 'List loans', perm: 'loaner:read', hasId: false,
+  description: 'Loans from loaner pools (assignments with a `loaner_pool_id`): the click-through lists behind the dashboard. By default the open ones (`on_loan`, `due_today`, `overdue`); add `returned` to include closed ones. `q` matches the asset tag and name and the borrower\'s name.',
+  params: [P('Cursor'), P('Limit'), P('IncludeTotal'), P('Q'), qp('loaner_pool_id', uuid(), 'Only this pool.'), qp('person_id', uuid(), 'Only this borrower.'), qp('asset_id', uuid(), 'Only this device.'), arrQ('state', en(['on_loan', 'due_today', 'overdue', 'returned']), 'Only these states. Default: `on_loan,due_today,overdue`.'), qp('due_within_days', int({ minimum: 0, maximum: 366 }), 'Open loans due on or before today + N days (0 = due today or earlier).'), sortParam(['expected_return', 'checked_out_at'], ['expected_return'])],
+  success: { 200: okResp(200, 'A page of loans.', S('LoanList'), { replay: false }) },
 });
 addOp('/v1/loans/overdue', 'get', {
   tag: 'Loaners', id: 'listOverdueCheckouts', summary: 'Overdue check-outs', perm: 'loaner:read', hasId: false,
-  description: 'Open asset check-outs past `expected_return`, loaner or not (the data behind overdue alerts).',
+  description: 'Open asset check-outs past `expected_return` (before today, UTC), loaner or not, to anyone or anywhere: the data behind the overdue view. Only loans from a loaner pool raise alerts (see ED-21). `days_overdue` counts whole days.',
   params: [P('Cursor'), P('Limit'), qp('loaner_pool_id', uuid(), 'Only this pool.'), qp('person_id', uuid(), 'Only this borrower.'), sortParam(['expected_return', 'days_overdue'], ['expected_return'])],
   success: { 200: okResp(200, 'A page of overdue check-outs.', S('OverdueCheckoutList'), { replay: false }) },
 });
+addOp('/v1/loans/return', 'post', {
+  tag: 'Loaners', id: 'returnLoans', summary: 'Quick return by scanning (one or many devices)', perm: 'loaner:checkout', hasId: false, idem: 'required', conflict: false,
+  description: 'The bulk check-in screen in one call: the scanned devices (`codes`, at most 100) are checked in one after the other, answered per item in request order. A device must be a member of a loaner pool (of `loaner_pool_id` when given): else `422` (`not-in-pool`, pointer `/codes/<i>`); not checked out `409 asset-not-checked-out`; unknown code `404`. Each return is a normal check-in (history, audit, outbox, status back to deployable) and moves the device to `checkin_location_id`, or to the pool\'s `home_location_id`. A failing item does not roll back the others; unknown codes count towards the scan-resolve throttle. Replaying the same `Idempotency-Key` answers the stored result; returning a device twice with different keys is a per-item `409 asset-not-checked-out`.',
+  body: jsonBody(S('LoanReturnRequest')),
+  problems: { 409: { codes: ['idempotency-key-in-flight'], text: 'A request with the same Idempotency-Key is still running.' }, 422: { codes: ['validation', 'idempotency-key-reuse'], text: 'Bad body, unknown location or status.' } },
+  success: { 200: okResp(200, 'Per-device results (HTTP 200 whenever the request itself was valid).', S('LoanReturnResult')) },
+});
+addOp('/v1/loans/{id}', 'get', {
+  tag: 'Loaners', id: 'getLoan', summary: 'Get a loan', perm: 'loaner:read', params: [ID],
+  description: 'One loan by its assignment id (open or returned).',
+  success: { 200: okResp(200, 'The loan.', S('Loan'), { replay: false }) },
+});
+addOp('/v1/loans/{id}/extend', 'post', {
+  tag: 'Loaners', id: 'extendLoan', summary: 'Extend a loan', perm: 'loaner:checkout', params: [ID],
+  description: 'Moves the due date of an open loan to a later date: not before today (UTC) and within the pool\'s `max_loan_days` counted from the day the loan started (422 `/expected_return`). A closed loan is `409 conflict`. Extending is a logged action: an audit record (`loan.extended`, with the old and new date and the note), an outbox event and an entry in the asset\'s history (event type `updated`, `payload.loan_extended`). The asset\'s ETag changes (its `current_assignment` did). The "due soon" and "overdue" alerts re-arm for the new date.',
+  body: jsonBody(S('LoanExtendRequest')),
+  success: { 200: okResp(200, 'The loan with its new due date.', S('Loan')) },
+});
+addOp('/v1/loaners/dashboard', 'get', {
+  tag: 'Loaners', id: 'getLoanerDashboard', summary: 'Loaner dashboard', perm: 'loaner:read', hasId: false, mutate: false,
+  description: 'Per-pool counts (pool size, available, out, overdue, due today, due soon) with their totals, and the latest check-outs and returns. Counts cover live (not archived) pools and members; "today" is the UTC date (`as_of`). Inactive pools are listed (with `is_active: false`) and counted.',
+  success: { 200: okResp(200, 'The dashboard.', S('LoanerDashboard'), { replay: false }) },
+});
+// [LOAN] END
+// [LOAN] BEGIN - tenant custody settings (M2-LIFE-09)
+addOp('/v1/settings/custody', 'get', {
+  tag: 'Custody', id: 'getCustodySettings', summary: 'Get the custody settings', perm: 'catalog:read', hasId: false,
+  description: 'Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API never applies it to an ordinary check-out, but a loaner loan whose pool has no `default_loan_days` takes it, ED-24) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).',
+  success: { 200: okResp(200, 'The settings.', S('CustodySettings'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/custody', 'put', {
+  tag: 'Custody', id: 'putCustodySettings', summary: 'Replace the custody settings', perm: 'catalog:manage', ifMatch: true, conflict: false, hasId: false,
+  description: 'Replaces both settings (an omitted one is reset to its default). `If-Match` is the ETag of `GET` (the tenant settings version). Audited like the other settings.',
+  body: jsonBody(S('CustodySettingsUpdate')),
+  success: { 200: okResp(200, 'The new settings.', S('CustodySettings'), { etag: true }) },
+});
+// [LOAN] END
 
 // ---------------------------------------------------------------- REPAIRS
 crud({
@@ -1988,49 +2205,6 @@ addOp('/v1/files/{token}', 'get', {
   success: { 200: { description: 'The file bytes.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'inline for raster images, attachment otherwise.', schema: str() }, 'X-Content-Type-Options': { description: 'nosniff', schema: str() }, 'Content-Security-Policy': { description: "default-src 'none'; sandbox", schema: str() } }, content: { 'application/octet-stream': { schema: str({ format: 'binary' }) } } } },
 });
 // M2 wave 1b (files): END
-
-// ---------------------------------------------------------------- IMPORTS
-addOp('/v1/imports', 'get', {
-  tag: 'Imports', id: 'listImports', summary: 'List import jobs', perm: 'import:read',
-  params: [P('Cursor'), P('Limit'), arrQ('state', en(['draft', 'dry_run_queued', 'dry_run_running', 'dry_run_complete', 'commit_queued', 'committing', 'committed', 'failed', 'cancelled']), 'Filter by state.'), qp('entity_type', str(), 'Filter by entity type.')],
-  success: { 200: okResp(200, 'A page of import jobs, newest first.', S('ImportJobList'), { replay: false }) },
-});
-addOp('/v1/imports', 'post', {
-  tag: 'Imports', id: 'createImport', summary: 'Create an import job', perm: 'import:run',
-  description: 'Creates a `draft` job. Upload the file first (`POST /v1/attachments` with kind `import_file`), then reference it here. Nothing is written to the registry until a dry run has completed and the job is committed.',
-  body: jsonBody(S('ImportJobCreate')),
-  success: { 201: okResp(201, 'Job created.', S('ImportJob'), { etag: true, location: true }) },
-});
-addOp('/v1/imports/{id}', 'get', {
-  tag: 'Imports', id: 'getImport', summary: 'Get an import job', perm: 'import:read', params: [ID],
-  success: { 200: okResp(200, 'The job.', S('ImportJob'), { etag: true, replay: false }) },
-});
-addOp('/v1/imports/{id}', 'patch', {
-  tag: 'Imports', id: 'updateImport', summary: 'Edit mapping and options', perm: 'import:run', params: [ID], ifMatch: true,
-  body: jsonBody(S('ImportJobUpdate')),
-  success: { 200: okResp(200, 'Updated job.', S('ImportJob'), { etag: true }) },
-});
-addOp('/v1/imports/{id}/dry-run', 'post', {
-  tag: 'Imports', id: 'startImportDryRun', summary: 'Run the import without writing', perm: 'import:run', params: [ID],
-  description: 'Queues a dry run that validates every row, matches existing records and reports per-row outcomes (`create` / `update` / `skip` / `error`) without touching the registry. Poll `GET /v1/imports/{id}` until `state=dry_run_complete`.',
-  success: { 202: { description: 'Dry run queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter') }, content: { 'application/json': { schema: S('ImportJob') } } } },
-});
-addOp('/v1/imports/{id}/rows', 'get', {
-  tag: 'Imports', id: 'listImportRows', summary: 'Per-row results', perm: 'import:read',
-  params: [ID, P('Cursor'), P('Limit'), qp('phase', en(['dry_run', 'commit']), 'Defaults to the latest phase.'), arrQ('outcome', en(['create', 'update', 'skip', 'error']), 'Filter by outcome.')],
-  success: { 200: okResp(200, 'A page of rows.', S('ImportRowList'), { replay: false }) },
-});
-addOp('/v1/imports/{id}/commit', 'post', {
-  tag: 'Imports', id: 'commitImport', summary: 'Commit a reviewed dry run', perm: 'import:run', params: [ID], idem: 'required',
-  description: 'Only valid in state `dry_run_complete`, and only with the `dry_run_digest` the caller reviewed (409 `import-stale-dry-run` otherwise). Writes through the normal registry services, so validation, history and audit are not bypassed. Rollback of a committed import is v1.1.',
-  body: jsonBody(S('ImportCommitRequest')),
-  success: { 202: { description: 'Commit queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter'), 'Idempotent-Replayed': H('IdempotentReplayed') }, content: { 'application/json': { schema: S('ImportJob') } } } },
-});
-addOp('/v1/imports/{id}/cancel', 'post', {
-  tag: 'Imports', id: 'cancelImport', summary: 'Cancel an import job', perm: 'import:run', params: [ID],
-  description: 'Allowed before commit starts; a running commit finishes its current batch and stops (rows already written stay).',
-  success: { 200: okResp(200, 'Cancelled job.', S('ImportJob')) },
-});
 
 // ---------------------------------------------------------------- AUDIT
 addOp('/v1/audit-log', 'get', {
@@ -2333,6 +2507,297 @@ S_.Me.required.push('mfa_policy');
   });
 }
 // ================================================================ [M2-W2 NOT] END
+
+// ================================================================ [M2-W3 IMP] BEGIN
+// M2-IMP-01..07: CSV / XLSX import with a mandatory dry run (ED-18, ADR 0010). Replaces the contract-only
+// placeholders of the first drafts (states draft..committed, source snipe_it, `match_on` options).
+{
+  const ENTITY = ['asset', 'person', 'location', 'department'];
+  const STATES = ['draft', 'uploaded', 'analyzing', 'analyzed', 'mapped', 'dry_running', 'dry_run_done', 'committing', 'completed', 'failed', 'cancelled'];
+  const REFS = ['category', 'manufacturer', 'model', 'status', 'location', 'department', 'vendor', 'person'];
+  const DATE_FORMATS = ['auto', 'iso', 'dmy', 'mdy'];
+  const optionProps = {
+    match_on: en(['auto', 'asset_tag', 'serial', 'external_id'], { default: 'auto', description: 'Assets: how an existing asset is found. `auto` = the tag when the row has one, else the serial number (a tag and a serial that name different assets is a row error).' }),
+    on_match: en(['skip', 'update', 'error'], { default: 'skip', description: 'What to do with a row whose record exists already, and with a row that repeats an earlier row of the file (same tag, serial, email, path or name): leave it, update it with the cells of the file, or report an error.' }),
+    blank_cells: en(['ignore', 'clear'], { default: 'ignore', description: 'Update only: an empty cell leaves the field alone, or empties it.' }),
+    date_format: en(DATE_FORMATS, { default: 'auto', description: '`auto` reads ISO dates, month names and unambiguous day/month dates; `03/04/2024` needs `dmy` or `mdy`.' }),
+    number_format: en(['auto', 'dot', 'comma'], { default: 'auto', description: 'The decimal separator of numbers in the file; `auto` decides where the text is unambiguous (`1.234,50`, `1,234.50`) and reads `1,234` as a thousand.' }),
+    default_currency: str({ pattern: '^[A-Z]{3}$', description: 'Currency of costs that name none; else the organisation\'s base currency.' }),
+    external_source: str({ maxLength: 100, description: 'Source recorded with a mapped external id (default `import`; the Google preset uses `google_admin`).' }),
+    references: { type: 'object', additionalProperties: en(['create', 'must_exist']), description: 'Per reference kind (`category`, `manufacturer`, `model`, `status`, `location`, `department`, `vendor`, `person`): create what is missing, or require it to exist. Defaults: `create`, except `status` and `person` (`must_exist`; a status label is never created).' },
+    defaults: obj({ category: uuid(), status: uuid(), location: uuid(), department: uuid(), vendor: uuid() }, [], { additionalProperties: false, description: 'Ids used when a row\'s own cell is empty.' }),
+    location_kind: en(['site', 'building', 'floor', 'room', 'storage', 'vehicle', 'other'], { default: 'other', description: 'Kind of the locations the import creates.' }),
+    assign: bool({ default: true, description: 'Assets: check an asset out to the person in `assigned_to` (only when it can be checked out; otherwise a warning).' }),
+    detect_changes: bool({ default: true, description: 'Update only: a record edited after the dry run is not touched (row error `changed-since-dry-run`).' }),
+  };
+  S_.ImportOptions = obj(optionProps, [], { additionalProperties: false });
+  S_.ImportMappingColumn = obj({
+    index: int({ minimum: 0, maximum: 499, description: '0-based column of the file.' }),
+    target: nstr({ maxLength: 80, description: 'A field of the entity (`GET /v1/imports/presets` lists them), `cf:<custom field key>` for an asset custom field, or null to ignore the column.' }),
+    date_format: en(DATE_FORMATS, { description: 'Overrides the job\'s date format for this column.' }),
+  }, ['index', 'target'], { additionalProperties: false });
+  S_.ImportMapping = obj({
+    columns: arr(S('ImportMappingColumn')),
+    constants: { type: 'object', additionalProperties: str({ minLength: 1, maxLength: 300 }), description: 'Text for a target that has no column (`{"category": "Chromebook"}`), used for every row whose own cell is empty.' },
+  }, ['columns'], { additionalProperties: false });
+  S_.ImportValueEntry = {
+    oneOf: [
+      obj({ id: uuid() }, ['id'], { additionalProperties: false, description: 'Use this existing record.' }),
+      obj({ create: { const: true }, name: str({ minLength: 1, maxLength: 200 }) }, ['create'], { additionalProperties: false, description: 'Create it (under this name, default the text of the cell).' }),
+      obj({ skip: { const: true } }, ['skip'], { additionalProperties: false, description: 'Treat the cell as empty.' }),
+    ],
+  };
+  S_.ImportValueMap = { type: 'object', additionalProperties: { type: 'object', additionalProperties: S('ImportValueEntry') }, description: 'By reference kind, then by the NORMALISED source value (trimmed, spaces collapsed, lower case): what that value of the file means.' };
+  S_.ImportParse = obj({
+    format: nstr({ description: '`csv` or `xlsx`.' }),
+    encoding: nstr({ description: 'CSV: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252` (detected).' }),
+    delimiter: nstr({ description: 'CSV: `,` `;` tab or `|` (detected).' }),
+    sheet: nstr({ description: 'XLSX: the sheet that is read (default: the first visible one).' }),
+    sheets: { type: ['array', 'null'], items: str(), description: 'XLSX: the visible sheets.' },
+    header_line: { type: ['integer', 'null'], description: 'Row (XLSX) or line (CSV) number of the header row.' },
+  }, ['format', 'encoding', 'delimiter', 'sheet', 'sheets', 'header_line']);
+  S_.ImportColumnProfile = obj({
+    index: int(), header: str(), non_blank: int(), blank: int(), distinct: int(),
+    distinct_capped: bool({ description: 'More than 10,000 distinct values: `distinct` is a lower bound.' }),
+    duplicates: int({ description: 'Non-blank cells that repeat an earlier value.' }),
+    type: en(['empty', 'integer', 'number', 'date', 'boolean', 'email', 'text']),
+    date_order: { type: ['string', 'null'], enum: ['iso', 'dmy', 'mdy', 'ambiguous', 'mixed', null], description: 'Date columns: the order the data allows; `ambiguous` needs an explicit date format.' },
+    max_length: int(), samples: arr(str(), { description: 'Up to five distinct values.' }),
+  }, ['index', 'header', 'non_blank', 'blank', 'distinct', 'distinct_capped', 'duplicates', 'type', 'date_order', 'max_length', 'samples']);
+  S_.RowIssue = obj({
+    field: nstr({ description: 'The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole.' }),
+    message: str(), code: str({ description: 'Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`...' }),
+  }, ['field', 'message', 'code']);
+  S_.ImportJob = obj({
+    id: uuid(),
+    entity_type: en(ENTITY),
+    source: en(['csv', 'xlsx', 'google_admin_csv']),
+    preset_key: nstr({ description: 'The built-in preset the import was created from (`GET /v1/imports/presets`).' }),
+    state: en(STATES, { description: 'draft (no file yet) -> uploaded -> analyzing -> analyzed -> mapped -> dry_running -> dry_run_done -> committing -> completed; `failed` and `cancelled` end it. Editing the mapping or options returns `dry_run_done` to `mapped`.' }),
+    filename: nstr(),
+    file_attachment_id: nuuid('The uploaded file: an attachment of kind `import_file` owned by this import.'),
+    parse: S('ImportParse'),
+    headers: { type: ['array', 'null'], items: str(), description: 'Header names of the file, after analysis.' },
+    mapping: S('ImportMapping'),
+    options: S('ImportOptions'),
+    rows_total: int({ description: 'Data rows of the file.' }),
+    counts: obj({
+      dry_run: obj({ create: int(), update: int(), skip: int(), error: int() }, ['create', 'update', 'skip', 'error']),
+      commit: obj({ created: int(), updated: int(), skipped: int(), error: int() }, ['created', 'updated', 'skipped', 'error']),
+    }, ['dry_run', 'commit']),
+    progress: obj({
+      phase: { type: ['string', 'null'], enum: ['analyze', 'dry_run', 'commit', null] },
+      processed: int(), total: int(), percent: int({ minimum: 0, maximum: 100 }),
+    }, ['phase', 'processed', 'total', 'percent']),
+    dry_run_digest: nstr({ description: 'Digest of the reviewed dry run (file, parse settings, mapping, options, value map and every row\'s outcome). Quote it in the commit request.' }),
+    dry_run_at: ndt(), committed_at: ndt(), started_at: ndt(), finished_at: ndt(),
+    data_purged_at: ndt({ description: 'When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.' }),
+    cancel_requested: bool(),
+    error: nstr({ description: 'Why a failed import failed (a sentence; for a bad file it names the line).' }),
+    summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created).' },
+    requested_by: uuid(),
+    created_at: dt(), updated_at: dt(),
+    profile: { type: ['array', 'null'], items: S('ImportColumnProfile'), description: 'Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.' },
+    samples: { type: ['array', 'null'], items: arr(str()), description: 'The first 50 data rows (only on a single import; null without `import:run`: they are cells of the file).' },
+    confidence: { type: ['object', 'null'], additionalProperties: { type: 'number' }, description: 'How sure the suggested mapping is per column index (1 = exact header match).' },
+    value_map: { ...S('ImportValueMap'), description: 'Empty without `import:run` (its keys are values of the file).' },
+  }, ['id', 'entity_type', 'source', 'preset_key', 'state', 'filename', 'file_attachment_id', 'parse', 'headers', 'mapping', 'options', 'rows_total', 'counts', 'progress', 'dry_run_digest', 'dry_run_at', 'committed_at', 'started_at', 'finished_at', 'data_purged_at', 'cancel_requested', 'error', 'summary', 'requested_by', 'created_at', 'updated_at']);
+  S_.ImportList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
+  S_.ImportCreate = obj({
+    entity_type: en(ENTITY),
+    preset_key: str({ minLength: 1, maxLength: 64, description: 'A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then).' }),
+    options: S('ImportOptions'),
+  }, ['entity_type'], { additionalProperties: false });
+  S_.ImportUpdate = obj({
+    mapping: S('ImportMapping'),
+    options: { ...S('ImportOptions'), description: 'Only the options to change; `references` and `defaults` are merged by key.' },
+    value_map: { ...S('ImportValueMap'), description: 'Replaces the entries of each reference kind given (send `{}` for a kind to clear it).' },
+  }, [], { additionalProperties: false, description: 'Any change returns a `dry_run_done` import to `mapped` and invalidates the digest. Allowed in `draft`, `uploaded`, `analyzed`, `mapped` and `dry_run_done`.' });
+  S_.ImportAnalyze = obj({
+    file_attachment_id: uuid('Attachment of kind `import_file` owned by this import, uploaded and completed. Omit to analyse the file again.'),
+    parse: obj({
+      encoding: en(['utf-8', 'utf-16le', 'utf-16be', 'windows-1252']), delimiter: en([',', ';', '\t', '|']),
+      sheet: str({ minLength: 1, maxLength: 100 }), header_line: int({ minimum: 1, maximum: 100000 }),
+    }, [], { additionalProperties: false, description: 'Overrides of what the analysis detects.' }),
+  }, [], { additionalProperties: false });
+  S_.ImportCommit = obj({ dry_run_digest: str({ pattern: '^[0-9a-f]{64}$', description: 'The `dry_run_digest` of the dry run the user reviewed.' }) }, ['dry_run_digest'], { additionalProperties: false });
+  S_.ImportRow = obj({
+    row_no: int({ minimum: 1, description: 'Position among the data rows.' }),
+    line_no: int({ minimum: 1, description: 'Line (CSV) or row (XLSX) of the file; shown in error messages.' }),
+    phase: en(['dry_run', 'commit']),
+    outcome: nstr({ description: 'Dry run: `create` / `update` / `skip` / `error`. Commit: `created` / `updated` / `skipped` / `error`.' }),
+    plan: { type: ['string', 'null'], enum: ['create', 'update', 'skip', 'error', null] },
+    result: { type: ['string', 'null'], enum: ['created', 'updated', 'skipped', 'error', null] },
+    entity_id: nuuid('The existing record an update changes.'),
+    created_id: nuuid('The record the commit created.'),
+    duplicate_of: { type: ['integer', 'null'], description: 'Row number of the first row of the file with the same key.' },
+    errors: arr(S('RowIssue')), warnings: arr(S('RowIssue')),
+    source: { type: 'object', additionalProperties: str(), description: 'The non-empty cells of the row by header.' },
+    mapped: { type: ['object', 'null'], additionalProperties: true, description: 'The typed record the mapping produced (`f` fields, `r` references, `c` custom fields).' },
+    before_image: { type: ['object', 'null'], additionalProperties: true, description: 'Commit of an update: the values it replaced (kept for import undo, v1.1).' },
+  }, ['row_no', 'line_no', 'phase', 'outcome', 'plan', 'result', 'entity_id', 'created_id', 'duplicate_of', 'errors', 'warnings', 'source', 'mapped', 'before_image']);
+  S_.ImportRowList = obj({ data: arr(S('ImportRow')), page: S('PageInfo') }, ['data', 'page']);
+  S_.ImportValue = obj({
+    value: str({ description: 'A distinct value of the column (trimmed).' }), count: int(),
+    suggestion: { type: ['object', 'null'], properties: { id: uuid(), name: str() }, required: ['id', 'name'], description: 'The existing record with that name, if exactly one.' },
+    entry: { oneOf: [S('ImportValueEntry'), { type: 'null' }], description: 'What the value map says now.' },
+  }, ['value', 'count', 'suggestion', 'entry']);
+  S_.ImportValues = obj({ field: en(REFS), column: nstr(), distinct: int({ description: 'Distinct values in the column (`data` is capped by `limit`).' }), data: arr(S('ImportValue')) }, ['field', 'column', 'distinct', 'data']);
+  S_.ImportPresetColumn = obj({ column: str(), target: str(), description: str(), required: str(), example: str() }, ['column', 'target', 'description', 'required', 'example']);
+  S_.ImportPreset = obj({
+    key: str(), label: str(), description: str(), entity_type: en(ENTITY), source: en(['csv', 'google_admin_csv']),
+    notes: arr(str()),
+    sets_up: { type: ['object', 'null'], properties: { category: str(), custom_fields: arr(str()) }, required: ['category', 'custom_fields'], description: 'Reference data creating an import from this preset creates when it is missing.' },
+    columns: arr(S('ImportPresetColumn'), { description: 'The columns of the template with their data dictionary.' }),
+  }, ['key', 'label', 'description', 'entity_type', 'source', 'notes', 'sets_up', 'columns']);
+  S_.ImportPresetList = obj({ data: arr(S('ImportPreset')) }, ['data']);
+  S_.ImportTemplateColumn = obj({ header: str({ minLength: 1, maxLength: 200 }), target: nstr({ maxLength: 80 }), date_format: en(DATE_FORMATS) }, ['header', 'target'], { additionalProperties: false });
+  S_.ImportTemplate = obj({
+    id: uuid(), name: str(), description: nstr(), entity_type: en(ENTITY),
+    columns: arr(S('ImportTemplateColumn')), options: S('ImportOptions'),
+    created_at: dt(), updated_at: dt(), created_by: nuuid(),
+  }, ['id', 'name', 'description', 'entity_type', 'columns', 'options', 'created_at', 'updated_at', 'created_by']);
+  S_.ImportTemplateList = obj({ data: arr(S('ImportTemplate')), page: S('PageInfo') }, ['data', 'page']);
+  S_.ImportTemplateCreate = obj({
+    name: str({ minLength: 1, maxLength: 100 }), description: nstr({ maxLength: 1000 }), entity_type: en(ENTITY),
+    columns: arr(S('ImportTemplateColumn')), options: S('ImportOptions'),
+    from_import_id: uuid('Copy the mapping (by header) and the options of this import instead of `entity_type` and `columns`.'),
+  }, ['name'], { additionalProperties: false, description: 'Either `from_import_id`, or `entity_type` and `columns`.' });
+  S_.ImportTemplateUpdate = obj({
+    name: str({ minLength: 1, maxLength: 100 }), description: nstr({ maxLength: 1000 }),
+    columns: arr(S('ImportTemplateColumn')), options: S('ImportOptions'),
+  }, [], { additionalProperties: false });
+  S_.ImportTemplateApply = obj({ template_id: uuid() }, ['template_id'], { additionalProperties: false });
+
+  const importProblems = {
+    409: { codes: ['import-wrong-state', 'import-stale-dry-run', 'conflict'], text: 'The import is not in a state that allows this (`import-wrong-state`, with `state` and `allowed`), or the digest is not the reviewed dry run (`import-stale-dry-run`).' },
+    429: { codes: ['import-quota-exceeded', 'too-many-requests'], text: 'Too many imports are running at once (`import-quota-exceeded`, see `Retry-After`) or the general rate limit.' },
+  };
+  const queued = (text) => ({ 202: { description: text, headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter') }, content: { 'application/json': { schema: S('ImportJob') } } } });
+  const IMPORT_NOTE = 'Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.';
+
+  addOp('/v1/imports/presets', 'get', {
+    tag: 'Imports', id: 'listImportPresets', summary: 'Built-in import presets', perm: 'import:read', hasId: false,
+    description: 'The templates for assets, people, locations and departments and the Google Admin ChromeOS preset, each with its data dictionary (column, target field, description, example). Pass `preset_key` when creating an import to apply one. Recommended order of imports: locations, departments, people, assets.',
+    success: { 200: okResp(200, 'The presets.', S('ImportPresetList'), { replay: false }) },
+  });
+  addOp('/v1/imports/presets/{key}/template', 'get', {
+    tag: 'Imports', id: 'downloadImportTemplate', summary: 'Download a template file', perm: 'import:read', hasId: true,
+    description: 'A CSV (UTF-8 with byte order mark) or XLSX template with the header row of the preset and example rows; the XLSX has the data dictionary on a second sheet. The asset templates also carry one `cf:<key>` column per custom field of the organisation.',
+    params: [{ name: 'key', in: 'path', required: true, schema: str(), description: 'Preset key.' }, qp('format', en(['csv', 'xlsx'], { default: 'csv' }), 'File format.')],
+    success: { 200: { description: 'The template file.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'attachment', schema: str() } }, content: { 'text/csv': { schema: str() }, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { schema: str({ format: 'binary' }) } } } },
+  });
+  addOp('/v1/imports', 'get', {
+    tag: 'Imports', id: 'listImports', summary: 'List imports', perm: 'import:read', hasId: false,
+    description: 'Newest first. Without the heavy members (`profile`, `samples`, `value_map`, `confidence`): fetch one import for those.',
+    params: [P('Cursor'), P('Limit'), arrQ('state', en(STATES), 'Filter by state.'), qp('entity_type', en(ENTITY), 'Filter by entity type.')],
+    success: { 200: okResp(200, 'A page of imports.', S('ImportList'), { replay: false }) },
+  });
+  addOp('/v1/imports', 'post', {
+    tag: 'Imports', id: 'createImport', summary: 'Create an import', perm: 'import:run', hasId: false,
+    description: [
+      'Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252), complete the upload, and call `POST /v1/imports/{id}/analyze`.',
+      'The caller needs the write permission of the entity type (`asset:create`, `person:manage`, `location:manage`, `department:manage`). `preset_key: google_admin_chromeos` also creates the Chromebook category and its custom fields when missing.',
+      IMPORT_NOTE,
+    ].join('\n\n'),
+    body: jsonBody(S('ImportCreate')),
+    success: { 201: okResp(201, 'The import.', S('ImportJob'), { etag: true, location: true, replay: false }) },
+  });
+  addOp('/v1/imports/{id}', 'get', {
+    tag: 'Imports', id: 'getImport', summary: 'Get an import', perm: 'import:read', params: [ID],
+    success: { 200: okResp(200, 'The import, with column profile, sample rows, mapping and value map.', S('ImportJob'), { etag: true, replay: false }) },
+  });
+  addOp('/v1/imports/{id}', 'patch', {
+    tag: 'Imports', id: 'updateImport', summary: 'Edit mapping, options and value mapping', perm: 'import:run', params: [ID], ifMatch: true,
+    description: 'Unknown or repeated targets are `422`. Missing essentials (no category column and no default category, ...) are reported when the dry run is requested.',
+    body: jsonBody(S('ImportUpdate')),
+    problems: { 409: importProblems[409] },
+    success: { 200: okResp(200, 'The import.', S('ImportJob'), { etag: true }) },
+  });
+  addOp('/v1/imports/{id}/analyze', 'post', {
+    tag: 'Imports', id: 'analyzeImport', summary: 'Read and profile the uploaded file', perm: 'import:run', params: [ID], idem: 'none',
+    description: [
+      'Queues the analysis: the file (which must have passed the upload scan) is read once as a stream; its format, encoding, delimiter and header row are detected, every data row is stored, each column is profiled (distinct values, blanks, duplicates, detected type, date order), 50 rows are kept as a sample and a mapping is suggested (or the preset\'s applied). A malformed file ends the analysis as `failed` with `error` naming the line. At most 100,000 data rows.',
+      IMPORT_NOTE,
+    ].join('\n\n'),
+    body: jsonBody(S('ImportAnalyze'), false),
+    problems: importProblems,
+    success: queued('Analysis queued.'),
+  });
+  addOp('/v1/imports/{id}/apply-template', 'post', {
+    tag: 'Imports', id: 'applyImportTemplate', summary: 'Apply a saved mapping template', perm: 'import:run', params: [ID], idem: 'none',
+    description: 'Maps the columns of the analysed file by header text and takes the template\'s options. Returns the import in state `mapped`.',
+    body: jsonBody(S('ImportTemplateApply')),
+    problems: { 409: importProblems[409] },
+    success: { 200: okResp(200, 'The import.', S('ImportJob'), { etag: true }) },
+  });
+  addOp('/v1/imports/{id}/values', 'get', {
+    tag: 'Imports', id: 'listImportValues', summary: 'Distinct values of a reference column', perm: 'import:run', extraErrors: [422], params: [ID, { name: 'field', in: 'query', required: true, schema: en(REFS), description: 'The reference kind (the column mapped to it, or the preset constant).' }, P('Limit'), P('Q')],
+    description: 'For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry.',
+    success: { 200: okResp(200, 'The values.', S('ImportValues'), { replay: false }) },
+  });
+  addOp('/v1/imports/{id}/dry-run', 'post', {
+    tag: 'Imports', id: 'startImportDryRun', summary: 'Run the import without writing', perm: 'import:run', params: [ID], idem: 'none', extraErrors: [422],
+    description: [
+      'Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.',
+      'The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).',
+      IMPORT_NOTE,
+    ].join('\n\n'),
+    problems: { 403: { codes: ['forbidden'], text: 'The import needs permissions the caller does not hold.' }, ...importProblems },
+    success: queued('Dry run queued.'),
+  });
+  addOp('/v1/imports/{id}/rows', 'get', {
+    tag: 'Imports', id: 'listImportRows', summary: 'Per-row results', perm: 'import:run', params: [ID, P('Limit'), P('Cursor'), qp('phase', en(['dry_run', 'commit']), 'Defaults to the latest phase.'), arrQ('outcome', en(['create', 'update', 'skip', 'error', 'created', 'updated', 'skipped']), 'Filter by outcome (dry run: create/update/skip/error; commit: created/updated/skipped/error).'), qp('has_warnings', bool(), 'Only rows with (or without) warnings.')],
+    description: 'Rows in file order with their errors and warnings (field + message) and the non-empty source cells. Raw file content: needs `import:run`, not just `import:read`.',
+    success: { 200: okResp(200, 'A page of rows.', S('ImportRowList'), { replay: false }) },
+  });
+  addOp('/v1/imports/{id}/errors.csv', 'get', {
+    tag: 'Imports', id: 'downloadImportErrors', summary: 'Download the error report', perm: 'import:run', params: [ID],
+    description: 'A CSV (UTF-8 with byte order mark) with one line per row that has errors: `Row`, `Line`, `Fields`, `Problems`, `Warnings`, then the original cells under their headers, so it can be corrected and uploaded again. After a commit it lists the rows that failed; before, the rows the dry run rejected. Cells that could be read as formulas get a leading apostrophe (the importer removes it again).',
+    success: { 200: { description: 'The report.', headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'attachment', schema: str() } }, content: { 'text/csv': { schema: str() } } } },
+  });
+  addOp('/v1/imports/{id}/commit', 'post', {
+    tag: 'Imports', id: 'commitImport', summary: 'Commit a reviewed dry run', perm: 'import:run', params: [ID], idem: 'required',
+    description: [
+      'Only valid in `dry_run_done`, and only with the `dry_run_digest` the user reviewed (`409 import-stale-dry-run` otherwise). The rows classified `create` and `update` are written in batches, one short transaction per batch, through the same services as the API, so validation, history, audit rows and events are never bypassed; every audit entry carries the `import_job_id`. A row that fails is recorded (`result: error`) and does not stop the import; a record edited after the dry run is left alone (`changed-since-dry-run`). The commit can be cancelled between batches and survives a worker restart without creating duplicates. On completion the requester is notified (`import.completed`). Rolling a commit back is v1.1 (the before-image of every update is stored already).',
+      IMPORT_NOTE,
+    ].join('\n\n'),
+    body: jsonBody(S('ImportCommit')),
+    problems: { 403: { codes: ['forbidden'], text: 'The import needs permissions the caller does not hold.' }, ...importProblems },
+    success: { 202: { description: 'Commit queued.', headers: { 'X-Request-Id': H('RequestId'), Location: H('Location'), 'Retry-After': H('RetryAfter'), 'Idempotent-Replayed': H('IdempotentReplayed') }, content: { 'application/json': { schema: S('ImportJob') } } } },
+  });
+  addOp('/v1/imports/{id}/cancel', 'post', {
+    tag: 'Imports', id: 'cancelImport', summary: 'Cancel an import', perm: 'import:run', params: [ID], idem: 'none',
+    description: 'Before a dry run or commit starts: `cancelled` at once. While one runs: `cancel_requested` is set and the job stops after its current batch (rows already written stay). A completed or cancelled import is `409`.',
+    problems: { 409: importProblems[409] },
+    success: { 200: okResp(200, 'The import.', S('ImportJob'), { replay: false }) },
+  });
+  addOp('/v1/import-templates', 'get', {
+    tag: 'Imports', id: 'listImportTemplates', summary: 'Saved mapping templates', perm: 'import:read', hasId: false,
+    params: [P('Cursor'), P('Limit'), qp('entity_type', en(ENTITY), 'Filter by entity type.')],
+    success: { 200: okResp(200, 'A page of templates, by name.', S('ImportTemplateList'), { replay: false }) },
+  });
+  addOp('/v1/import-templates', 'post', {
+    tag: 'Imports', id: 'createImportTemplate', summary: 'Save a mapping as a template', perm: 'import:run', hasId: false,
+    description: 'From an import (`from_import_id`: its mapped columns by header, and its options) or from explicit `columns`. Names are unique per entity type (ignoring case).',
+    body: jsonBody(S('ImportTemplateCreate')),
+    success: { 201: okResp(201, 'The template.', S('ImportTemplate'), { etag: true, location: true, replay: false }) },
+  });
+  addOp('/v1/import-templates/{id}', 'get', {
+    tag: 'Imports', id: 'getImportTemplate', summary: 'Get a mapping template', perm: 'import:read', params: [ID],
+    success: { 200: okResp(200, 'The template.', S('ImportTemplate'), { etag: true, replay: false }) },
+  });
+  addOp('/v1/import-templates/{id}', 'patch', {
+    tag: 'Imports', id: 'updateImportTemplate', summary: 'Edit a mapping template', perm: 'import:run', params: [ID], ifMatch: true,
+    body: jsonBody(S('ImportTemplateUpdate')),
+    success: { 200: okResp(200, 'The template.', S('ImportTemplate'), { etag: true }) },
+  });
+  addOp('/v1/import-templates/{id}', 'delete', {
+    tag: 'Imports', id: 'deleteImportTemplate', summary: 'Delete a mapping template', perm: 'import:run', params: [ID], ifMatch: true,
+    success: { 204: okResp(204, 'Deleted.', null, { replay: false }) },
+  });
+}
+// ================================================================ [M2-W3 IMP] END
 
 // ---------------------------------------------------------------- prune unused components, order, emit
 const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });

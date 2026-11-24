@@ -11,6 +11,7 @@ import {
   Printer,
   RotateCcw,
   Tag,
+  Undo2,
   Upload,
   Wrench,
   type LucideIcon,
@@ -40,12 +41,13 @@ const ICONS: Record<EventType, LucideIcon> = {
   restored: RotateCcw,
   label_printed: Printer,
   imported: Upload,
+  custody_undone: Undo2,
 };
 
 /** The groups of the "event type" filter, each a set of the API's `event_type` values. */
 export const HISTORY_FILTERS = {
   all: [] as EventType[],
-  custody: ['checked_out', 'checked_in', 'transferred'] as EventType[],
+  custody: ['checked_out', 'checked_in', 'transferred', 'custody_undone'] as EventType[],
   changes: ['status_changed', 'location_changed', 'updated'] as EventType[],
   repairs: ['repair_opened', 'repair_completed'] as EventType[],
   lifecycle: ['created', 'archived', 'restored', 'imported', 'label_printed'] as EventType[],
@@ -100,6 +102,13 @@ export function eventFacts(
           }),
         );
       }
+      if (isRecord(p.status)) {
+        const line = arrow(p.status.from, p.status.to);
+        if (line) facts.push(t('history.statusLine', { change: line }));
+      }
+      break;
+    }
+    case 'custody_undone': {
       if (isRecord(p.status)) {
         const line = arrow(p.status.from, p.status.to);
         if (line) facts.push(t('history.statusLine', { change: line }));

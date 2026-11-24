@@ -15,6 +15,7 @@ import {
   SeedRefusedError,
   seedDemoData,
 } from '../src/seed/seed.js';
+import { DEMO_LOANER_DEVICES, DEMO_LOANER_POOL, DEMO_LOAN_DUE_DAYS } from '../src/seed/loaners.js';
 import { asBytes, Prisma, type Tx } from '../src/tenancy/index.js';
 import { dbEnabled, mode, newTenancy } from './support/db.js';
 
@@ -342,7 +343,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       );
     });
 
-    it('creates Acme and Globex with 4 users and 200 assets each, overlapping tags and serials, and is idempotent', async () => {
+    it('creates Acme and Globex with 4 users and 210 assets each (200 demo assets and the ten loaner Chromebooks), overlapping tags and serials, and is idempotent', async () => {
       // Own tenants with unique slugs and domains: the shared demo tenants (Acme, Globex) are used and
       // changed by other suites and by the real-stack e2e, so exact seed counts can only be asserted on
       // tenants nobody else touches.
@@ -394,10 +395,10 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       ];
       for (const s of [acme, globex]) {
         expect(s.counts).toMatchObject({
-          'app.asset': ASSETS_PER_TENANT,
+          'app.asset': ASSETS_PER_TENANT + DEMO_LOANER_DEVICES,
           'app.user_account': 4,
           'app.status_label': 7,
-          'app.asset_model': 18,
+          'app.asset_model': 19, // 18 demo models and the Chromebook of the loaner pool
           'app.custom_field_def': 12,
         });
         expect(s.roles).toEqual(['asset_manager', 'technician', 'tenant_admin', 'viewer']);
@@ -425,14 +426,36 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
           const [late] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.assignment
              where checked_in_at is null and expected_return < current_date`;
-          expect(late!.n).toBe(3);
+          // three of the demo check-outs and two of the five demo loans are overdue
+          expect(late!.n).toBe(3 + DEMO_LOAN_DUE_DAYS.filter((d) => d < 0).length);
           // every asset has a "created" entry; every demo custody period a "checked_out" one
           const [created] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.asset_history where event_type = 'created'`;
-          expect(created!.n).toBe(ASSETS_PER_TENANT);
+          expect(created!.n).toBe(ASSETS_PER_TENANT + DEMO_LOANER_DEVICES);
           const [out] = await trx.$queryRaw<Array<{ n: number }>>`
             select count(*)::int as n from app.asset_history where event_type = 'checked_out'`;
           expect(out!.n).toBe(open);
+        });
+        // Loaner pool of the demo (ED-20): ten Chromebooks, five of them on loan, two overdue, one due today
+        await tenancy.withTenantTx({ tenantId: tenant.tenantId }, async (trx) => {
+          const pool = await trx.loaner_pool.findFirstOrThrow({
+            where: { name: DEMO_LOANER_POOL },
+          });
+          expect(await trx.loaner_pool_member.count({ where: { loaner_pool_id: pool.id } })).toBe(
+            DEMO_LOANER_DEVICES,
+          );
+          const loans = await trx.assignment.findMany({
+            where: { loaner_pool_id: pool.id, checked_in_at: null },
+            orderBy: { expected_return: 'asc' },
+          });
+          expect(loans).toHaveLength(DEMO_LOAN_DUE_DAYS.length);
+          expect(loans.every((l) => l.person_id !== null && l.asset_id !== null)).toBe(true);
+          const [counts] = await trx.$queryRaw<Array<{ late: number; today: number }>>`
+            select count(*) filter (where expected_return < current_date)::int as late,
+                   count(*) filter (where expected_return = current_date)::int as today
+              from app.assignment where loaner_pool_id = ${pool.id}::uuid and checked_in_at is null`;
+          expect(counts).toEqual({ late: 2, today: 1 });
+          expect(pool.owner_user_id).not.toBeNull();
         });
         // Repairs of the demo: every active asset labelled "In repair" has exactly one open repair that
         // moved it there (the Repairs page, the dashboard and the asset's tab agree); "Broken" has none.
@@ -520,7 +543,7 @@ describe.skipIf(!dbEnabled)(`control plane, identity lookups, bootstrap and seed
       }
       expect(acme.tags).toEqual(globex.tags); // deliberately overlapping
       expect(acme.serials).toEqual(globex.serials);
-      expect(new Set(acme.tags).size).toBe(ASSETS_PER_TENANT);
+      expect(new Set(acme.tags).size).toBe(ASSETS_PER_TENANT + DEMO_LOANER_DEVICES);
     });
   });
 });

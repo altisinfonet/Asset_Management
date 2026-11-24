@@ -58,6 +58,17 @@ import { SearchService } from './search.service.js';
     ScanResolverRegistry,
     SearchService,
   ],
-  exports: [AssetsFacade, AssetTagService, ScanResolverRegistry],
+  exports: [
+    AssetsFacade,
+    AssetTagService,
+    ScanResolverRegistry,
+    ScanResolveThrottle,
+    // M2-IMP: the importer creates missing reference data through the same services as the API
+    CategoriesService,
+    ManufacturersService,
+    ModelsService,
+    VendorsService,
+    CustomFieldsService,
+  ],
 })
 export class RegistryModule {}

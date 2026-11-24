@@ -3,8 +3,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoreHorizontal, UserPlus, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
 import { FormDialog } from '@/components/registry/form-dialog';
+import { LinkPersonDialog, UnlinkDialog } from '@/components/registry/login-link-dialogs';
 import { SectionHeader } from '@/components/registry/section-header';
 import { Badge } from '@/components/ui/badge';
 import { Banner } from '@/components/ui/banner';
@@ -32,9 +34,10 @@ import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
 import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
-import { fetchAll, usersApi } from '@/lib/registry/api';
+import { fetchAll, peopleApi, usersApi } from '@/lib/registry/api';
 import { useRoles } from '@/lib/registry/queries';
-import type { RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
+import type { Person, RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
+import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
 
 const USERS_KEY = ['users'] as const;
@@ -53,6 +56,21 @@ export function UsersScreen() {
         usersApi.list({ limit: 200, cursor, sort: ['display_name'], include_total: false }),
       ),
   });
+
+  // the people that have a login (their number is the number of logins): names the Person column
+  const persons = useQuery({
+    queryKey: ['person-logins', 'all'],
+    queryFn: () =>
+      fetchAll<Person>((cursor) =>
+        peopleApi.list({ limit: 200, cursor, has_login: true, sort: ['display_name'] }),
+      ),
+    enabled: can('person:read'),
+  });
+  const personOfLogin = useMemo(
+    () =>
+      new Map((persons.data ?? []).flatMap((p) => (p.user_id ? [[p.user_id, p] as const] : []))),
+    [persons.data],
+  );
 
   const roleName = (user: RegistryUser) =>
     roles.data?.find((r) => r.id === user.role_assignments[0]?.role_id)?.name ?? '';
@@ -98,6 +116,7 @@ export function UsersScreen() {
               roles={roles.data ?? []}
               loading={users.isLoading}
               manage={manage}
+              personOfLogin={personOfLogin}
             />
           </TabsContent>
           <TabsContent value="invitations">
@@ -128,11 +147,14 @@ function UsersTable({
   roles,
   loading,
   manage,
+  personOfLogin,
 }: {
   users: RegistryUser[];
   roles: Role[];
   loading: boolean;
   manage: boolean;
+  /** The person each login account belongs to (by `user_id`). */
+  personOfLogin: ReadonlyMap<string, Person>;
 }) {
   const { t, formatDateTime } = useI18n();
   const { me } = useAuth();
@@ -141,6 +163,8 @@ function UsersTable({
   const [mfaReset, setMfaReset] = useState<RegistryUser | null>(null);
   const [sessionsOf, setSessionsOf] = useState<RegistryUser | null>(null);
   const [renaming, setRenaming] = useState<RegistryUser | null>(null);
+  const [linking, setLinking] = useState<RegistryUser | null>(null);
+  const [unlinking, setUnlinking] = useState<RegistryUser | null>(null);
 
   const fail = (err: unknown) => {
     const ui = getApi().toUiError(err);
@@ -179,6 +203,23 @@ function UsersTable({
     () => [
       { id: 'name', header: t('users.columns.name'), cell: (u) => u.display_name },
       { id: 'email', header: t('users.columns.email'), cell: (u) => u.email },
+      {
+        id: 'person',
+        header: t('loginLink.personColumn'),
+        cell: (u) => {
+          const person = personOfLogin.get(u.id);
+          return person ? (
+            <Link
+              href={routes.personView(person.id)}
+              className="rounded-sm text-primary-text underline underline-offset-2"
+            >
+              {person.display_name}
+            </Link>
+          ) : (
+            <span className="text-muted">{t('loginLink.noPerson')}</span>
+          );
+        },
+      },
       {
         id: 'role',
         header: t('users.columns.role'),
@@ -234,6 +275,14 @@ function UsersTable({
                 <DropdownMenuItem onSelect={() => setRenaming(u)}>
                   {t('users.actions.rename')}
                 </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setLinking(u)}>
+                  {t('loginLink.linkPerson')}
+                </DropdownMenuItem>
+                {personOfLogin.has(u.id) ? (
+                  <DropdownMenuItem onSelect={() => setUnlinking(u)}>
+                    {t('loginLink.unlinkPerson')}
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem onSelect={() => setSessionsOf(u)}>
                   {t('users.actions.sessions')}
                 </DropdownMenuItem>
@@ -258,7 +307,7 @@ function UsersTable({
     ],
     // The handlers close over current toast/refresh; the table only needs to re-render with data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, roles, manage, me?.user.id, formatDateTime],
+    [t, roles, manage, me?.user.id, formatDateTime, personOfLogin],
   );
 
   return (
@@ -312,6 +361,41 @@ function UsersTable({
           if (!renaming) return;
           await usersApi.update(renaming.id, { display_name: String(values.display_name).trim() });
           await refresh();
+        }}
+      />
+      <LinkPersonDialog
+        open={linking !== null}
+        onOpenChange={(open) => !open && setLinking(null)}
+        login={{
+          id: linking?.id ?? '',
+          display_name: linking?.display_name ?? '',
+          email: linking?.email ?? '',
+        }}
+        onDone={async (person) => {
+          toast({
+            variant: 'success',
+            title: t('loginLink.linked', {
+              person: person.display_name,
+              login: linking?.email ?? '',
+            }),
+          });
+        }}
+      />
+      <UnlinkDialog
+        open={unlinking !== null}
+        onOpenChange={(open) => !open && setUnlinking(null)}
+        person={{
+          id: (unlinking && personOfLogin.get(unlinking.id)?.id) || '',
+          display_name: (unlinking && personOfLogin.get(unlinking.id)?.display_name) || '',
+        }}
+        loginLabel={unlinking?.email}
+        onDone={async () => {
+          toast({
+            variant: 'success',
+            title: t('loginLink.unlinked', {
+              person: (unlinking && personOfLogin.get(unlinking.id)?.display_name) || '',
+            }),
+          });
         }}
       />
       <SessionsDialog user={sessionsOf} onClose={() => setSessionsOf(null)} />

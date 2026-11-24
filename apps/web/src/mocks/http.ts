@@ -17,6 +17,8 @@ export interface ProblemExtra {
   detail?: string;
   /** RFC 9457 extension of a 409: what still references the record (`{ assets: 3 }`). */
   usage?: Record<string, number>;
+  /** Other RFC 9457 extension members of the problem (`state` and `allowed` of `import-wrong-state`, `current_digest` ...). */
+  extensions?: Record<string, unknown>;
 }
 
 /** The JSON body of a problem document (also used inside bulk results). */
@@ -36,6 +38,7 @@ export function problemBody(
     ...(extra.detail ? { detail: extra.detail } : {}),
     ...(extra.errors ? { errors: extra.errors } : {}),
     ...(extra.usage ? { usage: extra.usage } : {}),
+    ...(extra.extensions ?? {}),
   };
 }
 

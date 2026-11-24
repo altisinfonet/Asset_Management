@@ -82,6 +82,10 @@ export const transferSchema = z
   .superRefine(exactlyOneTarget);
 export type TransferBody = z.output<typeof transferSchema>;
 
+/** `POST /v1/assets/{id}/undo-custody`: the assignment the action to undo answered with (M2-UX-02). */
+export const undoSchema = z.strictObject({ assignment_id: z.uuid() });
+export type UndoBody = z.output<typeof undoSchema>;
+
 export const assetAssignmentsListSchema = listQuerySchema.pick({ limit: true, cursor: true });
 export type AssetAssignmentsQuery = z.output<typeof assetAssignmentsListSchema>;
 

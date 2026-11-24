@@ -241,6 +241,65 @@ test.describe('asset list: custody columns, filters and bulk actions', () => {
       await expect(page.getByRole('row', { name: new RegExp(tag) })).toHaveCount(0);
   });
 
+  test('undo toast (M2-UX-02): Undo reverses a check-out; the history keeps both; Undo works with the keyboard', async ({
+    page,
+  }) => {
+    const asset = await readyAsset(page);
+    await page.goto(`/assets/view?id=${asset.id}`);
+    await page.getByRole('button', { name: 'Check out', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: `Check out ${asset.asset_tag}` });
+    await pick(page, dialog.getByRole('combobox', { name: /Person/ }), 'Maria', /Maria Reyes/);
+    await dialog.getByRole('button', { name: 'Check out', exact: true }).click();
+    await expect(
+      page.getByText(`${asset.asset_tag} checked out to Maria Reyes.`).first(),
+    ).toBeVisible();
+    await expect(page.getByText('You can undo this for 10 seconds.').first()).toBeVisible();
+    await expect(page.getByTestId('asset-holder')).toContainText('Assigned to Maria Reyes');
+
+    // F8 jumps to the notifications region; Undo is reachable and used with Enter
+    await page.keyboard.press('F8');
+    const undo = page.getByRole('button', { name: 'Undo', exact: true });
+    await undo.focus();
+    await expect(undo).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(
+      page.getByText(`Undone: ${asset.asset_tag} is back as it was.`).first(),
+    ).toBeVisible();
+    await expect(page.getByTestId('asset-holder')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Check out', exact: true })).toBeVisible();
+
+    await page.getByRole('tab', { name: /History/ }).click();
+    const history = page.getByRole('list', { name: 'History' });
+    await expect(history.getByText('Custody undone').first()).toBeVisible();
+    await expect(history.getByText('Checked out to Maria Reyes').first()).toBeVisible();
+  });
+
+  test('undo is refused with a clear message when the asset changed meanwhile', async ({
+    page,
+  }) => {
+    const asset = await readyAsset(page);
+    await page.goto(`/assets/view?id=${asset.id}`);
+    await page.getByRole('button', { name: 'Check out', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: `Check out ${asset.asset_tag}` });
+    await pick(page, dialog.getByRole('combobox', { name: /Person/ }), 'Maria', /Maria Reyes/);
+    await dialog.getByRole('button', { name: 'Check out', exact: true }).click();
+    await expect(
+      page.getByText(`${asset.asset_tag} checked out to Maria Reyes.`).first(),
+    ).toBeVisible();
+    // somebody else edits the asset after the check-out
+    const current = await page.evaluate(
+      async (id) => (await fetch(`/v1/assets/${id}`)).headers.get('etag') ?? '',
+      asset.id,
+    );
+    await touchAsset(page, { ...asset, etag: current });
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(
+      page
+        .getByText(`${asset.asset_tag} changed in the meantime, so this cannot be undone.`)
+        .first(),
+    ).toBeVisible();
+  });
+
   test('bulk check-out to one person', async ({ page }) => {
     await page.goto('/assets');
     await choose(page, page.getByRole('combobox', { name: 'Custody' }), 'In stock', true);

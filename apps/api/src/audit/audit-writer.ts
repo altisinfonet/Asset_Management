@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { currentBulkSink } from '../context/bulk-writes.js';
 import { type ActorType, currentRequestContext } from '../context/request-context.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import type { AuditEntry, AuditWriter } from '../ports/index.js';
@@ -31,6 +32,22 @@ export class PgAuditWriter implements AuditWriter {
     const diff = buildDiffJson(entry);
     const ip = ctx?.ip && isIP(ctx.ip) ? ctx.ip : null;
     const userAgent = ctx?.userAgent ? ctx.userAgent.slice(0, 512) : null;
+
+    const sink = currentBulkSink();
+    if (sink) {
+      // a bulk job: the row is inserted with its batch (`flushAuditRows`)
+      sink.audit.push({
+        id: uuidv7(),
+        actor_type: actorType,
+        action: entry.action,
+        entity_type: entry.entityType,
+        entity_id: entry.entityId,
+        diff,
+        ip,
+        user_agent: userAgent,
+      });
+      return;
+    }
 
     await tx.$executeRaw`
       insert into app.audit_log
@@ -70,4 +87,33 @@ function buildDiffJson(entry: AuditEntry): string | null {
   if (entry.after !== undefined && entry.after !== null) body.after = redactSensitive(entry.after);
   if (entry.meta && Object.keys(entry.meta).length > 0) body.meta = redactSensitive(entry.meta);
   return Object.keys(body).length > 0 ? JSON.stringify(body) : null;
+}
+
+/** One multi-row INSERT of the audit rows a bulk job collected (same columns, same ambient tenant / actor / request). */
+export async function flushAuditRows(tx: Tx, rows: Array<Record<string, unknown>>): Promise<void> {
+  if (rows.length === 0) return;
+  const col = (key: string) => rows.map((r) => (r[key] ?? null) as string | null);
+  await tx.$executeRaw`
+    insert into app.audit_log
+      (id, tenant_id, actor_type, actor_user_id, actor_ref, action, entity_type, entity_id,
+       diff, ip, user_agent, request_id)
+    select t.id::uuid,
+           a.tenant_id,
+           t.actor_type,
+           case when t.actor_type = 'user' then a.actor_id end,
+           case when t.actor_type <> 'user' then a.actor_id end,
+           t.action,
+           t.entity_type,
+           t.entity_id::uuid,
+           t.diff::jsonb,
+           t.ip::inet,
+           t.user_agent,
+           a.request_id
+      from unnest(${col('id')}::text[], ${col('actor_type')}::text[], ${col('action')}::text[],
+                  ${col('entity_type')}::text[], ${col('entity_id')}::text[], ${col('diff')}::text[],
+                  ${col('ip')}::text[], ${col('user_agent')}::text[])
+           as t(id, actor_type, action, entity_type, entity_id, diff, ip, user_agent)
+     cross join (select nullif(current_setting('app.tenant_id', true), '')::uuid  as tenant_id,
+                        nullif(current_setting('app.actor_id', true), '')::uuid   as actor_id,
+                        nullif(current_setting('app.request_id', true), '')       as request_id) a`;
 }

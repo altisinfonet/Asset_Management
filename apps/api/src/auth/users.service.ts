@@ -142,11 +142,24 @@ export class UsersService {
       });
       const ids = page.data.map((u) => u.id);
       const grantsByUser = await this.grantsFor(trx, ids);
+      const persons = await this.personIdsFor(trx, ids);
       return {
-        data: page.data.map((u) => userDto(u, grantsByUser.get(u.id) ?? [])),
+        data: page.data.map((u) =>
+          userDto(u, grantsByUser.get(u.id) ?? [], persons.get(u.id) ?? null),
+        ),
         page: page.page,
       };
     });
+  }
+
+  /** The person record of each login account (M2-USR-03; `user_id` is unique per tenant). */
+  private async personIdsFor(trx: Tx, userIds: string[]): Promise<Map<string, string>> {
+    if (userIds.length === 0) return new Map();
+    const rows = await trx.person.findMany({
+      where: { user_id: { in: userIds } },
+      select: { id: true, user_id: true },
+    });
+    return new Map(rows.map((r) => [r.user_id!, r.id]));
   }
 
   private async grantsFor(trx: Tx, userIds: string[]): Promise<Map<string, GrantedRole[]>> {
@@ -177,7 +190,8 @@ export class UsersService {
     return this.tx(auth, async (trx) => {
       const user = await trx.user_account.findUnique({ where: { id } });
       if (!user) throw problem.notFound('User not found.');
-      return { user: userDto(user, await loadGrants(trx, id)), version: user.version };
+      const person = (await this.personIdsFor(trx, [id])).get(id) ?? null;
+      return { user: userDto(user, await loadGrants(trx, id), person), version: user.version };
     });
   }
 
@@ -342,9 +356,13 @@ export class UsersService {
             invitedBy: auth.user.displayName,
           });
         }
-        return { user, grants };
+        const personId = (await this.personIdsFor(trx, [userId])).get(userId) ?? null;
+        return { user, grants, personId };
       });
-      return { user: userDto(result.user, result.grants), version: result.user.version };
+      return {
+        user: userDto(result.user, result.grants, result.personId),
+        version: result.user.version,
+      };
     } catch (err) {
       if (isUniqueViolation(err)) throw problem.conflict('A user with this email already exists.');
       throw err;
@@ -556,9 +574,10 @@ export class UsersService {
           },
           meta: { sessions_revoked: revoked },
         });
-        return { user: updated, grants: after };
+        const personId = (await this.personIdsFor(trx, [id])).get(id) ?? null;
+        return { user: updated, grants: after, personId };
       });
-      return { user: userDto(out.user, out.grants), version: out.user.version };
+      return { user: userDto(out.user, out.grants, out.personId), version: out.user.version };
     } catch (err) {
       if (isUniqueViolation(err)) throw problem.conflict('A user with this email already exists.');
       throw err;

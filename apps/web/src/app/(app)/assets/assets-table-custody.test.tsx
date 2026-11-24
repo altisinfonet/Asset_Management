@@ -122,4 +122,38 @@ describe('AssetsTable: custody columns, filters and bulk actions (M2)', () => {
     );
     expect(screen.getByRole('combobox', { name: 'Custody' })).toHaveTextContent('Checked out');
   });
+
+  it('sorts by Assigned to, Due back and Location from the headers; assets without a value come last either way (M2-REG-03)', async () => {
+    const user = userEvent.setup();
+    renderApp(<AssetsTable />, { workflows: true });
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Columns' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Columns' });
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Due back' }));
+    await user.keyboard('{Escape}');
+
+    const header = (name: string) => screen.getByRole('columnheader', { name: new RegExp(name) });
+    for (const name of ['Assigned to', 'Due back', 'Location']) {
+      await user.click(within(header(name)).getByRole('button'));
+      await waitFor(() => expect(header(name)).toHaveAttribute('aria-sort', 'ascending'));
+      await user.click(within(header(name)).getByRole('button'));
+      await waitFor(() => expect(header(name)).toHaveAttribute('aria-sort', 'descending'));
+    }
+
+    // the mock mirrors the API: empty values last in both directions
+    const dueOf = async (sort: 'due' | '-due') =>
+      (await assetsApi.list({ sort: [sort], limit: 200 })).data.map(
+        (a) => a.current_assignment?.expected_return ?? null,
+      );
+    for (const sort of ['due', '-due'] as const) {
+      const dues = await dueOf(sort);
+      const firstEmpty = dues.indexOf(null);
+      expect(firstEmpty).toBeGreaterThan(0);
+      expect(dues.slice(firstEmpty).every((d) => d === null)).toBe(true);
+      const filled = dues.slice(0, firstEmpty) as string[];
+      expect(filled).toEqual(
+        [...filled].sort(sort === 'due' ? undefined : (a, b) => (a < b ? 1 : -1)),
+      );
+    }
+  });
 });

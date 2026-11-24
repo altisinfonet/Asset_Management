@@ -42,7 +42,96 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-Nothing yet. M2 wave 3 (import wizard, loaner pool, location scoping) is next.
+M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (M2-LOAN-01, 03, the API of 02 and 04, M2-LIFE-09) and three deferred stories (M2-REG-03, M2-USR-03, M2-UX-02). Not released yet.
+
+### Added
+
+- **CSV and XLSX import with a mandatory dry run** (M2-IMP-01..07, ADR 0010, ED-18, ED-19): create an import, upload the file through
+  the attachments API (it passes the virus scan first), analyse it (format, encoding UTF-8 / UTF-16 / Windows-1252, delimiter, header
+  row, per-column profile, 50 sample rows, suggested mapping), edit the mapping, options and value mapping, dry-run (every row
+  validated by the same code as the API, nothing written), commit in batches (one transaction each, resumable after a crash,
+  cancellable), download the error report. Entity types: assets, people, locations (paths such as `Site > Building > Room`; missing
+  parents are created) and departments. Missing categories, manufacturers, models, vendors, locations, departments and people can be
+  created by the import. API: tag Imports, 19 operations (`/v1/imports`, `/v1/import-templates`), problem codes
+  `import-wrong-state`, `import-quota-exceeded`, `import-stale-dry-run`; migration 0110 (`import_job`, `import_row`,
+  `import_template`); worker queues `import.analyze`, `import.step`, `import.sweep`; configuration `IMPORT_MAX_ROWS` (100,000),
+  `IMPORT_BATCH_ROWS` (1,000), `IMPORT_MAX_CONCURRENT` (2).
+- **Google Admin ChromeOS preset** and **generic templates** (downloadable CSV / XLSX with a data dictionary): `GET /v1/imports/presets`.
+  Creating an import from the Google preset creates the Chromebook category and its custom fields.
+- **Saved mapping templates** per organisation, applied to a file by header text.
+- The importer reads the `'` an export puts before cells that look like formulas, so exported files import to the original values;
+  the error report is formula-safe.
+- Notification `import.completed` (bell and e-mail) with the counts.
+- Dependencies `yauzl`, `saxes` (XLSX reading) and `fflate` (template workbooks).
+- **Loaner pools** (M2-LOAN-01, ED-20, ADR 0011): pools of spare devices with a default and a maximum loan length, a limit of
+  loans per person, eligible kinds of people, a home location (returned devices go back there) and an owner; membership of
+  assets (one pool per asset, single and bulk add and remove); live counts per pool (members, available, out, overdue, due
+  today). Asset list filters `loaner_pool_id` and `in_loaner_pool` (the first used to answer `400`).
+- **Quick loans by scanning** (API of M2-LOAN-02): `POST /v1/loaner-pools/{id}/quick-checkout` lends several devices to one
+  borrower found by email or badge (`employee_ref`), `POST /v1/loans/return` takes many devices back, both with a result per
+  scan; `POST /v1/loaner-pools/{id}/checkout` lends one device (a given one, or the next available). Loan lists
+  (`GET /v1/loans`, `GET /v1/loans/{id}`), the overdue list (`GET /v1/loans/overdue`, now implemented) and extending a loan
+  (`POST /v1/loans/{id}/extend`, logged in audit and history).
+- **Loaner dashboard** (API of M2-LOAN-04): `GET /v1/loaners/dashboard`, per-pool and total counts and the latest activity.
+- **Overdue and due-soon alerts** (M2-LOAN-03, ED-21): a daily job per tenant raises each alert once per loan and state
+  (a ledger table makes a second run silent); the borrower (when they have a login) and the pool owner or managers are
+  notified in-app and by e-mail, with a text that escalates; per-user opt-out through the notification preferences.
+- **Custody settings** (M2-LIFE-09): `GET` / `PUT /v1/settings/custody` with the default number of days for the expected return
+  (a pre-fill for the dialogs; ordinary check-outs stay open-ended, a loaner pool without its own loan length takes it, ED-24) and the reminder lead time of due-soon alerts.
+- Demo data: a Chromebook cart per demo tenant with ten devices, five on loan, two of them overdue (the demo tenants now have
+  210 assets).
+- Migration `0120` (pools, members, alert ledger, the loan foreign key), queue `loan.alerts`, problem codes
+  `loan-limit-reached` and `loaner-pool-inactive`; the 10 loaner operations that were contract-only are implemented, 8 new ones and the 2 custody settings operations are added (203 operations in all with the deferred stories).
+- **Sort the asset list by location, assignee and due date** (M2-REG-03, ED-22): the Location, Assigned to and Due back
+  columns of the Assets table sort through the server (`?sort=location|assignee|due`, also `-`). An asset with no value (no
+  location, in stock, no expected return) is listed last in both directions and paging never skips or repeats a row.
+- **Link and unlink a person and a login account** (M2-USR-03, ED-22): `POST` / `DELETE /v1/people/{id}/link-user`
+  (Administrators, audited), buttons on the person page and in Settings → Users (new Person column), confirmation dialogs
+  that say what happens. `User.person_id` is now filled (`/v1/users`, `/v1/auth/me`). Three new problem codes:
+  `person-already-linked`, `login-already-linked`, `login-person-in-use`.
+- **Undo toast after a custody action** (M2-UX-02, ED-23): the success toast of a check-out, check-in or transfer (single or
+  bulk) offers Undo for 10 seconds. `POST /v1/assets/{id}/undo-custody` performs the inverse action in one transaction
+  (never a delete), guarded by `If-Match`, the newest history event and a five-minute window; a new history event
+  `custody_undone` (migration `0130`). New problem codes `undo-expired`, `undo-asset-changed`, `undo-not-possible`.
+  F8 moves keyboard focus to the notifications (listed in the shortcuts help).
+- **Import wizard** (M2-IMP-08): Assets > Import and Settings > Imports. Choose the kind of data (assets, people, locations,
+  departments, or a Google Admin ChromeOS export), download a CSV or Excel template with its data dictionary, upload a CSV or
+  XLSX file (virus-scanned first), check the column suggestions (profile, confidence, date formats, saved mappings), decide
+  the values that match nothing, see the dry run (nothing is saved) with filters and the error report, then import with
+  progress and cancel; an import can be resumed from the list after a reload. Built against the real import API and tested
+  with a mock that mirrors it exactly, with axe in light and dark.
+- **Loaner desk, dashboard and pools** (M2-LOAN-02, M2-LOAN-04): Loaners menu: the desk (scan devices, scan or find the
+  borrower, the due date is filled in, Enter lends; bulk return by scanning), the dashboard (cards per pool, overdue loans
+  with the borrower, extend a loan, recent activity) and the pool settings with the organisation's loan defaults. The
+  check-out and transfer dialogs pre-fill the organisation's default return date (M2-LIFE-09).
+- **Loan length and mail rules for loaner pools** (founder decisions of 2026-11-24, ED-24, migration `0140`): the due date
+  of a loan is the date typed, else the pool's loan length (now optional), else the organisation's default return days,
+  else 7 days, never beyond the pool's maximum (`LoanerPool.effective_default_loan_days` shows the result);
+  "next available" lends the device idle the longest (never-lent first, ties by tag); the new pool option
+  `email_borrowers_without_login` (automatic: everybody except students; always; never) sends due-soon and overdue mail to
+  borrowers who have an address but no login; overdue loans always also go to the owner or the loaner managers. The school
+  vocabulary needs no new fields (student ID = employee ref, homeroom = department or room, device number = asset tag):
+  see getting-started.md.
+- **Import data retention** (ED-25, migration `0141`): the rows, sample cells, value map and uploaded file of a finished
+  import are removed after `IMPORT_ROW_RETENTION_DAYS` (default 30) by the scheduled sweep; the job, its counts, summary and
+  audit trail stay (`ImportJob.data_purged_at`). The sweep's six-hour give-up on a stuck import is now tested with an
+  injected clock.
+- The registry, custody, search and import performance suites record their numbers in the ordinary test run and enforce
+  the real budgets only when `PERF` is set (the nightly perf job sets it and now runs them).
+### Changed
+
+- The contract-only placeholders of the first drafts for imports (`ImportJob` states `dry_run_queued`..., source `snipe_it`) are
+  replaced by the built design; the Snipe-IT source returns with M5.
+- Uploads of kind `import_file` may be UTF-16 (with a byte order mark) or Windows-1252 CSV; other attachments are unchanged.
+- Creating an asset answers with the row it just wrote instead of reading it back (three queries fewer; also faster over the API);
+  the tag numbering template is read once per transaction. `people`, `locations` and `departments` create / update take an optional
+  audit metadata argument.
+- `GET /v1/loans/overdue` lists the asset check-outs past due with the holder, asset tag and name and the pool name
+  (new members `asset_tag`, `asset_name`, `holder_name`, `pool_name`).
+- The scan lookup of `GET /v1/scan/resolve` is shared with the loaner flows (no behaviour change).
+- The history payloads of check-out, check-in and a transfer out of stock now also carry the ids of the statuses
+  (`status.from_id` / `to_id`), what an undo restores.
+
 
 ---
 

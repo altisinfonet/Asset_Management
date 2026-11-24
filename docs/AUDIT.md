@@ -42,8 +42,8 @@ The outbox event that triggers notifications and later webhooks is written in th
 | Settings              | `tenant_settings.files_updated`, `tenant_settings.asset_tag_template_updated`, `notification_rule.updated`                                                                                                                                                                                                                         |
 | Catalogue             | `category.*`, `manufacturer.*`, `model.*`, `vendor.*`, `status_label.*`, `custom_field.*` with `created`, `updated`, `archived`                                                                                                                                                                                                    |
 | Assets                | `asset.created`, `asset.updated`, `asset.archived`, `asset.restored`, `asset.cloned`, `asset.moved`, `asset.disposed`, `asset.marked_lost`, `asset.marked_found`, `asset.bulk_update`, `asset.bulk_archive`, `asset.bulk_restore`, `asset.bulk_move` (a bulk action also writes the per-asset rows, linked by `bulk_operation_id`) |
-| Custody               | `asset.checked_out`, `asset.checked_in`, `asset.transferred`                                                                                                                                                                                                                                                                       |
-| Locations and people  | `location.created`, `location.updated`, `location.moved`, `location.archived`, `person.created`, `person.updated`, `person.archived`                                                                                                                                                                                               |
+| Custody               | `asset.checked_out`, `asset.checked_in`, `asset.transferred`, `asset.custody_undone`                                                                                                                                                                                                                                                                       |
+| Locations and people  | `location.created`, `location.updated`, `location.moved`, `location.archived`, `person.created`, `person.updated`, `person.archived`, `person.user_linked`, `person.user_unlinked`                                                                                                                                                                                               |
 | Repairs               | `repair.opened`, `repair.updated`, `repair.completed`, `repair.cancelled`, `repair.archived`                                                                                                                                                                                                                                       |
 | Stock                 | `accessory.created`, `accessory.updated`, `accessory.archived`, `accessory.checked_out`, `accessory.checked_in`, `consumable.created`, `consumable.updated`, `consumable.archived`, `consumable.stock_moved`                                                                                                                       |
 | Files                 | `attachment.created`, `attachment.uploaded`, `attachment.linked`, `attachment.scanned`, `attachment.scan_skipped`, `attachment.infected`, `attachment.rejected`, `attachment.abandoned`, `attachment.archived`                                                                                                                     |
@@ -120,6 +120,10 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.14 | 2026-11-19 | Test stability and scanner false positives                         | Four root causes fixed                                                     |
 | B.15 | 2026-11-24 | Founder review of M2 and fixes (0.2.3)                             | UX and data consistency fixes; slow-test flake root cause fixed            |
 | B.16 | 2026-11-24 | Managed departments and location edit fixes (0.2.4)                | 588/588 API e2e pooled, 54/54 real-stack; edit error root cause found      |
+| B.17 | 2026-11-24 | Loaner pool backend                                                | 627/627 API e2e pooled and direct; alert job tested with an advancing clock |
+| B.18 | 2026-11-24 | Three deferred M2 stories: list sorts, link a login, undo toast    | 622/622 API e2e pooled and direct, 59/59 real-stack; sort p95 50-100 ms    |
+| B.19 | 2026-11-24 | Import backend (CSV / XLSX, dry run, Google Admin preset)          | importer e2e suites green on the branch; two defects found in B.20          |
+| B.20 | 2026-11-24 | Wave 3 part 1 integration (four branches, follow-ups a-f)          | 699/699 API e2e direct and pooled, 21/21 clean builds, real-stack 64/64 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -318,6 +322,83 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Incident noted:** during this work the founder's local default Compose stack (containers and named volumes) was found
   removed. All automated runs used their own project names and ports; the cause was not determined. Only local demo data was
   affected; `docker compose up -d --build` recreates it.
+
+### B.17 Loaner pool backend - 2026-11-24 (branch from `f687c04`, unreleased)
+
+- **Scope:** M2-LOAN-01 and -03, the API of M2-LOAN-02 and -04, M2-LIFE-09 (migration `0120`, tables `loaner_pool`,
+  `loaner_pool_member`, `loan_alert`, the assignment -> pool foreign key, queue `loan.alerts`, ED-20, ED-21, ADR 0011).
+- **Method:** new API e2e (34 loaner tests plus a live contract walk of all 18 Loaners operations and the custody settings, with
+  response bodies validated against the contract schemas), role matrix, route rules and route replay extended (tenant B against
+  tenant A's pool, members, loans and settings), seed counts, the SQL design suite on `schema.sql` (`run_one.sh 18`), an own
+  Compose project on alternate ports with the demo seed run by the migrate service.
+- **Result:** clean-state build 21/21 (API unit 586, web 590, client 14); API e2e 627/627 through PgBouncer and direct, 0
+  skipped (one run of the 100k-asset performance budget missed its search p95 under load and passed alone); SQL suite
+  102/102; `schema:lint` 0 violations; drift check clean; Redocly lint 0 errors. The alert job was tested with an advancing
+  clock: exactly one notification per loan, recipient and day, none on a second run, the reminder re-armed by an extension.
+- **Follow-ups:** the tenant day is UTC (no tenant time zone); the demo tenants have 210 assets (web tests that count demo
+  assets may need the new number); web screens for pools, quick loan, bulk return, the dashboard and the dialog pre-fill.
+
+### B.18 Sort by location / assignee / due, link a person and a login, undo toast - 2026-11-24 (Unreleased)
+
+- **Scope:** M2-REG-03, M2-USR-03 and M2-UX-02 (ED-22, ED-23): keyset paging with empty values last, `link-user` / `undo-custody`
+  operations, migration `0130` (history event type), three new groups of problem codes.
+- **Method:** each story built end to end (API, contract through `gen.mjs`, web, MSW mock) with its own tests: API e2e that
+  compare every page of every sort with an independent SQL order, replay of every new route as another tenant, a contract
+  walk of the new operations, mock-handler tests, web unit tests with axe, mock browser tests (axe in light and dark) and real-stack
+  browser tests. The 50,000-asset performance suite gained the sort scenarios (15 scenarios x 120 samples, plans captured).
+- **Result:** clean-state build 21/21; API unit 565, web unit 606; API e2e **622/622 through PgBouncer and 622/622 direct**, 0
+  skipped; mock browser tests **572/572**; real-stack browser tests **59/59**; `schema:lint` 0 violations, Prisma drift clean.
+  Sort p95 between 50 and 100 ms on 50,000 assets per tenant (budget 500 ms; table in ED-22).
+- **Findings fixed during the work:** (1) the first version of the sorts sorted wide rows (100-500 ms): now two-phase, index-only
+  scan of the existing partial indexes; (2) a join to a derived location-path table was evaluated once per asset when the planner
+  under-estimated a tenant (RLS makes the tenant unknown at plan time): 450 ms in the full suite although 38 ms alone, now a single
+  jsonb map; (3) the new perf test updated 45,000 assets and slowed the search measurements that followed: it is now the last test.
+- **Known flake:** one pooled run of the full API e2e suite failed the pre-existing "custody check-in p95 < 300 ms" check (p95
+  573 ms, max 4.7 s; p50 28 ms) and the next two pooled runs passed, as did the direct run; the host was shared with other
+  Compose stacks. The perf suite measures wall-clock time and is sensitive to a busy machine.
+- **Follow-ups:** scan-batch mode has no undo; there is no person merge; the web sorts of Location sort by the whole path, not the
+  leaf name.
+
+### B.19 Import backend - 2026-11-24 (branch from `f687c04`, integrated in B.20)
+
+- **Scope:** M2-IMP-01..07 (migration `0110`, ADR 0010, ED-18, ED-19): import framework, file analysis (CSV encodings, XLSX
+  through a streaming reader), column and value mapping, dry run with the real validators, batched resumable commit, Google
+  Admin ChromeOS preset, generic templates, saved mappings, notification, 19 operations.
+- **Method:** importer e2e suites (assets, entities, flows, a 100,000-row compose run with the worker killed mid-commit),
+  isolation and route-replay cases for every operation, an in-process performance test with scaled gates (commit >= 10,000
+  rows/min, dry run of 100,000 rows < 10 min) that the nightly job enforces.
+- **Result:** all green on its branch (written before this record: the branch did not update AUDIT.md; the numbers are in the
+  M2-IMP-04 and M2-IMP-05 backlog entries).
+- **Findings after integration (B.20):** two defects that only the real-stack Google Admin run showed, both fixed (a row
+  undone at commit left its created references in the resolver cache; the dry run did not report a tag another asset
+  already has when matching on the serial).
+- **Follow-ups:** imports do not undo (v1.1); the founder's real files (F-09) are still missing.
+
+### B.20 Wave 3 part 1 integration - 2026-11-24 (version 0.2.4 plus four merges, Unreleased)
+
+- **Scope:** merged import backend (B.19), loaner backend (B.17), deferred items (B.18) and the web of wave 3 in that order;
+  regenerated the contract (203 operations), the client and API.md; then the follow-ups: the import wizard against the real
+  API (real MSW mock, `.xlsx`), the founder's loaner decisions (ED-24, migration `0140`), import data retention (ED-25,
+  migration `0141`), performance suites that enforce budgets only with `PERF`, real-stack specs for the import wizard and
+  the loaner desk, docs.
+- **Conflicts:** gen.mjs (all backend blocks kept, the web proposal block dropped), problem catalogue, scheduler, registry
+  module exports, subscriptions comment, route-replay, custody service (two methods added at the same place), docs;
+  generated files regenerated, never merged.
+- **Method:** clean-state build twice, API e2e direct and pooled (pooled twice) with the full environment, mock browser
+  suite, real-stack suite on a fresh stack, drift check, schema lint, Redocly, generator reproducibility.
+- **Result:** clean-state `turbo run lint typecheck test build --force` 21/21 twice (API unit 635, web 780, client 14); API
+  e2e 699/699 direct, pooled and pooled again, 0 skipped; mock browser suite 719 of 719 (axe in light and dark);
+  real-stack run 64 of 64 on a fresh stack; drift clean, schema lint 0, Redocly 0 errors, generator reproduces the yaml.
+- **Findings fixed during the work:** (1) the real Google Admin run committed 22 of 48 rows: a row undone by its savepoint left
+  the model it had created in the reference cache and the next rows hit a foreign key error: the resolvers are dropped
+  after an undone row (regression test in flows); (2) the dry run said "create" for rows whose tag another asset already
+  had (matching on serial): now an error in the dry run; (3) the mail tests of the loaner alerts failed when another test
+  file's outbox relay claimed the events (its mail went to its own fakes): the tests hand the events to the subscriptions
+  in-process; (4) real-stack tests that count "In repair" assets now ignore assets an import made.
+- **Known flakes closed:** the perf suites (registry, custody, search) record numbers and assert a 10x sanity ceiling unless
+  `PERF` is set; the nightly job sets it and runs them.
+- **Follow-ups:** API details the web works around are listed in STATUS.md section 5; `a11y-w3` axe scenarios for the import
+  wizard were edited by the web agent and run in the mock suite.
 
 ---
 

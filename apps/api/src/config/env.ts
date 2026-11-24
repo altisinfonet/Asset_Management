@@ -73,6 +73,12 @@ const envSchema = z
       .min(1024)
       .max(2_147_483_647)
       .default(100 * 1024 * 1024),
+    /** Imports (M2-IMP-01): most data rows of one file, rows per worker step, running imports per tenant. */
+    IMPORT_MAX_ROWS: z.coerce.number().int().min(10).max(1_000_000).default(100_000),
+    IMPORT_BATCH_ROWS: z.coerce.number().int().min(1).max(5_000).default(1_000),
+    IMPORT_MAX_CONCURRENT: z.coerce.number().int().min(1).max(20).default(2),
+    // ED-25: how long a finished import keeps its rows (the cells of the file), samples and uploaded file.
+    IMPORT_ROW_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
     /** ClamAV daemon (clamd, TCP). Without it uploads cannot be scanned; see SCAN_REQUIRED. */
     CLAMD_HOST: z.string().min(1).optional(),
     CLAMD_PORT: z.coerce.number().int().min(1).max(65535).default(3310),

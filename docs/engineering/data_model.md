@@ -131,14 +131,19 @@ Free text caused mistakes ("Maths", "maths ", "Mathematics" as three departments
 | `app.assignment` | M2 | **Check-out / check-in**: one row per custody period; the history of an asset is all its rows | `asset_id` XOR `accessory_id`; target `person_id` XOR `location_id` XOR `target_asset_id`; `quantity`, **`quantity_returned`**, `loaner_pool_id`, `checked_out_at/by`, `expected_return`, `checked_in_at/by`, `checkin_location_id`, `acceptance_state` | asset, accessory, person, location, loaner_pool | CHECKs `assignment_one_item`, `assignment_one_target`, asset quantity = 1, not self, loan needs a due date, time order, `assignment_returned_range` (0 <= `quantity_returned` <= `quantity`) and `assignment_returned_state` (closed exactly when everything is back; ED-11); **partial unique `(tenant_id, asset_id) WHERE asset_id IS NOT NULL AND checked_in_at IS NULL`** (one open custody per asset); partial indexes for open-by-person/location/target/accessory/pool and due dates; trigger `assignment_accessory_stock` serialises on the accessory row and refuses over-checkout (counts `quantity - quantity_returned`); trigger `assignment_b_guard_update` forbids changing `quantity` or lowering `quantity_returned`. **Partial return of an accessory** (ED-11): the same row stays open and `quantity_returned` grows; the return that reaches `quantity` also sets `checked_in_at`. Each partial return is recorded in the audit log |
 | `app.transfer` | M2 | Atomic hand-over record | `asset_id`, `from_assignment_id` (NULL if in stock), `to_assignment_id`, `from/to_location_id`, `reason`, `transferred_at/by` | asset, assignment x2, location x2 | `(tenant_id, asset_id, transferred_at DESC)` |
 | `app.asset_history` | M2 | User-facing chain of custody and lifecycle events (append-only), **partitioned by month from day one** (ED-09) | `id`, `asset_id`, `at` (PK `(id, at)`), `event_type`, `actor_type`, `actor_id`, `assignment_id`, `transfer_id`, `summary`, `payload jsonb` | asset, assignment, transfer | `(tenant_id, asset_id, at DESC, id DESC)`; parent-only grants (SELECT, INSERT); FORCE RLS + policy on each partition and the default partition; same rules as `audit_log` |
-| `app.loaner_pool` | M2 | **Loaner pool**: spare devices with default/max loan days | `name`, `home_location_id`, `default_loan_days`, `max_loan_days`, `is_active` | location | unique `(tenant_id, lower(name))` |
-| `app.loaner_pool_member` | M2 | Pool membership; an asset is in at most one pool | PK `(tenant_id, asset_id)`, `loaner_pool_id` | asset, loaner_pool | `(tenant_id, loaner_pool_id)` |
+| `app.loaner_pool` | M2 | **Loaner pool** (ED-20, ADR 0011): spare devices with loan rules | `name` (+ stored `name_key`), `home_location_id`, `default_loan_days` (nullable), `max_loan_days`, `max_loans_per_person`, `eligible_person_kinds text[]` (empty = every kind), `owner_user_id`, `is_active`, `email_borrowers_without_login`, `archived_at`, `version` | location, user_account | unique `(tenant_id, name_key) WHERE archived_at IS NULL`; CHECKs on the days, the kinds and `max_loan_days >= default_loan_days` |
+| `app.loaner_pool_member` | M2 | Pool membership; an asset is in at most one pool | PK `(tenant_id, asset_id)`, `loaner_pool_id`, `added_at`, `added_by` | asset, loaner_pool | `(tenant_id, loaner_pool_id)`; grants SELECT, INSERT, DELETE |
+| `app.loan_alert` | M2 | **Alert ledger** of the daily loan job (ED-21): one row per alert raised, so it is raised once per loan and state | `assignment_id`, `kind` (`due_soon`/`overdue`), `alert_date`, `expected_return`, `days_overdue` | assignment | unique `(tenant_id, assignment_id, expected_return) WHERE kind = 'due_soon'` and `(tenant_id, assignment_id, alert_date) WHERE kind = 'overdue'`; append-only (SELECT, INSERT) |
+
+#### 3.6.0 Undo of a custody action (ED-23, migration 0130)
+
+`app.asset_history.event_type` accepts one more value, `custody_undone` (the CHECK on the partitioned parent is replaced; it is inherited by every partition). No table, column or grant is added: the undo of a check-out closes the assignment it opened, the undo of a check-in or a transfer between holders opens a NEW assignment (a closed period is never re-opened: `assignment_returned_state`) and, for a transfer, a reversing `app.transfer` row. The history payloads of check-out, check-in and a transfer out of stock now carry `status: {from, to, from_id, to_id}`. `person.created_by IS NULL` marks the person the system made for a login account (the trigger of migration 0040, the backfill, and the placeholder an unlink creates): only such a person is replaced when another person is linked to the login (ED-22).
 
 #### 3.6.1 As built in M2 wave 1 (migrations 0040 and 0041): deltas from the tables above
 
 The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the design. Wave 1 built `location`, `person`, `assignment`, `transfer` and `asset_history` as designed, with these differences:
 
-- **`assignment`** has two extra columns, `attachment_ids uuid[]` and `checkin_attachment_ids uuid[]` (at most 10 each): the photos linked at check-out and check-in. They are plain uuid arrays **without a foreign key or existence check** because the attachments table is built in parallel; the integrator adds the validation (and, if wanted, the back-link `attachment.entity_id`) when the branches meet. `accessory_id` and `loaner_pool_id` exist as columns **without foreign keys** (those tables belong to other waves) and the accessory stock trigger `assignment_accessory_stock` is not created yet; the integrator adds `FOREIGN KEY (tenant_id, accessory_id)`, `FOREIGN KEY (tenant_id, loaner_pool_id)` and the trigger with those tables. **Update (wave 2, migration 0080):** the accessory foreign key and the stock trigger now exist (section 3.7.1); only the loaner foreign key is still open.
+- **`assignment`** has two extra columns, `attachment_ids uuid[]` and `checkin_attachment_ids uuid[]` (at most 10 each): the photos linked at check-out and check-in. They are plain uuid arrays **without a foreign key or existence check** because the attachments table is built in parallel; the integrator adds the validation (and, if wanted, the back-link `attachment.entity_id`) when the branches meet. `accessory_id` and `loaner_pool_id` exist as columns **without foreign keys** (those tables belong to other waves) and the accessory stock trigger `assignment_accessory_stock` is not created yet; the integrator adds `FOREIGN KEY (tenant_id, accessory_id)`, `FOREIGN KEY (tenant_id, loaner_pool_id)` and the trigger with those tables. **Update (wave 2, migration 0080):** the accessory foreign key and the stock trigger now exist (section 3.7.1). **Update (migration 0120):** the loaner foreign key exists too (section 3.6.3).
 - **`asset`** gains `disposed_on`, `disposal_reason` (sold, donated, recycled, scrapped, stolen, returned_to_vendor, other) and `disposal_note`, all-or-none (`asset_disposal_chk` on date and reason): the disposal record of M2-LIFE-05. `asset.location_id` and `role_assignment.scope_location_id` now have their composite foreign keys (`asset_location_fk`, `role_assignment_scope_location_fk`).
 - **`person`** has stored generated columns `email_key` (`lower(email)`) and `search_text` (lower-case name, email and employee number joined with `chr(31)`), so lookups and the people search use btree equality / `strpos` through RLS instead of `lower()` / ILIKE / trigram expressions that are not leakproof (ADR 0005); the trigram index of the design is not created. The partial unique index on the email is on `email_key`.
 - **One person per login account (ED-01)** is enforced by triggers on `user_account`: `AFTER INSERT` links an existing unlinked person with the same email, otherwise creates one (display name and email copied; the email is left empty if another live person already has it); `AFTER UPDATE OF display_name, email` keeps the linked person in step. The migration backfills existing accounts. Persons created by the trigger have ids from `gen_random_uuid()` (v4, ED-08).
@@ -152,6 +157,15 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 - **`assignment.checkin_attachment_ids` / `attachment_ids`** are no longer unchecked ids: custody calls validate them against `app.attachment` (same tenant, owned by the asset, not infected or rejected) and re-point each attachment at the assignment (`entity_type = 'assignment'`) in the custody transaction (`AttachmentsService.linkToOwner`). The arrays stay as the order in which the photos were attached.
 - **`assignment.checkin_condition`** (0060): `text`, nullable, one of `good`, `fair`, `poor`, `damaged`; set when the assignment is closed by a check-in.
 
+#### 3.6.3 As built: loaner pools (migration 0120, ED-20, ED-21, ADR 0011)
+
+- **`loaner_pool`** is as designed plus `max_loans_per_person` (null = no limit), `eligible_person_kinds` (empty array = every kind of person; the API shows null), `owner_user_id` (told about overdue loans instead of every manager) and a stored `name_key` (`lower(btrim(name))`) for the unique name, so the lookup is a btree equality under RLS (ADR 0005) instead of the `lower(name)` expression of the design. `default_loan_days` is optional since migration 0140 (null = the organisation default, else 7; ED-24), `max_loan_days` bounds a loan and its extensions, `email_borrowers_without_login` (null = automatic: every kind except students) says whether borrowers without a login get the due-soon and overdue mail.
+- **`loaner_pool_member`**: the primary key `(tenant_id, asset_id)` is the "at most one pool" rule. It is the only table of the domain with a hard `DELETE` grant: membership is a fact about now; who joined and left is in the audit log (`loaner_pool.member_added` / `member_removed`).
+- **`assignment.loaner_pool_id`** has its composite foreign key (`assignment_loaner_pool_fk`). A **loan is an assignment with a pool**: the existing CHECK `assignment_loan_due` requires an asset and a due date; everything else (one open assignment per asset, history, audit) is the custody model unchanged. A regular check-out of a pool member has no pool on its assignment and is not a loan. Two partial indexes (`assignment_loan_out_idx`, `assignment_loan_in_idx`) serve the loan lists and the dashboard's recent activity.
+- **`loan_alert`** is the ledger of the daily alert job; see ED-21. The tenant's reminder lead time and the expected-return pre-fill live in `app.tenant.settings.custody` (jsonb, `{default_expected_return_days, loan_reminder_days}`), not in a table.
+- **Counts** (`member_count`, `available_count`, `checked_out_count`, `overdue_count`, `due_today_count`, `due_soon_count`) are computed per request from one grouped query over members, assets and open custody; nothing stores them. Available = live (not archived) member in a `deployable` state with no open custody; "today" is the UTC date.
+- No new permission: `loaner:read`, `loaner:manage` and `loaner:checkout` have existed since `provision_tenant` (0008). Asset manager and Administrator hold all three, the Technician `loaner:read` and `loaner:checkout`, the read-only roles `loaner:read`.
+
 ### 3.7 Accessories and consumables (M2)
 
 | Entity | M | Purpose | Key columns | Notes |
@@ -163,7 +177,7 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 #### 3.7.1 As built in M2 wave 2 (migration 0080, ADR 0008): deltas from the table above
 
 - **`accessory` and `consumable`** also carry `label_code` (opaque QR payload, unique per tenant, same default as `asset.label_code`; scan resolve answers them), `low_stock_alerted boolean` (the latch of the minimum-stock event: set when the item crosses to at-or-below `min_qty`, cleared when it is restocked above it) and a stored generated `search_text` (`lower(name || chr(31) || model_number)`) for the list search (ADR 0005). Indexes: `(tenant_id, name, id)` for the default order, partial ones on `location_id`, `(tenant_id, category_id)`; the trigram index of the design is not created.
-- **`assignment.accessory_id`** now has its composite foreign key (`assignment_accessory_fk`) and the trigger `assignment_accessory_stock` (before insert, locks the accessory row and refuses an over-checkout with 23514, counts `quantity - quantity_returned`) that migration 0041 left to the integrator. The loaner foreign key (`loaner_pool_id`) is not part of this wave.
+- **`assignment.accessory_id`** now has its composite foreign key (`assignment_accessory_fk`) and the trigger `assignment_accessory_stock` (before insert, locks the accessory row and refuses an over-checkout with 23514, counts `quantity - quantity_returned`) that migration 0041 left to the integrator. The loaner foreign key (`loaner_pool_id`) came with migration 0120 (section 3.6.3).
 - **`accessory_guard_total`** (before update of `qty_total`) refuses a total below the units that are out (23514).
 - **`consumable.qty_on_hand`** changes only through the ledger: `consumable_guard_qty` refuses any other change (and a non-zero starting value) by trigger depth. `stock_movement` additionally has `stock_movement_sign` (receive/return positive, issue negative, adjust/correction either way) and `stock_movement_adjust_note` (adjust and correction need a note); its trigger stamps `balance_after` and `at := clock_timestamp()` after the row lock; a movement for an unknown consumable fails with 23503. The ledger index also has a partial `(tenant_id, person_id, at DESC, id DESC)` for the per-person consume log.
 - **Views** `v_accessory_availability` and `v_low_stock` exist as designed (security invoker, granted to `app_user`); the API computes availability for a page of accessories with one grouped query instead of joining the view (the view skips archived accessories).
@@ -178,8 +192,9 @@ The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the desi
 | `app.export_job` | M2 | **CSV exports** (API: `/v1/exports`) | `requested_by`, `resource`, `filters`, `status`, `row_count`, `size_bytes`, `storage_key` (tenant-prefixed), `expires_at` | file deleted 24 h after completion |
 | `app.label_template` | M2 | **Fixed** PDF label sheet templates (editor is v1.1) | `key`, `page_size`, label and page size in mm, `cols`, `rows`, margins, gaps, `offset_x_mm` / `offset_y_mm` (calibration, [M2-W2 LABELS]), `code_type` (qr/code128/qr_and_code128), `fields text[]`, `is_system` | 6 templates seeded per tenant by `app.seed_label_templates` (migration 0070, ADR 0007), mirrored by code constants (`tagging/templates.ts`) and checked for drift; only the two offsets change through the API; CHECKs: the grid fits the page, offsets within +-10 mm |
 | `app.label_batch` | M2 | One request to print labels; the worker renders the PDF (ADR 0007) | `template_id`/`template_key`, `status` (queued/ready/failed/expired), `asset_ids uuid[]` (print order), `source_filter`, `copies`, `label_count`, `start_position`, `codes`, `fields`, `outlines`, `logo_attachment_id`, `storage_key`, `size_bytes`, `sha256`, `page_count`, `render_ms`, `error_code`, `expires_at`, `created_by` (the requester: only they can read it) | the file is stored through the StorageAdapter under a tenant-prefixed key (CHECK) and deleted after `expires_at`; ready requires the file; indexes by requester, open (queued) and expiry |
-| `app.import_job` | M2 | Import with **mandatory dry run** | `source` (csv/xlsx/snipe_it/google_admin_csv), `entity_type`, `state`, `file_attachment_id`, `mapping`, `options`, row counters, `dry_run_digest`, `dry_run_completed_at`, `committed_at` | `CHECK` that commit states require a `dry_run_digest`; commit must quote the reviewed digest |
-| `app.import_row` | M2 | Per-row dry-run / commit outcome and errors | `job_id`, `phase`, `row_no`, `outcome` (create/update/skip/error), `entity_id`, `errors`, `warnings`, `source_data` | unique `(tenant_id, job_id, phase, row_no)` |
+| `app.import_job` | M2 | **CSV / XLSX import** with a mandatory dry run (API: `/v1/imports`; ADR 0010, ED-18) | `requested_by`, `source` (csv/xlsx/google_admin_csv), `entity_type` (asset/person/location/department), `preset_key`, `state` (draft, uploaded, analyzing, analyzed, mapped, dry_running, dry_run_done, committing, completed, failed, cancelled), `file_attachment_id`, `parse` (format, encoding, delimiter, sheet, header line), `headers`, `profile`, `samples`, `mapping`, `options`, `value_map`, `summary`, counters of both phases (`plan_*` = what the dry run says would happen, `done_*` = what the commit did), `rows_processed` / `cursor_row` (where the next worker step resumes), `dry_run_digest`, `cancel_requested` | `CHECK` that `committing` and `completed` need a `dry_run_digest`; at most 2 running per tenant (application quota); the file is an `attachment` (kind `import_file`, owner `import_job`) that went through the upload scan |
+| `app.import_row` | M2 | **One row of the file, both phases** (ED-18: the first design had a row per phase) | PK `(tenant_id, job_id, row_no)` (no surrogate id), `line_no`, `raw` (cells as read), `mapped` (typed record), `match_key` / `match_key2` + `dup_of` (de-duplication inside the file), `plan` + `errors` + `warnings` + `entity_id` + `entity_version` (dry run), `result` + `result_errors` + `created_id` + `before_image` + `processed_at` (commit) | `before_image` keeps what an update replaced, so import undo (v1.1) needs no migration; holds tenant data (may contain PII): readable with `import:run` only; `DELETE` is granted for re-analysis |
+| `app.import_template` | M2 | **Saved column mapping** per tenant and entity type (API: `/v1/import-templates`) | `name` + stored `name_key`, `entity_type`, `columns` (header text -> target field), `options` | unique name per entity type among live rows; applied to a file by header text, not position |
 
 ### 3.9 Views and functions
 
@@ -271,6 +286,7 @@ erDiagram
     TRANSFER |o--o{ ASSET_HISTORY : refers
 
     LOANER_POOL ||--o{ LOANER_POOL_MEMBER : contains
+    ASSIGNMENT ||--o{ LOAN_ALERT : "alerted by"
     ASSET ||--o| LOANER_POOL_MEMBER : "belongs to pool"
     LOCATION |o--o{ LOANER_POOL : "home of"
     CONSUMABLE ||--o{ STOCK_MOVEMENT : logs
@@ -279,6 +295,7 @@ erDiagram
     VENDOR |o--o{ MAINTENANCE_RECORD : repairs
     PERSON |o--o{ MAINTENANCE_RECORD : performs
     IMPORT_JOB ||--o{ IMPORT_ROW : processes
+    TENANT ||--o{ IMPORT_TEMPLATE : saves
     ATTACHMENT |o--o{ IMPORT_JOB : "source file"
 
     TENANT {
@@ -543,7 +560,18 @@ erDiagram
         uuid tenant_id FK
         text name
         integer default_loan_days
+        integer max_loan_days
+        integer max_loans_per_person
+        text_array eligible_person_kinds
         uuid home_location_id FK
+        uuid owner_user_id FK
+    }
+    LOAN_ALERT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid assignment_id FK
+        text kind
+        date alert_date
     }
     LOANER_POOL_MEMBER {
         uuid tenant_id PK
@@ -603,19 +631,30 @@ erDiagram
     IMPORT_JOB {
         uuid id PK
         uuid tenant_id FK
+        uuid requested_by FK
         text source
         text entity_type
         text state
         text dry_run_digest
+        int cursor_row
         uuid file_attachment_id FK
     }
     IMPORT_ROW {
+        uuid tenant_id PK
+        uuid job_id PK
+        int row_no PK
+        jsonb raw
+        text plan
+        text result
+        uuid created_id
+        jsonb before_image
+    }
+    IMPORT_TEMPLATE {
         uuid id PK
         uuid tenant_id FK
-        uuid job_id FK
-        text phase
-        integer row_no
-        text outcome
+        text name
+        text entity_type
+        jsonb columns
     }
 ```
 
@@ -664,7 +703,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Audit log, asset history and stock ledger are append-only; partitions are not directly readable | DB: grants |
 | Accessory partial returns: `quantity_returned` never exceeds `quantity`, never decreases, and the period is closed exactly when everything is back; the stock check counts only outstanding units | DB: CHECKs + trigger |
 | Ids are generated by the application (no DB defaults; PostgreSQL 16/17/18) | App + `schema_lint()` |
-| Commit requires a dry run | DB CHECK on `import_job` + app compares `dry_run_digest` |
+| Commit requires a dry run | DB CHECK on `import_job` + app compares `dry_run_digest` (which also covers the file, mapping, options, value map and every row's plan) |
 | Custom field values validate against definitions; `custom_data` merge semantics | App (zod), definitions in DB |
 | Asset state transitions (only a deployable asset can be checked out; repair open/complete restores status) | App (`lifecycle` module), serialised with `SELECT ... FOR UPDATE` on the asset |
 | Location-scoped authorisation, permission checks | App (`PolicyService`, `TenantRepository`) |
@@ -700,7 +739,7 @@ Built-in roles (seeded per tenant; custom roles are v2): `tenant_admin` (`*`), `
 | Loaners (10) | app.loaner_pool, loaner_pool_member, assignment; v_overdue_checkouts |
 | Repairs (6) | app.maintenance_record, asset, asset_history |
 | Labels (2) | app.label_template, asset |
-| Imports (8) | app.import_job, import_row, attachment |
+| Imports (19) | app.import_job, import_row, import_template, attachment |
 | Attachments (5), Audit (1) | app.attachment, audit_log |
 
 The OpenAPI file has 132 operations on 82 paths (52 GET, 42 POST, 15 PATCH, 23 DELETE).

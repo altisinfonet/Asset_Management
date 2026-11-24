@@ -67,6 +67,30 @@ export async function usersWithRoles(tx: Tx, roleKeys: readonly string[]): Promi
   return rows.map((r) => r.id);
 }
 
+/**
+ * The users to tell about a loaner pool's loans (ED-21): the pool's owner when it has an active one,
+ * otherwise everybody who holds `loaner:manage`. The pool is named by a payload key.
+ */
+export const poolManagers =
+  (key = 'poolId'): RecipientResolver =>
+  async (event, tx) => {
+    const poolId = idOf(event.payload[key]);
+    if (poolId) {
+      const pool = await tx.loaner_pool.findUnique({
+        where: { id: poolId },
+        select: { owner_user_id: true },
+      });
+      if (pool?.owner_user_id) {
+        const owner = await tx.user_account.findUnique({
+          where: { id: pool.owner_user_id },
+          select: { id: true, status: true, archived_at: true },
+        });
+        if (owner && owner.status === 'active' && !owner.archived_at) return [owner.id];
+      }
+    }
+    return usersWithPermission(tx, 'loaner:manage');
+  };
+
 /** A recipient list that is the union of several resolvers (duplicates folded). */
 export const anyOf =
   (...resolvers: RecipientResolver[]): RecipientResolver =>
@@ -74,4 +98,41 @@ export const anyOf =
     const all = new Set<string>();
     for (const resolve of resolvers) for (const id of await resolve(event, tx)) all.add(id);
     return [...all];
+  };
+
+/** An address that is not a login account (ED-24). */
+export interface EmailRecipient {
+  email: string;
+  locale?: string | null;
+}
+
+/** Who gets mail although they have no login: see `loanBorrowerWithoutLogin`. */
+export type EmailRecipientResolver = (event: OutboxDelivery, tx: Tx) => Promise<EmailRecipient[]>;
+
+/**
+ * The borrower of a loaner loan who has NO login account but has an e-mail address, when the pool
+ * wants them told (ED-24). The pool's `email_borrowers_without_login` decides: true = always, false =
+ * never, null (automatic) = every kind of person except students (a child's address is not written to
+ * by default). A borrower with a login is told through the in-app / user path instead, never twice.
+ */
+export const loanBorrowerWithoutLogin =
+  (personKey = 'personId', poolKey = 'poolId'): EmailRecipientResolver =>
+  async (event, tx) => {
+    const personId = idOf(event.payload[personKey]);
+    if (!personId) return [];
+    const person = await tx.person.findUnique({
+      where: { id: personId },
+      select: { user_id: true, email: true, kind: true, archived_at: true },
+    });
+    if (!person || person.user_id || person.archived_at || !person.email?.trim()) return [];
+    const poolId = idOf(event.payload[poolKey]);
+    const pool = poolId
+      ? await tx.loaner_pool.findUnique({
+          where: { id: poolId },
+          select: { email_borrowers_without_login: true },
+        })
+      : null;
+    if (!pool) return [];
+    const wanted = pool.email_borrowers_without_login ?? person.kind !== 'student';
+    return wanted ? [{ email: person.email.trim() }] : [];
   };

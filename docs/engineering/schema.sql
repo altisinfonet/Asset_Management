@@ -814,27 +814,40 @@ $$;
 CREATE TRIGGER stock_movement_apply BEFORE INSERT ON app.stock_movement
   FOR EACH ROW EXECUTE FUNCTION app.stock_movement_apply();
 
+-- Loaner pool (ED-20, ADR 0011; migration 0120): a named set of spare devices with loan rules. A loan is an
+-- assignment with loaner_pool_id (B9): it needs an asset and a due date (assignment_loan_due).
 CREATE TABLE app.loaner_pool (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL REFERENCES app.tenant (id),
   name             text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 200),
   description      text,
-  home_location_id uuid,
-  default_loan_days integer NOT NULL DEFAULT 7 CHECK (default_loan_days > 0),
+  home_location_id uuid,                          -- where returned devices go back to
+  default_loan_days integer CHECK (default_loan_days IS NULL OR default_loan_days > 0),  -- null = the tenant default (custody settings), else 7
   max_loan_days    integer CHECK (max_loan_days IS NULL OR max_loan_days >= default_loan_days),
-  is_active        boolean NOT NULL DEFAULT true,
+  max_loans_per_person integer CHECK (max_loans_per_person IS NULL OR max_loans_per_person >= 1),
+  -- empty = every kind of person may borrow (the API shows null); otherwise only the listed kinds
+  eligible_person_kinds text[] NOT NULL DEFAULT '{}'
+                   CHECK (cardinality(eligible_person_kinds) <= 4
+                          AND eligible_person_kinds <@ array['employee','student','contractor','external']::text[]),
+  owner_user_id    uuid,                          -- told about overdue loans instead of every manager
+  is_active        boolean NOT NULL DEFAULT true, -- an inactive pool lends nothing but keeps its members
+  email_borrowers_without_login boolean,          -- null = automatic (all kinds except students), true = all with an address, false = none (ED-24)
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   created_by       uuid,
   updated_by       uuid,
   archived_at      timestamptz,
   version          integer NOT NULL DEFAULT 1,
+  -- stored lower-cased key: btree equality under RLS (ADR 0005)
+  name_key         text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
   UNIQUE (tenant_id, id),
-  FOREIGN KEY (tenant_id, home_location_id) REFERENCES app.location (tenant_id, id)
+  FOREIGN KEY (tenant_id, home_location_id) REFERENCES app.location (tenant_id, id),
+  FOREIGN KEY (tenant_id, owner_user_id)    REFERENCES app.user_account (tenant_id, id)
 );
-CREATE UNIQUE INDEX loaner_pool_name_uq ON app.loaner_pool (tenant_id, lower(name)) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX loaner_pool_name_uq ON app.loaner_pool (tenant_id, name_key) WHERE archived_at IS NULL;
+CREATE INDEX loaner_pool_location_idx ON app.loaner_pool (tenant_id, home_location_id) WHERE home_location_id IS NOT NULL;
 
--- An asset belongs to at most one pool.
+-- An asset belongs to at most one pool (the primary key). Plain rows, removed with a DELETE.
 CREATE TABLE app.loaner_pool_member (
   tenant_id      uuid NOT NULL REFERENCES app.tenant (id),
   asset_id       uuid NOT NULL,
@@ -846,6 +859,25 @@ CREATE TABLE app.loaner_pool_member (
   FOREIGN KEY (tenant_id, loaner_pool_id) REFERENCES app.loaner_pool (tenant_id, id)
 );
 CREATE INDEX loaner_pool_member_pool_idx ON app.loaner_pool_member (tenant_id, loaner_pool_id);
+-- grants: SELECT, INSERT, DELETE (membership is a fact about now; the audit log keeps who joined and left)
+
+-- Alert ledger of the daily loan job (M2-LOAN-03, ED-21): one row per alert raised, so an alert is raised once
+-- per loan and state. due_soon: once per loan and due date (an extension re-arms it); overdue: once per loan
+-- and day. Append-only (SELECT, INSERT).
+CREATE TABLE app.loan_alert (
+  id              uuid PRIMARY KEY,
+  tenant_id       uuid NOT NULL REFERENCES app.tenant (id),
+  assignment_id   uuid NOT NULL,
+  kind            text NOT NULL CHECK (kind IN ('due_soon','overdue')),
+  alert_date      date NOT NULL,                  -- the tenant day (UTC) the job ran for
+  expected_return date NOT NULL,                  -- the due date the alert was about
+  days_overdue    integer NOT NULL DEFAULT 0 CHECK (days_overdue >= 0),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, id)
+  -- the foreign key to app.assignment is added below, after B9 creates that table
+);
+CREATE UNIQUE INDEX loan_alert_due_soon_uq ON app.loan_alert (tenant_id, assignment_id, expected_return) WHERE kind = 'due_soon';
+CREATE UNIQUE INDEX loan_alert_overdue_uq ON app.loan_alert (tenant_id, assignment_id, alert_date) WHERE kind = 'overdue';
 
 -- -----------------------------------------------------------------------------
 -- B9. [M2] Assignment (check-out / check-in), transfer, asset history
@@ -917,6 +949,13 @@ CREATE INDEX assignment_due_idx ON app.assignment (tenant_id, expected_return)
   WHERE checked_in_at IS NULL AND expected_return IS NOT NULL;
 CREATE INDEX assignment_pool_open_idx ON app.assignment (tenant_id, loaner_pool_id)
   WHERE loaner_pool_id IS NOT NULL AND checked_in_at IS NULL;
+-- loan lists and the dashboard's recent activity, newest first (migration 0120)
+CREATE INDEX assignment_loan_out_idx ON app.assignment (tenant_id, checked_out_at DESC, id DESC)
+  WHERE loaner_pool_id IS NOT NULL;
+CREATE INDEX assignment_loan_in_idx ON app.assignment (tenant_id, checked_in_at DESC, id DESC)
+  WHERE loaner_pool_id IS NOT NULL AND checked_in_at IS NOT NULL;
+ALTER TABLE app.loan_alert
+  ADD FOREIGN KEY (tenant_id, assignment_id) REFERENCES app.assignment (tenant_id, id);
 
 -- Accessories are quantity-tracked: refuse a check-out that would exceed qty_total.
 CREATE FUNCTION app.assignment_check_accessory_stock() RETURNS trigger
@@ -997,7 +1036,8 @@ CREATE TABLE app.asset_history (
   at            timestamptz NOT NULL DEFAULT now(),
   event_type    text NOT NULL CHECK (event_type IN (
                   'created','updated','status_changed','location_changed','checked_out','checked_in',
-                  'transferred','repair_opened','repair_completed','archived','restored','label_printed','imported')),
+                  'transferred','repair_opened','repair_completed','archived','restored','label_printed','imported',
+                  'custody_undone')),
   actor_type    text NOT NULL DEFAULT 'user' CHECK (actor_type IN ('user','api_key','integration','system')),
   actor_id      uuid,
   assignment_id uuid,
@@ -1280,55 +1320,106 @@ CREATE INDEX label_batch_requester_idx ON app.label_batch (tenant_id, created_by
 CREATE INDEX label_batch_open_idx      ON app.label_batch (tenant_id, created_at) WHERE status = 'queued';
 CREATE INDEX label_batch_expiry_idx    ON app.label_batch (tenant_id, expires_at) WHERE status = 'ready';
 
-CREATE TABLE app.import_job (
+CREATE TABLE app.import_job (                          -- one CSV / XLSX import: a mandatory dry run, then a commit in batches (ED-18, migration 0110)
   id                   uuid PRIMARY KEY,
   tenant_id            uuid NOT NULL REFERENCES app.tenant (id),
-  source               text NOT NULL CHECK (source IN ('csv','xlsx','snipe_it','google_admin_csv')),
-  entity_type          text NOT NULL
-                       CHECK (entity_type IN ('asset','accessory','consumable','location','person','manufacturer','asset_model','category')),
+  requested_by         uuid NOT NULL,
+  source               text NOT NULL CHECK (source IN ('csv','xlsx','google_admin_csv')),
+  entity_type          text NOT NULL CHECK (entity_type IN ('asset','person','location','department')),
+  preset_key           text CHECK (preset_key IS NULL OR length(preset_key) <= 64),
   state                text NOT NULL DEFAULT 'draft'
-                       CHECK (state IN ('draft','dry_run_queued','dry_run_running','dry_run_complete',
-                                        'commit_queued','committing','committed','failed','cancelled')),
+                       CHECK (state IN ('draft','uploaded','analyzing','analyzed','mapped','dry_running',
+                                        'dry_run_done','committing','completed','failed','cancelled')),
   file_attachment_id   uuid,
-  original_filename    text,
-  mapping              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(mapping) = 'object'),
-  options              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object'),
+  filename             text CHECK (filename IS NULL OR length(filename) <= 255),
+  parse                jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(parse) = 'object'),   -- format, encoding, delimiter, sheet, header line
+  headers              jsonb CHECK (headers IS NULL OR jsonb_typeof(headers) = 'array'),
+  profile              jsonb CHECK (profile IS NULL OR jsonb_typeof(profile) = 'array'),             -- per column: distinct, blanks, duplicates, type, samples
+  samples              jsonb CHECK (samples IS NULL OR jsonb_typeof(samples) = 'array'),             -- the first 50 data rows
+  mapping              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(mapping) = 'object' AND pg_column_size(mapping) <= 262144),
+  options              jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object' AND pg_column_size(options) <= 65536),
+  value_map            jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(value_map) = 'object' AND pg_column_size(value_map) <= 1048576),
+  summary              jsonb CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'),
   rows_total           integer NOT NULL DEFAULT 0 CHECK (rows_total >= 0),
-  rows_create          integer NOT NULL DEFAULT 0 CHECK (rows_create >= 0),
-  rows_update          integer NOT NULL DEFAULT 0 CHECK (rows_update >= 0),
-  rows_skip            integer NOT NULL DEFAULT 0 CHECK (rows_skip >= 0),
-  rows_error           integer NOT NULL DEFAULT 0 CHECK (rows_error >= 0),
-  dry_run_digest       text,                                 -- hash(file, mapping, options) at dry-run time
-  dry_run_completed_at timestamptz,
+  plan_create          integer NOT NULL DEFAULT 0 CHECK (plan_create >= 0),   -- dry run: what WOULD happen
+  plan_update          integer NOT NULL DEFAULT 0 CHECK (plan_update >= 0),
+  plan_skip            integer NOT NULL DEFAULT 0 CHECK (plan_skip >= 0),
+  plan_error           integer NOT NULL DEFAULT 0 CHECK (plan_error >= 0),
+  done_create          integer NOT NULL DEFAULT 0 CHECK (done_create >= 0),   -- commit: what happened
+  done_update          integer NOT NULL DEFAULT 0 CHECK (done_update >= 0),
+  done_skip            integer NOT NULL DEFAULT 0 CHECK (done_skip >= 0),
+  done_error           integer NOT NULL DEFAULT 0 CHECK (done_error >= 0),
+  rows_processed       integer NOT NULL DEFAULT 0 CHECK (rows_processed >= 0),   -- progress of the running phase
+  cursor_row           integer NOT NULL DEFAULT 0 CHECK (cursor_row >= 0),       -- last row number handled: where a step resumes
+  dry_run_digest       text CHECK (dry_run_digest IS NULL OR dry_run_digest ~ '^[0-9a-f]{64}$'),   -- file, parse, mapping, options, value map and every row's plan
+  dry_run_at           timestamptz,
   committed_at         timestamptz,
-  error                text,
+  started_at           timestamptz,
+  finished_at          timestamptz,
+  cancel_requested     boolean NOT NULL DEFAULT false,
+  error                text CHECK (error IS NULL OR length(error) <= 1000),
+  data_purged_at       timestamptz,                  -- rows, profile, samples, value map and file removed by the retention job (ED-25, migration 0141)
   created_at           timestamptz NOT NULL DEFAULT now(),
   updated_at           timestamptz NOT NULL DEFAULT now(),
   created_by           uuid,
   updated_by           uuid,
+  archived_at          timestamptz,
   version              integer NOT NULL DEFAULT 1,
   UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, requested_by)       REFERENCES app.user_account (tenant_id, id),
   FOREIGN KEY (tenant_id, file_attachment_id) REFERENCES app.attachment (tenant_id, id),
-  CHECK (state NOT IN ('commit_queued','committing','committed') OR dry_run_digest IS NOT NULL)  -- commit only after a dry run
+  CONSTRAINT import_job_commit_needs_digest CHECK (state NOT IN ('committing','completed') OR dry_run_digest IS NOT NULL)  -- commit only after a reviewed dry run
 );
-CREATE INDEX import_job_state_idx ON app.import_job (tenant_id, created_at DESC, id DESC);
+CREATE INDEX import_job_state_idx     ON app.import_job (tenant_id, state, updated_at) WHERE state IN ('analyzing','dry_running','committing');
+CREATE INDEX import_job_requester_idx ON app.import_job (tenant_id, requested_by, created_at DESC, id DESC);
+CREATE INDEX import_job_purge_idx     ON app.import_job (tenant_id, finished_at) WHERE data_purged_at IS NULL AND state IN ('completed','failed','cancelled');  -- migration 0141
 
-CREATE TABLE app.import_row (
-  id          uuid PRIMARY KEY,
-  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
-  job_id      uuid NOT NULL,
-  phase       text NOT NULL CHECK (phase IN ('dry_run','commit')),
-  row_no      integer NOT NULL CHECK (row_no > 0),
-  outcome     text NOT NULL CHECK (outcome IN ('create','update','skip','error')),
-  entity_id   uuid,                                          -- resulting / matched record
-  errors      jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(errors) = 'array'),
-  warnings    jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(warnings) = 'array'),
-  source_data jsonb,                                         -- raw mapped row (tenant data, may contain PII)
-  UNIQUE (tenant_id, id),
-  UNIQUE (tenant_id, job_id, phase, row_no),
+CREATE TABLE app.import_row (                          -- one row of the file, BOTH phases (ED-18); no surrogate id: nothing refers to a row
+  tenant_id      uuid NOT NULL REFERENCES app.tenant (id),
+  job_id         uuid NOT NULL,
+  row_no         integer NOT NULL CHECK (row_no >= 1),    -- position among the data rows
+  line_no        integer NOT NULL CHECK (line_no >= 1),   -- line (CSV) or row (XLSX) of the file, for messages
+  raw            jsonb NOT NULL CHECK (jsonb_typeof(raw) = 'array'),      -- the cells as read (tenant data, may contain PII)
+  mapped         jsonb CHECK (mapped IS NULL OR jsonb_typeof(mapped) = 'object'),   -- the typed record the mapping produced
+  match_key      text,                                    -- normalised primary de-duplication key (tag, email, path, name)
+  match_key2     text,                                    -- secondary key (serial, employee number, code)
+  dup_of         integer,                                 -- row_no of the first row with the same key
+  plan           text CHECK (plan IN ('create','update','skip','error')),            -- dry-run verdict
+  errors         jsonb CHECK (errors IS NULL OR jsonb_typeof(errors) = 'array'),
+  warnings       jsonb CHECK (warnings IS NULL OR jsonb_typeof(warnings) = 'array'),
+  entity_id      uuid,                                    -- the existing record an update will change
+  entity_version integer,                                 -- its version when the dry run looked (ETag check at commit)
+  result         text CHECK (result IN ('created','updated','skipped','error')),    -- commit verdict
+  result_errors  jsonb CHECK (result_errors IS NULL OR jsonb_typeof(result_errors) = 'array'),
+  created_id     uuid,
+  before_image   jsonb CHECK (before_image IS NULL OR jsonb_typeof(before_image) = 'object'),   -- values an update replaced (import undo, v1.1)
+  processed_at   timestamptz,
+  PRIMARY KEY (tenant_id, job_id, row_no),
   FOREIGN KEY (tenant_id, job_id) REFERENCES app.import_job (tenant_id, id)
 );
-CREATE INDEX import_row_outcome_idx ON app.import_row (tenant_id, job_id, phase, outcome, row_no);
+CREATE INDEX import_row_plan_idx    ON app.import_row (tenant_id, job_id, plan, row_no);
+CREATE INDEX import_row_pending_idx ON app.import_row (tenant_id, job_id, row_no) WHERE result IS NULL AND plan IN ('create','update');
+CREATE INDEX import_row_key_idx     ON app.import_row (tenant_id, job_id, match_key)  WHERE match_key IS NOT NULL;
+CREATE INDEX import_row_key2_idx    ON app.import_row (tenant_id, job_id, match_key2) WHERE match_key2 IS NOT NULL;
+
+CREATE TABLE app.import_template (                     -- a saved column mapping, matched to a file by header text (M2-IMP-03)
+  id          uuid PRIMARY KEY,
+  tenant_id   uuid NOT NULL REFERENCES app.tenant (id),
+  name        text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+  name_key    text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
+  entity_type text NOT NULL CHECK (entity_type IN ('asset','person','location','department')),
+  description text CHECK (description IS NULL OR length(description) <= 1000),
+  columns     jsonb NOT NULL CHECK (jsonb_typeof(columns) = 'array' AND jsonb_array_length(columns) <= 500),
+  options     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(options) = 'object' AND pg_column_size(options) <= 65536),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  created_by  uuid,
+  updated_by  uuid,
+  archived_at timestamptz,
+  version     integer NOT NULL DEFAULT 1,
+  UNIQUE (tenant_id, id)
+);
+CREATE UNIQUE INDEX import_template_name_uq ON app.import_template (tenant_id, entity_type, name_key) WHERE archived_at IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- B11. [M1] Technical tables: idempotency, outbox
@@ -1742,13 +1833,14 @@ GRANT SELECT, INSERT, UPDATE ON
   app.location, app.person, app.category, app.manufacturer, app.vendor, app.asset_model,
   app.status_label, app.custom_field_def, app.asset_tag_counter, app.asset, app.attachment,
   app.accessory, app.consumable, app.loaner_pool, app.assignment, app.transfer,
-  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.outbox_event
+  app.maintenance_record, app.label_template, app.label_batch, app.import_job, app.import_template, app.outbox_event
   TO app_user;
 -- app: limited deletes
 GRANT DELETE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key, app.outbox_event TO app_user;
-GRANT SELECT, INSERT, UPDATE ON app.role_assignment, app.loaner_pool_member, app.import_row, app.idempotency_key TO app_user;
--- app: append-only (no UPDATE / DELETE): audit trail, custody history, stock ledger
-GRANT SELECT, INSERT ON app.audit_log, app.asset_history, app.stock_movement TO app_user;   -- partitioned tables: PARENT only
+GRANT SELECT, INSERT, UPDATE ON app.role_assignment, app.import_row, app.idempotency_key TO app_user;
+GRANT SELECT, INSERT ON app.loaner_pool_member TO app_user;                                  -- membership: insert and delete only
+-- app: append-only (no UPDATE / DELETE): audit trail, custody history, stock ledger, loan alert ledger
+GRANT SELECT, INSERT ON app.audit_log, app.asset_history, app.stock_movement, app.loan_alert TO app_user;   -- partitioned tables: PARENT only
 GRANT SELECT ON app.v_accessory_availability, app.v_overdue_checkouts, app.v_low_stock TO app_user;
 GRANT EXECUTE ON FUNCTION app.provision_tenant(uuid, text, text, text, text), app.next_asset_tag(text) TO app_user;
 

@@ -1,7 +1,14 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { BulkResultsDialog } from '@/app/(app)/assets/bulk-dialogs';
 import { UploadSlot } from '@/components/files/upload-slot';
 import { AssetStatusBadge } from '@/components/registry/asset-details';
@@ -29,12 +36,14 @@ import {
   availableActions,
   CONDITIONS,
   createKeyKeeper,
+  dateAfter,
   holderOf,
   today,
   type Condition,
   type CustodyAction,
 } from '@/lib/custody/helpers';
 import { uiErrorText } from '@/lib/error-text';
+import { useCustodySettings } from '@/lib/loaners/queries';
 import { assetsApi, custodyApi } from '@/lib/registry/api';
 import type { BulkResult } from '@/lib/registry/bulk';
 import { useLookups, type Lookups } from '@/lib/registry/queries';
@@ -554,6 +563,23 @@ function NoteField({
   );
 }
 
+/**
+ * Pre-fills the expected return with the organisation's default (`default_expected_return_days` of
+ * `GET /v1/settings/custody`: today plus N days). Only a hint: the API never applies it, the person
+ * can change or clear the date, and a date typed before the setting arrived is left alone.
+ */
+function useDefaultReturn(expected: string, setExpected: (value: string) => void) {
+  const { can } = useAuth();
+  const settings = useCustodySettings(can('catalog:read'));
+  const days = settings.data?.value.default_expected_return_days ?? null;
+  const applied = useRef(false);
+  useEffect(() => {
+    if (applied.current || !days || expected) return;
+    applied.current = true;
+    setExpected(dateAfter({ days }));
+  }, [days, expected, setExpected]);
+}
+
 // ---- check out -------------------------------------------------------------------------------------
 
 function CheckoutForm(props: FormProps) {
@@ -562,6 +588,7 @@ function CheckoutForm(props: FormProps) {
   const [target, setTarget] = useState<TargetState>(EMPTY_TARGET);
   const single = props.assets.length === 1;
   const [expected, setExpected] = useState('');
+  useDefaultReturn(expected, setExpected);
   const [statusId, setStatusId] = useState('');
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
@@ -775,6 +802,7 @@ function TransferForm(props: FormProps) {
   const [target, setTarget] = useState<TargetState>(EMPTY_TARGET);
   const [toLocation, setToLocation] = useState('');
   const [expected, setExpected] = useState('');
+  useDefaultReturn(expected, setExpected);
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);

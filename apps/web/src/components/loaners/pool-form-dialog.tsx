@@ -1,13 +1,17 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormDialog, type FormFieldSpec, type FormValues } from '@/components/registry/form-dialog';
 import { LocationPicker } from '@/components/registry/location-picker';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
+import { useAuth } from '@/lib/auth/auth-context';
 import { loanersApi, type LoanerPool } from '@/lib/loaners/api';
+import { PERSON_KINDS } from '@/lib/loaners/helpers';
 import { loanKeys } from '@/lib/loaners/queries';
+import { usersApi } from '@/lib/registry/api';
 import type { Versioned } from '@/lib/registry/types';
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -37,6 +41,15 @@ export function PoolFormDialog({
   const { toast } = useToast();
   const client = useQueryClient();
   const current = pool?.value;
+  const { can } = useAuth();
+  // the owner is one of the organisation's users; only someone who may read users can choose one
+  const users = useQuery({
+    queryKey: ['loaner-owner-users'],
+    queryFn: () => usersApi.list({ limit: 100 }),
+    select: (page) => page.data,
+    enabled: open && can('user:read'),
+    staleTime: 60_000,
+  });
 
   const fields = useMemo<FormFieldSpec[]>(
     () => [
@@ -107,9 +120,55 @@ export function PoolFormDialog({
         validate: (value) =>
           Number.isNaN(wholeNumber(value, 1)) ? t('loanerPools.form.errors.maxLoans') : undefined,
       },
+      {
+        name: 'eligible_person_kinds',
+        label: t('loanerPools.form.kinds'),
+        kind: 'custom',
+        hint: t('loanerPools.form.kindsHint'),
+        render: ({ value, set }) => {
+          const chosen = String(value).split(',').filter(Boolean);
+          return (
+            <div
+              role="group"
+              aria-label={t('loanerPools.form.kinds')}
+              className="flex flex-wrap gap-x-5 gap-y-2"
+            >
+              {PERSON_KINDS.map((kind) => (
+                <Checkbox
+                  key={kind}
+                  label={t(`loanerPools.form.kindNames.${kind}`)}
+                  checked={chosen.includes(kind)}
+                  onCheckedChange={(on) =>
+                    set(
+                      PERSON_KINDS.filter((k) =>
+                        k === kind ? on === true : chosen.includes(k),
+                      ).join(','),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          );
+        },
+      },
+      ...(users.data
+        ? [
+            {
+              name: 'owner_user_id',
+              label: t('loanerPools.form.owner'),
+              kind: 'select' as const,
+              hint: t('loanerPools.form.ownerHint'),
+              emptyLabel: t('loanerPools.form.ownerNone'),
+              options: users.data.map((user) => ({
+                value: user.id,
+                label: user.display_name ?? user.email,
+              })),
+            },
+          ]
+        : []),
       { name: 'is_active', label: t('loanerPools.form.active'), kind: 'checkbox' },
     ],
-    [t],
+    [t, users.data],
   );
 
   const initial = useMemo<FormValues>(
@@ -122,12 +181,17 @@ export function PoolFormDialog({
       max_loans_per_person: current?.max_loans_per_person
         ? String(current.max_loans_per_person)
         : '',
+      eligible_person_kinds: (current?.eligible_person_kinds ?? []).join(','),
+      owner_user_id: current?.owner_user_id ?? '',
       is_active: current?.is_active ?? true,
     }),
     [current],
   );
 
   const submit = async (values: FormValues) => {
+    const kinds = PERSON_KINDS.filter((kind) =>
+      text(values.eligible_person_kinds).split(',').includes(kind),
+    );
     const body = {
       name: text(values.name),
       description: text(values.description) || null,
@@ -135,6 +199,8 @@ export function PoolFormDialog({
       default_loan_days: wholeNumber(values.default_loan_days, 1) ?? 7,
       max_loan_days: wholeNumber(values.max_loan_days, 1),
       max_loans_per_person: wholeNumber(values.max_loans_per_person, 1),
+      eligible_person_kinds: kinds.length > 0 ? kinds : null,
+      owner_user_id: text(values.owner_user_id) || null,
       is_active: values.is_active === true,
     };
     const saved = pool

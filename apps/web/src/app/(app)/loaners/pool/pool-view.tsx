@@ -5,7 +5,9 @@ import {
   ArrowLeft,
   ArrowUpRight,
   ClockAlert,
+  CalendarPlus,
   Hourglass,
+  Wrench,
   Pencil,
   Plus,
   Repeat,
@@ -14,6 +16,7 @@ import {
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
+import { ExtendLoanDialog, type ExtendTarget } from '@/components/loaners/extend-loan-dialog';
 import { PoolFormDialog } from '@/components/loaners/pool-form-dialog';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
@@ -38,7 +41,6 @@ import {
   isPoolShow,
   matchesShow,
   memberState,
-  poolCounts,
   POOL_SHOW,
   todayUtc,
   type MemberState,
@@ -69,12 +71,13 @@ async function loadMembers(id: string): Promise<LoanerPoolMember[]> {
 
 const STATE_BADGE: Record<
   MemberState,
-  { tone: 'success' | 'primary' | 'danger' | 'warning'; icon: typeof Repeat }
+  { tone: 'success' | 'primary' | 'danger' | 'warning' | 'neutral'; icon: typeof Repeat }
 > = {
   available: { tone: 'success', icon: Repeat },
   on_loan: { tone: 'primary', icon: ArrowUpRight },
   overdue: { tone: 'danger', icon: ClockAlert },
   due_today: { tone: 'warning', icon: Hourglass },
+  unavailable: { tone: 'neutral', icon: Wrench },
 };
 
 /**
@@ -95,6 +98,7 @@ export function PoolView() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [extending, setExtending] = useState<ExtendTarget | null>(null);
   const [version, setVersion] = useState(0);
 
   const pool = useQuery({
@@ -149,7 +153,14 @@ export function PoolView() {
   }
 
   const current = pool.data?.value;
-  const counts = current ? poolCounts(current) : null;
+  const counts = current
+    ? {
+        available: current.available_count,
+        onLoan: current.checked_out_count,
+        overdue: current.overdue_count,
+        dueToday: current.due_today_count,
+      }
+    : null;
 
   const setShow = (next: PoolShow) =>
     router.replace(next === 'all' ? routes.loanerPool(id) : routes.loanerPool(id, next));
@@ -235,7 +246,8 @@ export function PoolView() {
       align: 'end',
       cell: ({ member, state }) => {
         const tag = member.asset?.asset_tag ?? '';
-        const out = state !== 'available';
+        const out = state === 'on_loan' || state === 'overdue' || state === 'due_today';
+        const loan = member.asset?.current_assignment;
         return (
           <span className="inline-flex gap-1.5">
             {out && can('asset:checkin') ? (
@@ -246,6 +258,22 @@ export function PoolView() {
               >
                 <Undo2 aria-hidden className="size-4" />
                 {t('loanerPool.returnButton')}
+              </Button>
+            ) : null}
+            {out && loan && can('loaner:checkout') ? (
+              <Button
+                size="sm"
+                aria-label={t('loaners.extend.buttonNamed', { tag })}
+                onClick={() =>
+                  setExtending({
+                    loanId: loan.assignment_id,
+                    tag,
+                    expectedReturn: loan.expected_return ?? '',
+                  })
+                }
+              >
+                <CalendarPlus aria-hidden className="size-4" />
+                {t('loaners.extend.button')}
               </Button>
             ) : null}
             {canManage ? (
@@ -410,6 +438,7 @@ export function PoolView() {
         pool={pool.data}
         onSaved={() => setVersion((n) => n + 1)}
       />
+      <ExtendLoanDialog target={extending} onOpenChange={(open) => !open && setExtending(null)} />
       <ConfirmDialog
         open={archiving}
         onOpenChange={setArchiving}

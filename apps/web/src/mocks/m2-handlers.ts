@@ -1507,7 +1507,7 @@ export function openAssignment(
   return assignment;
 }
 
-function closeAssignment(
+export function closeAssignment(
   assignment: MockAssignment,
   actorId: string,
   close: {

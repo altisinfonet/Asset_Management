@@ -21,8 +21,8 @@ import { useI18n } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { uiErrorText } from '@/lib/error-text';
-import { loanersApi, type LoanerPool, type LoanSettings } from '@/lib/loaners/api';
-import { loanKeys, useLoanSettings, usePools } from '@/lib/loaners/queries';
+import { custodySettingsApi, loanersApi, type LoanerPool } from '@/lib/loaners/api';
+import { useCustodySettings, usePools } from '@/lib/loaners/queries';
 import { useLookups } from '@/lib/registry/queries';
 import type { Versioned } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
@@ -173,16 +173,20 @@ export function PoolsScreen() {
   );
 }
 
-/** The tenant defaults (`GET/PUT /v1/settings/loans`): a loan's length when the pool has none, and the longest any pool may allow. */
+/**
+ * The organisation's custody settings (`GET/PUT /v1/settings/custody`): how many days from today the
+ * return date of a regular check-out starts at (the API only offers it, it never applies it), and
+ * how many days before the due date a borrower is reminded. Changing them needs `catalog:manage`.
+ */
 function LoanDefaults() {
   const { t } = useI18n();
   const { can } = useAuth();
   const { toast } = useToast();
   const client = useQueryClient();
-  const settings = useLoanSettings();
+  const settings = useCustodySettings();
   const loaded = settings.data;
-  const canManage = can('loaner:manage');
-  const [values, setValues] = useState({ days: '', max: '', reminder: '' });
+  const canManage = can('catalog:manage');
+  const [values, setValues] = useState({ expected: '', reminder: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<UiError | null>(null);
   const [saving, setSaving] = useState(false);
@@ -191,61 +195,51 @@ function LoanDefaults() {
     if (!loaded) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the form starts from what the server has
     setValues({
-      days: String(loaded.value.default_loan_days),
-      max: loaded.value.max_loan_days ? String(loaded.value.max_loan_days) : '',
-      reminder: String(loaded.value.reminder_lead_days),
+      expected: loaded.value.default_expected_return_days
+        ? String(loaded.value.default_expected_return_days)
+        : '',
+      reminder: String(loaded.value.loan_reminder_days),
     });
   }, [loaded]);
 
-  const whole = (text: string, min: number): number | null | typeof Number.NaN => {
-    const trimmed = text.trim();
-    if (trimmed === '') return null;
-    const n = Number(trimmed);
-    return Number.isInteger(n) && n >= min ? n : Number.NaN;
+  const whole = (text: string, min: number, max: number): number | null => {
+    const n = Number(text.trim());
+    return text.trim() !== '' && Number.isInteger(n) && n >= min && n <= max ? n : null;
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const days = whole(values.days, 1);
-    const max = whole(values.max, 1);
-    const reminder = whole(values.reminder, 0);
+    const expected = values.expected.trim() === '' ? null : whole(values.expected, 1, 366);
+    const reminder = whole(values.reminder, 0, 30);
     const next: Record<string, string> = {};
-    if (days === null || Number.isNaN(days))
-      next.days = t('loanerPools.defaults.errors.defaultDays');
-    if (Number.isNaN(max)) next.max = t('loanerPools.defaults.errors.maxDays');
-    else if (max !== null && days !== null && !Number.isNaN(days) && max < days) {
-      next.max = t('loanerPools.defaults.errors.maxBelowDefault');
+    if (values.expected.trim() !== '' && expected === null) {
+      next.expected = t('loanerPools.defaults.errors.expectedDays');
     }
-    if (reminder === null || Number.isNaN(reminder)) {
-      next.reminder = t('loanerPools.defaults.errors.reminder');
-    }
+    if (reminder === null) next.reminder = t('loanerPools.defaults.errors.reminder');
     setErrors(next);
     if (Object.keys(next).length > 0) return;
     setSaving(true);
     setFormError(null);
     try {
-      const body: LoanSettings = {
-        default_loan_days: days as number,
-        max_loan_days: max,
-        reminder_lead_days: reminder as number,
-      };
-      await loanersApi.putSettings(body, loaded?.etag);
-      await client.invalidateQueries({ queryKey: loanKeys.settings });
+      await custodySettingsApi.put(
+        { default_expected_return_days: expected, loan_reminder_days: reminder! },
+        loaded?.etag,
+      );
+      await client.invalidateQueries({ queryKey: ['custody-settings'] });
       toast({ variant: 'success', title: t('loanerPools.defaults.saved') });
     } catch (err) {
       const ui = getApi().toUiError(err);
       const byField: Record<string, string> = {};
       for (const fe of ui.fieldErrors) {
         const key = {
-          default_loan_days: 'days',
-          max_loan_days: 'max',
-          reminder_lead_days: 'reminder',
+          default_expected_return_days: 'expected',
+          loan_reminder_days: 'reminder',
         }[fe.pointer.replace(/^\//, '')];
         if (key) byField[key] = fe.message;
       }
       setErrors(byField);
       setFormError(
-        Object.keys(byField).length === ui.fieldErrors.length && ui.fieldErrors.length > 0
+        ui.fieldErrors.length > 0 && Object.keys(byField).length === ui.fieldErrors.length
           ? null
           : ui,
       );
@@ -274,45 +268,37 @@ function LoanDefaults() {
           {formError ? (
             <FormError message={uiErrorText(t, formError)} requestId={formError.requestId} />
           ) : null}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label={t('loanerPools.defaults.defaultDays')} error={errors.days}>
-              {(control) => (
-                <Input
-                  {...control}
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={values.days}
-                  readOnly={!canManage}
-                  invalid={!!errors.days}
-                  onChange={(event) => setValues({ ...values, days: event.target.value })}
-                />
-              )}
-            </Field>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
-              label={t('loanerPools.defaults.maxDays')}
-              hint={t('loanerPools.defaults.maxHint')}
-              error={errors.max}
+              label={t('loanerPools.defaults.expectedDays')}
+              hint={t('loanerPools.defaults.expectedHint')}
+              error={errors.expected}
             >
               {(control) => (
                 <Input
                   {...control}
                   type="number"
                   min={1}
+                  max={366}
                   inputMode="numeric"
-                  value={values.max}
+                  value={values.expected}
                   readOnly={!canManage}
-                  invalid={!!errors.max}
-                  onChange={(event) => setValues({ ...values, max: event.target.value })}
+                  invalid={!!errors.expected}
+                  onChange={(event) => setValues({ ...values, expected: event.target.value })}
                 />
               )}
             </Field>
-            <Field label={t('loanerPools.defaults.reminder')} error={errors.reminder}>
+            <Field
+              label={t('loanerPools.defaults.reminder')}
+              hint={t('loanerPools.defaults.reminderHint')}
+              error={errors.reminder}
+            >
               {(control) => (
                 <Input
                   {...control}
                   type="number"
                   min={0}
+                  max={30}
                   inputMode="numeric"
                   value={values.reminder}
                   readOnly={!canManage}

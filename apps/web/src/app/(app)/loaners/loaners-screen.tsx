@@ -4,6 +4,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  CalendarPlus,
   ClockAlert,
   Plus,
   Repeat,
@@ -12,10 +13,11 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { ExtendLoanDialog, type ExtendTarget } from '@/components/loaners/extend-loan-dialog';
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
-import { Banner } from '@/components/ui/banner';
 import { Badge } from '@/components/ui/badge';
+import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -26,17 +28,15 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { cn } from '@/lib/cn';
 import {
   loanersApi,
-  type LoanActivity,
-  type LoanerPool,
-  type OverdueCheckout,
+  type Loan,
+  type LoanerActivity,
+  type LoanerDashboardPool,
 } from '@/lib/loaners/api';
-import { poolCounts, sumCounts, type PoolCounts } from '@/lib/loaners/helpers';
-import { loanKeys, usePools } from '@/lib/loaners/queries';
+import { loanKeys } from '@/lib/loaners/queries';
 import { routes } from '@/lib/routes';
 
 const OVERDUE_PAGE = 10;
 const ALL_POOLS = '__all__';
-const ACTIVITY_SIZE = 8;
 
 type CountKey = 'available' | 'onLoan' | 'overdue' | 'dueToday';
 const SHOW_OF: Record<CountKey, 'available' | 'on_loan' | 'overdue' | 'due_today'> = {
@@ -53,16 +53,19 @@ const LABEL_OF: Record<CountKey, TranslationKey> = {
 };
 
 /**
- * The loaner dashboard (WEB-16, M2-LOAN-04): totals and one card per pool (available, on loan,
- * overdue, due today; each number opens that list in the pool), the overdue loans with the
- * borrower's contact, and what happened lately. The desk and the bulk return are one click away.
+ * The loaner dashboard (WEB-16, M2-LOAN-04), from one call: totals and one card per pool (available,
+ * on loan, overdue, due today; each number opens that list in the pool), the overdue loans with the
+ * borrower's contact and a way to extend them, and what happened lately. The desk and the bulk
+ * return are one click away.
  */
 export function LoanersScreen() {
   const { t } = useI18n();
   const { can } = useAuth();
-  const pools = usePools();
-  const list = useMemo(() => pools.data ?? [], [pools.data]);
-  const totals = useMemo(() => sumCounts(list), [list]);
+  const dashboard = useQuery({
+    queryKey: loanKeys.dashboard,
+    queryFn: () => loanersApi.dashboard(),
+  });
+  const data = dashboard.data;
 
   return (
     <>
@@ -90,10 +93,10 @@ export function LoanersScreen() {
         }
       />
       <div className="flex flex-col gap-8">
-        {pools.isError ? (
+        {dashboard.isError ? (
           <Banner
             tone="danger"
-            action={<Button onClick={() => void pools.refetch()}>{t('common.retry')}</Button>}
+            action={<Button onClick={() => void dashboard.refetch()}>{t('common.retry')}</Button>}
           >
             {t('loaners.loadFailed')}
           </Banner>
@@ -103,7 +106,7 @@ export function LoanersScreen() {
           <h2 id="loaners-totals" className="sr-only">
             {t('loaners.totalsLabel')}
           </h2>
-          <TotalTiles totals={totals} loading={pools.isPending} />
+          <TotalTiles data={data} loading={dashboard.isPending} />
         </section>
 
         <section aria-labelledby="loaners-pools" className="flex flex-col gap-3">
@@ -115,12 +118,12 @@ export function LoanersScreen() {
               <Link href={routes.loanerPools}>{t('loaners.managePools')}</Link>
             </Button>
           </div>
-          {pools.isPending ? (
+          {dashboard.isPending ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <Skeleton className="h-40 w-full" />
               <Skeleton className="h-40 w-full" />
             </div>
-          ) : list.length === 0 && !pools.isError ? (
+          ) : data && data.pools.length === 0 ? (
             <div className="rounded-lg border border-border bg-surface">
               <EmptyState
                 icon={Repeat}
@@ -142,7 +145,7 @@ export function LoanersScreen() {
             </div>
           ) : (
             <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {list.map((pool) => (
+              {(data?.pools ?? []).map((pool) => (
                 <li key={pool.id}>
                   <PoolCard pool={pool} />
                 </li>
@@ -151,24 +154,45 @@ export function LoanersScreen() {
           )}
         </section>
 
-        <OverdueSection pools={list} />
-        <ActivitySection />
+        <OverdueSection pools={data?.pools ?? []} />
+        <ActivitySection
+          recent={data?.recent}
+          loading={dashboard.isPending}
+          failed={dashboard.isError}
+        />
       </div>
     </>
   );
 }
 
-function TotalTiles({ totals, loading }: { totals: PoolCounts; loading: boolean }) {
+function TotalTiles({
+  data,
+  loading,
+}: {
+  data:
+    | {
+        totals: {
+          members: number;
+          available: number;
+          checked_out: number;
+          overdue: number;
+          due_today: number;
+        };
+      }
+    | undefined;
+  loading: boolean;
+}) {
   const { t, formatNumber } = useI18n();
+  const totals = data?.totals;
   const tiles: Array<{ key: string; label: TranslationKey; value: number; tone?: string }> = [
-    { key: 'inPool', label: 'loaners.counts.inPool', value: totals.total },
-    { key: 'available', label: 'loaners.counts.available', value: totals.available },
-    { key: 'onLoan', label: 'loaners.counts.onLoan', value: totals.onLoan },
+    { key: 'inPool', label: 'loaners.counts.inPool', value: totals?.members ?? 0 },
+    { key: 'available', label: 'loaners.counts.available', value: totals?.available ?? 0 },
+    { key: 'onLoan', label: 'loaners.counts.onLoan', value: totals?.checked_out ?? 0 },
     {
       key: 'overdue',
       label: 'loaners.counts.overdue',
-      value: totals.overdue,
-      tone: totals.overdue > 0 ? 'text-danger-text' : undefined,
+      value: totals?.overdue ?? 0,
+      tone: (totals?.overdue ?? 0) > 0 ? 'text-danger-text' : undefined,
     },
   ];
   return (
@@ -205,9 +229,14 @@ const COUNT_ICONS: Partial<Record<CountKey, LucideIcon>> = {
 };
 
 /** One pool: its name, size and the four numbers, each a link to the matching devices. */
-function PoolCard({ pool }: { pool: LoanerPool }) {
+function PoolCard({ pool }: { pool: LoanerDashboardPool }) {
   const { t, formatNumber } = useI18n();
-  const counts = poolCounts(pool);
+  const counts: Record<CountKey, number> = {
+    available: pool.available_count,
+    onLoan: pool.checked_out_count,
+    overdue: pool.overdue_count,
+    dueToday: pool.due_today_count,
+  };
   const keys: CountKey[] = ['available', 'onLoan', 'overdue', 'dueToday'];
   return (
     <article
@@ -227,7 +256,7 @@ function PoolCard({ pool }: { pool: LoanerPool }) {
             </Link>
           </h3>
           <p className="text-sm text-muted">
-            {t('loaners.pools.devices', { count: counts.total })}
+            {t('loaners.pools.devices', { count: pool.member_count })}
           </p>
         </div>
         {pool.is_active === false ? <Badge>{t('loaners.pools.switchedOff')}</Badge> : null}
@@ -236,7 +265,7 @@ function PoolCard({ pool }: { pool: LoanerPool }) {
         {keys.map((key) => {
           const Icon = COUNT_ICONS[key];
           const value = counts[key];
-          const alarming = (key === 'overdue' && value > 0) || (key === 'dueToday' && value > 0);
+          const alarming = (key === 'overdue' || key === 'dueToday') && value > 0;
           return (
             <li key={key}>
               <Link
@@ -269,13 +298,16 @@ function PoolCard({ pool }: { pool: LoanerPool }) {
   );
 }
 
-function OverdueSection({ pools }: { pools: LoanerPool[] }) {
-  const { t, formatDate, formatNumber } = useI18n();
+function OverdueSection({ pools }: { pools: LoanerDashboardPool[] }) {
+  const { t, formatDate } = useI18n();
+  const { can } = useAuth();
   const [poolFilter, setPoolFilter] = useState(ALL_POOLS);
+  const [extending, setExtending] = useState<ExtendTarget | null>(null);
   const query = useInfiniteQuery({
     queryKey: [...loanKeys.overdue, poolFilter],
     queryFn: ({ pageParam }) =>
-      loanersApi.overdue({
+      loanersApi.loans({
+        state: ['overdue'],
         limit: OVERDUE_PAGE,
         sort: ['expected_return'],
         ...(poolFilter !== ALL_POOLS ? { loaner_pool_id: poolFilter } : {}),
@@ -287,10 +319,8 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
   });
   const rows = useMemo(() => query.data?.pages.flatMap((page) => page.data) ?? [], [query.data]);
   const day = (value: string) => formatDate(`${value}T00:00:00Z`, { timeZone: 'UTC' });
-  const poolName = (id: string | null | undefined) =>
-    pools.find((pool) => pool.id === id)?.name ?? t('loaners.overdue.noPool');
 
-  const columns: DataTableColumn<OverdueCheckout>[] = [
+  const columns: DataTableColumn<Loan>[] = [
     {
       id: 'device',
       header: t('loaners.overdue.columns.device'),
@@ -324,7 +354,7 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
       id: 'contact',
       header: t('loaners.overdue.columns.contact'),
       cell: (row) =>
-        row.person_email || row.person_phone ? (
+        row.person_email || row.person_ref ? (
           <span className="flex flex-col">
             {row.person_email ? (
               <a
@@ -334,17 +364,13 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
                 {row.person_email}
               </a>
             ) : null}
-            {row.person_phone ? <span>{row.person_phone}</span> : null}
+            {row.person_ref ? <span className="font-tag text-sm">{row.person_ref}</span> : null}
           </span>
         ) : (
           <span className="text-muted">{t('loaners.overdue.noContact')}</span>
         ),
     },
-    {
-      id: 'pool',
-      header: t('loaners.overdue.columns.pool'),
-      cell: (row) => poolName(row.loaner_pool_id),
-    },
+    { id: 'pool', header: t('loaners.overdue.columns.pool'), cell: (row) => row.pool_name },
     {
       id: 'due',
       header: t('loaners.overdue.columns.due'),
@@ -359,6 +385,32 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
         </Badge>
       ),
     },
+    ...(can('loaner:checkout')
+      ? [
+          {
+            id: 'actions',
+            header: t('loaners.overdue.columns.actions'),
+            srOnlyHeader: true,
+            align: 'end' as const,
+            cell: (row: Loan) => (
+              <Button
+                size="sm"
+                aria-label={t('loaners.extend.buttonNamed', { tag: row.asset_tag })}
+                onClick={() =>
+                  setExtending({
+                    loanId: row.id,
+                    tag: row.asset_tag,
+                    expectedReturn: row.expected_return,
+                  })
+                }
+              >
+                <CalendarPlus aria-hidden className="size-4" />
+                {t('loaners.extend.button')}
+              </Button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -393,7 +445,7 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
         label={t('loaners.overdue.tableLabel')}
         columns={columns}
         rows={rows}
-        getRowId={(row) => row.assignment_id}
+        getRowId={(row) => row.id}
         getRowLabel={(row) => row.asset_tag}
         loading={query.isPending}
         skeletonRows={3}
@@ -410,21 +462,22 @@ function OverdueSection({ pools }: { pools: LoanerPool[] }) {
           </Button>
         </div>
       ) : null}
-      <p className="sr-only" aria-live="polite">
-        {formatNumber(rows.length)}
-      </p>
+      <ExtendLoanDialog target={extending} onOpenChange={(open) => !open && setExtending(null)} />
     </section>
   );
 }
 
-function ActivitySection() {
+function ActivitySection({
+  recent,
+  loading,
+  failed,
+}: {
+  recent: LoanerActivity[] | undefined;
+  loading: boolean;
+  failed: boolean;
+}) {
   const { t, formatDateTime, formatDate } = useI18n();
-  const query = useQuery({
-    queryKey: loanKeys.activity,
-    queryFn: () => loanersApi.activity({ limit: ACTIVITY_SIZE }),
-    select: (page) => page.data,
-  });
-  const text = (item: LoanActivity) => {
+  const text = (item: LoanerActivity) => {
     const tag = item.asset_tag;
     if (item.kind === 'checked_out') {
       return item.person_name
@@ -440,24 +493,17 @@ function ActivitySection() {
       <h2 id="loaners-activity" className="text-lg font-semibold text-text">
         {t('loaners.activity.heading')}
       </h2>
-      {query.isPending ? (
+      {loading ? (
         <Skeleton className="h-24 w-full" />
-      ) : query.isError ? (
-        <Banner
-          tone="danger"
-          action={<Button onClick={() => void query.refetch()}>{t('common.retry')}</Button>}
-        >
-          {t('loaners.activity.loadFailed')}
-        </Banner>
-      ) : query.data.length === 0 ? (
+      ) : failed || !recent ? null : recent.length === 0 ? (
         <p className="text-base text-muted">{t('loaners.activity.empty')}</p>
       ) : (
         <ul className="flex flex-col rounded-lg border border-border bg-surface">
-          {query.data.map((item) => {
+          {recent.slice(0, 8).map((item) => {
             const Icon = item.kind === 'checked_out' ? ArrowUpRight : ArrowDownLeft;
             return (
               <li
-                key={item.id}
+                key={`${item.assignment_id}-${item.kind}`}
                 className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border px-3 py-2 first:border-t-0"
               >
                 <Icon aria-hidden className="size-4 shrink-0 text-muted" />
@@ -467,7 +513,7 @@ function ActivitySection() {
                 >
                   {text(item)}
                 </Link>
-                {item.kind === 'checked_out' && item.expected_return ? (
+                {item.kind === 'checked_out' ? (
                   <span className="text-sm text-muted">
                     {t('loaners.activity.due', {
                       date: formatDate(`${item.expected_return}T00:00:00Z`, { timeZone: 'UTC' }),

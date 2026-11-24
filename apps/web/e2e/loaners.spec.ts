@@ -1,10 +1,11 @@
 import { expect, test } from './fixtures';
 import { wedge } from './m2-helpers';
-import { api, loadApp, poolWithDevices, studentPool } from './w3-helpers';
+import { api, loadApp, looseDevice, poolWithDevices, staffPool, studentPool } from './w3-helpers';
 
 /**
  * The loaner desk and dashboard (M2-LOAN-02, M2-LOAN-04): ten devices lent and taken back, the
- * dashboard numbers following, the keyboard flow and the scanner flow, the main dashboard's link.
+ * dashboard numbers following, the keyboard flow and the scanner flow, a device the pool refuses, the
+ * main dashboard's link, extending a loan.
  */
 test.describe('loaner desk', () => {
   test('checks 10 devices out to one borrower with the keyboard and back in by scanner', async ({
@@ -15,29 +16,32 @@ test.describe('loaner desk', () => {
     expect(devices).toHaveLength(10);
 
     await page.goto('/loaners/desk');
+    // the pool picked is the first by name: the new one; its five days are filled in
+    await expect(page.getByRole('combobox', { name: 'Lend from' })).toContainText(
+      'Exam week loaners',
+    );
     const device = page.getByLabel('Device', { exact: true });
     await expect(device).toBeFocused();
     const feedback = page.getByTestId('desk-feedback');
 
-    for (const [index, asset] of devices.entries()) {
+    for (const asset of devices) {
       await device.fill(asset.asset_tag);
       await device.press('Enter');
-      if (index === 0) {
-        // the first device asks for the borrower; the pool's five days are filled in
-        const borrower = page.getByLabel('Borrower', { exact: true });
-        await expect(borrower).toBeFocused();
-        await expect(page.getByLabel('Due date')).not.toHaveValue('');
-        await borrower.fill('Alice Owner');
-        await borrower.press('Enter');
-      }
-      // with a device and a borrower the Lend button has focus: one Enter lends
-      await expect(page.getByRole('button', { name: 'Lend device' })).toBeFocused();
-      await page.keyboard.press('Enter');
-      await expect(feedback).toContainText(`${asset.asset_tag} lent to Alice Owner`);
-      await expect(feedback).toHaveAttribute('role', 'status');
-      await expect(device).toBeFocused();
     }
-    await expect(page.getByTestId('desk-log').getByRole('listitem')).toHaveCount(10);
+    await expect(
+      page.getByRole('list', { name: 'Devices to lend' }).getByRole('listitem'),
+    ).toHaveCount(10);
+    const borrower = page.getByLabel('Borrower', { exact: true });
+    await borrower.fill('Alice Owner');
+    await borrower.press('Enter');
+    // with devices and a borrower the Lend button has focus: one Enter lends them all
+    await expect(page.getByRole('button', { name: 'Lend 10 devices' })).toBeFocused();
+    await expect(page.getByLabel('Due date')).not.toHaveValue('');
+    await page.keyboard.press('Enter');
+    await expect(feedback).toContainText('10 devices lent to Alice Owner');
+    await expect(feedback).toHaveAttribute('role', 'status');
+    await expect(page.getByRole('list', { name: 'Devices to lend' })).toHaveCount(0);
+    await expect(device).toBeFocused();
 
     // the dashboard follows
     await page.goto('/loaners');
@@ -49,15 +53,13 @@ test.describe('loaner desk', () => {
     // back in by scanner: nothing is focused, the code arrives as one burst of keys and Enter
     await page.goto('/loaners/desk?mode=return');
     await expect(page.getByLabel('Returned device')).toBeFocused();
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     for (const [index, asset] of devices.entries()) {
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await wedge(page, asset.asset_tag);
-      await expect(feedback).toContainText(`${asset.asset_tag} returned by Alice Owner`);
+      await expect(feedback).toContainText(`${asset.asset_tag} returned`);
       await expect(page.getByTestId('desk-return-summary')).toContainText(
         `${index + 1} ${index === 0 ? 'device' : 'devices'} returned`,
       );
-      // let the scanner's "same code twice" window pass, as a real second device would
     }
     await expect(page.getByTestId('desk-log').getByRole('listitem')).toHaveCount(10);
 
@@ -66,39 +68,73 @@ test.describe('loaner desk', () => {
     await expect(page.getByTestId(`pool-${pool.id}-available`)).toContainText('10');
   });
 
-  test('says why a device cannot be lent and offers the return', async ({ page }) => {
+  test('keeps a device the pool refuses in the list, with the reason, and lends the others', async ({
+    page,
+  }) => {
     await loadApp(page);
-    const pool = await studentPool(page);
+    const staff = await staffPool(page);
     const members = await api<{
-      data: Array<{
-        available: boolean;
-        asset: { asset_tag: string; current_assignment: { target_name: string } | null };
-      }>;
-    }>(page, 'GET', `/v1/loaner-pools/${pool.id}/members`);
-    const out = members.json.data.find((m) => !m.available)!;
-    const spare = await api<{ data: Array<{ asset_tag: string; loaner_pool_id: string | null }> }>(
-      page,
-      'GET',
-      '/v1/assets?state_type=deployable&assigned=false&limit=200',
-    );
-    const loose = spare.json.data.find((a) => !a.loaner_pool_id)!;
+      data: Array<{ available: boolean; asset: { asset_tag: string } }>;
+    }>(page, 'GET', `/v1/loaner-pools/${staff.id}/members?available=true`);
+    const mine = members.json.data[0]!.asset.asset_tag;
+    const loose = await looseDevice(page);
 
     await page.goto('/loaners/desk');
     const device = page.getByLabel('Device', { exact: true });
+    await device.fill(mine);
+    await device.press('Enter');
     await device.fill(loose.asset_tag);
     await device.press('Enter');
-    await expect(page.getByTestId('desk-feedback')).toContainText(
-      `${loose.asset_tag} is not in a loaner pool. Add it to a pool first.`,
-    );
+    await page.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
+    await page.getByLabel('Borrower', { exact: true }).press('Enter');
+    await page.getByRole('button', { name: 'Lend 2 devices' }).click();
+    const feedback = page.getByTestId('desk-feedback');
+    await expect(feedback).toContainText('1 of 2 devices lent to Alice Owner.');
+    await expect(feedback).toHaveAttribute('role', 'alert');
+    const queue = page.getByRole('list', { name: 'Devices to lend' });
+    await expect(queue.getByRole('listitem')).toHaveCount(1);
+    await expect(queue).toContainText(`${loose.asset_tag} is not in this loaner pool.`);
+  });
 
-    await device.fill(out.asset.asset_tag);
+  test('says a device is already out and offers the return', async ({ page }) => {
+    await loadApp(page);
+    const staff = await staffPool(page);
+    const members = await api<{
+      data: Array<{ available: boolean; asset: { asset_tag: string } }>;
+    }>(page, 'GET', `/v1/loaner-pools/${staff.id}/members?available=false`);
+    const out = members.json.data[0]!.asset.asset_tag;
+
+    await page.goto('/loaners/desk');
+    const device = page.getByLabel('Device', { exact: true });
+    await device.fill(out);
     await device.press('Enter');
-    const alert = page.getByTestId('desk-feedback');
-    await expect(alert).toContainText(`${out.asset.asset_tag} is already on loan to`);
-    await alert.getByRole('button', { name: 'Return it instead' }).click();
-    await expect(page.getByTestId('desk-feedback')).toContainText(
-      `${out.asset.asset_tag} returned`,
+    await page.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
+    await page.getByLabel('Borrower', { exact: true }).press('Enter');
+    await page.getByRole('button', { name: 'Lend 1 device' }).click();
+    const feedback = page.getByTestId('desk-feedback');
+    await expect(page.getByRole('list', { name: 'Devices to lend' })).toContainText(
+      `${out} is already out.`,
     );
+    await feedback.getByRole('button', { name: 'Return it instead' }).click();
+    await expect(feedback).toContainText(`${out} returned`);
+  });
+
+  test('extends an overdue loan from the dashboard', async ({ page }) => {
+    await page.goto('/loaners');
+    const overdue = page.getByRole('table', { name: 'Overdue loans' });
+    await expect(overdue.getByText('5 days late')).toBeVisible();
+    await overdue
+      .getByRole('button', { name: /^Extend the loan of / })
+      .first()
+      .click();
+    const dialog = page.getByRole('dialog', { name: /^Extend the loan of / });
+    await dialog
+      .getByLabel(/^New due date/)
+      .fill(new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
+    await dialog.getByLabel('Reason (optional)').fill('Exam week');
+    await dialog.getByRole('button', { name: 'Extend loan' }).click();
+    await expect(page.getByText(/^The loan of .* now ends /)).toBeVisible();
+    await expect(overdue.getByText('5 days late')).toHaveCount(0);
   });
 
   test('the main dashboard links its overdue card to the loaner dashboard', async ({ page }) => {
@@ -135,12 +171,15 @@ test.describe('loaner desk', () => {
     const dialog = page.getByRole('dialog', { name: 'New loaner pool' });
     await dialog.getByLabel(/^Name/).fill('Staff trips');
     await dialog.getByLabel(/Default loan length/).fill('3');
+    await dialog.getByRole('checkbox', { name: 'Students' }).check();
     await dialog.getByRole('button', { name: 'Create pool' }).click();
     await expect(page.getByRole('row', { name: /Staff trips/ })).toContainText('3 days');
-    await page.getByLabel('Default loan length (days)').fill('10');
+    await page.getByLabel('Return date offered at check-out (days from today)').fill('10');
     await page.getByRole('button', { name: 'Save defaults' }).click();
     await expect(page.getByText('Loan defaults saved.')).toBeVisible();
     await page.reload();
-    await expect(page.getByLabel('Default loan length (days)')).toHaveValue('10');
+    await expect(page.getByLabel('Return date offered at check-out (days from today)')).toHaveValue(
+      '10',
+    );
   });
 });

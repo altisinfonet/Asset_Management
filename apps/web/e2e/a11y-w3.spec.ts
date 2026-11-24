@@ -8,7 +8,9 @@ import {
   CSV_MATCHING,
   importAt,
   loadApp,
+  looseDevice,
   poolWithDevices,
+  staffPool,
   studentPool,
 } from './w3-helpers';
 
@@ -33,11 +35,22 @@ const SCENARIOS: Scenario[] = [
     open: async (p) => {
       await p.goto('/loaners');
       await expect(p.getByRole('article', { name: /Student Chromebook loaners/ })).toBeVisible();
-      await expect(p.getByText('5 days late')).toHaveCount(0);
       await expect(
-        p.getByRole('table', { name: 'Overdue loans' }).getByRole('row').nth(1),
+        p.getByRole('table', { name: 'Overdue loans' }).getByText('5 days late'),
       ).toBeVisible();
       await settled(p);
+    },
+  },
+  {
+    name: 'loaners: extend a loan dialog',
+    open: async (p) => {
+      await p.goto('/loaners');
+      await p
+        .getByRole('table', { name: 'Overdue loans' })
+        .getByRole('button', { name: /^Extend the loan of / })
+        .first()
+        .click();
+      await expect(p.getByRole('dialog', { name: /^Extend the loan of / })).toBeVisible();
     },
   },
   {
@@ -48,17 +61,21 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
-    name: 'loaners: desk with a device and a borrower',
+    name: 'loaners: desk with devices and a borrower',
     open: async (p) => {
       await loadApp(p);
-      const pool = await studentPool(p);
-      const members = await api<{
-        data: Array<{ available: boolean; asset: { asset_tag: string } }>;
-      }>(p, 'GET', `/v1/loaner-pools/${pool.id}/members?available=true`);
+      const staff = await staffPool(p);
+      const members = await api<{ data: Array<{ asset: { asset_tag: string } }> }>(
+        p,
+        'GET',
+        `/v1/loaner-pools/${staff.id}/members?available=true`,
+      );
       await p.goto('/loaners/desk');
       const device = p.getByLabel('Device', { exact: true });
-      await device.fill(members.json.data[0]!.asset.asset_tag);
-      await device.press('Enter');
+      for (const member of members.json.data) {
+        await device.fill(member.asset.asset_tag);
+        await device.press('Enter');
+      }
       await p.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
       await p.getByLabel('Borrower', { exact: true }).press('Enter');
       await expect(p.getByTestId('desk-summary')).toContainText('Alice Owner');
@@ -68,11 +85,11 @@ const SCENARIOS: Scenario[] = [
     name: 'loaners: desk after a lend',
     open: async (p) => {
       await loadApp(p);
-      const pool = await studentPool(p);
+      const staff = await staffPool(p);
       const members = await api<{ data: Array<{ asset: { asset_tag: string } }> }>(
         p,
         'GET',
-        `/v1/loaner-pools/${pool.id}/members?available=true`,
+        `/v1/loaner-pools/${staff.id}/members?available=true`,
       );
       await p.goto('/loaners/desk');
       const device = p.getByLabel('Device', { exact: true });
@@ -80,23 +97,27 @@ const SCENARIOS: Scenario[] = [
       await device.press('Enter');
       await p.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
       await p.getByLabel('Borrower', { exact: true }).press('Enter');
-      await expect(p.getByRole('button', { name: 'Lend device' })).toBeFocused();
+      await expect(p.getByRole('button', { name: 'Lend 1 device' })).toBeFocused();
       await p.keyboard.press('Enter');
       await expect(p.getByTestId('desk-feedback')).toContainText('lent to Alice Owner');
     },
   },
   {
-    name: 'loaners: desk with a problem',
+    name: 'loaners: desk with a device the pool refuses',
     open: async (p) => {
       await loadApp(p);
-      const spare = await api<{
-        data: Array<{ asset_tag: string; loaner_pool_id: string | null }>;
-      }>(p, 'GET', '/v1/assets?state_type=deployable&assigned=false&limit=200');
+      const loose = await looseDevice(p);
       await p.goto('/loaners/desk');
       const device = p.getByLabel('Device', { exact: true });
-      await device.fill(spare.json.data.find((a) => !a.loaner_pool_id)!.asset_tag);
+      await device.fill(loose.asset_tag);
       await device.press('Enter');
-      await expect(p.getByTestId('desk-feedback')).toContainText('is not in a loaner pool');
+      await p.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
+      await p.getByLabel('Borrower', { exact: true }).press('Enter');
+      await p.getByRole('button', { name: 'Lend 1 device' }).click();
+      await expect(p.getByTestId('desk-feedback')).toContainText('No device could be lent');
+      await expect(p.getByRole('list', { name: 'Devices to lend' })).toContainText(
+        'is not in this loaner pool',
+      );
     },
   },
   {
@@ -111,7 +132,7 @@ const SCENARIOS: Scenario[] = [
     open: async (p) => {
       await p.goto('/loaners/pools');
       await expect(p.getByRole('row', { name: /Student Chromebook loaners/ })).toBeVisible();
-      await expect(p.getByLabel('Default loan length (days)')).toHaveValue('7');
+      await expect(p.getByLabel('Remind the borrower (days before the due date)')).toHaveValue('2');
       await settled(p);
     },
   },
@@ -404,8 +425,8 @@ for (const scheme of ['light', 'dark'] as const) {
 test.describe('responsive layout of the wave 3 screens (375, 768, 1440)', () => {
   const FIT = [
     'loaners: dashboard',
-    'loaners: desk with a device and a borrower',
-    'loaners: desk with a problem',
+    'loaners: desk with devices and a borrower',
+    'loaners: desk with a device the pool refuses',
     'loaners: desk bulk return',
     'loaners: pools and defaults',
     'loaners: new pool dialog',

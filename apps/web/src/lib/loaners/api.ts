@@ -1,22 +1,31 @@
 import type { components, operations } from '@assettracker/api-client';
 import { getApi } from '@/lib/api';
-import type { CustodyResult, Page, Versioned } from '@/lib/registry/types';
+import type { Page, Versioned } from '@/lib/registry/types';
 
 /**
  * Loaner pools (M2-LOAN-02 / M2-LOAN-04) over the generated client: pools and their members, the
- * quick loan (`POST /v1/loaner-pools/{id}/checkout`), overdue loans, recent activity and the
- * organisation's loan defaults. A return is the ordinary asset check-in (`custodyApi.checkin`).
- * Several of the shapes are the web's proposal (see `[M2-W3 WEB proposal]` in docs/engineering/tools/gen.mjs).
+ * quick check-out and the quick return by scanning (per-device results), loans (list, extend),
+ * overdue loans, the dashboard and the organisation's custody settings (ED-20, ED-21).
  */
 type S = components['schemas'];
 export type LoanerPool = S['LoanerPool'];
 export type LoanerPoolCreate = S['LoanerPoolCreate'];
 export type LoanerPoolUpdate = S['LoanerPoolUpdate'];
 export type LoanerPoolMember = S['LoanerPoolMember'];
-export type LoanerCheckoutRequest = S['LoanerCheckoutRequest'];
-export type OverdueCheckout = S['OverdueCheckout'];
-export type LoanActivity = S['LoanActivity'];
-export type LoanSettings = S['LoanSettings'];
+export type QuickLoanRequest = S['QuickLoanRequest'];
+export type QuickLoanResult = S['QuickLoanResult'];
+export type LoanReturnRequest = S['LoanReturnRequest'];
+export type LoanReturnResult = S['LoanReturnResult'];
+export type Loan = S['Loan'];
+export type LoanState = Loan['state'];
+export type LoanExtendRequest = S['LoanExtendRequest'];
+export type LoanerDashboard = S['LoanerDashboard'];
+export type LoanerDashboardPool = S['LoanerDashboardPool'];
+export type LoanerActivity = S['LoanerActivity'];
+export type CustodySettings = S['CustodySettings'];
+
+export type ProblemBody = S['Problem'];
+export type PersonKind = NonNullable<LoanerPool['eligible_person_kinds']>[number];
 
 type Query<K extends keyof operations> = operations[K]['parameters'] extends {
   query?: infer Q;
@@ -24,7 +33,7 @@ type Query<K extends keyof operations> = operations[K]['parameters'] extends {
   ? Q
   : never;
 export type PoolQuery = Query<'listLoanerPools'>;
-export type OverdueQuery = Query<'listOverdueCheckouts'>;
+export type LoanQuery = Query<'listLoans'>;
 
 const http = () => getApi().http;
 const etagFor = (path: string) => getApi().etags.etagFor(path);
@@ -85,38 +94,56 @@ export const loanersApi = {
       params: { path: { id, asset_id: assetId } },
     });
   },
-  /** Lend a pool device (a given one, or the next free one) to a person; a retry with the same key replays. */
-  async checkout(
-    id: string,
-    body: LoanerCheckoutRequest,
+  /**
+   * Quick check-out by scanning: one borrower, one or more devices (`codes`), answered per device in
+   * request order. The request is a 200 whenever it was valid; a device that failed carries its problem.
+   */
+  async quickCheckout(
+    poolId: string,
+    body: QuickLoanRequest,
     idempotencyKey: string,
-  ): Promise<CustodyResult> {
-    const { data } = await http().POST('/v1/loaner-pools/{id}/checkout', {
-      params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey } },
+  ): Promise<QuickLoanResult> {
+    const { data } = await http().POST('/v1/loaner-pools/{id}/quick-checkout', {
+      params: { path: { id: poolId }, header: { 'Idempotency-Key': idempotencyKey } },
       body,
     });
-    return data as CustodyResult;
+    return data as QuickLoanResult;
   },
-  async overdue(query: OverdueQuery = {}): Promise<Page<OverdueCheckout>> {
-    const { data } = await http().GET('/v1/loans/overdue', { params: { query } });
-    return data as Page<OverdueCheckout>;
+  /** Quick return by scanning (one or many devices, any borrowers), answered per device. */
+  async returnLoans(body: LoanReturnRequest, idempotencyKey: string): Promise<LoanReturnResult> {
+    const { data } = await http().POST('/v1/loans/return', {
+      params: { header: { 'Idempotency-Key': idempotencyKey } },
+      body,
+    });
+    return data as LoanReturnResult;
   },
-  async activity(
-    query: { loaner_pool_id?: string; cursor?: string; limit?: number } = {},
-  ): Promise<Page<LoanActivity>> {
-    const { data } = await http().GET('/v1/loans/activity', { params: { query } });
-    return data as Page<LoanActivity>;
+  async loans(query: LoanQuery = {}): Promise<Page<Loan>> {
+    const { data } = await http().GET('/v1/loans', { params: { query } });
+    return data as Page<Loan>;
   },
-  async settings(): Promise<Versioned<LoanSettings>> {
-    const { data } = await http().GET('/v1/settings/loans');
-    return versioned(data as LoanSettings, '/v1/settings/loans');
+  /** Move the due date of an open loan to a later day (logged). */
+  async extend(id: string, body: LoanExtendRequest): Promise<Loan> {
+    const { data } = await http().POST('/v1/loans/{id}/extend', { params: { path: { id } }, body });
+    return data as Loan;
   },
-  async putSettings(body: LoanSettings, etag?: string): Promise<Versioned<LoanSettings>> {
-    const ifMatch = await ifMatchOf(etag, () => loanersApi.settings());
-    const { data } = await http().PUT('/v1/settings/loans', {
+  async dashboard(): Promise<LoanerDashboard> {
+    const { data } = await http().GET('/v1/loaners/dashboard');
+    return data as LoanerDashboard;
+  },
+};
+
+/** `GET/PUT /v1/settings/custody`: the pre-filled return date of a check-out and the loan reminder lead time. */
+export const custodySettingsApi = {
+  async get(): Promise<Versioned<CustodySettings>> {
+    const { data } = await http().GET('/v1/settings/custody');
+    return versioned(data as CustodySettings, '/v1/settings/custody');
+  },
+  async put(body: CustodySettings, etag?: string): Promise<Versioned<CustodySettings>> {
+    const ifMatch = await ifMatchOf(etag, () => custodySettingsApi.get());
+    const { data } = await http().PUT('/v1/settings/custody', {
       params: { header: { 'If-Match': ifMatch } },
       body,
     });
-    return versioned(data as LoanSettings, '/v1/settings/loans');
+    return versioned(data as CustodySettings, '/v1/settings/custody');
   },
 };

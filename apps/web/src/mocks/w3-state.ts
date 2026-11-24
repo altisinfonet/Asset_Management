@@ -21,6 +21,8 @@ export interface MockPool {
   default_loan_days: number;
   max_loan_days: number | null;
   max_loans_per_person: number | null;
+  eligible_person_kinds: Array<'employee' | 'student' | 'contractor' | 'external'> | null;
+  owner_user_id: string | null;
   is_active: boolean;
   _v: number;
 }
@@ -31,10 +33,9 @@ export interface MockMember {
   added_at: string;
 }
 
-export interface MockLoanSettings {
-  default_loan_days: number;
-  max_loan_days: number | null;
-  reminder_lead_days: number;
+export interface MockCustodySettings {
+  default_expected_return_days: number | null;
+  loan_reminder_days: number;
   _v: number;
 }
 
@@ -97,7 +98,7 @@ export interface MockMappingTemplate {
 export interface W3Data {
   pools: MockPool[];
   members: MockMember[];
-  loanSettings: MockLoanSettings;
+  custodySettings: MockCustodySettings;
   /** The two seed pools and their loans were created. */
   loansSeeded: boolean;
   importJobs: MockImportJob[];
@@ -105,7 +106,7 @@ export interface W3Data {
   mappingTemplates: MockMappingTemplate[];
 }
 
-const KEY = 'at-mock-w3-v1';
+const KEY = 'at-mock-w3-v2';
 
 const KIND_CODE = { pool: '00b1', import: '00b2', template: '00b3', row: '00b4' } as const;
 export type W3Kind = keyof typeof KIND_CODE;
@@ -125,7 +126,7 @@ function emptyState(): W3Data {
   return {
     pools: [],
     members: [],
-    loanSettings: { default_loan_days: 7, max_loan_days: 30, reminder_lead_days: 1, _v: 1 },
+    custodySettings: { default_expected_return_days: null, loan_reminder_days: 2, _v: 1 },
     loansSeeded: false,
     importJobs: [],
     importRows: [],

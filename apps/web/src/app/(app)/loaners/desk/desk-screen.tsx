@@ -16,44 +16,46 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { PageHeader } from '@/components/page-header';
 import { PageTitle } from '@/components/page-title';
 import { useScanTarget } from '@/components/scan/scan-provider';
-import { Button } from '@/components/ui/button';
+import { Button, IconButton } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { useI18n } from '@/i18n';
-import { getApi, type UiError } from '@/lib/api';
+import { getApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 import { cn } from '@/lib/cn';
 import { createKeyKeeper, dateAfter, isoDate } from '@/lib/custody/helpers';
-import { loanersApi } from '@/lib/loaners/api';
+import { uiErrorText } from '@/lib/error-text';
+import { loanersApi, type ProblemBody } from '@/lib/loaners/api';
 import {
   defaultDueDate,
+  itemFailure,
+  lateDays,
   latestDueDate,
-  loanFailure,
-  lendVerdict,
   pickBorrower,
-  returnVerdict,
-  type LendVerdict,
+  requestFailure,
 } from '@/lib/loaners/helpers';
-import { useLoanSettings, usePools, useRefreshAfterLoan } from '@/lib/loaners/queries';
-import { uiErrorText } from '@/lib/error-text';
-import { custodyApi, peopleApi } from '@/lib/registry/api';
-import type { Asset, Person } from '@/lib/registry/types';
+import { usePools, useRefreshAfterLoan } from '@/lib/loaners/queries';
+import { peopleApi } from '@/lib/registry/api';
+import type { Person } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
 import { beep } from '@/lib/scan/beep';
 import { resolveScan } from '@/lib/scan/resolve';
 
 type Mode = 'lend' | 'return';
 
-interface Device {
-  asset: Asset;
-  poolId: string;
+/** A device waiting to be lent: what is sent (`code`), what is shown (`tag`), and why it was refused. */
+interface Queued {
+  code: string;
+  tag: string;
+  problem?: string;
 }
 
 interface Feedback {
   kind: 'ok' | 'error';
   message: string;
-  /** A device that is on loan can be returned from the message (lend mode). */
-  returnTag?: string;
+  /** A device that is out can be returned from the message (lend mode). */
+  returnCode?: string;
 }
 
 interface LogEntry {
@@ -63,14 +65,24 @@ interface LogEntry {
 }
 
 const LOG_LIMIT = 40;
+const POOL_KEY = 'at-loaner-desk-pool';
+
+const readPool = () => {
+  try {
+    return window.localStorage.getItem(POOL_KEY) ?? '';
+  } catch {
+    return '';
+  }
+};
 
 /**
  * The loaner desk (WEB-16 quick check-out and bulk check-in, M2-LOAN-02): one screen for the counter.
- * Lend: scan the device, scan or find the borrower, the pool's due date is filled in, Enter lends;
- * the borrower stays for the next device. Return: every scan returns the device at once. A USB
- * keyboard-wedge scanner works from anywhere on the page (the scan provider hands it the scans), the
- * fields accept typing, targets are large, and every result is shown in words and an icon, with an
- * optional sound.
+ * Lend: pick the pool, scan the devices, scan or find the borrower, the pool's due date is filled in,
+ * Enter lends them all in one request (each device answered on its own: one that is not in the pool or
+ * already out stays in the list with its problem while the others go). Return: every scan returns the
+ * device at once. A USB keyboard-wedge scanner works from anywhere on the page (the scan provider hands
+ * it the scans), the fields accept typing, targets are large, and every result is shown in words and an
+ * icon, with an optional sound.
  */
 export function DeskScreen() {
   const { t, formatDate } = useI18n();
@@ -79,13 +91,20 @@ export function DeskScreen() {
   const { can } = useAuth();
   const refresh = useRefreshAfterLoan();
   const mode: Mode = params.get('mode') === 'return' ? 'return' : 'lend';
-  const canReturn = can('asset:checkin');
+  const canReturn = can('loaner:checkout');
 
   const pools = usePools();
-  const settings = useLoanSettings();
-  const loan = settings.data?.value ?? null;
+  const activePools = useMemo(
+    () => (pools.data ?? []).filter((candidate) => candidate.is_active !== false),
+    [pools.data],
+  );
+  const [chosenPool, setChosenPool] = useState('');
+  const pool =
+    activePools.find((candidate) => candidate.id === (chosenPool || readPool())) ??
+    activePools[0] ??
+    null;
 
-  const [device, setDevice] = useState<Device | null>(null);
+  const [queue, setQueue] = useState<Queued[]>([]);
   const [borrower, setBorrower] = useState<Person | null>(null);
   const [candidates, setCandidates] = useState<Person[] | null>(null);
   const [deviceText, setDeviceText] = useState('');
@@ -109,19 +128,17 @@ export function DeskScreen() {
     soundRef.current = sound;
   });
 
-  const pool = useMemo(
-    () => pools.data?.find((candidate) => candidate.id === device?.poolId) ?? null,
-    [pools.data, device],
-  );
-  const latest = latestDueDate(pool, loan);
+  const latest = latestDueDate(pool);
+  // until the effect below has filled the field, the pool's own default is the date
+  const dueValue = due || defaultDueDate(pool);
   const today = isoDate(new Date());
 
-  // The due date follows the pool of the scanned device until the person picks one themselves.
+  // The due date follows the pool until the person picks one themselves.
   useEffect(() => {
     if (dueTouched) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- derived default, replaced once the user edits it
-    setDue(defaultDueDate(pool, loan));
-  }, [pool, loan, dueTouched]);
+    setDue(defaultDueDate(pool));
+  }, [pool, dueTouched]);
 
   const remember = useCallback((ok: boolean, message: string) => {
     counter.current += 1;
@@ -137,54 +154,35 @@ export function DeskScreen() {
     [remember],
   );
 
-  const failureText = useCallback(
-    (error: UiError, tag: string, name?: string | null) => {
-      switch (loanFailure(error)) {
-        case 'no_device':
-          return t('loanerDesk.errors.noDevice');
-        case 'limit':
-          return name
-            ? t('loanerDesk.errors.limit', { name })
-            : t('loanerDesk.errors.limitAnonymous');
+  /** The words for what stopped one device (its own problem). */
+  const itemText = useCallback(
+    (code: string, status: number, error: ProblemBody | undefined, name?: string) => {
+      switch (itemFailure(error, status)) {
+        case 'not_found':
+          return t('loanerDesk.errors.notFound', { code });
+        case 'ambiguous':
+          return t('loanerDesk.errors.ambiguous', { code });
+        case 'not_in_pool':
+          return t('loanerDesk.errors.notInPool', { code });
         case 'already_out':
-          return t('loanerDesk.errors.onLoanAnonymous', { tag });
+          return t('loanerDesk.errors.alreadyOut', { code });
         case 'not_deployable':
-          return t('loanerDesk.errors.unavailableNoStatus', { tag });
-        case 'inactive_person':
-          return t('loanerDesk.errors.inactivePerson', { name: name ?? '' });
+          return t('loanerDesk.errors.notDeployable', { code });
+        case 'limit':
+          return t('loanerDesk.errors.limit', { code, name: name ?? '' });
+        case 'not_checked_out':
+          return t('loanerDesk.errors.notCheckedOut', { code });
         default:
-          return uiErrorText(t, error);
+          return error?.detail ?? t('loanerDesk.errors.itemGeneric', { code });
       }
     },
     [t],
   );
 
-  const verdictText = useCallback(
-    (verdict: Exclude<LendVerdict, { kind: 'ok' }>, tag: string) => {
-      switch (verdict.kind) {
-        case 'not_in_pool':
-          return t('loanerDesk.errors.notInPool', { tag });
-        case 'on_loan':
-          return verdict.holder && verdict.due
-            ? t('loanerDesk.errors.onLoan', {
-                tag,
-                name: verdict.holder,
-                date: formatDate(`${verdict.due}T00:00:00Z`, { timeZone: 'UTC' }),
-              })
-            : t('loanerDesk.errors.onLoanAnonymous', { tag });
-        case 'unavailable':
-          return verdict.status
-            ? t('loanerDesk.errors.unavailable', { tag, status: verdict.status })
-            : t('loanerDesk.errors.unavailableNoStatus', { tag });
-      }
-    },
-    [t, formatDate],
-  );
-
   // ---- lend ---------------------------------------------------------------------------------------
 
-  /** Resolves a typed or scanned tag; returns whether it was a device (so a scan can fall back to a person). */
-  const lookupDevice = useCallback(
+  /** Adds a device to the list: it has to exist; whether it is in the pool is the server's to say. */
+  const addDevice = useCallback(
     async (raw: string, options: { quiet?: boolean } = {}): Promise<boolean> => {
       const code = raw.trim();
       if (!code) return false;
@@ -192,33 +190,22 @@ export function DeskScreen() {
       try {
         const outcome = await resolveScan(code);
         if (outcome.kind !== 'found') {
-          if (options.quiet) return false;
-          announce({
-            kind: 'error',
-            message:
-              outcome.kind === 'ambiguous'
-                ? t('loanerDesk.errors.ambiguous', { code })
-                : t('loanerDesk.errors.notFound', { code }),
-          });
+          if (!options.quiet) {
+            announce({
+              kind: 'error',
+              message:
+                outcome.kind === 'ambiguous'
+                  ? t('loanerDesk.errors.ambiguous', { code })
+                  : t('loanerDesk.errors.notFound', { code }),
+            });
+          }
           return false;
         }
-        const { asset } = outcome;
-        const verdict = lendVerdict(asset, outcome.allowed.includes('checkout'));
-        if (verdict.kind !== 'ok') {
-          setDevice(null);
-          setDeviceText('');
-          announce({
-            kind: 'error',
-            message: verdictText(verdict, asset.asset_tag),
-            returnTag: verdict.kind === 'on_loan' && canReturn ? asset.asset_tag : undefined,
-          });
-          deviceInput.current?.focus();
-          return true;
-        }
-        setDevice({ asset, poolId: verdict.poolId });
-        setDeviceText('');
+        const tag = outcome.asset.asset_tag;
+        setQueue((current) =>
+          current.some((entry) => entry.code === tag) ? current : [...current, { code: tag, tag }],
+        );
         setFeedback(null);
-        setDueError('');
         keys.current.renew();
         return true;
       } catch (err) {
@@ -228,7 +215,7 @@ export function DeskScreen() {
         setBusy(false);
       }
     },
-    [announce, canReturn, t, verdictText],
+    [announce, t],
   );
 
   const chooseBorrower = useCallback((person: Person) => {
@@ -269,9 +256,9 @@ export function DeskScreen() {
   );
 
   const validDue = (): string | null => {
-    if (!due) return t('loanerDesk.due.required');
-    if (due < today) return t('loanerDesk.due.past');
-    if (latest && due > latest) {
+    if (!dueValue) return t('loanerDesk.due.required');
+    if (dueValue < today) return t('loanerDesk.due.past');
+    if (latest && dueValue > latest) {
       return t('loanerDesk.due.tooLate', {
         date: formatDate(`${latest}T00:00:00Z`, { timeZone: 'UTC' }),
       });
@@ -282,7 +269,12 @@ export function DeskScreen() {
   const lend = async (event?: FormEvent) => {
     event?.preventDefault();
     if (busy) return;
-    if (!device) {
+    if (!pool) {
+      announce({ kind: 'error', message: t('loanerDesk.errors.noPool') });
+      return;
+    }
+    if (queue.length === 0) {
+      announce({ kind: 'error', message: t('loanerDesk.errors.noCodes') });
       deviceInput.current?.focus();
       return;
     }
@@ -294,27 +286,86 @@ export function DeskScreen() {
     const problem = validDue();
     setDueError(problem ?? '');
     if (problem) return;
-    const tag = device.asset.asset_tag;
-    const body = { person_id: borrower.id, asset_id: device.asset.id, expected_return: due };
+    const body = {
+      person_id: borrower.id,
+      codes: queue.map((entry) => entry.code),
+      expected_return: dueValue,
+    };
     setBusy(true);
     try {
-      await loanersApi.checkout(device.poolId, body, keys.current.keyFor(body));
+      const result = await loanersApi.quickCheckout(pool.id, body, keys.current.keyFor(body));
       keys.current.renew();
-      announce({
-        kind: 'ok',
-        message: t('loanerDesk.result.lent', {
-          tag,
-          name: borrower.display_name,
-          date: formatDate(`${due}T00:00:00Z`, { timeZone: 'UTC' }),
-        }),
-      });
-      setDevice(null);
-      if (!dueTouched) setDue(defaultDueDate(null, loan));
+      const name = result.person.display_name;
+      const date = formatDate(`${result.expected_return}T00:00:00Z`, { timeZone: 'UTC' });
+      const failed = new Map<string, string>();
+      let returnCode: string | undefined;
+      for (const item of result.results) {
+        if (item.status === 201) continue;
+        failed.set(item.code, itemText(item.code, item.status, item.error, name));
+        if (itemFailure(item.error, item.status) === 'already_out' && canReturn) {
+          returnCode = item.code;
+        }
+      }
+      const lent = result.results.filter((item) => item.status === 201);
+      for (const message of failed.values()) remember(false, message);
+      // what went through leaves the list; what did not stays with its problem
+      setQueue((current) =>
+        current
+          .filter((entry) => failed.has(entry.code))
+          .map((entry) => ({ ...entry, problem: failed.get(entry.code) })),
+      );
+      if (failed.size === 0) {
+        announce({
+          kind: 'ok',
+          message:
+            lent.length === 1
+              ? t('loanerDesk.result.lentOne', {
+                  tag: lent[0]!.data?.asset.asset_tag ?? lent[0]!.code,
+                  name,
+                  date,
+                })
+              : t('loanerDesk.result.lentMany', { count: lent.length, name, date }),
+        });
+      } else {
+        announce({
+          kind: 'error',
+          message:
+            lent.length === 0
+              ? t('loanerDesk.result.noneLent')
+              : t('loanerDesk.result.someFailed', {
+                  ok: lent.length,
+                  total: result.results.length,
+                  name,
+                  failed: failed.size,
+                }),
+          returnCode,
+        });
+      }
+      if (!dueTouched) setDue(defaultDueDate(pool));
       await refresh();
       deviceInput.current?.focus();
     } catch (err) {
       const ui = getApi().toUiError(err);
-      announce({ kind: 'error', message: failureText(ui, tag, borrower.display_name) });
+      const name = borrower.display_name;
+      const message = (() => {
+        switch (requestFailure(ui)) {
+          case 'pool_inactive':
+            return t('loanerDesk.errors.poolInactive');
+          case 'not_eligible':
+            return t('loanerDesk.errors.notEligible', { name });
+          case 'borrower_inactive':
+            return t('loanerDesk.errors.borrowerInactive', { name });
+          case 'borrower_not_found':
+            return t('loanerDesk.errors.borrowerNotFound');
+          case 'borrower_ambiguous':
+            return t('loanerDesk.errors.borrowerAmbiguous');
+          case 'no_device':
+            return t('loanerDesk.errors.noDevice');
+          default:
+            return uiErrorText(t, ui);
+        }
+      })();
+      announce({ kind: 'error', message });
     } finally {
       setBusy(false);
     }
@@ -328,41 +379,24 @@ export function DeskScreen() {
       if (!code) return;
       setBusy(true);
       try {
-        const outcome = await resolveScan(code);
-        if (outcome.kind !== 'found') {
-          announce({
-            kind: 'error',
-            message:
-              outcome.kind === 'ambiguous'
-                ? t('loanerDesk.errors.ambiguous', { code })
-                : t('loanerDesk.errors.notFound', { code }),
-          });
+        const body = { codes: [code] };
+        const result = await loanersApi.returnLoans(body, createKeyKeeper().keyFor(body));
+        const item = result.results[0]!;
+        if (item.status !== 200) {
+          announce({ kind: 'error', message: itemText(code, item.status, item.error) });
           return;
         }
-        const { asset } = outcome;
-        const tag = asset.asset_tag;
-        const verdict = returnVerdict(asset);
-        if (verdict.kind === 'not_in_pool') {
-          announce({ kind: 'error', message: t('loanerDesk.errors.notInPool', { tag }) });
-          return;
-        }
-        if (verdict.kind === 'not_on_loan') {
-          announce({ kind: 'error', message: t('loanerDesk.errors.notOnLoan', { tag }) });
-          return;
-        }
-        const key = createKeyKeeper().keyFor({ asset: asset.id, checkin: true });
-        await custodyApi.checkin(asset.id, {}, { idempotencyKey: key });
-        const late = t('loanerDesk.result.daysLate', { count: verdict.overdueDays });
+        const tag = item.data?.asset.asset_tag ?? code;
+        const days = lateDays(item.data?.assignment.expected_return);
         announce({
           kind: 'ok',
           message:
-            verdict.overdueDays > 0
-              ? verdict.holder
-                ? t('loanerDesk.result.returnedLate', { tag, name: verdict.holder, days: late })
-                : t('loanerDesk.result.returnedLateAnonymous', { tag, days: late })
-              : verdict.holder
-                ? t('loanerDesk.result.returnedFrom', { tag, name: verdict.holder })
-                : t('loanerDesk.result.returned', { tag }),
+            days > 0
+              ? t('loanerDesk.result.returnedLate', {
+                  tag,
+                  days: t('loanerDesk.result.daysLate', { count: days }),
+                })
+              : t('loanerDesk.result.returned', { tag }),
         });
         await refresh();
       } catch (err) {
@@ -371,7 +405,7 @@ export function DeskScreen() {
         setBusy(false);
       }
     },
-    [announce, refresh, t],
+    [announce, itemText, refresh, t],
   );
 
   // ---- scans from a wedge scanner (anywhere on the page) --------------------------------------------
@@ -384,25 +418,24 @@ export function DeskScreen() {
         return;
       }
       // a code is a device first; what no device matches may be the borrower's card
-      const wasDevice = await lookupDevice(code, { quiet: true });
-      if (wasDevice) return;
-      const wasBorrower = await lookupBorrower(code);
-      if (!wasBorrower) {
+      if (await addDevice(code, { quiet: true })) return;
+      if (!(await lookupBorrower(code))) {
         announce({ kind: 'error', message: t('loanerDesk.errors.notFound', { code }) });
       }
     },
-    [mode, returnDevice, lookupDevice, lookupBorrower, announce, t],
+    [mode, returnDevice, addDevice, lookupBorrower, announce, t],
   );
   useScanTarget(onScan);
 
   // ---- focus: the next field the flow needs ----------------------------------------------------------
 
+  const hasQueue = queue.length > 0;
+  // with devices waiting, a chosen borrower makes the next key the confirmation
   useEffect(() => {
-    if (mode !== 'lend') return;
-    if (device && borrower) lendButton.current?.focus();
-    else if (device && !borrower) borrowerInput.current?.focus();
-  }, [device, borrower, mode]);
-
+    if (borrower && hasQueue) lendButton.current?.focus();
+    // only choosing (or changing) the borrower moves focus, not scanning another device
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [borrower]);
   useEffect(() => {
     (mode === 'return' ? returnInput : deviceInput).current?.focus();
   }, [mode]);
@@ -411,9 +444,8 @@ export function DeskScreen() {
 
   const okCount = log.filter((entry) => entry.ok).length;
   const problemCount = log.length - okCount;
-  const dueDefault = defaultDueDate(pool, loan);
-
-  const ready = !device
+  const dueDefault = defaultDueDate(pool);
+  const ready = !hasQueue
     ? t('loanerDesk.ready.device')
     : !borrower
       ? t('loanerDesk.ready.borrower')
@@ -458,7 +490,7 @@ export function DeskScreen() {
         <FeedbackPanel
           feedback={feedback}
           idle={mode === 'return' ? t('loanerDesk.ready.device') : ready}
-          onReturn={(tag) => void returnDevice(tag)}
+          onReturn={(code) => void returnDevice(code)}
           returnLabel={t('loanerDesk.returnInstead')}
         />
 
@@ -470,37 +502,38 @@ export function DeskScreen() {
             className="flex flex-col gap-5 rounded-lg border border-border bg-surface p-4 sm:p-6"
           >
             <div className="flex flex-col gap-1.5">
+              <label htmlFor="desk-pool" className="text-base font-medium text-text">
+                {t('loanerDesk.pool.label')}
+              </label>
+              {activePools.length === 0 && !pools.isPending ? (
+                <p className="text-base text-muted">{t('loanerDesk.pool.none')}</p>
+              ) : (
+                <Select
+                  id="desk-pool"
+                  value={pool?.id ?? ''}
+                  placeholder={t('loanerDesk.pool.label')}
+                  options={activePools.map((candidate) => ({
+                    value: candidate.id,
+                    label: candidate.name,
+                  }))}
+                  onValueChange={(id) => {
+                    setChosenPool(id);
+                    setDueTouched(false);
+                    try {
+                      window.localStorage.setItem(POOL_KEY, id);
+                    } catch {
+                      // storage unavailable: the choice lasts for this visit
+                    }
+                  }}
+                />
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <label htmlFor="desk-device" className="text-base font-medium text-text">
                 {t('loanerDesk.device.label')}
               </label>
-              {device ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-strong bg-sunken p-3">
-                  <span className="flex min-w-0 flex-col">
-                    <span className="font-tag text-lg font-semibold text-text">
-                      {device.asset.asset_tag}
-                    </span>
-                    <span className="text-sm text-muted">
-                      {[
-                        device.asset.name,
-                        pool ? t('loanerDesk.device.inPool', { pool: pool.name }) : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' - ')}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setDevice(null);
-                      deviceInput.current?.focus();
-                    }}
-                  >
-                    <X aria-hidden className="size-4" />
-                    {t('loanerDesk.device.change')}
-                  </Button>
-                </div>
-              ) : null}
-              <div className={cn('flex gap-2', device && 'sr-only')}>
+              <div className="flex gap-2">
                 <Input
                   id="desk-device"
                   ref={deviceInput}
@@ -509,26 +542,77 @@ export function DeskScreen() {
                   autoCapitalize="characters"
                   spellCheck={false}
                   placeholder={t('loanerDesk.device.placeholder')}
+                  aria-describedby="desk-device-hint"
                   className="min-h-12 flex-1 font-tag text-lg"
-                  tabIndex={device ? -1 : undefined}
                   onChange={(event) => setDeviceText(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      void lookupDevice(deviceText);
-                    }
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    // a code is a device first, else the borrower's card; Enter on an empty field lends the list
+                    if (deviceText.trim()) {
+                      const code = deviceText;
+                      setDeviceText('');
+                      void onScan(code);
+                    } else void lend();
                   }}
                 />
                 <Button
                   type="button"
                   className="min-h-12"
                   disabled={busy || !deviceText.trim()}
-                  onClick={() => void lookupDevice(deviceText)}
+                  onClick={() => {
+                    const code = deviceText;
+                    setDeviceText('');
+                    void onScan(code);
+                  }}
                 >
                   <ScanLine aria-hidden className="size-4" />
                   {t('loanerDesk.device.find')}
                 </Button>
               </div>
+              <p id="desk-device-hint" className="text-sm text-muted">
+                {t('loanerDesk.device.hint')}
+              </p>
+              {hasQueue ? (
+                <ul
+                  aria-label={t('loanerDesk.queue.label')}
+                  className="mt-1 flex flex-col overflow-hidden rounded-md border border-border-strong"
+                  data-testid="desk-queue"
+                >
+                  {queue.map((entry) => (
+                    <li
+                      key={entry.code}
+                      className="flex items-center gap-2 border-t border-border bg-sunken px-3 py-2 first:border-t-0"
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="font-tag text-base font-semibold text-text">
+                          {entry.tag}
+                        </span>
+                        {entry.problem ? (
+                          <span className="flex items-start gap-1.5 text-sm text-danger-text">
+                            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                            <span>
+                              <span className="sr-only">{`${t('loanerDesk.queue.problem')}: `}</span>
+                              {entry.problem}
+                            </span>
+                          </span>
+                        ) : null}
+                      </span>
+                      <IconButton
+                        icon={X}
+                        size="icon-sm"
+                        label={t('loanerDesk.queue.remove', { tag: entry.tag })}
+                        onClick={() => {
+                          setQueue((current) =>
+                            current.filter((other) => other.code !== entry.code),
+                          );
+                          deviceInput.current?.focus();
+                        }}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -626,7 +710,7 @@ export function DeskScreen() {
                 <Input
                   id="desk-due"
                   type="date"
-                  value={due}
+                  value={dueValue}
                   min={today}
                   max={latest ?? undefined}
                   invalid={!!dueError}
@@ -649,8 +733,8 @@ export function DeskScreen() {
                       key={preset.key}
                       type="button"
                       className="min-h-12"
-                      aria-pressed={due === preset.value}
-                      variant={due === preset.value ? 'primary' : 'secondary'}
+                      aria-pressed={dueValue === preset.value}
+                      variant={dueValue === preset.value ? 'primary' : 'secondary'}
                       onClick={() => {
                         setDue(preset.value);
                         setDueTouched(true);
@@ -680,12 +764,12 @@ export function DeskScreen() {
             </div>
 
             <div className="flex flex-col gap-1">
-              {device && borrower && !validDue() ? (
+              {hasQueue && borrower && !validDue() ? (
                 <p className="text-base text-text" data-testid="desk-summary">
                   {t('loanerDesk.summary', {
-                    tag: device.asset.asset_tag,
+                    count: queue.length,
                     name: borrower.display_name,
-                    date: formatDate(`${due}T00:00:00Z`, { timeZone: 'UTC' }),
+                    date: formatDate(`${dueValue}T00:00:00Z`, { timeZone: 'UTC' }),
                   })}
                 </p>
               ) : null}
@@ -694,10 +778,12 @@ export function DeskScreen() {
                 type="submit"
                 variant="primary"
                 loading={busy}
-                disabled={!device || !borrower}
+                disabled={!hasQueue || !borrower || !pool}
                 className="min-h-14 text-lg"
               >
-                {t('loanerDesk.lend')}
+                {hasQueue
+                  ? t('loanerDesk.lendCount', { count: queue.length })
+                  : t('loanerDesk.lendNone')}
               </Button>
               <p className="text-sm text-muted">{t('loanerDesk.lendHint')}</p>
             </div>
@@ -820,7 +906,7 @@ function FeedbackPanel({
 }: {
   feedback: Feedback | null;
   idle: string;
-  onReturn: (tag: string) => void;
+  onReturn: (code: string) => void;
   returnLabel: string;
 }) {
   const ok = feedback?.kind === 'ok';
@@ -839,8 +925,8 @@ function FeedbackPanel({
     >
       <Icon aria-hidden className="size-7 shrink-0" />
       <span className="min-w-0 flex-1 font-medium">{feedback?.message ?? idle}</span>
-      {feedback?.returnTag ? (
-        <Button type="button" onClick={() => onReturn(feedback.returnTag!)}>
+      {feedback?.returnCode ? (
+        <Button type="button" onClick={() => onReturn(feedback.returnCode!)}>
           {returnLabel}
         </Button>
       ) : null}

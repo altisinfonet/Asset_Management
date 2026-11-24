@@ -65,6 +65,38 @@ export async function studentPool(page: Page): Promise<PoolRef> {
   return json.data.find((pool) => pool.name.startsWith('Student'))!;
 }
 
+/** The ids of every asset that is in a loaner pool. */
+export async function pooledAssetIds(page: Page): Promise<Set<string>> {
+  const pools = await api<{ data: PoolRef[] }>(page, 'GET', '/v1/loaner-pools');
+  const ids = new Set<string>();
+  for (const pool of pools.json.data) {
+    const members = await api<{ data: Array<{ asset_id: string }> }>(
+      page,
+      'GET',
+      `/v1/loaner-pools/${pool.id}/members?limit=200`,
+    );
+    for (const member of members.json.data) ids.add(member.asset_id);
+  }
+  return ids;
+}
+
+/** A deployable device that is in no pool. */
+export async function looseDevice(page: Page): Promise<AssetLite> {
+  const free = await api<{ data: AssetLite[] }>(
+    page,
+    'GET',
+    '/v1/assets?state_type=deployable&assigned=false&limit=200&sort=asset_tag',
+  );
+  const taken = await pooledAssetIds(page);
+  return free.json.data.find((asset) => !taken.has(asset.id))!;
+}
+
+/** The seeded pool of staff laptops: two devices per borrower, two of its three laptops free. */
+export async function staffPool(page: Page): Promise<PoolRef> {
+  const { json } = await api<{ data: PoolRef[] }>(page, 'GET', '/v1/loaner-pools');
+  return json.data.find((pool) => pool.name.startsWith('Staff'))!;
+}
+
 /** A new pool with `count` free devices added, for scripts that need more than the seeded ones. */
 export async function poolWithDevices(
   page: Page,
@@ -76,12 +108,13 @@ export async function poolWithDevices(
     default_loan_days: 5,
     max_loan_days: 14,
   });
-  const free = await api<{ data: Array<AssetLite & { loaner_pool_id: string | null }> }>(
+  const free = await api<{ data: AssetLite[] }>(
     page,
     'GET',
     '/v1/assets?state_type=deployable&assigned=false&limit=200&sort=asset_tag',
   );
-  const devices = free.json.data.filter((asset) => !asset.loaner_pool_id).slice(0, count);
+  const taken = await pooledAssetIds(page);
+  const devices = free.json.data.filter((asset) => !taken.has(asset.id)).slice(0, count);
   for (const device of devices) {
     const added = await api(page, 'POST', `/v1/loaner-pools/${created.json.id}/members`, {
       asset_id: device.id,

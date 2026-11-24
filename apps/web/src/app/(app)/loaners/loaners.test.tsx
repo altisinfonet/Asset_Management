@@ -1,13 +1,12 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loanersApi } from '@/lib/loaners/api';
-import { assetsApi, peopleApi } from '@/lib/registry/api';
+import { custodySettingsApi, loanersApi } from '@/lib/loaners/api';
+import { assetsApi } from '@/lib/registry/api';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { resetRouter, router } from '@/test/navigation';
 import { renderApp, seedSession } from '@/test/render';
-import { DeskScreen } from './desk/desk-screen';
 import { LoanersScreen } from './loaners-screen';
 import { PoolView } from './pool/pool-view';
 import { PoolsScreen } from './pools/pools-screen';
@@ -19,6 +18,16 @@ async function students() {
 }
 async function members(poolId: string) {
   return (await loanersApi.members(poolId)).data;
+}
+/** A deployable device that is in no pool. */
+async function looseDevice() {
+  const pools = (await loanersApi.pools()).data;
+  const taken = new Set(
+    (await Promise.all(pools.map((p) => members(p.id)))).flat().map((m) => m.asset_id),
+  );
+  return (
+    await assetsApi.list({ limit: 200, state_type: ['deployable'], assigned: false })
+  ).data.find((a) => !taken.has(a.id))!;
 }
 
 describe('loaner dashboard', () => {
@@ -102,8 +111,11 @@ describe('loaner pools', () => {
     expect(within(row).getByText('7 days')).toBeVisible();
     expect(within(row).getByText('28 days')).toBeVisible();
     expect(within(row).getByText('Active')).toBeVisible();
-    expect(await screen.findByLabelText('Default loan length (days)')).toHaveValue(7);
-    expect(screen.getByLabelText('Longest loan (days)')).toHaveValue(30);
+    // no return date is offered at check-out until the organisation sets one; reminders default to 2 days
+    expect(
+      await screen.findByLabelText('Return date offered at check-out (days from today)'),
+    ).toHaveValue(null);
+    expect(screen.getByLabelText('Remind the borrower (days before the due date)')).toHaveValue(2);
     await expectNoA11yViolations(container);
   });
 
@@ -155,24 +167,32 @@ describe('loaner pools', () => {
     );
   });
 
-  it('saves the organisation defaults and rejects a longest loan below the default', async () => {
+  it('saves the organisation defaults and checks the numbers first', async () => {
     const user = userEvent.setup();
     renderApp(<PoolsScreen />);
-    const days = await screen.findByLabelText('Default loan length (days)');
-    await waitFor(() => expect(days).toHaveValue(7));
-    await user.clear(days);
-    await user.type(days, '40');
+    const expected = await screen.findByLabelText(
+      'Return date offered at check-out (days from today)',
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText('Remind the borrower (days before the due date)')).toHaveValue(
+        2,
+      ),
+    );
+    await user.type(expected, '999');
     await user.click(screen.getByRole('button', { name: 'Save defaults' }));
     expect(
-      await screen.findByText('The longest loan cannot be shorter than the default.'),
+      await screen.findByText('Enter a whole number from 1 to 366, or leave it empty.'),
     ).toBeVisible();
-    const max = screen.getByLabelText('Longest loan (days)');
-    await user.clear(max);
+    await user.clear(expected);
+    await user.type(expected, '14');
+    const reminder = screen.getByLabelText('Remind the borrower (days before the due date)');
+    await user.clear(reminder);
+    await user.type(reminder, '3');
     await user.click(screen.getByRole('button', { name: 'Save defaults' }));
     expect(await screen.findByText('Loan defaults saved.')).toBeVisible();
-    expect((await loanersApi.settings()).value).toMatchObject({
-      default_loan_days: 40,
-      max_loan_days: null,
+    expect((await custodySettingsApi.get()).value).toEqual({
+      default_expected_return_days: 14,
+      loan_reminder_days: 3,
     });
   });
 
@@ -235,9 +255,7 @@ describe('one pool', () => {
 
   it('adds a device and does not remove one that is out', async () => {
     const pool = await students();
-    const spare = (
-      await assetsApi.list({ limit: 200, state_type: ['deployable'], assigned: false })
-    ).data.find((a) => !a.loaner_pool_id)!;
+    const spare = await looseDevice();
     window.history.pushState({}, '', `/loaners/pool?id=${pool.id}`);
     const user = userEvent.setup();
     renderApp(<PoolView />);
@@ -259,7 +277,7 @@ describe('one pool', () => {
     await user.click(await screen.findByRole('option', { name: new RegExp(spare.asset_tag) }));
     await user.click(within(dialog).getByRole('button', { name: 'Add to pool' }));
     expect(await screen.findByText(`${spare.asset_tag} added to the pool.`)).toBeVisible();
-    expect((await assetsApi.get(spare.id)).value.loaner_pool_id).toBe(pool.id);
+    expect((await members(pool.id)).some((m) => m.asset_id === spare.id)).toBe(true);
   });
 
   it('archives a pool that has nothing out and goes back to the list', async () => {
@@ -281,210 +299,5 @@ describe('one pool', () => {
         name: 'This pool does not exist or you cannot see it.',
       }),
     ).toBeVisible();
-  });
-});
-
-describe('loaner desk', () => {
-  beforeEach(() => {
-    resetRouter();
-    window.history.pushState({}, '', '/loaners/desk');
-    seedSession(MOCK_ACCOUNTS.owner);
-  });
-
-  async function freeDevice() {
-    const pool = await students();
-    return (await loanersApi.members(pool.id, { available: true })).data[0]!;
-  }
-
-  it('lends with the keyboard: device, borrower, Enter; the borrower stays for the next device', async () => {
-    const free = await freeDevice();
-    const user = userEvent.setup();
-    const { container } = renderApp(<DeskScreen />, { workflows: true });
-    const device = await screen.findByLabelText('Device');
-    await waitFor(() => expect(device).toHaveFocus());
-    await expectNoA11yViolations(container);
-
-    await user.type(device, `${free.asset?.asset_tag}{Enter}`);
-    expect(await screen.findByText(new RegExp(`In Student Chromebook loaners`))).toBeVisible();
-    const borrower = await screen.findByLabelText('Borrower');
-    await waitFor(() => expect(borrower).toHaveFocus());
-    // the pool's seven days are filled in
-    await waitFor(() => expect(screen.getByLabelText('Due date')).not.toHaveValue(''));
-    await user.type(borrower, 'Alice Owner{Enter}');
-    const lend = await screen.findByRole('button', { name: 'Lend device' });
-    await waitFor(() => expect(lend).toHaveFocus());
-    expect(screen.getByTestId('desk-summary')).toHaveTextContent(
-      `Lend ${free.asset?.asset_tag} to Alice Owner`,
-    );
-
-    await user.keyboard('{Enter}');
-    const feedback = await screen.findByTestId('desk-feedback');
-    await waitFor(() =>
-      expect(feedback).toHaveTextContent(
-        new RegExp(`${free.asset?.asset_tag} lent to Alice Owner, due `),
-      ),
-    );
-    expect(feedback).toHaveAttribute('role', 'status');
-    // the device is cleared, the borrower stays
-    expect(screen.getByText('Alice Owner')).toBeVisible();
-    await waitFor(() => expect(screen.getByLabelText('Device')).toHaveFocus());
-    const pool = await students();
-    const lent = (await members(pool.id)).find((m) => m.asset_id === free.asset_id)!;
-    expect(lent.available).toBe(false);
-    expect(lent.asset?.current_assignment?.target_name).toBe('Alice Owner');
-  });
-
-  it('refuses a device that is not in a pool, in words and as an alert', async () => {
-    const spare = (
-      await assetsApi.list({ limit: 200, state_type: ['deployable'], assigned: false })
-    ).data.find((a) => !a.loaner_pool_id)!;
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(await screen.findByLabelText('Device'), `${spare.asset_tag}{Enter}`);
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(
-      `${spare.asset_tag} is not in a loaner pool. Add it to a pool first.`,
-    );
-  });
-
-  it('says who has a device that is already out and offers to return it', async () => {
-    const pool = await students();
-    const out = (await members(pool.id)).find(
-      (m) => !m.available && !m.asset?.current_assignment?.overdue,
-    )!;
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(await screen.findByLabelText('Device'), `${out.asset?.asset_tag}{Enter}`);
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(
-      `${out.asset?.asset_tag} is already on loan to ${out.asset?.current_assignment?.target_name}, due`,
-    );
-    await user.click(within(alert).getByRole('button', { name: 'Return it instead' }));
-    await waitFor(() =>
-      expect(screen.getByTestId('desk-feedback')).toHaveTextContent(
-        `${out.asset?.asset_tag} returned by`,
-      ),
-    );
-  });
-
-  it('stops a borrower at the most devices the pool allows', async () => {
-    const free = await freeDevice();
-    const pool = await students();
-    const holder = (await members(pool.id)).find((m) => !m.available)!.asset!.current_assignment!;
-    const person = (await peopleApi.get(holder.target_id)).value;
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(await screen.findByLabelText('Device'), `${free.asset?.asset_tag}{Enter}`);
-    await user.type(await screen.findByLabelText('Borrower'), `${person.display_name}{Enter}`);
-    await user.click(await screen.findByRole('button', { name: 'Lend device' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(
-      `${person.display_name} already holds the most devices this pool allows.`,
-    );
-  });
-
-  it('lists several matches for a borrower to choose from', async () => {
-    const free = await freeDevice();
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(await screen.findByLabelText('Device'), `${free.asset?.asset_tag}{Enter}`);
-    await user.type(await screen.findByLabelText('Borrower'), 'a{Enter}');
-    const list = await screen.findByRole('list', { name: 'Matches' });
-    const choices = within(list).getAllByRole('button');
-    expect(choices.length).toBeGreaterThan(1);
-    await user.click(choices[0]!);
-    expect(screen.getByRole('button', { name: 'Change borrower' })).toBeVisible();
-  });
-
-  it('warns when the due date is beyond what the pool allows', async () => {
-    const free = await freeDevice();
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(await screen.findByLabelText('Device'), `${free.asset?.asset_tag}{Enter}`);
-    await user.type(await screen.findByLabelText('Borrower'), 'Alice Owner{Enter}');
-    const due = screen.getByLabelText('Due date');
-    fireEvent.change(due, { target: { value: '2099-01-01' } });
-    await user.click(await screen.findByRole('button', { name: 'Lend device' }));
-    expect(await screen.findByText(/The pool allows loans until .* at most\./)).toBeVisible();
-  });
-
-  it('accepts a scanner anywhere on the page: device, then the borrower card', async () => {
-    const free = await freeDevice();
-    const person = (await peopleApi.list({ limit: 50, status: 'active' })).data.find(
-      (p) => p.employee_ref,
-    )!;
-    renderApp(<DeskScreen />, { workflows: true });
-    await screen.findByLabelText('Device');
-    (document.activeElement as HTMLElement | null)?.blur();
-    const burst = (code: string) => {
-      for (const key of [...code, 'Enter']) fireEvent.keyDown(document.body, { key });
-    };
-    burst(free.asset!.asset_tag);
-    expect(await screen.findByText(/In Student Chromebook loaners/)).toBeVisible();
-    (document.activeElement as HTMLElement | null)?.blur();
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    burst(person.employee_ref!);
-    expect(await screen.findByRole('button', { name: 'Change borrower' })).toBeVisible();
-    expect(screen.getByText(person.display_name)).toBeVisible();
-  });
-
-  it('returns by scan in bulk, counting what worked and what did not', async () => {
-    window.history.pushState({}, '', '/loaners/desk?mode=return');
-    const pool = await students();
-    const out = (await members(pool.id)).filter((m) => !m.available);
-    const user = userEvent.setup();
-    const { container } = renderApp(<DeskScreen />, { workflows: true });
-    const input = await screen.findByLabelText('Returned device');
-    await waitFor(() => expect(input).toHaveFocus());
-    await user.type(input, `${out[0]!.asset?.asset_tag}{Enter}`);
-    await waitFor(() =>
-      expect(screen.getByTestId('desk-feedback')).toHaveTextContent(
-        `${out[0]!.asset?.asset_tag} returned`,
-      ),
-    );
-    await user.type(input, `${out[1]!.asset?.asset_tag}{Enter}`);
-    await waitFor(() =>
-      expect(screen.getByTestId('desk-return-summary')).toHaveTextContent('2 devices returned'),
-    );
-    // the same device again is not on loan any more
-    await user.type(input, `${out[0]!.asset?.asset_tag}{Enter}`);
-    await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        `${out[0]!.asset?.asset_tag} is not on loan.`,
-      ),
-    );
-    expect(screen.getByTestId('desk-return-summary')).toHaveTextContent(
-      '2 devices returned, 1 problem',
-    );
-    const log = within(screen.getByTestId('desk-log')).getAllByRole('listitem');
-    expect(log).toHaveLength(3);
-    expect(log[0]).toHaveTextContent('Problem: ');
-    await expectNoA11yViolations(container);
-    // the pool agrees
-    expect((await students()).checked_out_count).toBe(1);
-  });
-
-  it('says a late return is late', async () => {
-    window.history.pushState({}, '', '/loaners/desk?mode=return');
-    const pool = await students();
-    const late = (await members(pool.id)).find((m) => m.asset?.current_assignment?.overdue)!;
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.type(
-      await screen.findByLabelText('Returned device'),
-      `${late.asset?.asset_tag}{Enter}`,
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId('desk-feedback')).toHaveTextContent(
-        /returned by .*, 5 days late\./,
-      ),
-    );
-  });
-
-  it('switches between lending and returning through the URL', async () => {
-    const user = userEvent.setup();
-    renderApp(<DeskScreen />, { workflows: true });
-    await user.click(await screen.findByRole('button', { name: 'Return' }));
-    expect(router.replace).toHaveBeenCalledWith('/loaners/desk?mode=return');
   });
 });

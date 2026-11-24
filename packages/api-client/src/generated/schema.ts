@@ -1776,15 +1776,13 @@ export interface paths {
         };
         /**
          * List loaner pools
-         * @description Cursor-paginated list.
-         *
-         *     Requires permission `loaner:read`.
+         * @description Cursor-paginated list. `q` matches the name. Every pool carries its live counts (`member_count`, `available_count`, `checked_out_count`, `overdue_count`, `due_today_count`), so the pool list needs one call.
          */
         get: operations["listLoanerPools"];
         put?: never;
         /**
          * Create loaner pool
-         * @description Requires permission `loaner:manage`.
+         * @description Creates a pool. The name is unique among live pools, ignoring case (409 `conflict`, pointer `/name`); `home_location_id` must be a live location and `owner_user_id` an active user (422); `max_loan_days` must be >= `default_loan_days` (422).
          */
         post: operations["createLoanerPool"];
         delete?: never;
@@ -1809,9 +1807,7 @@ export interface paths {
         post?: never;
         /**
          * Archive loaner pool
-         * @description Soft delete (`archived_at`). Fails with 409 while the record is still referenced by active records where that would break integrity.
-         *
-         *     Requires permission `loaner:manage`.
+         * @description Soft delete. `409 conflict` with `usage.open_loans` while a member is checked out; otherwise the pool is archived and its memberships are removed, so the assets can join another pool. Switch a pool off with `is_active: false` instead to keep its members.
          */
         delete: operations["archiveLoanerPool"];
         options?: never;
@@ -1834,7 +1830,7 @@ export interface paths {
         put?: never;
         /**
          * Quick loan from the pool
-         * @description Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment.
+         * @description Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool's `default_loan_days`. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool's limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool's `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.
          *
          *     Requires permission `loaner:checkout`.
          */
@@ -1854,13 +1850,15 @@ export interface paths {
         };
         /**
          * List pool members
-         * @description Requires permission `loaner:read`.
+         * @description The assets of the pool, in asset-tag order, with the full asset (status, location, `current_assignment`) and whether each can be lent right now.
+         *
+         *     Requires permission `loaner:read`.
          */
         get: operations["listLoanerPoolMembers"];
         put?: never;
         /**
          * Add an asset to the pool
-         * @description An asset belongs to at most one pool (409 if it is in another).
+         * @description An asset belongs to at most one pool (409 `conflict` if it is in another one; adding it to the pool it is in answers 200 with the existing member). Archived assets cannot join (422). A member can still be checked out the regular way.
          *
          *     Requires permission `loaner:manage`.
          */
@@ -1883,7 +1881,7 @@ export interface paths {
         post?: never;
         /**
          * Remove an asset from the pool
-         * @description Rejected with 409 while the asset is on loan.
+         * @description Rejected with 409 while the asset is on loan from this pool (`usage.open_loans`); a regular check-out of a member does not block removal.
          *
          *     Requires permission `loaner:manage`.
          */
@@ -1893,7 +1891,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/loans/activity": {
+    "/v1/loaner-pools/{id}/members/bulk-add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add many assets to the pool
+         * @description Adds every listed asset (same rules as `POST /v1/loaner-pools/{id}/members`). At most 100 ids; the response is `200` with one result per id, in request order, and a failing item does not roll back the others. Idempotent with `Idempotency-Key`.
+         *
+         *     Requires permission `loaner:manage`.
+         */
+        post: operations["bulkAddLoanerPoolMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaner-pools/{id}/members/bulk-remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove many assets from the pool
+         * @description Removes every listed asset (same rules as `DELETE /v1/loaner-pools/{id}/members/{asset_id}`). At most 100 ids; `200` with one result per id (status 204 on success, no `data`), a failing item does not roll back the others.
+         *
+         *     Requires permission `loaner:manage`.
+         */
+        post: operations["bulkRemoveLoanerPoolMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaner-pools/{id}/quick-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quick loan by scanning: one borrower, many devices
+         * @description The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool's `default_loan_days`. The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower's limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["quickCheckoutLoaners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loaners/dashboard": {
         parameters: {
             query?: never;
             header?: never;
@@ -1901,14 +1965,80 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Recent loans and returns
-         * @description The latest check-outs and returns of loaner pool devices, newest first.
+         * Loaner dashboard
+         * @description Per-pool counts (pool size, available, out, overdue, due today, due soon) with their totals, and the latest check-outs and returns. Counts cover live (not archived) pools and members; "today" is the UTC date (`as_of`). Inactive pools are listed (with `is_active: false`) and counted.
          *
          *     Requires permission `loaner:read`.
          */
-        get: operations["listLoanActivity"];
+        get: operations["getLoanerDashboard"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List loans
+         * @description Loans from loaner pools (assignments with a `loaner_pool_id`): the click-through lists behind the dashboard. By default the open ones (`on_loan`, `due_today`, `overdue`); add `returned` to include closed ones. `q` matches the asset tag and name and the borrower's name.
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["listLoans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a loan
+         * @description One loan by its assignment id (open or returned).
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["getLoan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/{id}/extend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extend a loan
+         * @description Moves the due date of an open loan to a later date: not before today (UTC) and within the pool's `max_loan_days` counted from the day the loan started (422 `/expected_return`). A closed loan is `409 conflict`. Extending is a logged action: an audit record (`loan.extended`, with the old and new date and the note), an outbox event and an entry in the asset's history (event type `updated`, `payload.loan_extended`). The asset's ETag changes (its `current_assignment` did). The "due soon" and "overdue" alerts re-arm for the new date.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["extendLoan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1924,13 +2054,35 @@ export interface paths {
         };
         /**
          * Overdue check-outs
-         * @description Open asset check-outs past `expected_return`, loaner or not (the data behind overdue alerts).
+         * @description Open asset check-outs past `expected_return` (before today, UTC), loaner or not, to anyone or anywhere: the data behind the overdue view. Only loans from a loaner pool raise alerts (see ED-21). `days_overdue` counts whole days.
          *
          *     Requires permission `loaner:read`.
          */
         get: operations["listOverdueCheckouts"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quick return by scanning (one or many devices)
+         * @description The bulk check-in screen in one call: the scanned devices (`codes`, at most 100) are checked in one after the other, answered per item in request order. A device must be a member of a loaner pool (of `loaner_pool_id` when given): else `422` (`not-in-pool`, pointer `/codes/<i>`); not checked out `409 asset-not-checked-out`; unknown code `404`. Each return is a normal check-in (history, audit, outbox, status back to deployable) and moves the device to `checkin_location_id`, or to the pool's `home_location_id`. A failing item does not roll back the others; unknown codes count towards the scan-resolve throttle. Replaying the same `Idempotency-Key` answers the stored result; returning a device twice with different keys is a per-item `409 asset-not-checked-out`.
+         *
+         *     Requires permission `loaner:checkout`.
+         */
+        post: operations["returnLoans"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2657,6 +2809,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/settings/custody": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the custody settings
+         * @description Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API itself never applies it) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).
+         *
+         *     Requires permission `catalog:read`.
+         */
+        get: operations["getCustodySettings"];
+        /**
+         * Replace the custody settings
+         * @description Replaces both settings (an omitted one is reset to its default). `If-Match` is the ETag of `GET` (the tenant settings version). Audited like the other settings.
+         *
+         *     Requires permission `catalog:manage`.
+         */
+        put: operations["putCustodySettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/settings/files": {
         parameters: {
             query?: never;
@@ -2678,32 +2858,6 @@ export interface paths {
          *     Requires permission `catalog:manage`.
          */
         put: operations["putFilesSettings"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/settings/loans": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get the organisation loan defaults
-         * @description Requires permission `loaner:read`.
-         */
-        get: operations["getLoanSettings"];
-        /**
-         * Replace the organisation loan defaults
-         * @description `If-Match` is the ETag of `GET` (the tenant settings version).
-         *
-         *     Requires permission `loaner:manage`.
-         */
-        put: operations["putLoanSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -4031,6 +4185,7 @@ export interface components {
             data: components["schemas"]["Consumable"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description A loaner pool (ED-20): a named set of spare devices (a Chromebook cart, a laptop trolley) with loan rules. An asset belongs to at most one pool. */
         LoanerPool: {
             /** Format: uuid */
             readonly id: string;
@@ -4040,52 +4195,108 @@ export interface components {
             readonly updated_at?: string;
             /** Format: date-time */
             readonly archived_at?: string | null;
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
+            /**
+             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
+             * @default 7
+             */
             default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
-            is_active?: boolean;
-            readonly member_count?: number;
-            readonly checked_out_count?: number;
-            readonly overdue_count?: number;
-            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
-            /** @description Open loans of this pool whose `expected_return` is today (UTC). */
-            readonly due_today_count?: number;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
+            is_active?: boolean;
+            /** @description Live (not archived) assets in the pool. */
+            readonly member_count: number;
+            /** @description Members that can be lent right now: not archived, in a `deployable` state and not checked out. */
+            readonly available_count: number;
+            /** @description Members that are checked out (a loan from the pool or a regular check-out). */
+            readonly checked_out_count: number;
+            /** @description Checked-out members whose `expected_return` is before today (UTC). */
+            readonly overdue_count: number;
+            /** @description Checked-out members whose `expected_return` is today (UTC). */
+            readonly due_today_count: number;
         };
         LoanerPoolCreate: {
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
+            /**
+             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
+             * @default 7
+             */
             default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
-            is_active?: boolean;
-            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
+            is_active?: boolean;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         LoanerPoolUpdate: {
+            /** @description Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
             name?: string;
             description?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Where returned devices go back to: a quick return moves the asset here unless the request names another location.
+             */
             home_location_id?: string | null;
-            /** @default 7 */
+            /**
+             * @description Length of a loan when the request has no `expected_return`: today (UTC) + this many days.
+             * @default 7
+             */
             default_loan_days?: number;
-            /** @description Must be >= default_loan_days. */
+            /** @description Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit. */
             max_loan_days?: number | null;
-            /** @default true */
-            is_active?: boolean;
-            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            /** @description Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit. */
             max_loans_per_person?: number | null;
+            /** @description Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind. */
+            eligible_person_kinds?: ("employee" | "student" | "contractor" | "external")[] | null;
+            /**
+             * Format: uuid
+             * @description The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.
+             */
+            owner_user_id?: string | null;
+            /**
+             * @description false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.
+             * @default true
+             */
+            is_active?: boolean;
         };
         LoanerPoolList: {
             data: components["schemas"]["LoanerPool"][];
@@ -4321,11 +4532,6 @@ export interface components {
              * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
              */
             image_attachment_id?: string | null;
-            /**
-             * Format: uuid
-             * @description The loaner pool the asset belongs to, or null. Lets the quick-loan desk refuse a device that is not in a pool without a second request.
-             */
-            readonly loaner_pool_id?: string | null;
         };
         AssetCreate: {
             /** @description Unique per tenant (case-insensitive). If omitted on create, generated from the category `tag_prefix`. */
@@ -4740,7 +4946,7 @@ export interface components {
             loaner_pool_id: string;
             /** Format: date-time */
             added_at: string;
-            /** @description Not currently checked out. */
+            /** @description Can be lent right now: not archived, in a `deployable` state and not checked out. */
             available: boolean;
             asset?: components["schemas"]["Asset"];
         };
@@ -4748,19 +4954,183 @@ export interface components {
             data: components["schemas"]["LoanerPoolMember"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description Asset ids (at most 100). */
+        LoanerPoolMembersBulk: {
+            ids: string[];
+        };
+        LoanerPoolMemberBulkResult: {
+            results: {
+                index: number;
+                /** @description HTTP status the single-asset operation would have returned (201 added, 204 removed). */
+                status: number;
+                data?: components["schemas"]["LoanerPoolMember"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
         LoanerCheckoutRequest: {
             /** Format: uuid */
             person_id: string;
             /**
              * Format: uuid
-             * @description A specific pool member. If omitted, the next available member is chosen.
+             * @description A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).
              */
             asset_id?: string;
             /**
              * Format: date
-             * @description Defaults to today + pool.default_loan_days; must not exceed pool.max_loan_days.
+             * @description Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.
              */
             expected_return?: string;
+            note?: string;
+        };
+        /** @description The borrower a scan resolved to. */
+        PersonBrief: {
+            /** Format: uuid */
+            id: string;
+            display_name: string;
+            /** @enum {string} */
+            kind: "employee" | "student" | "contractor" | "external";
+            email?: string | null;
+            employee_ref?: string | null;
+        };
+        /** @description Quick check-out by scanning: one borrower, one or more devices. */
+        QuickLoanRequest: {
+            /**
+             * Format: uuid
+             * @description The borrower by id. Exactly one of `person_id` and `borrower`.
+             */
+            person_id?: string;
+            /** @description The borrower as scanned or typed: the exact email address or the exact `employee_ref` (the badge / student number), matched case-insensitively. Exactly one of `person_id` and `borrower`. 422 (pointer `/borrower`, code `not-found`) when nobody matches, 409 `conflict` when the text matches two different people. */
+            borrower?: string;
+            /** @description The devices: the opaque QR `label_code` (or the whole label URL), the asset tag or the exact serial number, as `GET /v1/scan/resolve` accepts them. Several devices per borrower in one request. */
+            codes: string[];
+            /**
+             * Format: date
+             * @description One due date for every device. Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.
+             */
+            expected_return?: string;
+            note?: string;
+        } & (unknown | unknown);
+        /** @description Per-device outcome of a quick check-out, in request order. A device that fails (unknown code, not in this pool, already out, borrower at the pool's limit...) does not stop the others. */
+        QuickLoanResult: {
+            person: components["schemas"]["PersonBrief"];
+            /** Format: uuid */
+            loaner_pool_id: string;
+            /**
+             * Format: date
+             * @description The due date that applied (the request's, or the pool default).
+             */
+            expected_return: string;
+            results: {
+                /** @description Position of the code in the request. */
+                index: number;
+                /** @description The code as sent. */
+                code: string;
+                /** @description 201 when the loan was opened, otherwise the status of the problem. */
+                status: number;
+                data?: components["schemas"]["CustodyResult"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
+        /** @description Return by scanning: one or many devices, any borrowers. */
+        LoanReturnRequest: {
+            /** @description The returned devices (label code or URL, asset tag or serial), as for a quick check-out. */
+            codes: string[];
+            /**
+             * Format: uuid
+             * @description Only accept devices of this pool (422 `not-in-pool` for others).
+             */
+            loaner_pool_id?: string;
+            /**
+             * Format: uuid
+             * @description Where the devices are now; default the pool's `home_location_id`.
+             */
+            checkin_location_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Status to set on every device (default: the tenant default deployable status).
+             */
+            status_id?: string | null;
+            /** @enum {string} */
+            condition?: "good" | "fair" | "poor" | "damaged";
+            note?: string;
+        };
+        /** @description Per-device outcome of a quick return, in request order (the per-scan feedback of the bulk check-in screen). Returning a device that is not out is a per-item `409 asset-not-checked-out`. */
+        LoanReturnResult: {
+            results: {
+                /** @description Position of the code in the request. */
+                index: number;
+                /** @description The code as sent. */
+                code: string;
+                /** @description 200 when the device was checked in, otherwise the status of the problem. */
+                status: number;
+                data?: components["schemas"]["CustodyResult"];
+                error?: components["schemas"]["Problem"];
+            }[];
+            summary: {
+                total: number;
+                succeeded: number;
+                failed: number;
+            };
+        };
+        /** @description A loan: one device out of a pool (an assignment with `loaner_pool_id`). */
+        Loan: {
+            /**
+             * Format: uuid
+             * @description The assignment id.
+             */
+            id: string;
+            /** Format: uuid */
+            asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** Format: uuid */
+            loaner_pool_id: string;
+            pool_name: string;
+            /** Format: uuid */
+            person_id?: string | null;
+            person_name?: string | null;
+            person_email?: string | null;
+            /** @description The borrower's `employee_ref` (badge, student number). */
+            person_ref?: string | null;
+            /** Format: date-time */
+            checked_out_at: string;
+            /** Format: date */
+            expected_return: string;
+            /**
+             * Format: date-time
+             * @description When the device came back; null while it is out.
+             */
+            returned_at?: string | null;
+            /**
+             * @description `on_loan` = out and due after today, `due_today`, `overdue` = out and due before today, `returned`. "Today" is the UTC date.
+             * @enum {string}
+             */
+            state: "on_loan" | "due_today" | "overdue" | "returned";
+            /** @description Whole days past the due date while `overdue`; 0 otherwise. */
+            days_overdue: number;
+            note?: string | null;
+        };
+        LoanList: {
+            data: components["schemas"]["Loan"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        LoanExtendRequest: {
+            /**
+             * Format: date
+             * @description The new due date: later than the current one, not before today (UTC) and within the pool's `max_loan_days` counted from the day the loan started.
+             */
+            expected_return: string;
+            /** @description Why (audit trail and history). */
             note?: string;
         };
         OverdueCheckout: {
@@ -4768,28 +5138,94 @@ export interface components {
             assignment_id: string;
             /** Format: uuid */
             asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
             /** Format: uuid */
             person_id?: string | null;
             /** Format: uuid */
             location_id?: string | null;
             /** Format: uuid */
             target_asset_id?: string | null;
+            /** @description Display name of the person, location or asset the device is with. */
+            holder_name?: string | null;
             /** Format: uuid */
             loaner_pool_id?: string | null;
+            pool_name?: string | null;
             /** Format: date */
             expected_return: string;
             days_overdue: number;
-            asset_tag: string;
-            asset_name?: string | null;
-            /** @description Display name of the borrower (the holder when it is a person). */
-            person_name?: string | null;
-            /** @description Contact of the borrower, so staff can chase the device without opening the person. */
-            person_email?: string | null;
-            person_phone?: string | null;
         };
         OverdueCheckoutList: {
             data: components["schemas"]["OverdueCheckout"][];
             page: components["schemas"]["PageInfo"];
+        };
+        LoanerDashboardPool: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            is_active: boolean;
+            member_count: number;
+            available_count: number;
+            /** @description Members that are checked out (includes the overdue ones and those due today). */
+            checked_out_count: number;
+            overdue_count: number;
+            due_today_count: number;
+            /** @description Checked-out members due after today but within the tenant's `loan_reminder_days`. */
+            due_soon_count: number;
+        };
+        LoanerActivity: {
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            kind: "checked_out" | "checked_in";
+            /** Format: uuid */
+            assignment_id: string;
+            /** Format: uuid */
+            asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** Format: uuid */
+            person_id?: string | null;
+            person_name?: string | null;
+            /** Format: uuid */
+            loaner_pool_id: string;
+            pool_name: string;
+            /** Format: date */
+            expected_return: string;
+        };
+        /** @description Everything the loaner dashboard page shows, in one call. Each count has a list behind it: `GET /v1/loans` (`loaner_pool_id`, `state`) for out / overdue / due today, `GET /v1/loaner-pools/{id}/members?available=true` for available. */
+        LoanerDashboard: {
+            /**
+             * Format: date
+             * @description The UTC date the counts are for.
+             */
+            as_of: string;
+            totals: {
+                pools: number;
+                members: number;
+                available: number;
+                checked_out: number;
+                overdue: number;
+                due_today: number;
+                due_soon: number;
+            };
+            pools: components["schemas"]["LoanerDashboardPool"][];
+            /** @description The latest check-outs and returns of loans from the pools, newest first (at most 20). */
+            recent: components["schemas"]["LoanerActivity"][];
+        };
+        CustodySettings: {
+            /** @description Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API itself never applies it (a check-out without `expected_return` stays open-ended). */
+            default_expected_return_days: number | null;
+            /**
+             * @description How many days before the due date a borrower of a loaner pool gets the "due soon" reminder; 0 = no reminder.
+             * @default 2
+             */
+            loan_reminder_days: number;
+        };
+        /** @description Replaces the settings; an omitted member is reset to its default (`null` / 2). */
+        CustodySettingsUpdate: {
+            default_expected_return_days?: number | null;
+            loan_reminder_days?: number;
         };
         RepairCompleteRequest: {
             /**
@@ -5973,43 +6409,6 @@ export interface components {
             data: components["schemas"]["ImportMappingTemplate"][];
             page: components["schemas"]["PageInfo"];
         };
-        LoanSettings: {
-            /**
-             * @description Due date offered when a pool does not set its own (today + this many days).
-             * @default 7
-             */
-            default_loan_days: number;
-            /** @description Longest loan any pool may allow; null = no limit. Must be >= default_loan_days. */
-            max_loan_days: number | null;
-            /**
-             * @description How many days before the due date the borrower is reminded (`loan.due_soon`).
-             * @default 1
-             */
-            reminder_lead_days: number;
-        };
-        LoanActivity: {
-            /** Format: uuid */
-            id: string;
-            /** Format: date-time */
-            at: string;
-            /** @enum {string} */
-            kind: "checked_out" | "returned";
-            /** Format: uuid */
-            asset_id: string;
-            asset_tag: string;
-            asset_name?: string | null;
-            /** Format: uuid */
-            person_id?: string | null;
-            person_name?: string | null;
-            /** Format: uuid */
-            loaner_pool_id: string | null;
-            /** Format: date */
-            expected_return?: string | null;
-        };
-        LoanActivityList: {
-            data: components["schemas"]["LoanActivity"][];
-            page: components["schemas"]["PageInfo"];
-        };
     };
     responses: {
         /** @description Malformed request (bad JSON, bad query parameter, invalid cursor). Codes: `bad-request`, `idempotency-key-required`, `idempotency-key-invalid`. */
@@ -6760,8 +7159,10 @@ export interface operations {
                 assigned?: boolean;
                 /** @description [M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset. */
                 overdue?: boolean;
-                /** @description Members of this loaner pool. */
+                /** @description [LOAN] Members of this loaner pool (ED-20). */
                 loaner_pool_id?: string;
+                /** @description [LOAN] true = member of any loaner pool, false = in none. */
+                in_loaner_pool?: boolean;
                 /** @description Warranty ends on or before. */
                 warranty_end_before?: string;
                 /** @description Warranty ends on or after. */
@@ -11652,6 +12053,8 @@ export interface operations {
                 archived?: components["parameters"]["Archived"];
                 /** @description Only active / inactive pools. */
                 is_active?: boolean;
+                /** @description Pools whose home is this location. */
+                home_location_id?: string;
                 /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: name, created_at. A unique tiebreaker (`id`) is always appended. */
                 sort?: ("name" | "-name" | "created_at" | "-created_at")[];
             };
@@ -11884,7 +12287,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The pool has nothing to lend, is switched off, or the borrower is at the limit; or (with `asset_id`) the device is out or not deployable. Codes: `no-loaner-available`, `loaner-pool-inactive`, `loan-limit-reached`, `asset-already-checked-out`, `asset-not-deployable`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/no-loaner-available",
+                     *       "title": "no loaner available",
+                     *       "status": 409,
+                     *       "code": "no-loaner-available",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -11896,7 +12317,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description true = not currently checked out. */
+                /** @description true = can be lent right now (not archived, `deployable`, not checked out); false = every other member. */
                 available?: boolean;
             };
             header?: never;
@@ -11952,6 +12373,20 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Already a member of this pool. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMember"];
+                };
+            };
             /** @description Added. */
             201: {
                 headers: {
@@ -11970,7 +12405,25 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            /** @description The asset is a member of another pool. Codes: `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/conflict",
+                     *       "title": "conflict",
+                     *       "status": 409,
+                     *       "code": "conflict",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -12013,23 +12466,200 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
-    listLoanActivity: {
+    bulkAddLoanerPoolMembers: {
         parameters: {
-            query?: {
-                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
-                cursor?: components["parameters"]["Cursor"];
-                /** @description Page size. */
-                limit?: components["parameters"]["Limit"];
-                /** @description Only this pool. */
-                loaner_pool_id?: string;
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
             };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanerPoolMembersBulk"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMemberBulkResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    bulkRemoveLoanerPoolMembers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanerPoolMembersBulk"];
+            };
+        };
+        responses: {
+            /** @description Per-item results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanerPoolMemberBulkResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    quickCheckoutLoaners: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuickLoanRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-device results (HTTP 200 whenever the request itself was valid). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuickLoanResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such pool. Codes: `not-found`. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/not-found",
+                     *       "title": "not found",
+                     *       "status": 404,
+                     *       "code": "not-found",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The pool is switched off, the borrower text matches two people, or a request with the same Idempotency-Key is still running. Codes: `loaner-pool-inactive`, `conflict`, `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/loaner-pool-inactive",
+                     *       "title": "loaner pool inactive",
+                     *       "status": 409,
+                     *       "code": "loaner-pool-inactive",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad body, unknown / inactive / ineligible borrower, or due date past the pool's maximum. Codes: `validation`, `idempotency-key-reuse`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLoanerDashboard: {
+        parameters: {
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description A page of activity. */
+            /** @description The dashboard. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];
@@ -12039,12 +12669,135 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LoanActivityList"];
+                    "application/json": components["schemas"]["LoanerDashboard"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listLoans: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Also return `page.total` (an extra count query; avoid on large lists). */
+                include_total?: components["parameters"]["IncludeTotal"];
+                /** @description Free-text search (trigram / prefix match). */
+                q?: components["parameters"]["Q"];
+                /** @description Only this pool. */
+                loaner_pool_id?: string;
+                /** @description Only this borrower. */
+                person_id?: string;
+                /** @description Only this device. */
+                asset_id?: string;
+                /** @description Only these states. Default: `on_loan,due_today,overdue`. */
+                state?: ("on_loan" | "due_today" | "overdue" | "returned")[];
+                /** @description Open loans due on or before today + N days (0 = due today or earlier). */
+                due_within_days?: number;
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: expected_return, checked_out_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("expected_return" | "-expected_return" | "checked_out_at" | "-checked_out_at")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of loans. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanList"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLoan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The loan. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Loan"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    extendLoan: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanExtendRequest"];
+            };
+        };
+        responses: {
+            /** @description The loan with its new due date. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Loan"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -12084,6 +12837,82 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    returnLoans: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key (8-255 chars) so the operation can be retried without being applied twice. Required. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanReturnRequest"];
+            };
+        };
+        responses: {
+            /** @description Per-device results (HTTP 200 whenever the request itself was valid). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanReturnResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A request with the same Idempotency-Key is still running. Codes: `idempotency-key-in-flight`. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/idempotency-key-in-flight",
+                     *       "title": "idempotency key in flight",
+                     *       "status": 409,
+                     *       "code": "idempotency-key-in-flight",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Bad body, unknown location or status. Codes: `validation`, `idempotency-key-reuse`. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "type": "https://api.assettracker.test/problems/validation",
+                     *       "title": "validation",
+                     *       "status": 422,
+                     *       "code": "validation",
+                     *       "request_id": "01JABCDEF0123456789"
+                     *     }
+                     */
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -14273,6 +15102,78 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    getCustodySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustodySettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    putCustodySettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustodySettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The new settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustodySettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     getFilesSettings: {
         parameters: {
             query?: never;
@@ -14334,78 +15235,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FilesSettings"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            412: components["responses"]["PreconditionFailed"];
-            422: components["responses"]["Unprocessable"];
-            428: components["responses"]["PreconditionRequired"];
-            429: components["responses"]["TooManyRequests"];
-        };
-    };
-    getLoanSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The settings. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["RequestId"];
-                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
-                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
-                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    ETag: components["headers"]["ETag"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoanSettings"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            429: components["responses"]["TooManyRequests"];
-        };
-    };
-    putLoanSettings: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
-                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
-                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
-                "If-Match": components["parameters"]["IfMatch"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoanSettings"];
-            };
-        };
-        responses: {
-            /** @description The new settings. */
-            200: {
-                headers: {
-                    "X-Request-Id": components["headers"]["RequestId"];
-                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
-                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
-                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
-                    ETag: components["headers"]["ETag"];
-                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoanSettings"];
                 };
             };
             400: components["responses"]["BadRequest"];

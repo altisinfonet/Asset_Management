@@ -122,6 +122,8 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.16 | 2026-11-24 | Managed departments and location edit fixes (0.2.4)                | 588/588 API e2e pooled, 54/54 real-stack; edit error root cause found      |
 | B.17 | 2026-11-24 | Loaner pool backend                                                | 627/627 API e2e pooled and direct; alert job tested with an advancing clock |
 | B.18 | 2026-11-24 | Three deferred M2 stories: list sorts, link a login, undo toast    | 622/622 API e2e pooled and direct, 59/59 real-stack; sort p95 50-100 ms    |
+| B.19 | 2026-11-24 | Import backend (CSV / XLSX, dry run, Google Admin preset)          | importer e2e suites green on the branch; two defects found in B.20          |
+| B.20 | 2026-11-24 | Wave 3 part 1 integration (four branches, follow-ups a-f)          | 699/699 API e2e direct and pooled, 21/21 clean builds, real-stack 64/64 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -356,6 +358,47 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   Compose stacks. The perf suite measures wall-clock time and is sensitive to a busy machine.
 - **Follow-ups:** scan-batch mode has no undo; there is no person merge; the web sorts of Location sort by the whole path, not the
   leaf name.
+
+### B.19 Import backend - 2026-11-24 (branch from `f687c04`, integrated in B.20)
+
+- **Scope:** M2-IMP-01..07 (migration `0110`, ADR 0010, ED-18, ED-19): import framework, file analysis (CSV encodings, XLSX
+  through a streaming reader), column and value mapping, dry run with the real validators, batched resumable commit, Google
+  Admin ChromeOS preset, generic templates, saved mappings, notification, 19 operations.
+- **Method:** importer e2e suites (assets, entities, flows, a 100,000-row compose run with the worker killed mid-commit),
+  isolation and route-replay cases for every operation, an in-process performance test with scaled gates (commit >= 10,000
+  rows/min, dry run of 100,000 rows < 10 min) that the nightly job enforces.
+- **Result:** all green on its branch (written before this record: the branch did not update AUDIT.md; the numbers are in the
+  M2-IMP-04 and M2-IMP-05 backlog entries).
+- **Findings after integration (B.20):** two defects that only the real-stack Google Admin run showed, both fixed (a row
+  undone at commit left its created references in the resolver cache; the dry run did not report a tag another asset
+  already has when matching on the serial).
+- **Follow-ups:** imports do not undo (v1.1); the founder's real files (F-09) are still missing.
+
+### B.20 Wave 3 part 1 integration - 2026-11-24 (version 0.2.4 plus four merges, Unreleased)
+
+- **Scope:** merged import backend (B.19), loaner backend (B.17), deferred items (B.18) and the web of wave 3 in that order;
+  regenerated the contract (203 operations), the client and API.md; then the follow-ups: the import wizard against the real
+  API (real MSW mock, `.xlsx`), the founder's loaner decisions (ED-24, migration `0140`), import data retention (ED-25,
+  migration `0141`), performance suites that enforce budgets only with `PERF`, real-stack specs for the import wizard and
+  the loaner desk, docs.
+- **Conflicts:** gen.mjs (all backend blocks kept, the web proposal block dropped), problem catalogue, scheduler, registry
+  module exports, subscriptions comment, route-replay, custody service (two methods added at the same place), docs;
+  generated files regenerated, never merged.
+- **Method:** clean-state build twice, API e2e direct and pooled (pooled twice) with the full environment, mock browser
+  suite, real-stack suite on a fresh stack, drift check, schema lint, Redocly, generator reproducibility.
+- **Result:** clean-state `turbo run lint typecheck test build --force` 21/21 twice (API unit 635, web 780, client 14); API
+  e2e 699/699 direct, pooled and pooled again, 0 skipped; mock browser suite 719 of 719 (axe in light and dark);
+  real-stack run 64 of 64 on a fresh stack; drift clean, schema lint 0, Redocly 0 errors, generator reproduces the yaml.
+- **Findings fixed during the work:** (1) the real Google Admin run committed 22 of 48 rows: a row undone by its savepoint left
+  the model it had created in the reference cache and the next rows hit a foreign key error: the resolvers are dropped
+  after an undone row (regression test in flows); (2) the dry run said "create" for rows whose tag another asset already
+  had (matching on serial): now an error in the dry run; (3) the mail tests of the loaner alerts failed when another test
+  file's outbox relay claimed the events (its mail went to its own fakes): the tests hand the events to the subscriptions
+  in-process; (4) real-stack tests that count "In repair" assets now ignore assets an import made.
+- **Known flakes closed:** the perf suites (registry, custody, search) record numbers and assert a 10x sanity ceiling unless
+  `PERF` is set; the nightly job sets it and runs them.
+- **Follow-ups:** API details the web works around are listed in STATUS.md section 5; `a11y-w3` axe scenarios for the import
+  wizard were edited by the web agent and run in the mock suite.
 
 ---
 

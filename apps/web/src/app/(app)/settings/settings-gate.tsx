@@ -17,6 +17,8 @@ const SECTION_PERMISSION: Record<SettingsSection, string | readonly string[]> = 
   status: 'catalog:manage',
   tags: 'catalog:manage',
   vendors: 'catalog:manage',
+  // everybody who can read departments sees the page; writing needs department:manage
+  departments: 'department:read',
   notifications: 'notification:manage',
 };
 

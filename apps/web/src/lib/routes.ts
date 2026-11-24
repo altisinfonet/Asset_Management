@@ -40,12 +40,14 @@ export const routes = {
    */
   assetsFiltered: ({
     location,
+    department,
     person,
     stateType,
     assigned,
     overdue,
   }: {
     location?: string;
+    department?: string;
     person?: string;
     stateType?: string;
     assigned?: boolean;
@@ -53,6 +55,7 @@ export const routes = {
   }) => {
     const params = new URLSearchParams();
     if (location) params.set('location', location);
+    if (department) params.set('department', department);
     if (person) params.set('person', person);
     if (stateType) params.set('state_type', stateType);
     if (assigned) params.set('assigned', 'yes');
@@ -74,6 +77,8 @@ export const routes = {
   /** The asset list with the progress of a CSV export open (the "export ready" notification). */
   exportJob: (id: string) => `/assets?export=${encodeURIComponent(id)}`,
   people: '/people',
+  /** The people list opened with one department chosen (`?department=`). */
+  peopleInDepartment: (id: string) => `/people?department=${encodeURIComponent(id)}`,
   personView: (id: string, tab?: string) =>
     `/people/view?id=${encodeURIComponent(id)}${tab ? `&tab=${tab}` : ''}`,
   settings: (section: SettingsSection = 'organisation') => `/settings/${section}`,
@@ -90,6 +95,7 @@ export const SETTINGS_SECTIONS = [
   'status',
   'tags',
   'vendors',
+  'departments',
   'notifications',
 ] as const;
 

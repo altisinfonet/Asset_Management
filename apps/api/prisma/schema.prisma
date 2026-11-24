@@ -134,6 +134,7 @@ model asset {
   asset_history                                          asset_history[]
   assignment_assignment_tenant_id_asset_idToasset        assignment?         @relation("assignment_tenant_id_asset_idToasset")
   assignment_assignment_tenant_id_target_asset_idToasset assignment[]        @relation("assignment_tenant_id_target_asset_idToasset")
+  loaner_pool_member                                     loaner_pool_member?
   maintenance_record                                     maintenance_record?
   transfer                                               transfer[]
 
@@ -262,12 +263,14 @@ model assignment {
   checkin_condition                                           String?
   asset_history                                               asset_history[]
   accessory                                                   accessory?      @relation(fields: [tenant_id, accessory_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "assignment_accessory_fk")
+  loaner_pool                                                 loaner_pool?    @relation(fields: [tenant_id, loaner_pool_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction, map: "assignment_loaner_pool_fk")
   asset_assignment_tenant_id_asset_idToasset                  asset?          @relation("assignment_tenant_id_asset_idToasset", fields: [tenant_id, asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   location_assignment_tenant_id_checkin_location_idTolocation location?       @relation("assignment_tenant_id_checkin_location_idTolocation", fields: [tenant_id, checkin_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   tenant                                                      tenant          @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   location_assignment_tenant_id_location_idTolocation         location?       @relation("assignment_tenant_id_location_idTolocation", fields: [tenant_id, location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   person                                                      person?         @relation(fields: [tenant_id, person_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   asset_assignment_tenant_id_target_asset_idToasset           asset?          @relation("assignment_tenant_id_target_asset_idToasset", fields: [tenant_id, target_asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  loan_alert                                                  loan_alert[]
   transfer_transfer_tenant_id_from_assignment_idToassignment  transfer[]      @relation("transfer_tenant_id_from_assignment_idToassignment")
   transfer_transfer_tenant_id_to_assignment_idToassignment    transfer[]      @relation("transfer_tenant_id_to_assignment_idToassignment")
 
@@ -276,6 +279,8 @@ model assignment {
   @@index([tenant_id, accessory_id], map: "assignment_accessory_open_idx", where: raw("((accessory_id IS NOT NULL) AND (checked_in_at IS NULL))"))
   @@index([tenant_id, asset_id, checked_out_at(sort: Desc), id(sort: Desc)], map: "assignment_asset_history_idx", where: raw("(asset_id IS NOT NULL)"))
   @@index([tenant_id, expected_return], map: "assignment_due_idx", where: raw("((checked_in_at IS NULL) AND (expected_return IS NOT NULL))"))
+  @@index([tenant_id, checked_in_at(sort: Desc), id(sort: Desc)], map: "assignment_loan_in_idx", where: raw("((loaner_pool_id IS NOT NULL) AND (checked_in_at IS NOT NULL))"))
+  @@index([tenant_id, checked_out_at(sort: Desc), id(sort: Desc)], map: "assignment_loan_out_idx", where: raw("(loaner_pool_id IS NOT NULL)"))
   @@index([tenant_id, location_id], map: "assignment_location_open_idx", where: raw("((location_id IS NOT NULL) AND (checked_in_at IS NULL))"))
   @@index([tenant_id, person_id, checked_out_at(sort: Desc), id(sort: Desc)], map: "assignment_person_open_idx", where: raw("(person_id IS NOT NULL)"))
   @@index([tenant_id, loaner_pool_id], map: "assignment_pool_open_idx", where: raw("((loaner_pool_id IS NOT NULL) AND (checked_in_at IS NULL))"))
@@ -670,6 +675,75 @@ model label_template {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model loan_alert {
+  id              String     @id @db.Uuid
+  tenant_id       String     @db.Uuid
+  assignment_id   String     @db.Uuid
+  kind            String
+  alert_date      DateTime   @db.Date
+  expected_return DateTime   @db.Date
+  days_overdue    Int        @default(0)
+  created_at      DateTime   @default(now()) @db.Timestamptz(6)
+  assignment      assignment @relation(fields: [tenant_id, assignment_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant          tenant     @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([tenant_id, assignment_id, expected_return], map: "loan_alert_due_soon_uq", where: raw("(kind = 'due_soon'::text)"))
+  @@unique([tenant_id, assignment_id, alert_date], map: "loan_alert_overdue_uq", where: raw("(kind = 'overdue'::text)"))
+  @@unique([tenant_id, id])
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model loaner_pool {
+  id                    String               @id @db.Uuid
+  tenant_id             String               @db.Uuid
+  name                  String
+  description           String?
+  home_location_id      String?              @db.Uuid
+  default_loan_days     Int                  @default(7)
+  max_loan_days         Int?
+  max_loans_per_person  Int?
+  eligible_person_kinds String[]             @default([])
+  owner_user_id         String?              @db.Uuid
+  is_active             Boolean              @default(true)
+  created_at            DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime             @default(now()) @db.Timestamptz(6)
+  created_by            String?              @db.Uuid
+  updated_by            String?              @db.Uuid
+  archived_at           DateTime?            @db.Timestamptz(6)
+  version               Int                  @default(1)
+  name_key              String?              @default(dbgenerated("lower(btrim(name))"))
+  assignment            assignment[]
+  tenant                tenant               @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location              location?            @relation(fields: [tenant_id, home_location_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  user_account          user_account?        @relation(fields: [tenant_id, owner_user_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  loaner_pool_member    loaner_pool_member[]
+
+  @@unique([tenant_id, name_key], map: "loaner_pool_name_uq", where: raw("(archived_at IS NULL)"))
+  @@unique([tenant_id, id])
+  @@index([tenant_id, home_location_id], map: "loaner_pool_location_idx", where: raw("(home_location_id IS NOT NULL)"))
+  @@schema("app")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model loaner_pool_member {
+  tenant_id      String      @db.Uuid
+  asset_id       String      @db.Uuid
+  loaner_pool_id String      @db.Uuid
+  added_at       DateTime    @default(now()) @db.Timestamptz(6)
+  added_by       String?     @db.Uuid
+  asset          asset       @relation(fields: [tenant_id, asset_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  tenant         tenant      @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  loaner_pool    loaner_pool @relation(fields: [tenant_id, loaner_pool_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([tenant_id, asset_id])
+  @@index([tenant_id, loaner_pool_id], map: "loaner_pool_member_pool_idx")
+  @@schema("app")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model location {
   id                                                            String            @id @db.Uuid
@@ -696,6 +770,7 @@ model location {
   assignment_assignment_tenant_id_checkin_location_idTolocation assignment[]      @relation("assignment_tenant_id_checkin_location_idTolocation")
   assignment_assignment_tenant_id_location_idTolocation         assignment[]      @relation("assignment_tenant_id_location_idTolocation")
   consumable                                                    consumable[]
+  loaner_pool                                                   loaner_pool[]
   company                                                       company           @relation(fields: [tenant_id, company_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   tenant                                                        tenant            @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   location                                                      location?         @relation("locationTolocation", fields: [tenant_id, parent_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
@@ -1143,6 +1218,9 @@ model tenant {
   invitation              invitation[]
   label_batch             label_batch[]
   label_template          label_template[]
+  loan_alert              loan_alert[]
+  loaner_pool             loaner_pool[]
+  loaner_pool_member      loaner_pool_member[]
   location                location[]
   mail_outbox             mail_outbox[]
   maintenance_record      maintenance_record[]
@@ -1215,6 +1293,7 @@ model user_account {
   version                 Int                       @default(1)
   export_job              export_job[]
   invitation              invitation[]
+  loaner_pool             loaner_pool[]
   notification            notification[]
   notification_delivery   notification_delivery[]
   notification_preference notification_preference[]

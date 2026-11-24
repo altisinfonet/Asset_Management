@@ -40,6 +40,8 @@ export const PRODUCERS: readonly Producer[] = [
     perTenant: true,
   },
   { name: 'export-sweep', queue: 'export.sweep', everySeconds: 3600, perTenant: true },
+  // M2-LOAN-03: overdue and due-soon alerts of loaner loans, once a day per tenant (tenant day = UTC, ED-21).
+  { name: 'loan-alerts', queue: 'loan.alerts', everySeconds: 86_400, perTenant: true },
 ];
 
 export interface SchedulerDeps {

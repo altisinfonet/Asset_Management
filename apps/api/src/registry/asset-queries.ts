@@ -453,6 +453,14 @@ export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Pri
     const overdue = Prisma.sql`${open} and s.expected_return < (now() at time zone 'UTC')::date`;
     c.push(q.overdue ? Prisma.sql`exists (${overdue})` : Prisma.sql`not exists (${overdue})`);
   }
+  // ED-20: loaner pool membership (primary key (tenant_id, asset_id) of app.loaner_pool_member)
+  const member = Prisma.sql`select 1 from app.loaner_pool_member m where m.tenant_id = a.tenant_id and m.asset_id = a.id`;
+  if (q.loaner_pool_id) {
+    c.push(Prisma.sql`exists (${member} and m.loaner_pool_id = ${q.loaner_pool_id}::uuid)`);
+  }
+  if (q.in_loaner_pool !== undefined) {
+    c.push(q.in_loaner_pool ? Prisma.sql`exists (${member})` : Prisma.sql`not exists (${member})`);
+  }
   if (q.department_id) c.push(Prisma.sql`a.department_id = ${q.department_id}::uuid`);
   if (q.company_id) c.push(Prisma.sql`a.company_id = ${q.company_id}::uuid`);
   if (q.vendor_id) c.push(Prisma.sql`a.vendor_id = ${q.vendor_id}::uuid`);

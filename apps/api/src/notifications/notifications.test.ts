@@ -54,6 +54,7 @@ describe('notification types and texts (M2-NOT-01)', () => {
         due_date: '2026-12-01',
         days_overdue: 2,
         borrower: 'Ada',
+        escalation: 'Please return it.',
         filename: 'a.csv',
         created: 1,
         updated: 2,
@@ -106,6 +107,8 @@ describe('the subscriber mapping table', () => {
       'accessory.low_stock',
       'label.batch.ready',
       'label.batch.failed',
+      'loan.overdue',
+      'loan.due_soon',
     ]) {
       expect(seen.has(event), event).toBe(true);
     }

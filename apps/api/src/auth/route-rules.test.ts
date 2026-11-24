@@ -8,6 +8,7 @@ import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
   ACC_TAGS,
   DEPT_TAGS,
+  LOANER_TAGS,
   M2_OPERATIONS,
   FILES_TAGS,
   LABELS_TAGS,
@@ -106,6 +107,16 @@ describe('route access rules', async () => {
     const departments = operations.filter((o) => DEPT_TAGS.has(o.tag));
     expect(departments.length).toBe(5);
     const missing = departments
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every Loaners operation of the contract (ED-20)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const loaners = operations.filter((o) => LOANER_TAGS.has(o.tag));
+    expect(loaners.length).toBe(18);
+    const missing = loaners
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

@@ -361,6 +361,25 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
     });
   });
 
+  it('walks the custody settings (M2-LIFE-09, tag Custody)', async () => {
+    const got = await hit('getCustodySettings', 'GET', '/v1/settings/custody', 200);
+    await hit('putCustodySettings', 'PUT', '/v1/settings/custody', 428, {
+      body: { loan_reminder_days: 3 },
+    });
+    await hit('putCustodySettings', 'PUT', '/v1/settings/custody', 412, {
+      body: { loan_reminder_days: 3 },
+      headers: { 'if-match': 'W/"999"' },
+    });
+    await hit('putCustodySettings', 'PUT', '/v1/settings/custody', 422, {
+      body: { default_expected_return_days: 0 },
+      headers: { 'if-match': String(got.headers.etag) },
+    });
+    await hit('putCustodySettings', 'PUT', '/v1/settings/custody', 200, {
+      body: { default_expected_return_days: 14, loan_reminder_days: 3 },
+      headers: { 'if-match': String(got.headers.etag) },
+    });
+  });
+
   it('the walk covered every operation of the wave-1 tags and of the Departments tag', () => {
     const required = operations.filter((o) => WAVE1_TAGS.has(o.tag)).map((o) => o.operationId);
     expect(required.length).toBeGreaterThanOrEqual(15);

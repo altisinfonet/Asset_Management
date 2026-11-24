@@ -2,6 +2,12 @@
 export { LifecycleModule } from './lifecycle.module.js';
 export { CustodyService, type CustodyResult, type TransferResult } from './custody.service.js';
 export {
+  type CustodySettings,
+  CustodySettingsService,
+  DEFAULT_CUSTODY_SETTINGS,
+  parseCustodySettings,
+} from './custody-settings.js';
+export {
   type AssignmentExtras,
   type AssignmentRow,
   assignmentDto,

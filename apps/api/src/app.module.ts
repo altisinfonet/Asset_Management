@@ -8,6 +8,7 @@ import { DepartmentsModule } from './departments/index.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
 import { LifecycleModule } from './lifecycle/index.js';
+import { LoanersModule } from './loaners/index.js';
 import { LocationsModule } from './locations/index.js';
 import { MaintenanceModule } from './maintenance/index.js';
 import { NotificationsModule } from './notifications/index.js';
@@ -57,6 +58,7 @@ export class AppModule {
               PeopleModule,
               DepartmentsModule,
               LifecycleModule,
+              LoanersModule,
               FilesModule,
               StockModule,
               TaggingModule,

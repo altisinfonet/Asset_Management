@@ -358,9 +358,10 @@ export const ASSET_EXPANDS = ['model', 'category', 'location', 'vendor', 'depart
 /**
  * Filters that exist in the contract but need tables another M2 wave builds: refused (400) until
  * they exist. (`include_sublocations`, `assigned`, `assigned_person_id` and `overdue` arrived with
- * locations and custody; `loaner_pool_id` comes with the loaner pools.)
+ * locations and custody, `loaner_pool_id` and `in_loaner_pool` with the loaner pools, ED-20.) Empty
+ * now; a later wave that adds a filter to the contract before its table lists the name here.
  */
-export const M2_ONLY_ASSET_FILTERS = ['loaner_pool_id'] as const;
+export const M2_ONLY_ASSET_FILTERS: readonly string[] = [];
 
 /** `true` / `false` in a query string. */
 const boolParam = z.enum(['true', 'false']).transform((v) => v === 'true');
@@ -381,6 +382,8 @@ export const assetListSchema = listQuerySchema.extend({
   assigned: boolParam.optional(),
   assigned_person_id: z.uuid().optional(),
   overdue: boolParam.optional(),
+  loaner_pool_id: z.uuid().optional(),
+  in_loaner_pool: boolParam.optional(),
   company_id: z.uuid().optional(),
   vendor_id: z.uuid().optional(),
   parent_asset_id: z.uuid().optional(),

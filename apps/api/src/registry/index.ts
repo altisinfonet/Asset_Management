@@ -1,12 +1,15 @@
 // Public facade of the registry module (M1-REG). Other modules import from here only.
 export { AssetsFacade, BULK_MAX, type AssetWithVersion } from './assets.facade.js';
 export { AssetTagService, formatAssetTag } from './asset-tags.js';
+export { type AssetMatchType, findAssetByCode, scanCandidates } from './asset-codes.js';
+export { ScanResolveThrottle } from './scan-throttle.js';
 export {
   type AssetDto,
   type AssetRow,
   type AssignmentSummaryDto,
   assetDto,
   loadAsset,
+  loadAssetRows,
   lockAsset,
   openAssignmentSummaries,
   withStatus,

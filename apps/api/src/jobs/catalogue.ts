@@ -160,6 +160,18 @@ export const QUEUES = {
     expireInSeconds: 10 * MINUTE,
     dedupeSeconds: 6 * 60 * MINUTE,
   },
+  /** Daily per tenant: raises the overdue and due-soon alerts of loaner loans (M2-LOAN-03, ED-21). */
+  'loan.alerts': {
+    name: 'loan.alerts',
+    tenantScoped: true,
+    priorityClass: 'scheduled',
+    runsIn: 'worker',
+    retryLimit: 3,
+    retryDelay: 60,
+    retryDelayMax: 15 * MINUTE,
+    expireInSeconds: 10 * MINUTE,
+    dedupeSeconds: 6 * 60 * MINUTE,
+  },
   /** Writes one CSV export through the StorageAdapter (M2-REG-02). Ids only: { tenantId, exportId }. */
   'export.run': {
     name: 'export.run',

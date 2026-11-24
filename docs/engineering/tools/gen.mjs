@@ -179,6 +179,9 @@ const PROBLEM_CODES = {
   'asset-not-deployable': [[409], 'The asset\'s status does not allow this custody action: check-out (and a transfer out of stock) need a `deployable` state, so lost, archived, in-repair and pending assets cannot be checked out.'],
   'insufficient-stock': [[409], 'Not enough quantity on hand.'],
   'no-loaner-available': [[409], 'The loaner pool has no available member.'],
+  // [LOAN] ED-20 loaner pools
+  'loan-limit-reached': [[409], 'The borrower already holds the most open loans the pool allows (`max_loans_per_person`).'],
+  'loaner-pool-inactive': [[409], 'The loaner pool is switched off (`is_active = false`): it lends nothing until it is switched on again.'],
   'import-stale-dry-run': [[409], 'The dry run being committed is not the one reviewed.'],
   // M2 wave 1b (files): BEGIN
   'upload-missing': [[409], 'The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete.'],
@@ -521,17 +524,28 @@ defineResource('Consumable', {
 });
 S_.Consumable.required.push('qty_on_hand', 'low_stock', 'label_code');
 defineResource('LoanerPool', {
+  description: 'A loaner pool (ED-20): a named set of spare devices (a Chromebook cart, a laptop trolley) with loan rules. An asset belongs to at most one pool.',
   props: {
-    name: str({ minLength: 1, maxLength: 200 }),
+    name: str({ minLength: 1, maxLength: 200, description: 'Unique among the live pools of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).' }),
     description: nstr(),
-    home_location_id: nuuid(),
-    default_loan_days: int({ minimum: 1, default: 7 }),
-    max_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Must be >= default_loan_days.' },
-    is_active: bool({ default: true }),
+    home_location_id: nuuid('Where returned devices go back to: a quick return moves the asset here unless the request names another location.'),
+    default_loan_days: int({ minimum: 1, default: 7, description: 'Length of a loan when the request has no `expected_return`: today (UTC) + this many days.' }),
+    max_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Longest a loan may run, counted from the day it started (also bounds an extension). Must be >= default_loan_days; null = no limit.' },
+    max_loans_per_person: { type: ['integer', 'null'], minimum: 1, description: 'Most open loans one person may hold from this pool at once (409 `loan-limit-reached`); null = no limit.' },
+    eligible_person_kinds: { type: ['array', 'null'], items: en(['employee', 'student', 'contractor', 'external']), minItems: 1, uniqueItems: true, description: 'Kinds of people who may borrow from the pool (422 `not-eligible` otherwise); null = every kind.' },
+    owner_user_id: nuuid('The user told about overdue loans of this pool in addition to the borrower; without one the users who hold `loaner:manage` are told.'),
+    is_active: bool({ default: true, description: 'false = the pool lends nothing (409 `loaner-pool-inactive`) but keeps its members and open loans.' }),
   },
   required: ['name'],
-  readOnly: { member_count: ro(int()), checked_out_count: ro(int()), overdue_count: ro(int()) },
+  readOnly: {
+    member_count: ro(int({ minimum: 0, description: 'Live (not archived) assets in the pool.' })),
+    available_count: ro(int({ minimum: 0, description: 'Members that can be lent right now: not archived, in a `deployable` state and not checked out.' })),
+    checked_out_count: ro(int({ minimum: 0, description: 'Members that are checked out (a loan from the pool or a regular check-out).' })),
+    overdue_count: ro(int({ minimum: 0, description: 'Checked-out members whose `expected_return` is before today (UTC).' })),
+    due_today_count: ro(int({ minimum: 0, description: 'Checked-out members whose `expected_return` is today (UTC).' })),
+  },
 });
+S_.LoanerPool.required.push('member_count', 'available_count', 'checked_out_count', 'overdue_count', 'due_today_count');
 defineResource('Repair', {
   description: 'Repair / maintenance log entry (table `maintenance_record`).',
   props: {
@@ -795,25 +809,159 @@ S_.StockMovementCreate = obj({
 S_.StockMovementList = obj({ data: arr(S('StockMovement')), page: S('PageInfo') }, ['data', 'page']);
 
 // loaners
-S_.LoanerPoolMember = obj({ asset_id: uuid(), loaner_pool_id: uuid(), added_at: dt(), available: bool({ description: 'Not currently checked out.' }), asset: S('Asset') }, ['asset_id', 'loaner_pool_id', 'added_at', 'available']);
+// [LOAN] BEGIN - loaner pools, quick loans, overdue, dashboard (ED-20, ED-21, ADR 0011)
+S_.LoanerPoolMember = obj({ asset_id: uuid(), loaner_pool_id: uuid(), added_at: dt(), available: bool({ description: 'Can be lent right now: not archived, in a `deployable` state and not checked out.' }), asset: S('Asset') }, ['asset_id', 'loaner_pool_id', 'added_at', 'available']);
 S_.LoanerPoolMemberList = obj({ data: arr(S('LoanerPoolMember')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanerPoolMembersBulk = obj({ ids: bulkIds() }, ['ids'], { additionalProperties: false, description: 'Asset ids (at most 100).' });
+S_.LoanerPoolMemberBulkResult = obj({
+  results: arr(obj({
+    index: int(),
+    status: int({ description: 'HTTP status the single-asset operation would have returned (201 added, 204 removed).' }),
+    data: S('LoanerPoolMember'),
+    error: S('Problem'),
+  }, ['index', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary']);
 S_.LoanerCheckoutRequest = obj({
   person_id: uuid(),
-  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen.'),
-  expected_return: date({ description: 'Defaults to today + pool.default_loan_days; must not exceed pool.max_loan_days.' }),
+  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).'),
+  expected_return: date({ description: 'Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.' }),
   note: str({ maxLength: 2000 }),
 }, ['person_id'], { additionalProperties: false });
+S_.PersonBrief = obj({
+  id: uuid(),
+  display_name: str(),
+  kind: en(['employee', 'student', 'contractor', 'external']),
+  email: nstr(),
+  employee_ref: nstr(),
+}, ['id', 'display_name', 'kind'], { description: 'The borrower a scan resolved to.' });
+S_.QuickLoanRequest = obj({
+  person_id: uuid('The borrower by id. Exactly one of `person_id` and `borrower`.'),
+  borrower: str({ minLength: 1, maxLength: 254, description: 'The borrower as scanned or typed: the exact email address or the exact `employee_ref` (the badge / student number), matched case-insensitively. Exactly one of `person_id` and `borrower`. 422 (pointer `/borrower`, code `not-found`) when nobody matches, 409 `conflict` when the text matches two different people.' }),
+  codes: arr(str({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 50, description: 'The devices: the opaque QR `label_code` (or the whole label URL), the asset tag or the exact serial number, as `GET /v1/scan/resolve` accepts them. Several devices per borrower in one request.' }),
+  expected_return: date({ description: 'One due date for every device. Defaults to today (UTC) + pool.default_loan_days; must not exceed the start day + pool.max_loan_days.' }),
+  note: str({ maxLength: 2000 }),
+}, ['codes'], {
+  additionalProperties: false,
+  oneOf: [{ required: ['person_id'] }, { required: ['borrower'] }],
+  description: 'Quick check-out by scanning: one borrower, one or more devices.',
+});
+S_.QuickLoanResult = obj({
+  person: S('PersonBrief'),
+  loaner_pool_id: uuid(),
+  expected_return: date({ description: 'The due date that applied (the request\'s, or the pool default).' }),
+  results: arr(obj({
+    index: int({ description: 'Position of the code in the request.' }),
+    code: str({ description: 'The code as sent.' }),
+    status: int({ description: '201 when the loan was opened, otherwise the status of the problem.' }),
+    data: S('CustodyResult'),
+    error: S('Problem'),
+  }, ['index', 'code', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['person', 'loaner_pool_id', 'expected_return', 'results', 'summary'], { description: 'Per-device outcome of a quick check-out, in request order. A device that fails (unknown code, not in this pool, already out, borrower at the pool\'s limit...) does not stop the others.' });
+S_.LoanReturnRequest = obj({
+  codes: arr(str({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 100, description: 'The returned devices (label code or URL, asset tag or serial), as for a quick check-out.' }),
+  loaner_pool_id: uuid('Only accept devices of this pool (422 `not-in-pool` for others).'),
+  checkin_location_id: nuuid('Where the devices are now; default the pool\'s `home_location_id`.'),
+  status_id: nuuid('Status to set on every device (default: the tenant default deployable status).'),
+  condition: en(['good', 'fair', 'poor', 'damaged']),
+  note: str({ maxLength: 2000 }),
+}, ['codes'], { additionalProperties: false, description: 'Return by scanning: one or many devices, any borrowers.' });
+S_.LoanReturnResult = obj({
+  results: arr(obj({
+    index: int({ description: 'Position of the code in the request.' }),
+    code: str({ description: 'The code as sent.' }),
+    status: int({ description: '200 when the device was checked in, otherwise the status of the problem.' }),
+    data: S('CustodyResult'),
+    error: S('Problem'),
+  }, ['index', 'code', 'status'])),
+  summary: obj({ total: int(), succeeded: int(), failed: int() }, ['total', 'succeeded', 'failed']),
+}, ['results', 'summary'], { description: 'Per-device outcome of a quick return, in request order (the per-scan feedback of the bulk check-in screen). Returning a device that is not out is a per-item `409 asset-not-checked-out`.' });
+S_.Loan = obj({
+  id: uuid('The assignment id.'),
+  asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
+  loaner_pool_id: uuid(),
+  pool_name: str(),
+  person_id: nuuid(),
+  person_name: nstr(),
+  person_email: nstr(),
+  person_ref: nstr({ description: 'The borrower\'s `employee_ref` (badge, student number).' }),
+  checked_out_at: dt(),
+  expected_return: date(),
+  returned_at: ndt({ description: 'When the device came back; null while it is out.' }),
+  state: en(['on_loan', 'due_today', 'overdue', 'returned'], { description: '`on_loan` = out and due after today, `due_today`, `overdue` = out and due before today, `returned`. "Today" is the UTC date.' }),
+  days_overdue: int({ minimum: 0, description: 'Whole days past the due date while `overdue`; 0 otherwise.' }),
+  note: nstr(),
+}, ['id', 'asset_id', 'asset_tag', 'loaner_pool_id', 'pool_name', 'checked_out_at', 'expected_return', 'state', 'days_overdue'], { description: 'A loan: one device out of a pool (an assignment with `loaner_pool_id`).' });
+S_.LoanList = obj({ data: arr(S('Loan')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanExtendRequest = obj({
+  expected_return: date({ description: 'The new due date: later than the current one, not before today (UTC) and within the pool\'s `max_loan_days` counted from the day the loan started.' }),
+  note: str({ maxLength: 500, description: 'Why (audit trail and history).' }),
+}, ['expected_return'], { additionalProperties: false });
 S_.OverdueCheckout = obj({
   assignment_id: uuid(),
   asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
   person_id: nuuid(),
   location_id: nuuid(),
   target_asset_id: nuuid(),
+  holder_name: nstr({ description: 'Display name of the person, location or asset the device is with.' }),
   loaner_pool_id: nuuid(),
+  pool_name: nstr(),
   expected_return: date(),
   days_overdue: int({ minimum: 1 }),
-}, ['assignment_id', 'asset_id', 'expected_return', 'days_overdue']);
+}, ['assignment_id', 'asset_id', 'asset_tag', 'expected_return', 'days_overdue']);
 S_.OverdueCheckoutList = obj({ data: arr(S('OverdueCheckout')), page: S('PageInfo') }, ['data', 'page']);
+S_.LoanerDashboardPool = obj({
+  id: uuid(),
+  name: str(),
+  is_active: bool(),
+  member_count: int({ minimum: 0 }),
+  available_count: int({ minimum: 0 }),
+  checked_out_count: int({ minimum: 0, description: 'Members that are checked out (includes the overdue ones and those due today).' }),
+  overdue_count: int({ minimum: 0 }),
+  due_today_count: int({ minimum: 0 }),
+  due_soon_count: int({ minimum: 0, description: 'Checked-out members due after today but within the tenant\'s `loan_reminder_days`.' }),
+}, ['id', 'name', 'is_active', 'member_count', 'available_count', 'checked_out_count', 'overdue_count', 'due_today_count', 'due_soon_count']);
+S_.LoanerActivity = obj({
+  at: dt(),
+  kind: en(['checked_out', 'checked_in']),
+  assignment_id: uuid(),
+  asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
+  person_id: nuuid(),
+  person_name: nstr(),
+  loaner_pool_id: uuid(),
+  pool_name: str(),
+  expected_return: date(),
+}, ['at', 'kind', 'assignment_id', 'asset_id', 'asset_tag', 'loaner_pool_id', 'pool_name', 'expected_return']);
+S_.LoanerDashboard = obj({
+  as_of: date({ description: 'The UTC date the counts are for.' }),
+  totals: obj({
+    pools: int({ minimum: 0 }),
+    members: int({ minimum: 0 }),
+    available: int({ minimum: 0 }),
+    checked_out: int({ minimum: 0 }),
+    overdue: int({ minimum: 0 }),
+    due_today: int({ minimum: 0 }),
+    due_soon: int({ minimum: 0 }),
+  }, ['pools', 'members', 'available', 'checked_out', 'overdue', 'due_today', 'due_soon']),
+  pools: arr(S('LoanerDashboardPool')),
+  recent: arr(S('LoanerActivity'), { maxItems: 20, description: 'The latest check-outs and returns of loans from the pools, newest first (at most 20).' }),
+}, ['as_of', 'totals', 'pools', 'recent'], { description: 'Everything the loaner dashboard page shows, in one call. Each count has a list behind it: `GET /v1/loans` (`loaner_pool_id`, `state`) for out / overdue / due today, `GET /v1/loaner-pools/{id}/members?available=true` for available.' });
+S_.CustodySettings = obj({
+  default_expected_return_days: { type: ['integer', 'null'], minimum: 1, maximum: 366, description: 'Pre-fill for the expected return of a check-out or transfer: today + this many days; null = none. A hint for clients: the API itself never applies it (a check-out without `expected_return` stays open-ended).' },
+  loan_reminder_days: int({ minimum: 0, maximum: 30, default: 2, description: 'How many days before the due date a borrower of a loaner pool gets the "due soon" reminder; 0 = no reminder.' }),
+}, ['default_expected_return_days', 'loan_reminder_days']);
+S_.CustodySettingsUpdate = obj({
+  default_expected_return_days: { type: ['integer', 'null'], minimum: 1, maximum: 366 },
+  loan_reminder_days: int({ minimum: 0, maximum: 30 }),
+}, [], { additionalProperties: false, description: 'Replaces the settings; an omitted member is reset to its default (`null` / 2).' });
+// [LOAN] END
 
 // repairs
 S_.RepairCompleteRequest = obj({
@@ -1560,7 +1708,8 @@ const assetFilters = [
   qp('assigned_person_id', uuid(), 'Currently checked out to this person.'),
   qp('assigned', bool(), 'true = checked out, false = in stock.'),
   qp('overdue', bool(), '[M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset.'),
-  qp('loaner_pool_id', uuid(), 'Members of this loaner pool.'),
+  qp('loaner_pool_id', uuid(), '[LOAN] Members of this loaner pool (ED-20).'),
+  qp('in_loaner_pool', bool(), '[LOAN] true = member of any loaner pool, false = in none.'),
   qp('warranty_end_before', date(), 'Warranty ends on or before.'),
   qp('warranty_end_after', date(), 'Warranty ends on or after.'),
   qp('purchase_date_from', date(), 'Purchased on or after.'),
@@ -1833,38 +1982,110 @@ addOp('/v1/people/{id}/stock-movements', 'get', {
 // [M2-W2 ACC]: END
 
 // ---------------------------------------------------------------- LOANERS
+// [LOAN] BEGIN - loaner pools (M2-LOAN-01, ED-20, ED-21, ADR 0011)
 crud({
   tag: 'Loaners', base: 'loaner-pools', name: 'LoanerPool', plural: 'LoanerPools', singular: 'loaner pool', readPerm: 'loaner:read', writePerm: 'loaner:manage',
-  filters: [qp('is_active', bool(), 'Only active / inactive pools.')], sorts: ['name', 'created_at'], defSort: ['name'],
+  filters: [qp('is_active', bool(), 'Only active / inactive pools.'), qp('home_location_id', uuid(), 'Pools whose home is this location.')], sorts: ['name', 'created_at'], defSort: ['name'],
 });
+doc.paths['/v1/loaner-pools'].get.description = 'Cursor-paginated list. `q` matches the name. Every pool carries its live counts (`member_count`, `available_count`, `checked_out_count`, `overdue_count`, `due_today_count`), so the pool list needs one call.';
+doc.paths['/v1/loaner-pools'].post.description = 'Creates a pool. The name is unique among live pools, ignoring case (409 `conflict`, pointer `/name`); `home_location_id` must be a live location and `owner_user_id` an active user (422); `max_loan_days` must be >= `default_loan_days` (422).';
+doc.paths['/v1/loaner-pools/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_loans` while a member is checked out; otherwise the pool is archived and its memberships are removed, so the assets can join another pool. Switch a pool off with `is_active: false` instead to keep its members.';
 addOp('/v1/loaner-pools/{id}/members', 'get', {
   tag: 'Loaners', id: 'listLoanerPoolMembers', summary: 'List pool members', perm: 'loaner:read',
-  params: [ID, P('Cursor'), P('Limit'), qp('available', bool(), 'true = not currently checked out.')],
+  description: 'The assets of the pool, in asset-tag order, with the full asset (status, location, `current_assignment`) and whether each can be lent right now.',
+  params: [ID, P('Cursor'), P('Limit'), qp('available', bool(), 'true = can be lent right now (not archived, `deployable`, not checked out); false = every other member.')],
   success: { 200: okResp(200, 'A page of pool members.', S('LoanerPoolMemberList'), { replay: false }) },
 });
 addOp('/v1/loaner-pools/{id}/members', 'post', {
   tag: 'Loaners', id: 'addLoanerPoolMember', summary: 'Add an asset to the pool', perm: 'loaner:manage', params: [ID],
-  description: 'An asset belongs to at most one pool (409 if it is in another).',
+  description: 'An asset belongs to at most one pool (409 `conflict` if it is in another one; adding it to the pool it is in answers 200 with the existing member). Archived assets cannot join (422). A member can still be checked out the regular way.',
   body: jsonBody(obj({ asset_id: uuid() }, ['asset_id'], { additionalProperties: false })),
-  success: { 201: okResp(201, 'Added.', S('LoanerPoolMember')) },
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The asset is a member of another pool.' } },
+  success: { 201: okResp(201, 'Added.', S('LoanerPoolMember')), 200: okResp(200, 'Already a member of this pool.', S('LoanerPoolMember')) },
 });
 addOp('/v1/loaner-pools/{id}/members/{asset_id}', 'delete', {
   tag: 'Loaners', id: 'removeLoanerPoolMember', summary: 'Remove an asset from the pool', perm: 'loaner:manage', params: [ID, P('AssetIdPath')],
-  description: 'Rejected with 409 while the asset is on loan.',
+  description: 'Rejected with 409 while the asset is on loan from this pool (`usage.open_loans`); a regular check-out of a member does not block removal.',
   success: { 204: okResp(204, 'Removed.') },
+});
+addOp('/v1/loaner-pools/{id}/members/bulk-add', 'post', {
+  tag: 'Loaners', id: 'bulkAddLoanerPoolMembers', summary: 'Add many assets to the pool', perm: 'loaner:manage', params: [ID], conflict: false,
+  description: 'Adds every listed asset (same rules as `POST /v1/loaner-pools/{id}/members`). At most 100 ids; the response is `200` with one result per id, in request order, and a failing item does not roll back the others. Idempotent with `Idempotency-Key`.',
+  body: jsonBody(S('LoanerPoolMembersBulk')),
+  success: { 200: okResp(200, 'Per-item results.', S('LoanerPoolMemberBulkResult')) },
+});
+addOp('/v1/loaner-pools/{id}/members/bulk-remove', 'post', {
+  tag: 'Loaners', id: 'bulkRemoveLoanerPoolMembers', summary: 'Remove many assets from the pool', perm: 'loaner:manage', params: [ID], conflict: false,
+  description: 'Removes every listed asset (same rules as `DELETE /v1/loaner-pools/{id}/members/{asset_id}`). At most 100 ids; `200` with one result per id (status 204 on success, no `data`), a failing item does not roll back the others.',
+  body: jsonBody(S('LoanerPoolMembersBulk')),
+  success: { 200: okResp(200, 'Per-item results.', S('LoanerPoolMemberBulkResult')) },
 });
 addOp('/v1/loaner-pools/{id}/checkout', 'post', {
   tag: 'Loaners', id: 'checkoutLoaner', summary: 'Quick loan from the pool', perm: 'loaner:checkout', params: [ID], idem: 'required',
-  description: 'Checks out a specific pool member, or the next available one, to a person with a due date. Return it with `POST /v1/assets/{id}/checkin`. 409 `no-loaner-available` when the pool is empty. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment.',
+  description: 'Checks out a specific pool member, or the next available one (lowest asset tag first), to a person with a due date: `expected_return`, else today (UTC) + the pool\'s `default_loan_days`. Return it with `POST /v1/assets/{id}/checkin` or `POST /v1/loans/return`. 409 `no-loaner-available` when the pool is empty, `loaner-pool-inactive` when it is switched off, `loan-limit-reached` when the borrower is at the pool\'s limit; 422 when the person is inactive or of a kind the pool does not serve (`not-eligible`) or the due date is past the pool\'s `max_loan_days`. Like a normal check-out it returns the updated asset (the client may not have known which pool member was chosen) and the assignment, which carries `loaner_pool_id`.',
   body: jsonBody(S('LoanerCheckoutRequest')),
+  problems: { 409: { codes: ['no-loaner-available', 'loaner-pool-inactive', 'loan-limit-reached', 'asset-already-checked-out', 'asset-not-deployable', 'conflict', 'idempotency-key-in-flight'], text: 'The pool has nothing to lend, is switched off, or the borrower is at the limit; or (with `asset_id`) the device is out or not deployable.' } },
   success: { 201: okResp(201, 'Loan opened. Returns the updated asset and the new assignment; `ETag` is the new version of the asset.', S('CustodyResult'), { etag: true, location: true }) },
+});
+addOp('/v1/loaner-pools/{id}/quick-checkout', 'post', {
+  tag: 'Loaners', id: 'quickCheckoutLoaners', summary: 'Quick loan by scanning: one borrower, many devices', perm: 'loaner:checkout', params: [ID], idem: 'required', conflict: false,
+  description: 'The quick check-out screen in one call: the borrower (`person_id`, or `borrower` = the scanned email / badge, see `QuickLoanRequest`) and the scanned devices (`codes`: label code or URL, asset tag, serial). The due date is `expected_return`, else today (UTC) + the pool\'s `default_loan_days`. The borrower is validated once (whole request `422`: unknown, inactive, not eligible; `409 loaner-pool-inactive`); then every code is a loan of its own, in order, answered per item (`results[].status`, `results[].error`): unknown code `404`, ambiguous serial `409 conflict`, not a member of this pool `422` (`not-in-pool`, pointer `/codes/<i>`), already out `409 asset-already-checked-out`, not deployable `409 asset-not-deployable`, past the borrower\'s limit `409 loan-limit-reached`. A failing item does not roll back the others. Every loan is a normal check-out (one open custody per asset, history, audit, outbox) with the pool on the assignment. Unknown codes count towards the scan-resolve throttle (429 once exceeded). Replaying the same `Idempotency-Key` answers the stored result.',
+  body: jsonBody(S('QuickLoanRequest')),
+  problems: { 404: { codes: ['not-found'], text: 'No such pool.' }, 409: { codes: ['loaner-pool-inactive', 'conflict', 'idempotency-key-in-flight'], text: 'The pool is switched off, the borrower text matches two people, or a request with the same Idempotency-Key is still running.' }, 422: { codes: ['validation', 'idempotency-key-reuse'], text: 'Bad body, unknown / inactive / ineligible borrower, or due date past the pool\'s maximum.' } },
+  success: { 200: okResp(200, 'Per-device results (HTTP 200 whenever the request itself was valid).', S('QuickLoanResult')) },
+});
+// [LOAN] END
+
+// [LOAN] BEGIN - loans: list, return, extend, overdue, dashboard (M2-LOAN-02..04)
+addOp('/v1/loans', 'get', {
+  tag: 'Loaners', id: 'listLoans', summary: 'List loans', perm: 'loaner:read', hasId: false,
+  description: 'Loans from loaner pools (assignments with a `loaner_pool_id`): the click-through lists behind the dashboard. By default the open ones (`on_loan`, `due_today`, `overdue`); add `returned` to include closed ones. `q` matches the asset tag and name and the borrower\'s name.',
+  params: [P('Cursor'), P('Limit'), P('IncludeTotal'), P('Q'), qp('loaner_pool_id', uuid(), 'Only this pool.'), qp('person_id', uuid(), 'Only this borrower.'), qp('asset_id', uuid(), 'Only this device.'), arrQ('state', en(['on_loan', 'due_today', 'overdue', 'returned']), 'Only these states. Default: `on_loan,due_today,overdue`.'), qp('due_within_days', int({ minimum: 0, maximum: 366 }), 'Open loans due on or before today + N days (0 = due today or earlier).'), sortParam(['expected_return', 'checked_out_at'], ['expected_return'])],
+  success: { 200: okResp(200, 'A page of loans.', S('LoanList'), { replay: false }) },
 });
 addOp('/v1/loans/overdue', 'get', {
   tag: 'Loaners', id: 'listOverdueCheckouts', summary: 'Overdue check-outs', perm: 'loaner:read', hasId: false,
-  description: 'Open asset check-outs past `expected_return`, loaner or not (the data behind overdue alerts).',
+  description: 'Open asset check-outs past `expected_return` (before today, UTC), loaner or not, to anyone or anywhere: the data behind the overdue view. Only loans from a loaner pool raise alerts (see ED-21). `days_overdue` counts whole days.',
   params: [P('Cursor'), P('Limit'), qp('loaner_pool_id', uuid(), 'Only this pool.'), qp('person_id', uuid(), 'Only this borrower.'), sortParam(['expected_return', 'days_overdue'], ['expected_return'])],
   success: { 200: okResp(200, 'A page of overdue check-outs.', S('OverdueCheckoutList'), { replay: false }) },
 });
+addOp('/v1/loans/return', 'post', {
+  tag: 'Loaners', id: 'returnLoans', summary: 'Quick return by scanning (one or many devices)', perm: 'loaner:checkout', hasId: false, idem: 'required', conflict: false,
+  description: 'The bulk check-in screen in one call: the scanned devices (`codes`, at most 100) are checked in one after the other, answered per item in request order. A device must be a member of a loaner pool (of `loaner_pool_id` when given): else `422` (`not-in-pool`, pointer `/codes/<i>`); not checked out `409 asset-not-checked-out`; unknown code `404`. Each return is a normal check-in (history, audit, outbox, status back to deployable) and moves the device to `checkin_location_id`, or to the pool\'s `home_location_id`. A failing item does not roll back the others; unknown codes count towards the scan-resolve throttle. Replaying the same `Idempotency-Key` answers the stored result; returning a device twice with different keys is a per-item `409 asset-not-checked-out`.',
+  body: jsonBody(S('LoanReturnRequest')),
+  problems: { 409: { codes: ['idempotency-key-in-flight'], text: 'A request with the same Idempotency-Key is still running.' }, 422: { codes: ['validation', 'idempotency-key-reuse'], text: 'Bad body, unknown location or status.' } },
+  success: { 200: okResp(200, 'Per-device results (HTTP 200 whenever the request itself was valid).', S('LoanReturnResult')) },
+});
+addOp('/v1/loans/{id}', 'get', {
+  tag: 'Loaners', id: 'getLoan', summary: 'Get a loan', perm: 'loaner:read', params: [ID],
+  description: 'One loan by its assignment id (open or returned).',
+  success: { 200: okResp(200, 'The loan.', S('Loan'), { replay: false }) },
+});
+addOp('/v1/loans/{id}/extend', 'post', {
+  tag: 'Loaners', id: 'extendLoan', summary: 'Extend a loan', perm: 'loaner:checkout', params: [ID],
+  description: 'Moves the due date of an open loan to a later date: not before today (UTC) and within the pool\'s `max_loan_days` counted from the day the loan started (422 `/expected_return`). A closed loan is `409 conflict`. Extending is a logged action: an audit record (`loan.extended`, with the old and new date and the note), an outbox event and an entry in the asset\'s history (event type `updated`, `payload.loan_extended`). The asset\'s ETag changes (its `current_assignment` did). The "due soon" and "overdue" alerts re-arm for the new date.',
+  body: jsonBody(S('LoanExtendRequest')),
+  success: { 200: okResp(200, 'The loan with its new due date.', S('Loan')) },
+});
+addOp('/v1/loaners/dashboard', 'get', {
+  tag: 'Loaners', id: 'getLoanerDashboard', summary: 'Loaner dashboard', perm: 'loaner:read', hasId: false, mutate: false,
+  description: 'Per-pool counts (pool size, available, out, overdue, due today, due soon) with their totals, and the latest check-outs and returns. Counts cover live (not archived) pools and members; "today" is the UTC date (`as_of`). Inactive pools are listed (with `is_active: false`) and counted.',
+  success: { 200: okResp(200, 'The dashboard.', S('LoanerDashboard'), { replay: false }) },
+});
+// [LOAN] END
+// [LOAN] BEGIN - tenant custody settings (M2-LIFE-09)
+addOp('/v1/settings/custody', 'get', {
+  tag: 'Custody', id: 'getCustodySettings', summary: 'Get the custody settings', perm: 'catalog:read', hasId: false,
+  description: 'Organisation-wide custody defaults: `default_expected_return_days` (the web app pre-fills the expected return of check-out and transfer dialogs with today + N days; the API itself never applies it) and `loan_reminder_days` (lead time of the "due soon" reminder of loaner loans).',
+  success: { 200: okResp(200, 'The settings.', S('CustodySettings'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/custody', 'put', {
+  tag: 'Custody', id: 'putCustodySettings', summary: 'Replace the custody settings', perm: 'catalog:manage', ifMatch: true, conflict: false, hasId: false,
+  description: 'Replaces both settings (an omitted one is reset to its default). `If-Match` is the ETag of `GET` (the tenant settings version). Audited like the other settings.',
+  body: jsonBody(S('CustodySettingsUpdate')),
+  success: { 200: okResp(200, 'The new settings.', S('CustodySettings'), { etag: true }) },
+});
+// [LOAN] END
 
 // ---------------------------------------------------------------- REPAIRS
 crud({

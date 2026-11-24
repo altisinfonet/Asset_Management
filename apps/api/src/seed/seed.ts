@@ -1,6 +1,7 @@
 import { seedDemoLogins } from '../auth/index.js';
 import { addUser, bootstrapTenant } from '../bootstrap/bootstrap-tenant.js';
 import { uuidv7 } from '../ids/uuidv7.js';
+import { ensureDemoLoaners } from './loaners.js';
 import type { SecretBox } from '../ports/index.js';
 import type { Prisma, TenancyService, Tx } from '../tenancy/index.js';
 
@@ -338,7 +339,7 @@ function lcg(seed: number): () => number {
 /**
  * Creates the two demo tenants "Acme" and "Globex" with an Owner, an Admin, a Technician and a
  * Viewer each, default status labels and categories, manufacturers, models, custom field
- * definitions and 200 assets (every asset in the "In repair" status has an open repair record). Idempotent: a tenant that already has assets is left untouched.
+ * definitions and 200 assets (every asset in the "In repair" status has an open repair record) and a loaner pool of ten Chromebooks with five loans. Idempotent: a tenant that already has assets is left untouched.
  * Refuses to run in production.
  */
 export async function seedDemoData(
@@ -385,6 +386,7 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
   if (existing > 0) {
     // An already seeded tenant keeps its data; the demo departments (ED-17) are topped up, idempotently.
     await topUpDepartments(trx, tenantId);
+    await ensureDemoLoaners(trx, tenantId);
     return false;
   }
 
@@ -563,6 +565,7 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
     restoreStatusId: statusByName.get('Ready to deploy')!,
   });
   await seedStock(trx, tenantId, company.id, staff, places);
+  await ensureDemoLoaners(trx, tenantId);
 
   return true;
 }

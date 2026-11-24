@@ -58,6 +58,6 @@ import { SearchService } from './search.service.js';
     ScanResolverRegistry,
     SearchService,
   ],
-  exports: [AssetsFacade, AssetTagService, ScanResolverRegistry],
+  exports: [AssetsFacade, AssetTagService, ScanResolverRegistry, ScanResolveThrottle],
 })
 export class RegistryModule {}

@@ -39,7 +39,7 @@ export const en: Catalogue = {
 
   'notification.loan.overdue.title': 'Overdue: {asset}',
   'notification.loan.overdue.body':
-    '{asset} was due back on {due_date} and is {days_overdue} day(s) overdue. Borrower: {borrower}.',
+    '{asset} was due back on {due_date} and is {days_overdue} day(s) overdue. Borrower: {borrower}. {escalation}',
 
   'notification.loan.due_soon.title': 'Due back soon: {asset}',
   'notification.loan.due_soon.body': '{asset} is due back on {due_date}.',

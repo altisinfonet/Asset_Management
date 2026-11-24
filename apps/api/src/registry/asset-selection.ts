@@ -27,6 +27,8 @@ export const ASSET_SELECTION_KEYS = [
   'assigned',
   'assigned_person_id',
   'overdue',
+  'loaner_pool_id',
+  'in_loaner_pool',
   'company_id',
   'vendor_id',
   'parent_asset_id',

@@ -22,6 +22,7 @@ import {
 } from './fixtures';
 import { problem, requireSession } from './http';
 import { roleIdFor } from './registry-fixtures';
+import { departmentHandlers } from './dept-handlers';
 import { m2Handlers } from './m2-handlers';
 import { registryHandlers } from './registry-handlers';
 import { w2Handlers } from './w2-handlers';
@@ -252,6 +253,7 @@ export const handlers: HttpHandler[] = [
   // ---- not auth, but the dashboard and the API-status tile call them --------------------
   ...registryHandlers,
   ...m2Handlers,
+  ...departmentHandlers,
   ...w2Handlers,
 
   http.get('/v1/health', () =>

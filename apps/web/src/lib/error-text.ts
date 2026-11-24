@@ -4,6 +4,7 @@ import type { UiError } from '@/lib/api';
 /** Keys of a `409` problem's `usage` member the API sends today, with a catalogue key each. */
 const USAGE_LABELS = {
   assets: 'usage.assets',
+  people: 'usage.people',
   models: 'usage.models',
   custom_fields: 'usage.customFields',
   assets_with_values: 'usage.assetsWithValues',

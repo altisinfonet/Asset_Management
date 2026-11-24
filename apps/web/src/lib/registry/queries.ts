@@ -5,6 +5,7 @@ import { useCallback, useMemo } from 'react';
 import { useAuth } from '@/lib/auth/auth-context';
 import {
   categoriesApi,
+  departmentsApi,
   fetchAll,
   fieldsApi,
   locationsApi,
@@ -19,6 +20,7 @@ import type {
   AssetModel,
   Category,
   CustomFieldDef,
+  Department,
   Location,
   Manufacturer,
   Role,
@@ -39,6 +41,7 @@ export const LOOKUP_KEYS = {
   models: ['lookup', 'models'],
   vendors: ['lookup', 'vendors'],
   locations: ['lookup', 'locations'],
+  departments: ['lookup', 'departments'],
   roles: ['lookup', 'roles'],
 } as const;
 
@@ -141,6 +144,18 @@ export function useLocations() {
   });
 }
 
+/** Every live department (ED-17), for the pickers, filters and name columns. */
+export function useDepartments() {
+  const enabled = useCan('department:read');
+  return useQuery({
+    queryKey: LOOKUP_KEYS.departments,
+    queryFn: () =>
+      fetchAll<Department>((cursor) => departmentsApi.list({ limit: 200, cursor, sort: ['name'] })),
+    enabled,
+    staleTime: STALE,
+  });
+}
+
 export function useRoles() {
   const enabled = useCan('role:read');
   return useQuery({
@@ -180,12 +195,14 @@ export interface Lookups {
   models: AssetModel[];
   vendors: Vendor[];
   locations: Location[];
+  departments: Department[];
   manufacturers: Manufacturer[];
   categoryById: Map<string, Category>;
   statusById: Map<string, StatusLabel>;
   modelById: Map<string, AssetModel>;
   vendorById: Map<string, Vendor>;
   locationById: Map<string, Location>;
+  departmentById: Map<string, Department>;
   manufacturerById: Map<string, Manufacturer>;
   /** Fields that apply to a category (its own plus those for all categories), in display order. */
   fieldsFor: (categoryId: string | undefined | null) => CustomFieldDef[];
@@ -205,6 +222,7 @@ export function useLookups(): Lookups {
   const models = useModels();
   const vendors = useVendors();
   const locations = useLocations();
+  const departments = useDepartments();
   const manufacturers = useManufacturers();
 
   const categoryList = categories.data ?? EMPTY;
@@ -213,6 +231,7 @@ export function useLookups(): Lookups {
   const modelList = models.data ?? EMPTY;
   const vendorList = vendors.data ?? EMPTY;
   const locationList = locations.data ?? EMPTY;
+  const departmentList = departments.data ?? EMPTY;
   const manufacturerList = manufacturers.data ?? EMPTY;
 
   return useMemo(() => {
@@ -225,12 +244,14 @@ export function useLookups(): Lookups {
       models: modelList,
       vendors: vendorList,
       locations: locationList,
+      departments: departmentList,
       manufacturers: manufacturerList,
       categoryById: byId(categoryList),
       statusById: byId(statusList),
       modelById: byId(modelList),
       vendorById: byId(vendorList),
       locationById: byId(locationList),
+      departmentById: byId(departmentList),
       manufacturerById: byId(manufacturerList),
       fieldsFor: (categoryId) =>
         fieldList
@@ -253,6 +274,7 @@ export function useLookups(): Lookups {
     modelList,
     vendorList,
     locationList,
+    departmentList,
     manufacturerList,
     categories.isLoading,
     fields.isLoading,

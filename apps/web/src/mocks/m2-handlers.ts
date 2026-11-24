@@ -50,15 +50,15 @@ const CATALOG = {
   'unsupported-media-type': [415, 'Unsupported media type'],
 } as const;
 
-function fail(code: keyof typeof CATALOG, extra: ProblemExtra = {}) {
+export function fail(code: keyof typeof CATALOG, extra: ProblemExtra = {}) {
   const [status, title] = CATALOG[code];
   return problem(status, code, title, extra);
 }
 
-const notFound = (what: string) => fail('not-found', { detail: `${what} not found.` });
+export const notFound = (what: string) => fail('not-found', { detail: `${what} not found.` });
 
 /** `409 conflict` with the `usage` counts of what still references the record (`inUse` of the API). */
-function inUse(label: string, usage: Record<string, number>) {
+export function inUse(label: string, usage: Record<string, number>) {
   const parts = Object.entries(usage)
     .filter(([, n]) => n > 0)
     .map(([what, n]) => `${what}: ${n}`);
@@ -69,21 +69,21 @@ function inUse(label: string, usage: Record<string, number>) {
 }
 
 /** `409 conflict` of a unique value taken (`duplicate` of the API). */
-const duplicate = (label: string, pointer: string, value: string) =>
+export const duplicate = (label: string, pointer: string, value: string) =>
   fail('conflict', {
     detail: `${label} "${value}" already exists.`,
     errors: [{ pointer, message: 'is already in use', code: 'duplicate' }],
   });
 
 /** A reference to something that does not exist (`invalidRef` of the API). */
-const missing = (pointer: string, message: string): FieldError => ({
+export const missing = (pointer: string, message: string): FieldError => ({
   pointer,
   message,
   code: 'not-found',
 });
 
 /** A body member the schema does not know: zod's strict object reports it on the root. */
-function rejectUnknown(body: Body, allowed: readonly string[]): FieldError[] {
+export function rejectUnknown(body: Body, allowed: readonly string[]): FieldError[] {
   return Object.keys(body)
     .filter((key) => !allowed.includes(key))
     .map((key) => ({
@@ -97,7 +97,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value);
 
 /** `z.uuid()` members (optionally nullable): the bad ones as field errors. */
-function checkUuids(body: Body, keys: readonly string[], nullable: readonly string[] = []) {
+export function checkUuids(body: Body, keys: readonly string[], nullable: readonly string[] = []) {
   const errors: FieldError[] = [];
   for (const key of keys) {
     const value = body[key];
@@ -110,7 +110,11 @@ function checkUuids(body: Body, keys: readonly string[], nullable: readonly stri
 }
 
 /** `str().trim().max(n)` members. */
-function checkTexts(body: Body, limits: Record<string, number>, nullable: readonly string[] = []) {
+export function checkTexts(
+  body: Body,
+  limits: Record<string, number>,
+  nullable: readonly string[] = [],
+) {
   const errors: FieldError[] = [];
   for (const [key, max] of Object.entries(limits)) {
     const value = body[key];
@@ -134,7 +138,7 @@ function checkTexts(body: Body, limits: Record<string, number>, nullable: readon
 
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 const dayBefore = () => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+export const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const DEFAULT_COMPANY = '0190a6b2-0000-7000-8000-0000000000c0';
 
 // ==== locations ==================================================================================
@@ -513,7 +517,7 @@ const PERSON_KEYS = [
   'email',
   'phone',
   'employee_ref',
-  'department',
+  'department_id',
   'job_title',
   'location_id',
   'company_id',
@@ -530,8 +534,16 @@ const assetsHeld = (personId: string) =>
 const openAssignmentsOf = (personId: string) =>
   registry().assignments.filter((a) => a.person_id === personId && !a.checked_in_at).length;
 
+/** `Person.department` is the NAME of the linked department (read-only); `department_id` is what is written. */
+const departmentNameOf = (id: string | null | undefined): string | null =>
+  (id ? registry().departments.find((d) => d.id === id)?.name : undefined) ?? null;
+
 function personView(person: MockPerson) {
-  return { ...strip(person), assets_held: assetsHeld(person.id) };
+  return {
+    ...strip(person),
+    department: departmentNameOf(person.department_id),
+    assets_held: assetsHeld(person.id),
+  };
 }
 
 function onePerson(person: MockPerson, status = 200, headers: Record<string, string> = {}) {
@@ -589,7 +601,13 @@ function validatePersonBody(body: Body, mode: 'create' | 'update'): FieldError[]
       errors.push({ pointer: '/email', message: 'Invalid email address', code: 'format' });
     }
   }
-  errors.push(...checkUuids(body, ['location_id', 'company_id'], ['location_id']));
+  errors.push(
+    ...checkUuids(
+      body,
+      ['location_id', 'company_id', 'department_id'],
+      ['location_id', 'department_id'],
+    ),
+  );
   errors.push(
     ...checkTexts(
       body,
@@ -598,11 +616,10 @@ function validatePersonBody(body: Body, mode: 'create' | 'update'): FieldError[]
         last_name: 100,
         phone: 60,
         employee_ref: 100,
-        department: 200,
         job_title: 200,
         notes: 10_000,
       },
-      ['first_name', 'last_name', 'phone', 'employee_ref', 'department', 'job_title', 'notes'],
+      ['first_name', 'last_name', 'phone', 'employee_ref', 'job_title', 'notes'],
     ),
   );
   if ('force' in body && typeof body.force !== 'boolean') {
@@ -676,7 +693,8 @@ const personHandlers: HttpHandler[] = [
           const kinds = csv(params, 'kind');
           if (kinds.length > 0 && !kinds.includes(p.kind ?? 'employee')) return false;
           if (params.get('status') && p.status !== params.get('status')) return false;
-          if (params.get('department') && p.department !== params.get('department')) return false;
+          if (params.get('department_id') && p.department_id !== params.get('department_id'))
+            return false;
           if (params.get('location_id') && p.location_id !== params.get('location_id'))
             return false;
           if (params.get('employee_ref') && p.employee_ref !== params.get('employee_ref'))
@@ -712,6 +730,12 @@ const personHandlers: HttpHandler[] = [
     ) {
       errors.push(missing('/location_id', 'No such location.'));
     }
+    if (
+      body.department_id &&
+      !data.departments.some((d) => d.id === body.department_id && !d.archived_at)
+    ) {
+      errors.push(missing('/department_id', 'No such department.'));
+    }
     if (body.company_id && body.company_id !== DEFAULT_COMPANY) {
       errors.push(missing('/company_id', 'No such company.'));
     }
@@ -733,7 +757,8 @@ const personHandlers: HttpHandler[] = [
         email,
         phone: nullableText(body.phone),
         employee_ref: nullableText(body.employee_ref),
-        department: nullableText(body.department),
+        department: null,
+        department_id: (body.department_id as string | null | undefined) ?? null,
         job_title: nullableText(body.job_title),
         location_id: (body.location_id as string | null | undefined) ?? null,
         company_id: (body.company_id as string | undefined) ?? DEFAULT_COMPANY,
@@ -768,6 +793,13 @@ const personHandlers: HttpHandler[] = [
       !data.locations.some((l) => l.id === body.location_id && !l.archived_at)
     ) {
       errors.push(missing('/location_id', 'No such location.'));
+    }
+    if (
+      body.department_id &&
+      body.department_id !== existing.department_id &&
+      !data.departments.some((d) => d.id === body.department_id && !d.archived_at)
+    ) {
+      errors.push(missing('/department_id', 'No such department.'));
     }
     if (
       body.company_id &&

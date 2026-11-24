@@ -1,3 +1,4 @@
+import { departmentsMessages } from './departments';
 import { labelsMessages } from './labels';
 import { m2Messages } from './m2';
 import { notificationsMessages } from './notifications';
@@ -170,6 +171,8 @@ export const en = {
   usage: {
     assets_one: '{count} asset',
     assets_other: '{count} assets',
+    people_one: '{count} person',
+    people_other: '{count} people',
     models_one: '{count} model',
     models_other: '{count} models',
     customFields_one: '{count} custom field',
@@ -235,6 +238,7 @@ export const en = {
       tags: 'Tag numbering',
       vendors: 'Vendors',
       notifications: 'Notification rules',
+      departments: 'Departments',
     },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',
@@ -465,6 +469,7 @@ export const en = {
   },
   ...registryMessages,
   ...m2Messages,
+  ...departmentsMessages,
   ...labelsMessages,
   ...stockMessages,
   ...repairsMessages,

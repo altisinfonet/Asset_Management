@@ -1,6 +1,6 @@
 import type { components } from '@assettracker/api-client';
 import { MOCK_ACCOUNTS } from './fixtures';
-import { seedCustody } from './m2-fixtures';
+import { DEPARTMENT_SEED, seedCustody } from './m2-fixtures';
 
 /**
  * Seed data of the mock registry: categories with custom fields, manufacturers, models, status
@@ -22,6 +22,7 @@ export type MockVendor = Rec<S['Vendor']>;
 export type MockLocation = Rec<S['Location']>;
 export type MockUserRecord = Rec<S['User']> & { invitation_expires_at?: string };
 export type MockPerson = Rec<S['Person']>;
+export type MockDepartment = Rec<S['Department']>;
 export type MockAssignment = Rec<S['Assignment']>;
 /** An attachment plus what the mock storage and scanner know about it. */
 export type MockAttachment = Rec<S['Attachment']> & {
@@ -52,6 +53,8 @@ export interface RegistryData {
   models: MockModel[];
   vendors: MockVendor[];
   locations: MockLocation[];
+  /** Managed departments (ED-17). */
+  departments: MockDepartment[];
   assets: MockAsset[];
   users: MockUserRecord[];
   people: MockPerson[];
@@ -81,6 +84,7 @@ const KIND_CODE = {
   person: '0011',
   assignment: '0012',
   attachment: '0013',
+  department: '0014',
 } as const;
 
 type Kind = keyof typeof KIND_CODE;
@@ -115,6 +119,7 @@ const READ = [
   'attachment:read',
   'company:read',
   'search:read',
+  'department:read',
 ];
 
 /** The built-in roles with the permission bundles of apps/api/src/auth/permissions.ts. */
@@ -158,6 +163,7 @@ export const MOCK_ROLES: S['Role'][] = [
       'role:read',
       'view:share',
       'export:run',
+      'department:manage',
     ],
     is_builtin: true,
   },
@@ -439,6 +445,18 @@ export function buildSeed(): RegistryData {
   });
   const rooms = [3, 4, 5, 7].map((n) => uid('location', n));
 
+  // the managers are people of the seed (Alice Owner is person 1, Sam Lee person 2)
+  const departments: MockDepartment[] = DEPARTMENT_SEED.map((d, i) =>
+    base({
+      id: uid('department', i + 1),
+      name: d.name,
+      code: d.code,
+      description: d.description,
+      manager_person_id: i === 0 ? uid('person', 1) : i === 3 ? uid('person', 2) : null,
+      archived_at: null,
+    }),
+  );
+
   // ---- assets: 130 Chromebooks (AT-), 40 laptops, 20 tablets, 10 projectors -----------------
   const plan: Array<[MockCategory, number]> = [
     [chromebook, 130],
@@ -505,6 +523,11 @@ export function buildSeed(): RegistryData {
         model_id: model.id,
         status_id: label.id,
         location_id: pick(rooms),
+        // two in three assets belong to a department (the API seed does the same)
+        department_id:
+          seq % 3 === 0
+            ? null
+            : uid('department', ((seq + Math.floor(seq / 3)) % DEPARTMENT_SEED.length) + 1),
         vendor_id: rand() < 0.7 ? pick(vendors).id : null,
         parent_asset_id: null,
         purchase_date: dateOnly(purchaseMs),
@@ -625,6 +648,7 @@ export function buildSeed(): RegistryData {
     models,
     vendors,
     locations,
+    departments,
     assets,
     users,
     people: custody.people,

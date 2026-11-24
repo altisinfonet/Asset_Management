@@ -68,6 +68,7 @@ const VIEWER_PERMISSIONS = [
   'attachment:read',
   'company:read',
   'search:read',
+  'department:read',
 ];
 
 export const SEED_USERS: Record<string, MockUser> = {
@@ -129,6 +130,7 @@ export const SEED_USERS: Record<string, MockUser> = {
       'import:run',
       'view:share',
       'export:run',
+      'department:manage',
       'attachment:write',
       'audit:read',
       'role:read',

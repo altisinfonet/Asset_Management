@@ -42,7 +42,28 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-Nothing yet. M2 wave 3 (import wizard, loaner pool, location scoping) is next.
+Three deferred M2 stories (M2-REG-03, M2-USR-03, M2-UX-02). The rest of M2 wave 3 (import wizard, loaner pool, location
+scoping) is next.
+
+### Added
+
+- **Sort the asset list by location, assignee and due date** (M2-REG-03, ED-22): the Location, Assigned to and Due back
+  columns of the Assets table sort through the server (`?sort=location|assignee|due`, also `-`). An asset with no value (no
+  location, in stock, no expected return) is listed last in both directions and paging never skips or repeats a row.
+- **Link and unlink a person and a login account** (M2-USR-03, ED-22): `POST` / `DELETE /v1/people/{id}/link-user`
+  (Administrators, audited), buttons on the person page and in Settings → Users (new Person column), confirmation dialogs
+  that say what happens. `User.person_id` is now filled (`/v1/users`, `/v1/auth/me`). Three new problem codes:
+  `person-already-linked`, `login-already-linked`, `login-person-in-use`.
+- **Undo toast after a custody action** (M2-UX-02, ED-23): the success toast of a check-out, check-in or transfer (single or
+  bulk) offers Undo for 10 seconds. `POST /v1/assets/{id}/undo-custody` performs the inverse action in one transaction
+  (never a delete), guarded by `If-Match`, the newest history event and a five-minute window; a new history event
+  `custody_undone` (migration `0130`). New problem codes `undo-expired`, `undo-asset-changed`, `undo-not-possible`.
+  F8 moves keyboard focus to the notifications (listed in the shortcuts help).
+
+### Changed
+
+- The history payloads of check-out, check-in and a transfer out of stock now also carry the ids of the statuses
+  (`status.from_id` / `to_id`), what an undo restores.
 
 ---
 

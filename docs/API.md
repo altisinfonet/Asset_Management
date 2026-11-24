@@ -129,7 +129,7 @@ The catalogue of codes (generated from the contract):
 
 <!-- problem-codes:start -->
 
-Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch on `code`, not on the title; the set grows over time.
+Generated from the root `x-problem-codes` of the contract: **47 codes**. Branch on `code`, not on the title; the set grows over time.
 
 | Status    | Code                        | Meaning                                                                                                                                                                                                           |
 | --------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -159,8 +159,14 @@ Generated from the root `x-problem-codes` of the contract: **41 codes**. Branch 
 | 409       | `idempotency-key-in-flight` | A request with the same Idempotency-Key is still running.                                                                                                                                                         |
 | 409       | `import-stale-dry-run`      | The dry run being committed is not the one reviewed. _(emitted once the feature ships)_                                                                                                                           |
 | 409       | `insufficient-stock`        | Not enough quantity on hand.                                                                                                                                                                                      |
+| 409       | `login-already-linked`      | The login account is already linked to a person that somebody chose (not the placeholder the system made for it). Unlink that person first.                                                                       |
+| 409       | `login-person-in-use`       | The login account's own person record still holds assets, so it cannot be replaced by the person being linked: check them in or transfer them first (`usage.open_assignments`).                                   |
 | 409       | `mfa-already-enrolled`      | The user already has an active TOTP factor; disable it first.                                                                                                                                                     |
 | 409       | `no-loaner-available`       | The loaner pool has no available member. _(emitted once the feature ships)_                                                                                                                                       |
+| 409       | `person-already-linked`     | The person is already linked to a login account (the same or another one). Unlink it first.                                                                                                                       |
+| 409       | `undo-asset-changed`        | The asset changed after the action (another custody action, an edit, a move...), so it can no longer be undone.                                                                                                   |
+| 409       | `undo-expired`              | More than five minutes have passed since the custody action, so it can no longer be undone.                                                                                                                       |
+| 409       | `undo-not-possible`         | The action cannot be undone: it was already undone, the previous holder or status is no longer available, or it is loaner custody.                                                                                |
 | 409       | `upload-missing`            | The upload was not found in object storage: PUT the bytes to the presigned URL before calling complete.                                                                                                           |
 | 410       | `invitation-expired`        | The invitation has expired; ask an administrator to resend it.                                                                                                                                                    |
 | 410       | `token-expired`             | The password-reset token has expired; request a new one. Also: a local-storage file link (`/v1/files/{token}`) whose lifetime ended.                                                                              |
@@ -321,7 +327,7 @@ Grouped by contract tag. Tags marked "contract only" are specified but have no r
 
 <!-- api-catalogue:start -->
 
-Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **179 operations on 117 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
+Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **182 operations on 119 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
 
 "Requires" lists headers that are mandatory for that operation beyond the credential: `If-Match` (stale or missing gives `412` / `428`) and `Idempotency-Key` (missing gives `400 idempotency-key-required`).
 
@@ -418,11 +424,12 @@ The asset registry: CRUD, search, scan resolution and history.
 
 Check-out, check-in and transfer of assets.
 
-| Method | Path                       | Permission       | Requires        | Purpose                           |
-| ------ | -------------------------- | ---------------- | --------------- | --------------------------------- |
-| POST   | `/v1/assets/{id}/checkin`  | `asset:checkin`  | Idempotency-Key | Check in an asset                 |
-| POST   | `/v1/assets/{id}/checkout` | `asset:checkout` | Idempotency-Key | Check out an asset                |
-| POST   | `/v1/assets/{id}/transfer` | `asset:transfer` | Idempotency-Key | Transfer an asset to a new holder |
+| Method | Path                           | Permission       | Requires                  | Purpose                                  |
+| ------ | ------------------------------ | ---------------- | ------------------------- | ---------------------------------------- |
+| POST   | `/v1/assets/{id}/checkin`      | `asset:checkin`  | Idempotency-Key           | Check in an asset                        |
+| POST   | `/v1/assets/{id}/checkout`     | `asset:checkout` | Idempotency-Key           | Check out an asset                       |
+| POST   | `/v1/assets/{id}/transfer`     | `asset:transfer` | Idempotency-Key           | Transfer an asset to a new holder        |
+| POST   | `/v1/assets/{id}/undo-custody` | `asset:checkout` | If-Match, Idempotency-Key | Undo the last custody action of an asset |
 
 ### Categories
 
@@ -512,15 +519,17 @@ Hierarchical locations.
 
 Assignable people (employees, students, contractors), with or without a login.
 
-| Method | Path                          | Permission      | Requires | Purpose                         |
-| ------ | ----------------------------- | --------------- | -------- | ------------------------------- |
-| GET    | `/v1/people`                  | `person:read`   | -        | List people                     |
-| POST   | `/v1/people`                  | `person:manage` | -        | Create person                   |
-| GET    | `/v1/people/{id}`             | `person:read`   | -        | Get person                      |
-| PATCH  | `/v1/people/{id}`             | `person:manage` | If-Match | Update person                   |
-| DELETE | `/v1/people/{id}`             | `person:manage` | If-Match | Archive person                  |
-| GET    | `/v1/people/{id}/assignments` | `person:read`   | -        | What is checked out to a person |
-| GET    | `/v1/people/{id}/history`     | `person:read`   | -        | Chain of custody of a person    |
+| Method | Path                          | Permission      | Requires | Purpose                                |
+| ------ | ----------------------------- | --------------- | -------- | -------------------------------------- |
+| GET    | `/v1/people`                  | `person:read`   | -        | List people                            |
+| POST   | `/v1/people`                  | `person:manage` | -        | Create person                          |
+| GET    | `/v1/people/{id}`             | `person:read`   | -        | Get person                             |
+| PATCH  | `/v1/people/{id}`             | `person:manage` | If-Match | Update person                          |
+| DELETE | `/v1/people/{id}`             | `person:manage` | If-Match | Archive person                         |
+| GET    | `/v1/people/{id}/assignments` | `person:read`   | -        | What is checked out to a person        |
+| GET    | `/v1/people/{id}/history`     | `person:read`   | -        | Chain of custody of a person           |
+| POST   | `/v1/people/{id}/link-user`   | `user:manage`   | -        | Link a person to a login account       |
+| DELETE | `/v1/people/{id}/link-user`   | `user:manage`   | -        | Unlink a person from its login account |
 
 ### Departments
 

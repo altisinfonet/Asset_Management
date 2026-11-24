@@ -997,7 +997,8 @@ CREATE TABLE app.asset_history (
   at            timestamptz NOT NULL DEFAULT now(),
   event_type    text NOT NULL CHECK (event_type IN (
                   'created','updated','status_changed','location_changed','checked_out','checked_in',
-                  'transferred','repair_opened','repair_completed','archived','restored','label_printed','imported')),
+                  'transferred','repair_opened','repair_completed','archived','restored','label_printed','imported',
+                  'custody_undone')),
   actor_type    text NOT NULL DEFAULT 'user' CHECK (actor_type IN ('user','api_key','integration','system')),
   actor_id      uuid,
   assignment_id uuid,

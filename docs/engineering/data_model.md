@@ -134,6 +134,10 @@ Free text caused mistakes ("Maths", "maths ", "Mathematics" as three departments
 | `app.loaner_pool` | M2 | **Loaner pool**: spare devices with default/max loan days | `name`, `home_location_id`, `default_loan_days`, `max_loan_days`, `is_active` | location | unique `(tenant_id, lower(name))` |
 | `app.loaner_pool_member` | M2 | Pool membership; an asset is in at most one pool | PK `(tenant_id, asset_id)`, `loaner_pool_id` | asset, loaner_pool | `(tenant_id, loaner_pool_id)` |
 
+#### 3.6.0 Undo of a custody action (ED-23, migration 0130)
+
+`app.asset_history.event_type` accepts one more value, `custody_undone` (the CHECK on the partitioned parent is replaced; it is inherited by every partition). No table, column or grant is added: the undo of a check-out closes the assignment it opened, the undo of a check-in or a transfer between holders opens a NEW assignment (a closed period is never re-opened: `assignment_returned_state`) and, for a transfer, a reversing `app.transfer` row. The history payloads of check-out, check-in and a transfer out of stock now carry `status: {from, to, from_id, to_id}`. `person.created_by IS NULL` marks the person the system made for a login account (the trigger of migration 0040, the backfill, and the placeholder an unlink creates): only such a person is replaced when another person is linked to the login (ED-22).
+
 #### 3.6.1 As built in M2 wave 1 (migrations 0040 and 0041): deltas from the tables above
 
 The runtime schema is the SQL migrations (ADR 0001); `schema.sql` stays the design. Wave 1 built `location`, `person`, `assignment`, `transfer` and `asset_history` as designed, with these differences:

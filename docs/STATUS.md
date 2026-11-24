@@ -75,6 +75,14 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | "Location edit for a site: an error at edit time, none later" (LOC-05, ED-16): the error was an address value over its limit (typically a country name instead of the two-letter code) that the dialog could not place on a field. Now named on its field with the fix, limits checked before saving, a "Reload latest" action after a stale save, the address kept when the type changes, address line 2 no longer dropped. The type of a location stays freely editable | ✅ |
 | "Free text causes mistakes": managed departments (ORG-01, ORG-02, ED-17): Settings → Departments (create, rename, archive, merge), a department picker on people and assets (also in bulk edit), department column and filter on both lists, optional owning department on assets, existing free text migrated to departments, demo departments seeded | ✅ |
 
+### Deferred wave-1 stories done early (Unreleased) ✅
+
+| What | Stories |
+| ---- | ------- |
+| Sort the assets list by location, assignee and due date (empty values last, paging exact; ED-22) | REG-03 ✅ |
+| Link and unlink a person and a login account from the person page and Settings → Users (ED-22) | USR-03 ✅ |
+| Undo toast after a check-out, check-in or transfer, single and bulk (ED-23) | UX-02 ✅ |
+
 ### Wave 3 — not started ⏳
 
 | Area                                                            | Stories |
@@ -83,7 +91,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Loaner pool, quick loaner flows, overdue alerts, loaner dashboard | LOAN-01…04 |
 | Location scoping for roles                                       | LOC-03 |
 | Isolation-harness extension, performance harness, user guides    | SEC-01, OPS-01, DOC-01 |
-| Deferred small items: default return date, sort by location/assignee/due, link person ↔ login, undo toast | LIFE-09, REG-03, USR-03, UX-02 |
+| Deferred small items still open: default return date (REG-03, USR-03 and UX-02 are done, see below) | LIFE-09 |
 | M2 founder acceptance walk-through 👤                            | UX-01 |
 
 ## 4. Waiting on the founder 👤

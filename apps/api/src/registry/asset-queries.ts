@@ -306,13 +306,18 @@ const ASSIGNEE_KEY = `coalesce(lower(coalesce(sort_person.display_name, sort_tlo
     (select ta.asset_tag from app.asset ta where ta.tenant_id = a.tenant_id and ta.id = sort_open.target_asset_id))), '')`;
 
 const SORT_JOIN_SQL: Record<SortJoin, string> = {
-  // the path key is computed once per LOCATION (a small table), then hash-joined to the assets
-  location: `left join (
-      select l.id, (select string_agg(lower(n.name), ' > ' order by u.ord)
-                      from unnest(l.ancestor_ids) with ordinality as u(id, ord)
-                      join app.location n on n.tenant_id = l.tenant_id and n.id = u.id) as path_key
+  // One row holding every location's path as a jsonb map {id: path}, built ONCE per statement (an
+  // uncorrelated aggregate over the tenant's small location table, 125 rows in the measurement). A
+  // per-asset lookup is then a jsonb key access whatever join order the planner picks: a join to a
+  // derived table with a correlated path subquery was evaluated once per ASSET when the planner (misled
+  // by the unknown tenant under RLS) chose a nested loop, 450 ms instead of 40.
+  location: `cross join (
+      select coalesce(jsonb_object_agg(l.id::text,
+               (select string_agg(lower(n.name), ' > ' order by u.ord)
+                  from unnest(l.ancestor_ids) with ordinality as u(id, ord)
+                  join app.location n on n.tenant_id = l.tenant_id and n.id = u.id)), '{}'::jsonb) as paths
         from app.location l
-    ) sort_loc on sort_loc.id = a.location_id`,
+    ) sort_loc`,
   custody: `left join app.assignment sort_open on sort_open.tenant_id = a.tenant_id
       and sort_open.asset_id = a.id and sort_open.checked_in_at is null`,
   // `assignee` includes the `custody` join (same alias): never request both
@@ -354,15 +359,15 @@ const SORTS: Record<string, SortSpec> = {
   // the cursor exact for NULL (a NULL cannot be compared with `>`); the value of an empty row is a
   // constant filler, so empty rows are ordered by the unique `id` tiebreaker alone.
   'location.null': {
-    expr: '(sort_loc.path_key is null)',
-    text: '(sort_loc.path_key is null)::text',
+    expr: '((sort_loc.paths ->> a.location_id::text) is null)',
+    text: '((sort_loc.paths ->> a.location_id::text) is null)::text',
     cast: 'boolean',
     joins: ['location'],
   },
   // the full path as the table shows it ("hq > floor 2 > room 4"), lower-cased
   location: {
-    expr: `coalesce(sort_loc.path_key, '')`,
-    text: `coalesce(sort_loc.path_key, '')`,
+    expr: `coalesce(sort_loc.paths ->> a.location_id::text, '')`,
+    text: `coalesce(sort_loc.paths ->> a.location_id::text, '')`,
     cast: 'text',
     joins: ['location'],
   },

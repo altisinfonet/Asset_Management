@@ -259,6 +259,85 @@ describe.skipIf(!dbEnabled)(`wave-1 contract (live, ${mode})`, () => {
     });
     await hit('checkinAsset', 'POST', `/v1/assets/${asset.id}/checkin`, 400, { body: {} });
 
+    // ---- undo of a custody action (M2-UX-02, ED-23)
+    const undoAsset = await newAsset(t.admin, categoryId);
+    const undoOut = await hit('checkoutAsset', 'POST', `/v1/assets/${undoAsset.id}/checkout`, 201, {
+      body: { person_id: other.id },
+      headers: keyed().headers,
+    });
+    const undoBody = { assignment_id: undoOut.body.assignment.id };
+    await hit('undoAssetCustody', 'POST', `/v1/assets/${undoAsset.id}/undo-custody`, 412, {
+      body: undoBody,
+      headers: keyed('W/"1"').headers,
+    });
+    await hit('undoAssetCustody', 'POST', `/v1/assets/${undoAsset.id}/undo-custody`, 428, {
+      body: undoBody,
+      headers: keyed().headers,
+    });
+    await hit('undoAssetCustody', 'POST', `/v1/assets/${undoAsset.id}/undo-custody`, 422, {
+      body: {},
+      headers: keyed(etag(undoOut)).headers,
+    });
+    await hit('undoAssetCustody', 'POST', `/v1/assets/${uuid()}/undo-custody`, 404, {
+      body: undoBody,
+      headers: keyed('W/"1"').headers,
+    });
+    await hit('undoAssetCustody', 'POST', `/v1/assets/${undoAsset.id}/undo-custody`, 400, {
+      body: undoBody,
+      headers: ifMatch(etag(undoOut)).headers,
+    });
+    const undone = await hit(
+      'undoAssetCustody',
+      'POST',
+      `/v1/assets/${undoAsset.id}/undo-custody`,
+      200,
+      {
+        body: undoBody,
+        headers: keyed(etag(undoOut)).headers,
+      },
+    );
+    expect(undone.body.undone).toBe('checkout');
+    const again = await hit(
+      'undoAssetCustody',
+      'POST',
+      `/v1/assets/${undoAsset.id}/undo-custody`,
+      409,
+      {
+        body: undoBody,
+        headers: keyed(etag(undone)).headers,
+      },
+    );
+    expect(again.body.code).toBe('undo-not-possible');
+
+    // ---- link and unlink a person and a login account (M2-USR-03, ED-22)
+    const linkUser = (
+      await hit('createUser', 'POST', '/v1/users', 201, {
+        body: {
+          email: `${unique('link').toLowerCase()}@wave1.example`,
+          display_name: unique('Link login'),
+          role_assignments: [{ role_id: t.roles.viewer }],
+        },
+      })
+    ).body;
+    const linkee = await newPerson(t.admin);
+    await hit('linkPersonToUser', 'POST', `/v1/people/${linkee.id}/link-user`, 200, {
+      body: { user_id: linkUser.id },
+    });
+    await hit('linkPersonToUser', 'POST', `/v1/people/${linkee.id}/link-user`, 409, {
+      body: { user_id: (await t.admin.get('/v1/auth/me')).body.user.id },
+    });
+    await hit('linkPersonToUser', 'POST', `/v1/people/${linkee.id}/link-user`, 422, { body: {} });
+    await hit('linkPersonToUser', 'POST', `/v1/people/${uuid()}/link-user`, 404, {
+      body: { user_id: linkUser.id },
+    });
+    await hit('linkPersonToUser', 'POST', `/v1/people/${linkee.id}/link-user`, 412, {
+      body: { user_id: linkUser.id },
+      headers: ifMatch('W/"99"').headers,
+    });
+    await hit('unlinkPersonFromUser', 'DELETE', `/v1/people/${linkee.id}/link-user`, 200);
+    await hit('unlinkPersonFromUser', 'DELETE', `/v1/people/${linkee.id}/link-user`, 409);
+    await hit('unlinkPersonFromUser', 'DELETE', `/v1/people/${uuid()}/link-user`, 404);
+
     // ---- clean up what the walk made (archive rules)
     await hit('archiveLocation', 'DELETE', `/v1/locations/${room3.body.id}`, 409, {
       headers: ifMatch('*').headers,

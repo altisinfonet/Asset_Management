@@ -1,10 +1,14 @@
 'use client';
 
+import Link from 'next/link';
+import { DepartmentPicker } from '@/components/registry/department-picker';
 import { FormDialog, type FormFieldSpec } from '@/components/registry/form-dialog';
 import { LocationPicker } from '@/components/registry/location-picker';
 import { useT } from '@/i18n';
+import { useAuth } from '@/lib/auth/auth-context';
 import { peopleApi } from '@/lib/registry/api';
 import { PERSON_KINDS, type Person, type PersonKind } from '@/lib/registry/types';
+import { routes } from '@/lib/routes';
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
@@ -22,6 +26,7 @@ export interface PersonFormDialogProps {
  */
 export function PersonFormDialog({ open, onOpenChange, person, onSaved }: PersonFormDialogProps) {
   const t = useT();
+  const { can } = useAuth();
   const editing = person?.value;
 
   const fields: FormFieldSpec[] = [
@@ -49,7 +54,35 @@ export function PersonFormDialog({ open, onOpenChange, person, onSaved }: Person
       hint: t('people.form.employeeRefHint'),
       mono: true,
     },
-    { name: 'department', label: t('people.form.department'), kind: 'text' },
+    {
+      name: 'department_id',
+      label: t('people.form.department'),
+      kind: 'custom',
+      hint: can('department:manage') ? (
+        <>
+          {t('people.form.departmentHint')}{' '}
+          <Link
+            href={routes.settings('departments')}
+            className="rounded-sm text-primary-text underline underline-offset-2"
+          >
+            {t('departments.manage')}
+          </Link>
+        </>
+      ) : (
+        t('people.form.departmentHint')
+      ),
+      render: ({ control, value, set, invalid }) => (
+        <DepartmentPicker
+          {...control}
+          invalid={invalid}
+          clearable
+          value={String(value)}
+          selectedLabel={editing?.department ?? undefined}
+          onChange={set}
+          placeholder={t('people.form.noDepartment')}
+        />
+      ),
+    },
     { name: 'job_title', label: t('people.form.jobTitle'), kind: 'text' },
     {
       name: 'location_id',
@@ -106,7 +139,7 @@ export function PersonFormDialog({ open, onOpenChange, person, onSaved }: Person
         email: editing?.email ?? '',
         phone: editing?.phone ?? '',
         employee_ref: editing?.employee_ref ?? '',
-        department: editing?.department ?? '',
+        department_id: editing?.department_id ?? '',
         job_title: editing?.job_title ?? '',
         location_id: editing?.location_id ?? '',
         status: editing?.status ?? 'active',
@@ -125,7 +158,7 @@ export function PersonFormDialog({ open, onOpenChange, person, onSaved }: Person
               email: optional('email'),
               phone: optional('phone'),
               employee_ref: optional('employee_ref'),
-              department: optional('department'),
+              department_id: optional('department_id'),
               job_title: optional('job_title'),
               location_id: optional('location_id'),
               status: values.status as 'active' | 'inactive',
@@ -144,7 +177,7 @@ export function PersonFormDialog({ open, onOpenChange, person, onSaved }: Person
           ...(text(values.email) ? { email: text(values.email) } : {}),
           ...(text(values.phone) ? { phone: text(values.phone) } : {}),
           ...(text(values.employee_ref) ? { employee_ref: text(values.employee_ref) } : {}),
-          ...(text(values.department) ? { department: text(values.department) } : {}),
+          ...(text(values.department_id) ? { department_id: text(values.department_id) } : {}),
           ...(text(values.job_title) ? { job_title: text(values.job_title) } : {}),
           ...(text(values.location_id) ? { location_id: text(values.location_id) } : {}),
           ...(text(values.notes) ? { notes: text(values.notes) } : {}),

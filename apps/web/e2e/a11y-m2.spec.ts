@@ -92,6 +92,16 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'people: add dialog with the department picker open',
+    open: async (p) => {
+      await p.goto('/people');
+      await p.getByRole('button', { name: 'Add person' }).click();
+      const dialog = p.getByRole('dialog', { name: 'Add a person' });
+      await dialog.getByRole('combobox', { name: 'Department' }).click();
+      await expect(p.getByRole('option', { name: /^Mathematics/ })).toBeVisible();
+    },
+  },
+  {
     name: 'people: empty search result',
     open: async (p) => {
       await p.goto('/people');

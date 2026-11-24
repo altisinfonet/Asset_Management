@@ -29,6 +29,8 @@ export const PERMISSIONS = [
   'consumable:adjust',
   'consumable:manage',
   'consumable:read',
+  'department:manage',
+  'department:read',
   'export:run',
   'import:read',
   'import:run',
@@ -67,6 +69,7 @@ const READ: readonly Permission[] = [
   'attachment:read',
   'company:read',
   'search:read',
+  'department:read',
 ];
 
 export interface BuiltinRole {
@@ -107,6 +110,7 @@ export const BUILTIN_ROLES: readonly BuiltinRole[] = [
       'role:read',
       'view:share',
       'export:run',
+      'department:manage',
     ],
   },
   {

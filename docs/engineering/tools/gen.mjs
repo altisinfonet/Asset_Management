@@ -108,6 +108,7 @@ const tagDefs = {
   Vendors: 'Suppliers and repair vendors.',
   Locations: 'Hierarchical locations.',
   People: 'Assignable people (employees, students, contractors), with or without a login.',
+  Departments: 'Managed departments (ED-17): the list people and assets are assigned to, instead of free text.',
   Accessories: 'Quantity-tracked items that are checked out and returned.',
   Consumables: 'Quantity-tracked items that are used up, with a stock ledger.',
   Loaners: 'Loaner pools: spare devices with quick check-out, due dates and overdue tracking.',
@@ -237,7 +238,7 @@ const BULK_MAX = 100;
 const bulkIds = () => arr({ type: 'string', format: 'uuid' }, { minItems: 1, maxItems: BULK_MAX });
 S_.AssetCloneRequest = obj({
   count: int({ minimum: 1, maximum: 100, default: 1 }),
-  copy_fields: arr(en(['name', 'model_id', 'status_id', 'vendor_id', 'location_id', 'parent_asset_id', 'purchase_date', 'purchase_cost', 'order_number', 'warranty_end', 'notes', 'custom_data']), { description: 'Fields to copy from the source. Default - all of them.' }),
+  copy_fields: arr(en(['name', 'model_id', 'status_id', 'vendor_id', 'location_id', 'department_id', 'parent_asset_id', 'purchase_date', 'purchase_cost', 'order_number', 'warranty_end', 'notes', 'custom_data']), { description: 'Fields to copy from the source. Default - all of them.' }),
   asset_tags: arr(str({ minLength: 1, maxLength: 64, pattern: '^\\S+$' }), { description: 'One explicit tag per copy; omit to generate them from the numbering template.' }),
 }, [], { additionalProperties: false });
 S_.AssetCloneResult = obj({ data: arr(S('Asset')) }, ['data']);
@@ -249,6 +250,7 @@ S_.BulkAssetUpdate = obj({
     category_id: uuid(),
     model_id: nuuid(),
     vendor_id: nuuid(),
+    department_id: nuuid('[ED-17] Department for every listed asset; `null` clears it.'),
     custom_data: S('CustomData'),
   }, [], { description: 'At least one of these. `custom_data` merges per key (`null` removes a key).', additionalProperties: false }),
 }, ['ids', 'changes'], { additionalProperties: false });
@@ -312,7 +314,7 @@ S_.PageInfo = obj({
 }, ['next_cursor', 'has_more']);
 S_.Money = obj({ amount_minor: int({ format: 'int64', minimum: 0, description: 'Integer minor units (cents).' }), currency: str({ pattern: '^[A-Z]{3}$', description: 'ISO 4217.' }) }, ['amount_minor', 'currency']);
 S_.CustomData = { type: 'object', additionalProperties: true, description: 'Custom field values keyed by `custom_field_def.key`; validated against the definitions.' };
-S_.Address = obj({ line1: nstr(), line2: nstr(), city: nstr(), region: nstr(), postal_code: nstr(), country: nstr({ description: 'ISO 3166-1 alpha-2.' }) });
+S_.Address = obj({ line1: nstr(), line2: nstr(), city: nstr(), region: nstr(), postal_code: nstr(), country: nstr({ description: 'ISO 3166-1 alpha-2: exactly two letters, stored upper-case (`no` is saved as `NO`); anything else is a 422 on `/address/country`.', pattern: '^[A-Za-z]{2}$' }) });
 S_.AssignmentTarget = {
   type: 'object',
   description: 'Exactly one target: a person, a location, or another asset.',
@@ -432,7 +434,7 @@ defineResource('Person', {
     email: nstr({ format: 'email' }),
     phone: nstr(),
     employee_ref: nstr({ description: 'Unique per tenant when set (employee / student number).' }),
-    department: nstr(),
+    department_id: nuuid('[ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department.'),
     job_title: nstr(),
     location_id: nuuid('Primary or home location.'),
     company_id: uuid(),
@@ -442,6 +444,7 @@ defineResource('Person', {
   required: ['display_name'],
   readOnly: {
     user_id: ro(nuuid('Linked login account, if this person can sign in.')),
+    department: ro(nstr({ description: '[ED-17] The NAME of the linked department (read-only; write `department_id`). Kept so readers of the old free-text field keep working.' })),
     // [M2-W1] computed per request
     assets_held: ro(int({ minimum: 0, description: 'Number of assets currently checked out to this person.' })),
   },
@@ -450,6 +453,23 @@ defineResource('Person', {
 // the update says `force: true` together with a `reason` (recorded in the audit trail). Not stored on the person.
 S_.PersonUpdate.properties.force = bool({ default: false, description: 'With `status: "inactive"`: deactivate even though the person still holds assets. Needs `reason`. Not stored on the person.' });
 S_.PersonUpdate.properties.reason = str({ minLength: 1, maxLength: 500, description: 'Why a forced deactivation is justified (audit trail). Ignored without `force`.' });
+// [DEPT] BEGIN - managed departments (ED-17; founder request 2026-11-24)
+defineResource('Department', {
+  description: 'A managed department: chosen from a list instead of typed, so the same department is never spelled three ways. People and assets reference it by id.',
+  props: {
+    name: str({ minLength: 1, maxLength: 200, description: 'Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).' }),
+    code: nstr({ maxLength: 50, description: 'Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none.' }),
+    description: nstr({ maxLength: 2000 }),
+    manager_person_id: nuuid('The head of the department: a live person (422 on `/manager_person_id` otherwise).'),
+  },
+  required: ['name'],
+  readOnly: {
+    manager_name: ro(nstr({ description: 'Display name of the manager.' })),
+    person_count: ro(int({ minimum: 0, description: 'Live (not archived) people in this department. Present on the department endpoints only.' })),
+    asset_count: ro(int({ minimum: 0, description: 'Live (not archived) assets owned by this department. Present on the department endpoints only.' })),
+  },
+});
+// [DEPT] END
 defineResource('Accessory', {
   props: {
     category_id: uuid('An accessory-kind category.'),
@@ -544,6 +564,7 @@ const assetProps = {
   model_id: nuuid(),
   status_id: uuid('Defaults to the tenant default status label.'),
   location_id: nuuid(),
+  department_id: nuuid('[ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`.'),
   company_id: uuid('Defaults to the tenant default company.'),
   vendor_id: nuuid(),
   parent_asset_id: nuuid('Parent asset (e.g. a laptop in a cart).'),
@@ -579,7 +600,7 @@ S_.Asset = obj({
   // [M2-W1] disposal (M2-LIFE-05)
   disposal: ro({ oneOf: [S('AssetDisposal'), { type: 'null' }], description: 'Set once the asset was disposed of (`POST /v1/assets/{id}/dispose`); null otherwise.' }),
   status: ro(obj({ id: uuid(), name: str(), state_type: str() }, ['id', 'name', 'state_type'])),
-  expanded: ro(obj({}, [], { additionalProperties: true, description: 'Related objects requested through `expand` (model, category, location, vendor).' })),
+  expanded: ro(obj({}, [], { additionalProperties: true, description: 'Related objects requested through `expand` (model, category, location, vendor, department).' })),
 }, ['id', 'asset_tag', 'category_id', 'status_id', 'custom_data']);
 S_.AssetCreate = obj({ ...assetProps, asset_tag: { ...assetProps.asset_tag, description: assetProps.asset_tag.description } }, ['category_id'], { additionalProperties: false });
 S_.AssetUpdate = obj({ ...assetProps }, [], { additionalProperties: false, description: 'Partial update (merge semantics). `custom_data` is merged per key; set a key to null to remove it. Changing status or location writes history events.' });
@@ -1493,13 +1514,27 @@ doc.paths['/v1/locations/{id}'].patch.description = 'Merge semantics. Changing `
 doc.paths['/v1/locations/{id}'].delete.description = 'Soft delete. Refused with `409 conflict` and `usage` (`children`, `assets`, `people`, `open_assignments`: how many live records still reference the location) while anything is located here or below it. Requires permission `location:manage`.';
 crud({
   tag: 'People', base: 'people', name: 'Person', plural: 'People', singular: 'person', readPerm: 'person:read', writePerm: 'person:manage',
-  filters: [arrQ('kind', en(['employee', 'student', 'contractor', 'external']), 'Filter by kind.'), qp('status', en(['active', 'inactive']), 'Filter by status.'), qp('department', str(), 'Exact department.'), qp('location_id', uuid(), 'Home location.'), qp('employee_ref', str(), 'Exact employee / student number.'), qp('has_login', bool(), 'Only people with (true) or without (false) a login account.')],
+  filters: [arrQ('kind', en(['employee', 'student', 'contractor', 'external']), 'Filter by kind.'), qp('status', en(['active', 'inactive']), 'Filter by status.'), qp('department_id', uuid(), '[ED-17] People of this department.'), qp('location_id', uuid(), 'Home location.'), qp('employee_ref', str(), 'Exact employee / student number.'), qp('has_login', bool(), 'Only people with (true) or without (false) a login account.')],
   sorts: ['display_name', 'created_at', 'employee_ref'], defSort: ['display_name'],
 });
 // [M2-W1] People rules (M2-USR-01)
 doc.paths['/v1/people'].post.description = 'Creates an assignable person (no login). `email` and `employee_ref` are unique per tenant among live people (409 `conflict`). A login account (`POST /v1/users`) gets its person automatically; a person created here with the same email is linked to the account when it is created. People never receive login emails. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].patch.description = 'Merge semantics. Setting `status: "inactive"` while the person still holds assets is `409 conflict` with `usage.open_assignments`, unless `force: true` and a `reason` are sent (the reason lands in the audit trail; the custody stays open). An inactive person cannot receive new check-outs. Requires permission `person:manage`.';
 doc.paths['/v1/people/{id}'].delete.description = 'Soft delete. `409 conflict` with `usage.open_assignments` while the person still holds assets, and for a person linked to a login account (archive the account first). Requires permission `person:manage`.';
+// [DEPT] BEGIN - departments (ED-17)
+crud({
+  tag: 'Departments', base: 'departments', name: 'Department', plural: 'Departments', singular: 'department', readPerm: 'department:read', writePerm: 'department:manage',
+  sorts: ['name', 'code', 'created_at'], defSort: ['name'],
+});
+doc.paths['/v1/departments'].get.description = 'Cursor-paginated list. `q` matches the name and the code (case-insensitive). Every row carries `person_count` and `asset_count` (live people / assets), so the settings page needs one call.';
+doc.paths['/v1/departments'].post.description = 'Creates a department. The name (and the code, when set) must be unique among live departments, ignoring case (409 `conflict`, pointer `/name` or `/code`). The manager must be a live person (422).';
+doc.paths['/v1/departments/{id}'].patch.description = 'Merge semantics. Renaming keeps every person and asset linked: they reference the id.';
+doc.paths['/v1/departments/{id}'].delete.description = 'Soft delete. While live people or assets still reference the department the answer is `409 conflict` with `usage` (`people`, `assets`), unless `reassign_to` names another live department: then every person and asset (archived ones included) moves there in the same transaction and the department is archived (this is how two departments are merged). The move is recorded in the audit entry (`meta.reassigned_to`, `people`, `assets`).';
+doc.paths['/v1/departments/{id}'].delete.parameters.push(qp('reassign_to', uuid(), 'Move the people and assets of this department to that department before archiving (merge). Must be another live department (422 on `query:reassign_to` otherwise).'));
+doc.paths['/v1/departments/{id}'].delete.responses['400'] = R('BadRequest');
+doc.paths['/v1/departments/{id}'].delete.responses['422'] = R('Unprocessable');
+doc.paths['/v1/departments/{id}'].delete.responses = Object.fromEntries(Object.entries(doc.paths['/v1/departments/{id}'].delete.responses).sort(([a], [b]) => a.localeCompare(b)));
+// [DEPT] END
 addOp('/v1/people/{id}/assignments', 'get', {
   tag: 'People', id: 'listPersonAssignments', summary: 'What is checked out to a person', perm: 'person:read',
   description: 'Assignments (assets and accessories) targeting this person; defaults to open ones, which is the offboarding checklist.',
@@ -1517,6 +1552,7 @@ const assetFilters = [
   arrQ('model_id', uuid(), 'Any of these models.'),
   qp('manufacturer_id', uuid(), 'Via the model.'),
   qp('location_id', uuid(), 'Assets at this location.'),
+  qp('department_id', uuid(), '[ED-17] Assets of this department.'),
   qp('include_sublocations', bool({ default: true }), 'With `location_id`: include the whole subtree.'),
   qp('company_id', uuid(), 'Filter by company.'),
   qp('vendor_id', uuid(), 'Filter by vendor.'),
@@ -1531,7 +1567,7 @@ const assetFilters = [
   qp('purchase_date_to', date(), 'Purchased on or before.'),
   qp('updated_since', dt(), 'Changed at or after (incremental sync).'),
   { name: 'cf', in: 'query', style: 'deepObject', explode: true, description: 'Custom field filters, e.g. `cf[warranty_tier]=gold`. Exact match on the JSONB value.', schema: { type: 'object', additionalProperties: str() } },
-  arrQ('expand', en(['model', 'category', 'location', 'vendor']), 'Embed related objects under `expanded`.'),
+  arrQ('expand', en(['model', 'category', 'location', 'vendor', 'department']), 'Embed related objects under `expanded`.'),
   arrQ('fields', str(), 'Sparse fieldset: return only these top-level properties (`id` is always included).'),
 ];
 addOp('/v1/assets', 'get', {
@@ -1548,7 +1584,7 @@ addOp('/v1/assets', 'post', {
 });
 addOp('/v1/assets/{id}', 'get', {
   tag: 'Assets', id: 'getAsset', summary: 'Get an asset', perm: 'asset:read',
-  params: [ID, arrQ('expand', en(['model', 'category', 'location', 'vendor']), 'Embed related objects under `expanded`.')],
+  params: [ID, arrQ('expand', en(['model', 'category', 'location', 'vendor', 'department']), 'Embed related objects under `expanded`.')],
   success: { 200: okResp(200, 'The asset.', S('Asset'), { etag: true, replay: false }) },
 });
 addOp('/v1/assets/{id}', 'patch', {
@@ -1591,7 +1627,7 @@ addOp('/v1/assets/{id}/clone', 'post', {
 const BULK_NOTE = 'At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.\n\nAdded by M1-REG-09 (not part of the first contract draft).';
 addOp('/v1/assets/bulk-update', 'post', {
   tag: 'Assets', id: 'bulkUpdateAssets', summary: 'Edit many assets', perm: 'asset:update', hasId: false, conflict: false,
-  description: 'Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.\n\n' + BULK_NOTE,
+  description: 'Applies the same `changes` (status, category, model, vendor, department, `custom_data` merge) to every listed asset.\n\n' + BULK_NOTE,
   body: jsonBody(S('BulkAssetUpdate')),
   success: { 200: okResp(200, 'Per-item results.', S('BulkAssetResult')) },
 });

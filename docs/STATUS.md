@@ -1,6 +1,6 @@
 # Project status
 
-_Last updated: 2026-11-24. Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-24 (location edit and departments). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
@@ -68,12 +68,12 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Demo data: every asset labelled "In repair" now has an open repair (the Repairs page, dashboard and status labels agree); "Broken" assets have none | ✅ |
 | Asset form, asset page and bulk edit say so when an asset is not deployable but has no open repair, with a "Log a repair" shortcut (never blocks); a repair logged for an asset already "In repair" takes the status over and returns it to ready when closed | ✅ |
 
-### In progress 🟡 (founder requests, not merged yet)
+### Founder requests (2026-11-24) ✅
 
-| Item                                                              | Status |
-| ----------------------------------------------------------------- | ------ |
-| Managed departments (today a department is free text on a person) | 🟡     |
-| Location edit fix                                                 | 🟡     |
+| Request                                                                                  | Status |
+| ---------------------------------------------------------------------------------------- | ------ |
+| "Location edit for a site: an error at edit time, none later" (LOC-05, ED-16): the error was an address value over its limit (typically a country name instead of the two-letter code) that the dialog could not place on a field. Now named on its field with the fix, limits checked before saving, a "Reload latest" action after a stale save, the address kept when the type changes, address line 2 no longer dropped. The type of a location stays freely editable | ✅ |
+| "Free text causes mistakes": managed departments (ORG-01, ORG-02, ED-17): Settings → Departments (create, rename, archive, merge), a department picker on people and assets (also in bulk edit), department column and filter on both lists, optional owning department on assets, existing free text migrated to departments, demo departments seeded | ✅ |
 
 ### Wave 3 — not started ⏳
 

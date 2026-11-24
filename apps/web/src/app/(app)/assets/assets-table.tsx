@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
+import { DepartmentPicker } from '@/components/registry/department-picker';
 import { LocationPicker } from '@/components/registry/location-picker';
 import { PersonPicker } from '@/components/registry/person-picker';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
@@ -249,6 +250,11 @@ export function AssetsTable() {
         header: t('assets.columns.location'),
         cell: (row) => lookups.locationLabel(row.location_id),
       },
+      department: {
+        id: 'department',
+        header: t('assets.columns.department'),
+        cell: (row) => lookups.departmentById.get(row.department_id ?? '')?.name ?? '',
+      },
       serial: {
         id: 'serial',
         header: t('assets.columns.serial'),
@@ -440,6 +446,16 @@ export function AssetsTable() {
               onCheckedChange={(v) => update({ include_sublocations: v === true })}
             />
           ) : null}
+        </div>
+        <div className="flex min-w-52 flex-col gap-1.5 text-sm font-medium">
+          <label htmlFor="filter-department">{t('assets.filters.department')}</label>
+          <DepartmentPicker
+            id="filter-department"
+            clearable
+            value={state.department_id}
+            placeholder={t('assets.filters.allDepartments')}
+            onChange={(id) => update({ department_id: id })}
+          />
         </div>
         <div className="flex min-w-44 flex-col gap-1.5 text-sm font-medium">
           <label className="flex flex-col gap-1.5">

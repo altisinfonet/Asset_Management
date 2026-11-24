@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
+import { uid } from '@/mocks/registry-fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { resetRouter, router } from '@/test/navigation';
 import { renderApp, seedSession } from '@/test/render';
@@ -97,6 +98,54 @@ describe('AssetsTable against the mock registry', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Archive' }));
     expect(await screen.findByText('Showing 1-8 of 8')).toBeVisible();
     expect(screen.queryByRole('row', { name: /PRJ-00010/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a department column on request and filters by department with the picker', async () => {
+    const user = userEvent.setup();
+    renderApp(<AssetsTable />, { workflows: true });
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Columns' }));
+    const columns = await screen.findByRole('dialog', { name: 'Columns' });
+    await user.click(within(columns).getByRole('checkbox', { name: 'Department' }));
+    await user.keyboard('{Escape}');
+    expect(await screen.findByRole('columnheader', { name: 'Department' })).toBeVisible();
+
+    await user.click(screen.getByRole('combobox', { name: 'Department' }));
+    await user.click(await screen.findByRole('option', { name: /^IT/ }));
+    await waitFor(() => expect(screen.getByTestId('assets-range')).not.toHaveTextContent('of 195'));
+    for (const row of screen.getAllByRole('row').slice(1)) expect(row).toHaveTextContent('IT');
+  });
+
+  it('bulk edit sets the department of the selected assets, or clears it', async () => {
+    const user = userEvent.setup();
+    renderApp(<AssetsTable />, { workflows: true });
+    await loaded();
+    await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
+    await screen.findByText('Showing 1-10 of 10');
+    await user.click(screen.getByRole('checkbox', { name: 'Select row PRJ-00010' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select row PRJ-00008' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit 2 assets' });
+    await user.click(within(dialog).getByRole('combobox', { name: 'Field' }));
+    await user.click(await screen.findByRole('option', { name: 'Department' }));
+    expect(within(dialog).getByRole('button', { name: 'Apply to 2 assets' })).toBeDisabled();
+    await user.click(within(dialog).getByRole('combobox', { name: 'New value' }));
+    await user.click(await screen.findByRole('option', { name: /^Library/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Apply to 2 assets' }));
+    expect(await screen.findByText('Done: 2 assets updated.')).toBeVisible();
+    const { assetsApi } = await import('@/lib/registry/api');
+    const library = uid('department', 5);
+    expect((await assetsApi.list({ tag: 'PRJ-00010' })).data[0]!.department_id).toBe(library);
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select row PRJ-00010' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const again = await screen.findByRole('dialog', { name: 'Edit 1 asset' });
+    await user.click(within(again).getByRole('combobox', { name: 'Field' }));
+    await user.click(await screen.findByRole('option', { name: 'Department' }));
+    await user.click(within(again).getByRole('checkbox', { name: 'No department (clear it)' }));
+    await user.click(within(again).getByRole('button', { name: 'Apply to 1 asset' }));
+    expect(await screen.findByText('Done: 1 asset updated.')).toBeVisible();
+    expect((await assetsApi.list({ tag: 'PRJ-00010' })).data[0]!.department_id).toBeNull();
   });
 
   it('bulk edit reports the assets that failed instead of stopping at the first one', async () => {

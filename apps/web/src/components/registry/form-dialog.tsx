@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { FormError } from '@/components/auth/form-error';
+import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -25,7 +26,7 @@ export interface FormFieldSpec {
   kind:
     'text' | 'textarea' | 'number' | 'select' | 'date' | 'checkbox' | 'email' | 'url' | 'custom';
   required?: boolean;
-  hint?: string;
+  hint?: ReactNode;
   placeholder?: string;
   options?: SelectOption[];
   /** Select: offer an empty choice with this label. */
@@ -38,6 +39,15 @@ export interface FormFieldSpec {
   render?: (context: CustomFieldContext) => ReactNode;
   /** Shown only while this returns true (fields that depend on another field). */
   visible?: (values: FormValues) => boolean;
+  /**
+   * Further problem pointers that belong to this field, for a value the API keeps inside an object
+   * (`/address/country` for the `country` field). A pointer equal to `/<name>` always matches.
+   */
+  pointers?: string[];
+  /** Longest accepted text (after trimming). Checked on submit, so the message names the field and limit. */
+  maxLength?: number;
+  /** Extra check on submit: return the message to show on the field, or nothing when the value is fine. */
+  validate?: (value: string | boolean, values: FormValues) => string | undefined;
 }
 
 export interface CustomFieldContext {
@@ -50,6 +60,12 @@ export interface CustomFieldContext {
 export type FormValues = Record<string, string | boolean>;
 
 const NONE = '__none__';
+
+/** "address / country: Too big ..." for a problem that matches no field of the form. */
+const problemLine = (pointer: string, message: string): string => {
+  const where = pointer.replace(/^\//, '').replace(/\//g, ' / ');
+  return where ? `${where}: ${message}` : message;
+};
 
 export interface FormDialogProps {
   open: boolean;
@@ -66,6 +82,11 @@ export interface FormDialogProps {
   footerNote?: ReactNode;
   /** Called on every change, for live previews. */
   onChange?: (values: FormValues) => void;
+  /**
+   * Offered after a `412` (somebody else saved first): loads the latest version and re-opens the form
+   * with it (the caller re-keys / re-initialises the dialog). Without it the stale notice has no button.
+   */
+  onReload?: () => void | Promise<void>;
 }
 
 /**
@@ -85,11 +106,15 @@ export function FormDialog({
   size = 'md',
   footerNote,
   onChange,
+  onReload,
 }: FormDialogProps) {
   const t = useT();
   const [values, setValues] = useState<FormValues>(initial);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<UiError | null>(null);
+  const [formDetails, setFormDetails] = useState<string[]>([]);
+  const [stale, setStale] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -100,6 +125,8 @@ export function FormDialog({
       setValues(initial);
       setErrors({});
       setFormError(null);
+      setFormDetails([]);
+      setStale(false);
       setSubmitting(false);
     }
     // `initial` is a fresh object each render; only a new open should reset the form.
@@ -128,7 +155,18 @@ export function FormDialog({
       const value = values[field.name];
       if (field.required && field.kind !== 'checkbox' && (!value || String(value).trim() === '')) {
         missing[field.name] = t('form.required');
+        continue;
       }
+      if (
+        field.maxLength !== undefined &&
+        typeof value === 'string' &&
+        value.trim().length > field.maxLength
+      ) {
+        missing[field.name] = t('form.tooLong', { max: field.maxLength });
+        continue;
+      }
+      const custom = field.validate?.(value ?? '', values);
+      if (custom) missing[field.name] = custom;
     }
     if (Object.keys(missing).length > 0) {
       setErrors(missing);
@@ -137,24 +175,37 @@ export function FormDialog({
     }
     setSubmitting(true);
     setFormError(null);
+    setFormDetails([]);
+    setStale(false);
     try {
       await onSubmit(values);
       onOpenChange(false);
     } catch (err) {
       const ui = getApi().toUiError(err);
       const byField: Record<string, string> = {};
+      const loose: string[] = [];
       for (const fe of ui.fieldErrors) {
-        const name = fe.pointer.replace(/^\//, '');
+        // `/name` is the field `name`; a value inside an object (`/address/country`) is claimed by
+        // the field that lists its pointer.
+        const field = fields.find(
+          (f) => f.name === fe.pointer.replace(/^\//, '') || f.pointers?.includes(fe.pointer),
+        );
         // `duplicate`: the API's own wording is terse ("is already in use"), so say it in full
-        if (fields.some((f) => f.name === name)) {
-          byField[name] = fe.code === 'duplicate' ? t('form.duplicate') : fe.message;
-        }
+        if (field) byField[field.name] = fe.code === 'duplicate' ? t('form.duplicate') : fe.message;
+        else loose.push(problemLine(fe.pointer, fe.message));
       }
       setErrors(byField);
-      // Show the banner unless every problem landed on a field.
-      const handled =
-        ui.fieldErrors.length > 0 && Object.keys(byField).length === ui.fieldErrors.length;
-      setFormError(handled ? null : ui);
+      if (ui.kind === 'stale') {
+        // somebody else saved first: say so (with a way to load their version) instead of a bare error
+        setStale(true);
+      } else {
+        // Show the banner unless every problem landed on a field; a problem that has no field is
+        // listed in it, so the person can see WHAT to fix instead of only "the request failed".
+        const handled =
+          ui.fieldErrors.length > 0 && Object.keys(byField).length === ui.fieldErrors.length;
+        setFormError(handled ? null : ui);
+        setFormDetails(handled ? [] : loose);
+      }
       focusFirstInvalid();
     } finally {
       setSubmitting(false);
@@ -178,8 +229,34 @@ export function FormDialog({
           noValidate
           className="flex flex-col gap-4"
         >
+          {stale ? (
+            <Banner
+              tone="warning"
+              title={t('form.staleTitle')}
+              action={
+                onReload ? (
+                  <Button
+                    type="button"
+                    loading={reloading}
+                    onClick={() => {
+                      setReloading(true);
+                      void Promise.resolve(onReload()).finally(() => setReloading(false));
+                    }}
+                  >
+                    {t('form.reload')}
+                  </Button>
+                ) : undefined
+              }
+            >
+              {t('form.stale')}
+            </Banner>
+          ) : null}
           {formError ? (
-            <FormError message={uiErrorText(t, formError)} requestId={formError.requestId} />
+            <FormError
+              message={uiErrorText(t, formError)}
+              requestId={formError.requestId}
+              details={formDetails}
+            />
           ) : null}
           {fields.map((field) =>
             field.visible && !field.visible(values) ? null : field.kind === 'checkbox' ? (

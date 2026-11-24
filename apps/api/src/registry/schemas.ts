@@ -231,6 +231,8 @@ export const assetUpdateSchema = z.strictObject({
   model_id: z.uuid().nullable().optional(),
   status_id: z.uuid().optional(),
   location_id: z.uuid().nullable().optional(),
+  /** ED-17: the owning / cost-centre department. */
+  department_id: z.uuid().nullable().optional(),
   company_id: z.uuid().optional(),
   vendor_id: z.uuid().nullable().optional(),
   parent_asset_id: z.uuid().nullable().optional(),
@@ -259,6 +261,7 @@ export const CLONE_FIELDS = [
   'status_id',
   'vendor_id',
   'location_id',
+  'department_id',
   'parent_asset_id',
   'purchase_date',
   'purchase_cost',
@@ -287,6 +290,7 @@ export const bulkUpdateSchema = z.strictObject({
       category_id: z.uuid(),
       model_id: z.uuid().nullable(),
       vendor_id: z.uuid().nullable(),
+      department_id: z.uuid().nullable(),
       custom_data: customData,
     })
     .partial()
@@ -349,7 +353,7 @@ export const ASSET_SORTS = [
   'warranty_end',
 ] as const;
 
-export const ASSET_EXPANDS = ['model', 'category', 'location', 'vendor'] as const;
+export const ASSET_EXPANDS = ['model', 'category', 'location', 'vendor', 'department'] as const;
 
 /**
  * Filters that exist in the contract but need tables another M2 wave builds: refused (400) until
@@ -372,6 +376,7 @@ export const assetListSchema = listQuerySchema.extend({
   model_id: csv(z.uuid()).optional(),
   manufacturer_id: z.uuid().optional(),
   location_id: z.uuid().optional(),
+  department_id: z.uuid().optional(),
   include_sublocations: boolParam.optional(),
   assigned: boolParam.optional(),
   assigned_person_id: z.uuid().optional(),

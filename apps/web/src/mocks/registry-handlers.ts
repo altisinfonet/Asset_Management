@@ -907,6 +907,14 @@ function validateAssetBody(
   if (typeof body.vendor_id === 'string' && !data.vendors.some((v) => v.id === body.vendor_id)) {
     errors.push({ pointer: '/vendor_id', message: 'unknown vendor', code: 'invalid' });
   }
+  // ED-17: a live department (the API answers `not-found` on the field)
+  if (
+    typeof body.department_id === 'string' &&
+    body.department_id !== existing?.department_id &&
+    !data.departments.some((d) => d.id === body.department_id && !d.archived_at)
+  ) {
+    errors.push({ pointer: '/department_id', message: 'No such department.', code: 'not-found' });
+  }
   if (typeof body.asset_tag === 'string' && /\s/.test(body.asset_tag.trim())) {
     errors.push({ pointer: '/asset_tag', message: 'must not contain whitespace', code: 'pattern' });
   }
@@ -1008,6 +1016,7 @@ function applyAssetPatch(data: RegistryData, id: string, body: Body, actorId: st
   if (body.status_id !== undefined) assign('status_id', body.status_id);
   if (body.location_id !== undefined) assign('location_id', body.location_id);
   if (body.vendor_id !== undefined) assign('vendor_id', body.vendor_id);
+  if (body.department_id !== undefined) assign('department_id', body.department_id);
   if (body.purchase_cost !== undefined) assign('purchase_cost', body.purchase_cost);
   if (body.custom_data !== undefined) {
     const merged = { ...target.custom_data } as Record<string, unknown>;
@@ -1138,6 +1147,11 @@ export function expandAsset(asset: MockAsset, expand: string[]): Record<string, 
     const l = data.locations.find((x) => x.id === asset.location_id);
     if (l) expanded.location = strip(l);
   }
+  if (expand.includes('department') && asset.department_id) {
+    const d = data.departments.find((x) => x.id === asset.department_id);
+    // the embedded department has no counts and no manager name (`departmentDto` of the API)
+    if (d) expanded.department = { ...strip(d), manager_name: null };
+  }
   if (expand.includes('vendor') && asset.vendor_id) {
     const v = data.vendors.find((x) => x.id === asset.vendor_id);
     if (v) expanded.vendor = strip(v);
@@ -1226,6 +1240,7 @@ export function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
     if (!(current?.target_type === 'person' && current.target_id === holder)) return false;
   }
   if (p.get('vendor_id') && a.vendor_id !== p.get('vendor_id')) return false;
+  if (p.get('department_id') && a.department_id !== p.get('department_id')) return false;
   const before = p.get('warranty_end_before');
   if (before && !(a.warranty_end && a.warranty_end <= before)) return false;
   const after = p.get('warranty_end_after');
@@ -1376,6 +1391,7 @@ const assetHandlers: HttpHandler[] = [
         model_id: (body.model_id as string | null | undefined) ?? null,
         status_id: (body.status_id as string | undefined) ?? defaultStatus.id,
         location_id: (body.location_id as string | null | undefined) ?? null,
+        department_id: (body.department_id as string | null | undefined) ?? null,
         vendor_id: (body.vendor_id as string | null | undefined) ?? null,
         parent_asset_id: null,
         purchase_date: text(body.purchase_date) ?? null,
@@ -1461,7 +1477,14 @@ const assetHandlers: HttpHandler[] = [
     const ids = bulkIds(body);
     if (!Array.isArray(ids)) return ids;
     const changes = body?.changes;
-    const allowed = ['status_id', 'category_id', 'model_id', 'vendor_id', 'custom_data'];
+    const allowed = [
+      'status_id',
+      'category_id',
+      'model_id',
+      'vendor_id',
+      'department_id',
+      'custom_data',
+    ];
     if (
       typeof changes !== 'object' ||
       changes === null ||

@@ -206,6 +206,12 @@ describe('role x operation matrix', () => {
     createPerson: ['tenant_admin', 'asset_manager'],
     updatePerson: ['tenant_admin', 'asset_manager'],
     archivePerson: ['tenant_admin', 'asset_manager'],
+    // [DEPT] managed departments (ED-17): everybody reads, the asset manager (and the administrator) writes
+    listDepartments: ALL,
+    getDepartment: ALL,
+    createDepartment: ['tenant_admin', 'asset_manager'],
+    updateDepartment: ['tenant_admin', 'asset_manager'],
+    archiveDepartment: ['tenant_admin', 'asset_manager'],
     transferAsset: ['tenant_admin', 'asset_manager', 'technician'],
     listAssetAssignments: ALL,
     listAssetHistory: ALL,

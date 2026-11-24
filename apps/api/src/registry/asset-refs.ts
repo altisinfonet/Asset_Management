@@ -61,6 +61,9 @@ export class AssetRefs {
   location(id: string) {
     return this.memo(`location:${id}`, () => this.trx.location.findUnique({ where: { id } }));
   }
+  department(id: string) {
+    return this.memo(`department:${id}`, () => this.trx.department.findUnique({ where: { id } }));
+  }
   asset(id: string) {
     return this.memo(`asset:${id}`, () =>
       this.trx.asset.findUnique({ where: { id }, select: { id: true, parent_asset_id: true } }),

@@ -59,6 +59,10 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     locationName: string;
     personId: string;
     personEmail: string;
+    // [DEPT] a department of A (with A's person and A's asset in it) and one of B
+    departmentId: string;
+    departmentName: string;
+    ownDepartmentId: string;
     /** an asset of tenant B (so B can try to hand it to A's person / A's location) */
     ownAssetId: string;
     // [M2-W2 ACC]
@@ -212,6 +216,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         list(`/v1/assets?category_id=${c.categoryId}`),
         list(`/v1/assets?model_id=${c.modelId}`),
         list(`/v1/assets?vendor_id=${c.vendorId}&include_total=true`),
+        list(`/v1/assets?department_id=${c.departmentId}&expand=department`),
         list(`/v1/assets?status_id=${c.statusLabelId}`),
         list('/v1/assets?limit=200&archived=include'),
         list(`/v1/assets?location_id=${c.locationId}`),
@@ -229,6 +234,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
           vendor_id: c.vendorId,
         }),
         refused('POST', '/v1/assets', { category_id: c.categoryId, status_id: c.statusLabelId }),
+        refused('POST', '/v1/assets', { category_id: c.categoryId, department_id: c.departmentId }),
       ],
       'post /v1/assets/:id/restore': [notFound('POST', `/v1/assets/${c.assetId}/restore`)],
       'post /v1/assets/:id/clone': [
@@ -363,15 +369,28 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         refused('POST', '/v1/locations', { name: unique('X'), parent_id: c.locationId }),
         { method: 'POST', url: '/v1/locations', body: { name: unique('B-own') }, expect: [201] },
       ],
+      // ---- [DEPT] managed departments (ED-17)
+      ...crud('departments', c.departmentId, { description: 'b was here' }),
+      'get /v1/departments': [
+        list(`/v1/departments?q=${c.departmentName}`),
+        list('/v1/departments?limit=200&archived=include'),
+      ],
+      'post /v1/departments': [
+        // A's person as manager: refused, nothing created in A
+        refused('POST', '/v1/departments', { name: unique('X'), manager_person_id: c.personId }),
+        { method: 'POST', url: '/v1/departments', body: { name: unique('B-own') }, expect: [201] },
+      ],
       // ---- M2 wave 1: people
       ...crud('people', c.personId, { notes: 'b was here' }),
       'get /v1/people': [
         list(`/v1/people?q=${c.personEmail}`),
         list(`/v1/people?location_id=${c.locationId}`),
+        list(`/v1/people?department_id=${c.departmentId}`),
         list('/v1/people?limit=200&archived=include'),
       ],
       'post /v1/people': [
         refused('POST', '/v1/people', { display_name: unique('X'), location_id: c.locationId }),
+        refused('POST', '/v1/people', { display_name: unique('X'), department_id: c.departmentId }),
         {
           method: 'POST',
           url: '/v1/people',
@@ -736,6 +755,27 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         location_id: location.id,
       })
     ).body;
+    // [DEPT] BEGIN a department of A, with A's person and A's asset in it; one department of B
+    const departmentName = `${marker} dept`;
+    const department = (
+      await a.post('/v1/departments', {
+        name: departmentName,
+        code: `${marker}-D`,
+        manager_person_id: person.id,
+      })
+    ).body;
+    await a.patch(
+      `/v1/people/${person.id}`,
+      { department_id: department.id },
+      { headers: { 'if-match': String((await a.get(`/v1/people/${person.id}`)).headers.etag) } },
+    );
+    await a.patch(
+      `/v1/assets/${asset.id}`,
+      { department_id: department.id },
+      { headers: { 'if-match': String((await a.get(`/v1/assets/${asset.id}`)).headers.etag) } },
+    );
+    const ownDepartment = (await b().post('/v1/departments', { name: unique('B-dept') })).body;
+    // [DEPT] END
     const bCategory = (await b().post('/v1/categories', { name: unique('B-cat') })).body;
     const bAsset = (await b().post('/v1/assets', { category_id: bCategory.id })).body;
     await a.post(
@@ -891,6 +931,9 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       locationName,
       personId: person.id,
       personEmail,
+      departmentId: department.id,
+      departmentName,
+      ownDepartmentId: ownDepartment.id,
       ownAssetId: bAsset.id,
       // [M2-W2 ACC]
       accessoryId: accessory.id,
@@ -941,6 +984,7 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
         notificationId,
         sharedView.body.id,
         privateView.body.id,
+        department.id,
         exportJob.body.id,
       ],
     };
@@ -964,6 +1008,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       user: await etag(`/v1/users/${fx.userId}`),
       location: await etag(`/v1/locations/${fx.locationId}`),
       person: await etag(`/v1/people/${fx.personId}`),
+      department: await etag(`/v1/departments/${fx.departmentId}`),
+      departments: String((await A.admin.get('/v1/departments?limit=200')).body.data.length),
       // custody of A's asset is untouched: the same open assignment and the same history
       assignments: JSON.stringify(
         (await A.admin.get(`/v1/assets/${fx.assetId}/assignments`)).body.data.map(

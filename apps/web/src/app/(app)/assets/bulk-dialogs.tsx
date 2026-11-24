@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { DepartmentPicker } from '@/components/registry/department-picker';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Banner } from '@/components/ui/banner';
 import {
   Dialog,
@@ -20,8 +22,12 @@ import type { Lookups } from '@/lib/registry/queries';
 import { uiErrorText } from '@/lib/error-text';
 
 /** What a bulk edit may change (the contract's `changes` of `POST /v1/assets/bulk-update`). */
-export type BulkEditPatch = { status_id: string } | { category_id: string } | { vendor_id: string };
-type BulkField = 'status_id' | 'category_id' | 'vendor_id';
+export type BulkEditPatch =
+  | { status_id: string }
+  | { category_id: string }
+  | { vendor_id: string }
+  | { department_id: string | null };
+type BulkField = 'status_id' | 'category_id' | 'vendor_id' | 'department_id';
 
 /** "Edit N assets" (wireframe WEB-07): choose a field and a value, preview the tags, apply. */
 export function BulkEditDialog({
@@ -43,6 +49,8 @@ export function BulkEditDialog({
   const { can } = useAuth();
   const [field, setField] = useState<BulkField>('status_id');
   const [value, setValue] = useState('');
+  /** Department only: set "no department" on every selected asset. */
+  const [clearDepartment, setClearDepartment] = useState(false);
   const active = <T extends { id: string; name: string; archived_at?: string | null }>(list: T[]) =>
     list.filter((x) => !x.archived_at).map((x) => ({ value: x.id, label: x.name }));
   const options =
@@ -50,7 +58,9 @@ export function BulkEditDialog({
       ? active(lookups.statuses)
       : field === 'category_id'
         ? active(lookups.categories)
-        : active(lookups.vendors);
+        : field === 'vendor_id'
+          ? active(lookups.vendors)
+          : [];
   const preview = items
     .slice(0, 5)
     .map((i) => i.label)
@@ -71,25 +81,46 @@ export function BulkEditDialog({
               onValueChange={(v) => {
                 setField(v as typeof field);
                 setValue('');
+                setClearDepartment(false);
               }}
               options={[
                 { value: 'status_id', label: t('assets.columns.status') },
                 { value: 'category_id', label: t('assets.columns.category') },
                 { value: 'vendor_id', label: t('assets.columns.vendor') },
+                { value: 'department_id', label: t('assets.columns.department') },
               ]}
             />
           )}
         </Field>
         <Field label={t('assets.bulk.newValue')}>
-          {(c) => (
-            <Select
-              {...c}
-              value={value}
-              placeholder={t('common.choose')}
-              onValueChange={setValue}
-              options={options}
-            />
-          )}
+          {(c) =>
+            field === 'department_id' ? (
+              <div className="flex flex-col gap-2">
+                <DepartmentPicker
+                  {...c}
+                  value={clearDepartment ? '' : value}
+                  disabled={clearDepartment}
+                  onChange={setValue}
+                />
+                <Checkbox
+                  label={t('assets.bulk.noDepartment')}
+                  checked={clearDepartment}
+                  onCheckedChange={(v) => {
+                    setClearDepartment(v === true);
+                    if (v === true) setValue('');
+                  }}
+                />
+              </div>
+            ) : (
+              <Select
+                {...c}
+                value={value}
+                placeholder={t('common.choose')}
+                onValueChange={setValue}
+                options={options}
+              />
+            )
+          }
         </Field>
         {can('repair:manage') &&
         field === 'status_id' &&
@@ -113,7 +144,7 @@ export function BulkEditDialog({
           <Button onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
           <Button
             variant="primary"
-            disabled={!value}
+            disabled={!value && !clearDepartment}
             loading={progress !== null}
             onClick={() =>
               onApply(
@@ -121,7 +152,9 @@ export function BulkEditDialog({
                   ? { status_id: value }
                   : field === 'category_id'
                     ? { category_id: value }
-                    : { vendor_id: value },
+                    : field === 'vendor_id'
+                      ? { vendor_id: value }
+                      : { department_id: clearDepartment ? null : value },
               )
             }
           >

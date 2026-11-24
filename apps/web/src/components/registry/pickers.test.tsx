@@ -9,6 +9,7 @@ import { uid } from '@/mocks/registry-fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { renderApp, seedSession } from '@/test/render';
 import { AssetPicker, type AssetRef } from './asset-picker';
+import { DepartmentPicker } from './department-picker';
 import { LocationPicker } from './location-picker';
 import { PersonPicker, type PersonRef } from './person-picker';
 
@@ -174,6 +175,64 @@ describe('LocationPicker', () => {
     expect(screen.getByRole('option', { name: /^Riverside Elementary/ })).not.toHaveAttribute(
       'aria-disabled',
     );
+  });
+});
+
+describe('DepartmentPicker', () => {
+  beforeEach(() => seedSession(MOCK_ACCOUNTS.owner));
+
+  function Harness({ excludeId }: { excludeId?: string }) {
+    const [value, setValue] = useState('');
+    return (
+      <div>
+        <DepartmentPicker
+          aria-label="Department"
+          clearable
+          value={value}
+          onChange={setValue}
+          excludeId={excludeId}
+        />
+        <output data-testid="chosen">{value}</output>
+      </div>
+    );
+  }
+
+  it('lists the managed departments with code and manager, and finds by name or by code', async () => {
+    const user = userEvent.setup();
+    renderApp(<Harness />);
+    const box = screen.getByRole('combobox', { name: 'Department' });
+    await user.click(box);
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(6);
+    expect(screen.getByRole('option', { name: /^IT/ })).toHaveTextContent('Alice Owner');
+    await user.type(box, 'math');
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option')).toHaveTextContent('Mathematics');
+    await user.clear(box);
+    await user.type(box, 'LIB');
+    expect(screen.getByRole('option')).toHaveTextContent('Library');
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('chosen')).toHaveTextContent(uid('department', 5));
+    expect(box).toHaveValue('Library');
+    await user.click(screen.getByRole('button', { name: 'Clear department' }));
+    expect(screen.getByTestId('chosen')).toBeEmptyDOMElement();
+  });
+
+  it('leaves out the excluded department (the one being merged away)', async () => {
+    const user = userEvent.setup();
+    renderApp(<Harness excludeId={uid('department', 1)} />);
+    await user.click(screen.getByRole('combobox', { name: 'Department' }));
+    await screen.findAllByRole('option');
+    expect(screen.queryByRole('option', { name: /^IT/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('option')).toHaveLength(5);
+  });
+
+  it('has no axe violations open', async () => {
+    const user = userEvent.setup();
+    const { container } = renderApp(<Harness />);
+    await user.click(screen.getByRole('combobox', { name: 'Department' }));
+    await screen.findAllByRole('option');
+    await expectNoA11yViolations(container);
   });
 });
 

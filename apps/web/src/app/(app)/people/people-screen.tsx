@@ -3,9 +3,10 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, KeyRound, Plus, Users } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '@/components/page-header';
+import { DepartmentPicker } from '@/components/registry/department-picker';
 import { ExportButton } from '@/components/exports/export-button';
 import { PageTitle } from '@/components/page-title';
 import { Badge } from '@/components/ui/badge';
@@ -33,10 +34,19 @@ interface ListState {
   status: string;
   kind: string;
   login: string;
+  /** A department id (`?department=` of the department's people count and the person page). */
+  department_id: string;
   sort: string;
 }
 
-const DEFAULT_STATE: ListState = { q: '', status: 'active', kind: '', login: '', sort: '' };
+const DEFAULT_STATE: ListState = {
+  q: '',
+  status: 'active',
+  kind: '',
+  login: '',
+  department_id: '',
+  sort: '',
+};
 
 const SORT_BY_COLUMN: Record<string, string> = {
   name: 'display_name',
@@ -50,6 +60,7 @@ function toQuery(state: ListState, cursor: string | undefined): PeopleQuery {
   if (state.status) query.status = state.status as 'active' | 'inactive';
   if (state.kind) query.kind = [state.kind as (typeof PERSON_KINDS)[number]];
   if (state.login) query.has_login = state.login === 'with';
+  if (state.department_id) query.department_id = state.department_id;
   if (state.sort) query.sort = [state.sort as NonNullable<PeopleQuery['sort']>[number]];
   return query;
 }
@@ -68,7 +79,11 @@ export function PeopleScreen() {
   const lookups = useLookups();
   const manage = can('person:manage');
 
-  const [state, setState] = useState<ListState>(DEFAULT_STATE);
+  const params = useSearchParams();
+  const [state, setState] = useState<ListState>(() => ({
+    ...DEFAULT_STATE,
+    department_id: params.get('department') ?? '',
+  }));
   const [searchText, setSearchText] = useState('');
   const [cursors, setCursors] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
@@ -95,7 +110,13 @@ export function PeopleScreen() {
   const total = list.data?.page.total;
   const pageStart = cursors.length * PAGE_SIZE;
 
-  const filtered = !!(state.q || state.kind || state.login || state.status !== 'active');
+  const filtered = !!(
+    state.q ||
+    state.kind ||
+    state.login ||
+    state.department_id ||
+    state.status !== 'active'
+  );
 
   const columns = useMemo<DataTableColumn<Person>[]>(
     () => [
@@ -240,6 +261,16 @@ export function PeopleScreen() {
               ]}
             />
           </label>
+          <div className="flex min-w-52 flex-col gap-1.5 text-sm font-medium">
+            <label htmlFor="filter-department">{t('people.filters.department')}</label>
+            <DepartmentPicker
+              id="filter-department"
+              clearable
+              value={state.department_id}
+              placeholder={t('people.filters.anyDepartment')}
+              onChange={(id) => update({ department_id: id })}
+            />
+          </div>
           {filtered ? (
             <Button
               variant="link"

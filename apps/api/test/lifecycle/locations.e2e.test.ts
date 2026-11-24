@@ -340,6 +340,179 @@ describe.skipIf(!dbEnabled)(`locations and asset moves (${mode})`, () => {
     });
   });
 
+  /**
+   * Founder report 2026-11-24 ("location edit for a site: an error at edit time, none later"). Root
+   * cause: an out-of-limit address value (a country name instead of its two-letter code) is a 422
+   * on `/address/country`; the web dialog could not place that pointer and only said "the request
+   * failed validation". The API now says exactly what the country must be, and the rules of an edit
+   * are pinned here: ED-16 (no rule ties `kind` to the parent or to children; a site may have a
+   * parent; `kind` is freely editable).
+   */
+  describe('editing a location (founder report 2026-11-24, ED-16)', () => {
+    const patch = async (id: string, body: Record<string, unknown>, etag?: string) => {
+      const current = etag ?? (await a().get(`/v1/locations/${id}`)).headers.etag;
+      return a().patch(`/v1/locations/${id}`, body, ifMatch(current));
+    };
+
+    it('address.country must be a two-letter code and is stored upper-case; other limits name their field', async () => {
+      const site = await newLocation(a(), { name: unique('Site'), kind: 'site' });
+      for (const country of ['Norway', 'N', '1A', '  ', 'NOR']) {
+        const res = await patch(site.id, { address: { country } });
+        expect(res.status, country).toBe(422);
+        expect(res.body.errors[0], country).toMatchObject({ pointer: '/address/country' });
+      }
+      const ok = await patch(site.id, {
+        address: { line1: '1 Main', city: 'Oslo', country: 'no' },
+      });
+      expect(ok.status).toBe(200);
+      expect(ok.body.address).toMatchObject({ city: 'Oslo', country: 'NO' });
+      // null clears it; a create takes the same rule
+      expect((await patch(site.id, { address: { country: null } })).status).toBe(200);
+      expect(
+        (await a().post('/v1/locations', { name: unique('Bad'), address: { country: 'Norway' } }))
+          .status,
+      ).toBe(422);
+      for (const [field, max] of [
+        ['line1', 200],
+        ['line2', 200],
+        ['city', 100],
+        ['region', 100],
+        ['postal_code', 40],
+      ] as const) {
+        const res = await patch(site.id, { address: { [field]: 'x'.repeat(max + 1) } });
+        expect(res.status, field).toBe(422);
+        expect(res.body.errors[0].pointer, field).toBe(`/address/${field}`);
+      }
+    });
+
+    it('kind is freely editable, with children, assets and a parent: nothing else about the location changes', async () => {
+      const { site, building, room } = await tree();
+      await a().post('/v1/assets', { category_id: b.categoryId, location_id: building.id });
+      await a().post('/v1/assets', { category_id: b.categoryId, location_id: room.id });
+      for (const [loc, kind] of [
+        [building.id, 'site'], // building -> site (it keeps its parent: a site may have a parent)
+        [building.id, 'floor'],
+        [site.id, 'room'], // site -> room (a root with a subtree)
+        [site.id, 'site'],
+        [room.id, 'site'], // room -> site, with assets and a parent
+        [room.id, 'storage'],
+        [building.id, 'building'],
+      ] as const) {
+        const res = await patch(loc, { kind });
+        expect(res.status, `${loc} -> ${kind}`).toBe(200);
+        expect(res.body.kind).toBe(kind);
+      }
+      const after = await a().get(`/v1/locations/${building.id}`);
+      expect(after.body).toMatchObject({
+        parent_id: site.id,
+        depth: 1,
+        child_count: 1,
+        asset_count: 2,
+        direct_asset_count: 1,
+      });
+      // a change of kind alone is audited as an update, not a move
+      const audit = await auditRows(
+        t.tenantId,
+        `entity_type = 'location' and entity_id = '${building.id}'`,
+      );
+      expect(audit.map((r) => r.action)).not.toContain('location.moved');
+    });
+
+    it('a site may be moved under another site or to the top level; a location under its own subtree is a 422, never a 500', async () => {
+      const one = await tree();
+      const two = await tree();
+      expect((await patch(one.site.id, { parent_id: two.site.id })).status).toBe(200);
+      expect((await patch(one.site.id, { parent_id: null })).status).toBe(200);
+      for (const target of [one.room.id, one.building.id, one.site.id]) {
+        const res = await patch(one.site.id, { parent_id: target });
+        expect(res.status, target).toBe(422);
+        expect(res.body.errors[0]).toMatchObject({ pointer: '/parent_id', code: 'cycle' });
+      }
+      // nothing moved
+      expect((await a().get(`/v1/locations/${one.site.id}`)).body.parent_id).toBeNull();
+      const gone = await newLocation(a());
+      await a().del(
+        `/v1/locations/${gone.id}`,
+        undefined,
+        ifMatch((await a().get(`/v1/locations/${gone.id}`)).headers.etag),
+      );
+      const archivedParent = await patch(one.building.id, { parent_id: gone.id });
+      expect(archivedParent.status).toBe(422);
+      expect(archivedParent.body.errors[0]).toMatchObject({ pointer: '/parent_id' });
+    });
+
+    it('a duplicate name under the same parent is a 409 on /name (also case-insensitively, also when moving)', async () => {
+      const root = await newLocation(a(), { name: unique('R'), kind: 'site' });
+      const first = await newLocation(a(), { name: unique('Twin'), parent_id: root.id });
+      const second = await newLocation(a(), { name: unique('Other'), parent_id: root.id });
+      for (const name of [first.body.name, first.body.name.toUpperCase()]) {
+        const res = await patch(second.id, { name });
+        expect(res.status).toBe(409);
+        expect(res.body.errors[0]).toMatchObject({ pointer: '/name', code: 'duplicate' });
+      }
+      // the same name elsewhere is fine; moving into a parent that has it is the same 409
+      const elsewhere = await newLocation(a(), { name: first.body.name });
+      const moved = await patch(elsewhere.id, { parent_id: root.id });
+      expect(moved.status).toBe(409);
+      expect(moved.body.errors[0].pointer).toBe('/name');
+      // renaming to its own name (different case) is not a conflict with itself
+      expect((await patch(first.id, { name: first.body.name.toUpperCase() })).status).toBe(200);
+    });
+
+    it('If-Match: missing 428, stale 412 (also after another editor), fresh 200; the ETag of a create is usable at once; moving assets in does not stale it', async () => {
+      const created = await a().post('/v1/locations', { name: unique('Fresh'), kind: 'site' });
+      expect(created.status).toBe(201);
+      const asset = await newAsset(a(), b.categoryId, { location_id: created.body.id });
+      expect(asset.id).toBeTruthy();
+      expect((await a().patch(`/v1/locations/${created.body.id}`, { notes: 'n' })).status).toBe(
+        428,
+      );
+      // the ETag of the 201 still describes the location after an asset was put in it
+      const first = await patch(created.body.id, { code: 'F-1' }, String(created.headers.etag));
+      expect(first.status).toBe(200);
+      // someone else saved in between: the older ETag is refused with 412, the new one works
+      const stale = await patch(created.body.id, { code: 'F-2' }, String(created.headers.etag));
+      expect(stale.status).toBe(412);
+      expect(stale.body.code).toBe('precondition-failed');
+      expect(
+        (await patch(created.body.id, { code: 'F-2' }, String(first.headers.etag))).status,
+      ).toBe(200);
+    });
+
+    it('an archived location cannot be edited (404), and a location of another tenant is a 404 too', async () => {
+      const loc = await newLocation(a());
+      const etag = (await a().get(`/v1/locations/${loc.id}`)).headers.etag;
+      expect((await a().del(`/v1/locations/${loc.id}`, undefined, ifMatch(etag))).status).toBe(204);
+      const res = await patch(loc.id, { notes: 'x' }, String(etag));
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('not-found');
+      const foreign = await newLocation(other.admin);
+      expect((await patch(foreign.id, { notes: 'x' }, 'W/"1"')).status).toBe(404);
+    });
+
+    it('every role: asset manager and administrator edit; technician, auditor and viewer get a 403', async () => {
+      const loc = await newLocation(a(), { name: unique('Roles'), kind: 'site' });
+      const manager = await createUser(app, t, 'asset_manager');
+      const etag = String((await a().get(`/v1/locations/${loc.id}`)).headers.etag);
+      const edited = await manager.client.patch(
+        `/v1/locations/${loc.id}`,
+        { kind: 'building' },
+        ifMatch(etag),
+      );
+      expect(edited.status).toBe(200);
+      for (const role of ['technician', 'auditor', 'viewer']) {
+        const user = await createUser(app, t, role);
+        const res = await user.client.patch(
+          `/v1/locations/${loc.id}`,
+          { kind: 'room' },
+          ifMatch(String(edited.headers.etag)),
+        );
+        expect(res.status, role).toBe(403);
+        expect(res.body.code).toBe('forbidden');
+      }
+    });
+  });
+
   describe('asset location and moves (M2-LOC-02)', () => {
     it('location_id is writable on create and update, validated, and recorded in the history', async () => {
       const { site, building } = await tree();

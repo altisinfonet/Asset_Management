@@ -37,7 +37,7 @@ export {
   listHistory,
   writeAssetHistory,
 } from './asset-history.js';
-export { type LocationCounts, locationDto } from './dto.js';
+export { type DepartmentCounts, type LocationCounts, departmentDto, locationDto } from './dto.js';
 export {
   type ChangeRecord,
   RegistryBase,

@@ -15,6 +15,7 @@ import {
   TagNumberingScreen,
   VendorsScreen,
 } from './catalog-screens';
+import { DepartmentsScreen } from './departments-screen';
 import { FieldsScreen } from './fields-screen';
 import { NotificationRulesScreen } from './notification-rules-screen';
 import { UsersScreen } from './users-screen';
@@ -41,6 +42,8 @@ export function SettingsSectionScreen({ section }: { section: SettingsSection })
         <VendorsScreen />
       ) : section === 'users' ? (
         <UsersScreen />
+      ) : section === 'departments' ? (
+        <DepartmentsScreen />
       ) : section === 'notifications' ? (
         <NotificationRulesScreen />
       ) : (

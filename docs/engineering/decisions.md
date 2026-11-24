@@ -21,6 +21,8 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 | ED-13 | Check-out, check-in and transfer return the updated asset and the assignment | M2 | `openapi.yaml` changed |
 | ED-14 | Auth contract completion (2026-11-18) | M1 | `openapi.yaml` changed |
 | ED-15 | Locations, people and custody as built (M2 wave 1) | M2 | `openapi.yaml` changed, migrations 0040-0041 |
+| ED-16 | Editing a location: `kind` is free, address limits are named on their field (founder report 2026-11-24) | M2 | `openapi.yaml` changed (`Address.country` pattern) |
+| ED-17 | Managed departments replace the free-text department (founder request 2026-11-24) | M2 | `openapi.yaml`, `data_model.md`, `schema.sql` changed, migration 0100 |
 
 ## ED-01. `person` is separate from `user_account`
 
@@ -140,3 +142,27 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 - **Rationale.** The first drafts left these rules to the implementer; pinning them keeps the web and mobile clients, the importer and the later waves (accessories, loaners, repairs) on one behaviour.
 - **Consequences.** Not built (reported to the integrator): default location on models and categories (M2-LOC-02 mentions it, the contract has no field), location scoping of roles (M2-LOC-03, last by plan), an explicit person-to-login link action. The accessory and loaner foreign keys on `assignment` and the attachment validation are left to the integrator (see `data_model.md` 3.6.1). Update: the attachment validation was done in wave 1b and the accessory foreign key and stock trigger in wave 2 (migration 0080, ADR 0008); only the loaner foreign key is open.
 - **Milestone.** M2.
+
+## ED-16. Editing a location: `kind` is free, address limits are named on their field
+
+- **Report.** "Location edit for site [type]: at edit time I got an error but right now I did not get it." Reproduced against the real stack: only a **site** shows the address fields, and an address value over its limit (typically a country name instead of the two-letter code) is a `422` whose pointer is `/address/country`. The edit dialog matched pointers to fields by name only, so it could not place that pointer and showed the generic "The request body failed validation (1 problem)" with no field marked; the same edit with a valid value (a two-letter code, or the field left empty) saved, hence "right now I did not get it". No `500` exists on any edit path: every scenario of the report (rename, change of kind, move, duplicate name, stale ETag, archived location, role) was replayed against the API and answers with a documented 2xx / 4xx.
+- **Decision.**
+  - **`kind` is editable at any time** and there are **no rules between `kind` and the tree**: a site may have a parent (a campus of sites, a site inside a region location), a room may be a root, any kind may have children and assets, changing the kind never moves, archives or recounts anything and is audited as an ordinary update. The only structural rules stay the ones that protect the tree: no cycle (`422`, `/parent_id`, code `cycle`), at most ten levels (`too-deep`), a live parent, a name unique among the live children of a parent (`409`, `/name`).
+  - `address.country` must be exactly two letters (ISO 3166-1 alpha-2) and is stored upper-case (`no` is saved as `NO`); every address member has its documented length limit and a violation is a `422` on `/address/<member>`.
+  - The generic form dialog (`FormDialog`) maps a nested pointer to the field that lists it (`pointers`), checks the field limits and custom rules before it calls the server (message names the field and the limit), lists a problem that matches no field in the banner instead of hiding it, and answers a `412` with "Someone saved this before you" and a **Reload latest** action that reopens the form with the other version.
+  - Changing a site to another kind keeps its address (the address fields are hidden, not cleared; change it back and it is there), and an edit keeps `address.line2`, which the old form silently dropped.
+- **Rationale.** The error was a message-quality bug, not an API bug; the fix puts the message on the field and stops the form from losing data. Keeping `kind` free avoids inventing hierarchy rules nobody asked for; the database has none either.
+- **Consequences.** `Address.country` gets `pattern: ^[A-Za-z]{2}$` in the contract. Stored addresses written before this with a longer country value are still readable and are re-validated only when edited.
+- **Milestone.** M2 (backlog M2-LOC-05).
+
+## ED-17. Managed departments replace the free-text department
+
+- **Decision.**
+  - A tenant table **`app.department`** (`name` unique among live rows ignoring case and padding through the stored key `name_key`, optional `code` unique likewise, `description`, optional `manager_person_id`, `archived_at`, `version`) with the tenant conventions (FORCE RLS, composite FKs). People get `department_id`, **assets get an optional `department_id`** (owning / cost-centre department; the plan lists CostCenter / Department as an allocation dimension of Asset; the location stays where the asset is).
+  - **Migration 0100** creates one department per distinct trimmed, case-insensitively deduplicated free-text value per tenant (most used spelling wins) and links the people without changing their version. `person.department` (text) is **kept one release as a deprecated, unused column** (nothing reads or writes it; the person read model derives `department` as the name of the linked department) and dropped later; it is not dropped now so that a rollback of the application does not lose the old values.
+  - **API.** `/v1/departments` (list with `q`, counts of live people and assets, create, get, patch with `If-Match`, archive). Archiving a department that live people or assets still use is a `409` with `usage` (`people`, `assets`) unless `reassign_to=<id>` moves them to another live department in the same transaction (the merge). `department_id` is a filter of the people and asset lists, a field of both read models, writable on person create / update, asset create / update / bulk update / clone, and `expand=department` embeds it in an asset; the people and asset CSV exports carry the department name. A `department` key on person create / update is a `422` (strict bodies).
+  - **Permissions.** `department:read` for every built-in role, `department:manage` for the Asset manager (and the Administrator through `*`); migration 0100 updates existing tenants and replaces `app.provision_tenant` from its definition in 0094.
+  - **Web.** Settings -> Departments (list, create, rename, archive with usage message, merge), a type-ahead `DepartmentPicker` on the person form, the asset form and the bulk edit, a department column and filter on People and Assets, and the department on both detail views.
+- **Rationale.** Free text produced "Maths", "maths " and "Mathematics" as three departments, which breaks every filter and report. A managed list with ids makes a rename a one-row change and a merge one call.
+- **Consequences.** Breaking for API clients that wrote `department` text or filtered by `?department=`: they use `department_id`. The old column is dropped in a later migration. Departments are not yet part of the global search.
+- **Milestone.** M2 (backlog M2-ORG-01, M2-ORG-02).

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CustomFieldInput } from '@/components/registry/custom-field-input';
+import { DepartmentPicker } from '@/components/registry/department-picker';
 import { LocationPicker } from '@/components/registry/location-picker';
 import { NoRepairNotice } from '@/components/repairs/no-repair-notice';
 import { Banner } from '@/components/ui/banner';
@@ -478,6 +479,22 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
                 value={state.location_id}
                 placeholder={t('common.none')}
                 onChange={(id) => set('location_id', id)}
+              />
+            )}
+          </Field>
+          <Field
+            label={t('assetForm.department')}
+            hint={t('assetForm.departmentHint')}
+            error={errors.department_id || undefined}
+          >
+            {(c) => (
+              <DepartmentPicker
+                {...c}
+                invalid={!!errors.department_id}
+                clearable
+                value={state.department_id}
+                placeholder={t('assetForm.noDepartment')}
+                onChange={(id) => set('department_id', id)}
               />
             )}
           </Field>

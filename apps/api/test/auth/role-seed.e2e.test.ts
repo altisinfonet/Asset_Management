@@ -32,7 +32,7 @@ describe.skipIf(!dbEnabled)('built-in roles in the database', () => {
     }
   });
 
-  it('a freshly provisioned tenant keeps every grant of the later migrations (0011 search:read, 0094 view:share and export:run)', async () => {
+  it('a freshly provisioned tenant keeps every grant of the later migrations (0011 search:read, 0094 view:share and export:run, 0100 department:read and department:manage)', async () => {
     const fixture = await createFixtureTenant(tenancy, 'RoleSeedWave2');
     const roles = await tenancy.withTenantTx({ tenantId: fixture.id }, (trx) =>
       trx.role.findMany({ where: { is_builtin: true } }),
@@ -45,6 +45,14 @@ describe.skipIf(!dbEnabled)('built-in roles in the database', () => {
     expect(byKey.get('asset_manager')).toEqual(
       expect.arrayContaining(['search:read', 'view:share', 'export:run']),
     );
+    // 0100 (ED-17): every role reads departments, only the asset manager (and the wildcard) manages them
+    for (const [key, permissions] of byKey) {
+      expect(permissions.includes('*') || permissions.includes('department:read'), key).toBe(true);
+      if (key !== 'asset_manager' && !permissions.includes('*')) {
+        expect(permissions, key).not.toContain('department:manage');
+      }
+    }
+    expect(byKey.get('asset_manager')).toContain('department:manage');
     // the administrator holds everything through the wildcard; read-only roles hold neither
     expect(byKey.get('tenant_admin')).toContain('*');
     for (const [key, permissions] of byKey) {

@@ -83,6 +83,8 @@ tags:
     description: Hierarchical locations.
   - name: People
     description: Assignable people (employees, students, contractors), with or without a login.
+  - name: Departments
+    description: "Managed departments (ED-17): the list people and assets are assigned to, instead of free text."
   - name: Accessories
     description: Quantity-tracked items that are checked out and returned.
   - name: Consumables
@@ -804,6 +806,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: department_id
+          in: query
+          description: "[ED-17] Assets of this department."
+          schema:
+            type: string
+            format: uuid
         - name: include_sublocations
           in: query
           description: "With `location_id`: include the whole subtree."
@@ -903,6 +911,7 @@ paths:
                 - category
                 - location
                 - vendor
+                - department
         - name: fields
           in: query
           description: "Sparse fieldset: return only these top-level properties (`id` is always included)."
@@ -1045,6 +1054,7 @@ paths:
                 - category
                 - location
                 - vendor
+                - department
       responses:
         "200":
           description: The asset.
@@ -2130,7 +2140,7 @@ paths:
       operationId: bulkUpdateAssets
       summary: Edit many assets
       description: |-
-        Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.
+        Applies the same `changes` (status, category, model, vendor, department, `custom_data` merge) to every listed asset.
 
         At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
 
@@ -4827,6 +4837,254 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/departments:
+    get:
+      tags:
+        - Departments
+      operationId: listDepartments
+      summary: List departments
+      description: Cursor-paginated list. `q` matches the name and the code (case-insensitive). Every row carries `person_count` and `asset_count` (live people / assets), so the settings page needs one call.
+      x-permission: department:read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/IncludeTotal"
+        - $ref: "#/components/parameters/Q"
+        - $ref: "#/components/parameters/Archived"
+        - name: sort
+          in: query
+          style: form
+          explode: false
+          description: "Comma-separated sort keys, `-` prefix = descending. Allowed: name, code, created_at. A unique tiebreaker (`id`) is always appended."
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - name
+                - -name
+                - code
+                - -code
+                - created_at
+                - -created_at
+            default:
+              - name
+      responses:
+        "200":
+          description: A page of results.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DepartmentList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    post:
+      tags:
+        - Departments
+      operationId: createDepartment
+      summary: Create department
+      description: Creates a department. The name (and the code, when set) must be unique among live departments, ignoring case (409 `conflict`, pointer `/name` or `/code`). The manager must be a live person (422).
+      x-permission: department:manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentCreate"
+      responses:
+        "201":
+          description: Department created.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              $ref: "#/components/headers/Location"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/departments/{id}:
+    get:
+      tags:
+        - Departments
+      operationId: getDepartment
+      summary: Get department
+      description: Requires permission `department:read`.
+      x-permission: department:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The department.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    patch:
+      tags:
+        - Departments
+      operationId: updateDepartment
+      summary: Update department
+      description: "Merge semantics. Renaming keeps every person and asset linked: they reference the id."
+      x-permission: department:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentUpdate"
+      responses:
+        "200":
+          description: Updated department.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    delete:
+      tags:
+        - Departments
+      operationId: archiveDepartment
+      summary: Archive department
+      description: "Soft delete. While live people or assets still reference the department the answer is `409 conflict` with `usage` (`people`, `assets`), unless `reassign_to` names another live department: then every person and asset (archived ones included) moves there in the same transaction and the department is archived (this is how two departments are merged). The move is recorded in the audit entry (`meta.reassigned_to`, `people`, `assets`)."
+      x-permission: department:manage
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - name: reassign_to
+          in: query
+          description: Move the people and assets of this department to that department before archiving (merge). Must be another live department (422 on `query:reassign_to` otherwise).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Archived.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
         "428":
           $ref: "#/components/responses/PreconditionRequired"
         "429":
@@ -7743,11 +8001,12 @@ paths:
             enum:
               - active
               - inactive
-        - name: department
+        - name: department_id
           in: query
-          description: Exact department.
+          description: "[ED-17] People of this department."
           schema:
             type: string
+            format: uuid
         - name: location_id
           in: query
           description: Home location.
@@ -10524,6 +10783,7 @@ components:
               - status_id
               - vendor_id
               - location_id
+              - department_id
               - parent_asset_id
               - purchase_date
               - purchase_cost
@@ -10592,6 +10852,12 @@ components:
                 - string
                 - "null"
               format: uuid
+            department_id:
+              type:
+                - string
+                - "null"
+              format: uuid
+              description: "[ED-17] Department for every listed asset; `null` clears it."
             custom_data:
               $ref: "#/components/schemas/CustomData"
           description: At least one of these. `custom_data` merges per key (`null` removes a key).
@@ -10879,7 +11145,8 @@ components:
           type:
             - string
             - "null"
-          description: ISO 3166-1 alpha-2.
+          description: "ISO 3166-1 alpha-2: exactly two letters, stored upper-case (`no` is saved as `NO`); anything else is a 422 on `/address/country`."
+          pattern: ^[A-Za-z]{2}$
     AssignmentTarget:
       type: object
       description: "Exactly one target: a person, a location, or another asset."
@@ -12080,10 +12347,12 @@ components:
             - string
             - "null"
           description: Unique per tenant when set (employee / student number).
-        department:
+        department_id:
           type:
             - string
             - "null"
+          format: uuid
+          description: "[ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department."
         job_title:
           type:
             - string
@@ -12113,6 +12382,12 @@ components:
             - "null"
           format: uuid
           description: Linked login account, if this person can sign in.
+          readOnly: true
+        department:
+          type:
+            - string
+            - "null"
+          description: "[ED-17] The NAME of the linked department (read-only; write `department_id`). Kept so readers of the old free-text field keep working."
           readOnly: true
         assets_held:
           type: integer
@@ -12159,10 +12434,12 @@ components:
             - string
             - "null"
           description: Unique per tenant when set (employee / student number).
-        department:
+        department_id:
           type:
             - string
             - "null"
+          format: uuid
+          description: "[ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department."
         job_title:
           type:
             - string
@@ -12226,10 +12503,12 @@ components:
             - string
             - "null"
           description: Unique per tenant when set (employee / student number).
-        department:
+        department_id:
           type:
             - string
             - "null"
+          format: uuid
+          description: "[ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department."
         job_title:
           type:
             - string
@@ -12271,6 +12550,136 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Person"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
+    Department:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        archived_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).
+        code:
+          type:
+            - string
+            - "null"
+          maxLength: 50
+          description: Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none.
+        description:
+          type:
+            - string
+            - "null"
+          maxLength: 2000
+        manager_person_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "The head of the department: a live person (422 on `/manager_person_id` otherwise)."
+        manager_name:
+          type:
+            - string
+            - "null"
+          description: Display name of the manager.
+          readOnly: true
+        person_count:
+          type: integer
+          minimum: 0
+          description: Live (not archived) people in this department. Present on the department endpoints only.
+          readOnly: true
+        asset_count:
+          type: integer
+          minimum: 0
+          description: Live (not archived) assets owned by this department. Present on the department endpoints only.
+          readOnly: true
+      required:
+        - id
+        - name
+      description: "A managed department: chosen from a list instead of typed, so the same department is never spelled three ways. People and assets reference it by id."
+    DepartmentCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).
+        code:
+          type:
+            - string
+            - "null"
+          maxLength: 50
+          description: Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none.
+        description:
+          type:
+            - string
+            - "null"
+          maxLength: 2000
+        manager_person_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "The head of the department: a live person (422 on `/manager_person_id` otherwise)."
+      required:
+        - name
+      additionalProperties: false
+    DepartmentUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`).
+        code:
+          type:
+            - string
+            - "null"
+          maxLength: 50
+          description: Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none.
+        description:
+          type:
+            - string
+            - "null"
+          maxLength: 2000
+        manager_person_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "The head of the department: a live person (422 on `/manager_person_id` otherwise)."
+      additionalProperties: false
+      description: "Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field."
+    DepartmentList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Department"
         page:
           $ref: "#/components/schemas/PageInfo"
       required:
@@ -13240,6 +13649,12 @@ components:
             - string
             - "null"
           format: uuid
+        department_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "[ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`."
         company_id:
           type: string
           format: uuid
@@ -13323,7 +13738,7 @@ components:
           type: object
           properties: {}
           additionalProperties: true
-          description: Related objects requested through `expand` (model, category, location, vendor).
+          description: Related objects requested through `expand` (model, category, location, vendor, department).
           readOnly: true
         image_attachment_id:
           type:
@@ -13373,6 +13788,12 @@ components:
             - string
             - "null"
           format: uuid
+        department_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "[ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`."
         company_id:
           type: string
           format: uuid
@@ -13460,6 +13881,12 @@ components:
             - string
             - "null"
           format: uuid
+        department_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: "[ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`."
         company_id:
           type: string
           format: uuid

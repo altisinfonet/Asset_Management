@@ -277,10 +277,12 @@ describe.skipIf(!dbEnabled)(`exports (${mode})`, () => {
         code: '-R1',
       })
     ).body;
+    const departmentName = unique('R&D');
+    const department = (await a().post('/v1/departments', { name: departmentName })).body;
     const person = await newPerson(a(), {
       display_name: '+Ada Lovelace',
       email: `${unique('ada')}@export.example`,
-      department: 'R&D',
+      department_id: department.id,
       location_id: room.id,
     });
     const people = await request(manager.client, {
@@ -293,7 +295,7 @@ describe.skipIf(!dbEnabled)(`exports (${mode})`, () => {
     expect(p.rows).toHaveLength(2);
     expect(p.rows[1]![0]).toBe("'+Ada Lovelace");
     expect(p.rows[1]![p.rows[0]!.indexOf('location')]).toBe(room.name);
-    expect(p.rows[1]![p.rows[0]!.indexOf('department')]).toBe('R&D');
+    expect(p.rows[1]![p.rows[0]!.indexOf('department')]).toBe(departmentName);
     expect(person.id).toBeTruthy();
 
     const locations = await request(manager.client, {

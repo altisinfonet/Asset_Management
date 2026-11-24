@@ -1,3 +1,4 @@
+import { departmentsMessages } from './departments';
 import { labelsMessages } from './labels';
 import { m2Messages } from './m2';
 import { notificationsMessages } from './notifications';
@@ -58,6 +59,10 @@ export const en = {
   form: {
     required: 'This field is required.',
     duplicate: 'This value is already in use.',
+    tooLong: 'Use at most {max} characters.',
+    staleTitle: 'Someone saved this before you',
+    stale: 'This item was changed by someone else after you opened it. Your edits were not saved.',
+    reload: 'Reload latest',
   },
   nav: {
     primary: 'Primary',
@@ -166,6 +171,8 @@ export const en = {
   usage: {
     assets_one: '{count} asset',
     assets_other: '{count} assets',
+    people_one: '{count} person',
+    people_other: '{count} people',
     models_one: '{count} model',
     models_other: '{count} models',
     customFields_one: '{count} custom field',
@@ -231,6 +238,7 @@ export const en = {
       tags: 'Tag numbering',
       vendors: 'Vendors',
       notifications: 'Notification rules',
+      departments: 'Departments',
     },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',
@@ -461,6 +469,7 @@ export const en = {
   },
   ...registryMessages,
   ...m2Messages,
+  ...departmentsMessages,
   ...labelsMessages,
   ...stockMessages,
   ...repairsMessages,

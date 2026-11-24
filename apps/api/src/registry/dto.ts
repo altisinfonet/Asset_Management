@@ -181,6 +181,30 @@ export const locationDto = (
   ...(counts ?? {}),
 });
 
+export interface DepartmentCounts {
+  person_count: number;
+  asset_count: number;
+}
+
+/** Schema `Department`; the counts and the manager name are present on the department endpoints, absent when embedded in an asset. */
+export const departmentDto = (
+  r: Stamped & {
+    name: string;
+    code: string | null;
+    description: string | null;
+    manager_person_id: string | null;
+  },
+  extra: { counts?: DepartmentCounts; managerName?: string | null } = {},
+) => ({
+  ...stamps(r),
+  name: r.name,
+  code: r.code,
+  description: r.description,
+  manager_person_id: r.manager_person_id,
+  manager_name: extra.managerName ?? null,
+  ...(extra.counts ?? {}),
+});
+
 /**
  * Options are stored as `[{value, label?}]`. Rows written by earlier seeds hold plain strings;
  * they read back in the canonical shape.

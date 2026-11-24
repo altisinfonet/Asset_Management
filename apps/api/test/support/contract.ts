@@ -142,6 +142,8 @@ export const REGISTRY_TAGS = new Set([
  * the registry tag and are walked there.
  */
 export const WAVE1_TAGS = new Set(['Locations', 'People', 'Custody']);
+/** [DEPT] Managed departments (ED-17): every operation is implemented by the departments module. */
+export const DEPT_TAGS = new Set(['Departments']);
 /**
  * Tags of M2 wave 2 (repairs, notifications, saved views, exports; the `[M2-W2 NOT]` block of gen.mjs):
  * every operation under them has a route and is walked live by `test/wave2/contract-wave2.e2e.test.ts`.

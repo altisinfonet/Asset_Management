@@ -151,6 +151,16 @@ until it is `healthy`. The signatures live in the `clamdata` volume, so later st
 | **Assets** > **Views**, **Export**                     | Save the current filters as a personal view and share it with the organisation (needs `view:share`); export the list as CSV (needs `export:run`), the file is ready after a few seconds and removed after 24 hours. |
 | **Account > Security**                                 | Shows whether the organisation policy requires two-step verification for you.                        |
 
+### Departments (added 2026-11-24)
+
+| Page (signed in as the demo `admin@acme.example`)   | What to try                                                                                          |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Settings > Departments**                          | The demo departments (IT, Science, Mathematics, Administration, Library, Facilities) with how many people and assets each holds. Add, rename, archive; archiving a department that is in use names what uses it and offers to merge it into another one (needs `department:manage`; every role can read the list). |
+| **People** > Add or Edit person, **Assets** > Add or Edit asset, bulk edit | Choose the department from the list instead of typing it; the asset department is the owner / cost centre, **Location** stays where it is. Filter both lists by department. |
+
+Departments that existed as free text on people before this change were turned into departments by migration `0100`
+(one per distinct spelling, ignoring case and spaces) and the people were linked to them.
+
 **Notification emails** are caught by Mailpit like every other mail: open http://localhost:8025 (port
 `MAILPIT_UI_PORT`). Immediate notifications arrive as soon as the worker has processed the event (a second or two);
 digest mails are sent once a day by the scheduler. If nothing arrives, check `docker compose logs worker`: the

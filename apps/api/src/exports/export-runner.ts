@@ -219,6 +219,7 @@ export class ExportRunner {
       'model',
       'status',
       'location',
+      'department',
       'assigned_to',
       'expected_return',
       'vendor',
@@ -239,7 +240,7 @@ export class ExportRunner {
         {
           ...filters,
           limit: String(PAGE),
-          expand: 'model,category,location,vendor',
+          expand: 'model,category,location,vendor,department',
           ...(cursor ? { cursor } : {}),
         },
       );
@@ -260,6 +261,7 @@ export class ExportRunner {
           ex.model?.name ?? null,
           status?.name ?? null,
           ex.location?.name ?? null,
+          ex.department?.name ?? null,
           current?.target_name ?? null,
           current?.expected_return ?? null,
           ex.vendor?.name ?? null,

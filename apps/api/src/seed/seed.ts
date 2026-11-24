@@ -382,7 +382,11 @@ export async function seedDemoData(
 
 async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): Promise<boolean> {
   const existing = await trx.asset.count();
-  if (existing > 0) return false;
+  if (existing > 0) {
+    // An already seeded tenant keeps its data; the demo departments (ED-17) are topped up, idempotently.
+    await topUpDepartments(trx, tenantId);
+    return false;
+  }
 
   // Users: the bootstrap admin is the Owner (activate it); add Admin, Technician and Viewer.
   await trx.user_account.updateMany({
@@ -469,7 +473,8 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
   });
   // M2 wave 1: a location tree (2 sites, buildings, floors, rooms) and a set of people.
   const places = await seedLocations(trx, tenantId, company.id);
-  const staff = await seedPeople(trx, tenantId, company.id, spec.domain, places);
+  const departments = await ensureDemoDepartments(trx, tenantId);
+  const staff = await seedPeople(trx, tenantId, company.id, spec.domain, places, departments);
   const rand = lcg(20251118);
   const weighted = <T>(items: Array<[T, number]>): T => {
     const total = items.reduce((n, [, w]) => n + w, 0);
@@ -543,9 +548,12 @@ async function seedTenantData(trx: Tx, tenantId: string, spec: SeedTenantSpec): 
       archived_at: retired && i % 2 === 0 ? new Date(Date.UTC(2025, 9, 1)) : null,
       // every asset has a place: the leaf locations in turn (deterministic, identical in both tenants)
       location_id: places.leaves[i % places.leaves.length]!,
+      // two in three assets belong to a department (ED-17); the rest are left unassigned on purpose
+      department_id: demoDepartmentOfAsset(departments, i),
     });
   }
   await trx.asset.createMany({ data: assets });
+  await setDemoManagers(trx, departments);
   await seedCustody(trx, tenantId, assets, staff, places, statusByName.get('Deployed')!);
   await seedRepairs(trx, tenantId, assets, {
     categoryNameById: new Map(categories.map((c) => [c.id, c.name])),
@@ -1151,7 +1159,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Camilla',
     last: 'Berg',
     kind: 'employee',
-    department: 'Finance',
+    department: 'Administration',
     title: 'Controller',
     home: 'Room 102',
   },
@@ -1167,7 +1175,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Eva',
     last: 'Larsen',
     kind: 'employee',
-    department: 'Sales',
+    department: 'Administration',
     title: 'Account executive',
     home: 'Open office',
   },
@@ -1183,7 +1191,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Gustav',
     last: 'Eriksen',
     kind: 'student',
-    department: 'Year 10',
+    department: 'Mathematics',
     title: null,
     home: 'Lab 1',
   },
@@ -1191,7 +1199,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Hanna',
     last: 'Solberg',
     kind: 'student',
-    department: 'Year 10',
+    department: 'Mathematics',
     title: null,
     home: 'Lab 1',
   },
@@ -1199,7 +1207,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Ivar',
     last: 'Moen',
     kind: 'student',
-    department: 'Year 11',
+    department: 'Science',
     title: null,
     home: 'Lab 2',
   },
@@ -1207,7 +1215,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Julie',
     last: 'Dahl',
     kind: 'student',
-    department: 'Year 11',
+    department: 'Science',
     title: null,
     home: 'Lab 2',
   },
@@ -1215,7 +1223,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Karl',
     last: 'Strand',
     kind: 'student',
-    department: 'Year 12',
+    department: 'Library',
     title: null,
     home: 'Reading room',
   },
@@ -1223,7 +1231,7 @@ export const DEMO_PEOPLE: PersonSeed[] = [
     first: 'Lise',
     last: 'Bakke',
     kind: 'student',
-    department: 'Year 12',
+    department: 'Library',
     title: null,
     home: 'Reading room',
   },
@@ -1236,6 +1244,7 @@ async function seedPeople(
   companyId: string,
   domain: string,
   places: Places,
+  departments: Map<string, string>,
 ): Promise<Array<{ id: string; name: string }>> {
   const rows = DEMO_PEOPLE.map((p, i) => ({
     id: uuidv7(),
@@ -1247,12 +1256,126 @@ async function seedPeople(
     last_name: p.last,
     email: `${p.first}.${p.last}@${domain}`.toLowerCase(),
     employee_ref: `${p.kind === 'student' ? 'S' : 'E'}-${(p.kind === 'student' ? 2000 : 1000) + i}`,
-    department: p.department,
+    department_id: departments.get(p.department) ?? null,
     job_title: p.title,
     location_id: places.byName.get(p.home) ?? null,
   }));
   await trx.person.createMany({ data: rows });
   return rows.map((r) => ({ id: r.id, name: r.display_name }));
+}
+
+interface DepartmentSeed {
+  name: string;
+  code: string;
+  description: string;
+  /** Display name of the head of the department (a demo person), when there is one. */
+  manager: string | null;
+}
+
+/** The managed demo departments (ED-17). The names are what people and assets are linked by. */
+export const DEMO_DEPARTMENTS: DepartmentSeed[] = [
+  {
+    name: 'IT',
+    code: 'IT',
+    description: 'Devices, network and support.',
+    manager: 'Alice Johansen',
+  },
+  {
+    name: 'Science',
+    code: 'SCI',
+    description: 'Laboratories and science teaching.',
+    manager: null,
+  },
+  { name: 'Mathematics', code: 'MATH', description: 'Mathematics teaching.', manager: null },
+  {
+    name: 'Administration',
+    code: 'ADM',
+    description: 'Office, finance and sales.',
+    manager: 'Camilla Berg',
+  },
+  { name: 'Library', code: 'LIB', description: 'Reading room and loan desk.', manager: null },
+  {
+    name: 'Facilities',
+    code: 'FAC',
+    description: 'Buildings, storage and equipment.',
+    manager: 'David Nilsen',
+  },
+];
+
+/**
+ * Creates the demo departments a tenant does not have yet (matched by name, case-insensitively) and
+ * returns name -> id. Idempotent: running it again changes nothing.
+ */
+async function ensureDemoDepartments(trx: Tx, tenantId: string): Promise<Map<string, string>> {
+  const live = await trx.department.findMany({
+    where: { archived_at: null },
+    select: { id: true, name: true, code_key: true },
+  });
+  const byKey = new Map(live.map((d) => [d.name.trim().toLowerCase(), d.id]));
+  const codes = new Set(live.map((d) => d.code_key).filter((c): c is string => c !== null));
+  const out = new Map<string, string>();
+  for (const d of DEMO_DEPARTMENTS) {
+    let id = byKey.get(d.name.toLowerCase());
+    if (!id) {
+      id = uuidv7();
+      // a code another department already holds is left unset rather than colliding
+      const code = codes.has(d.code.toLowerCase()) ? null : d.code;
+      await trx.department.create({
+        data: { id, tenant_id: tenantId, name: d.name, code, description: d.description },
+      });
+    }
+    out.set(d.name, id);
+  }
+  return out;
+}
+
+/** Heads of the demo departments that have none yet (people exist by now). Idempotent. */
+async function setDemoManagers(trx: Tx, departments: Map<string, string>): Promise<void> {
+  for (const d of DEMO_DEPARTMENTS) {
+    const id = departments.get(d.name);
+    if (!id || !d.manager) continue;
+    const person = await trx.person.findFirst({
+      where: { display_name: d.manager, archived_at: null },
+      select: { id: true },
+    });
+    if (!person) continue;
+    await trx.department.updateMany({
+      where: { id, manager_person_id: null },
+      data: { manager_person_id: person.id },
+    });
+  }
+}
+
+/** Two in three assets belong to a department, spread over the demo departments in turn. */
+function demoDepartmentOfAsset(departments: Map<string, string>, index: number): string | null {
+  if (index % 3 === 2) return null;
+  // (the skipped third would otherwise leave two of the six departments without any asset)
+  const spec = DEMO_DEPARTMENTS[(index + Math.floor(index / 3)) % DEMO_DEPARTMENTS.length]!;
+  return departments.get(spec.name) ?? null;
+}
+
+/**
+ * For a tenant that was seeded before departments existed (its people were linked by migration 0100):
+ * make sure the demo departments are there, set their heads, and link the assets of a tenant in which
+ * no asset has a department yet. Idempotent: once an asset has a department, nothing is touched again.
+ */
+async function topUpDepartments(trx: Tx, tenantId: string): Promise<void> {
+  const departments = await ensureDemoDepartments(trx, tenantId);
+  await setDemoManagers(trx, departments);
+  if ((await trx.asset.count({ where: { department_id: { not: null } } })) > 0) return;
+  const assets = await trx.asset.findMany({
+    where: { archived_at: null },
+    select: { id: true },
+    orderBy: [{ asset_tag: 'asc' }],
+  });
+  const groups = new Map<string, string[]>();
+  assets.forEach((a, i) => {
+    const department = demoDepartmentOfAsset(departments, i);
+    if (department) groups.set(department, [...(groups.get(department) ?? []), a.id]);
+  });
+  for (const [department, ids] of groups) {
+    await trx.asset.updateMany({ where: { id: { in: ids } }, data: { department_id: department } });
+  }
 }
 
 /**

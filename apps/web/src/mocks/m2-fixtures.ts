@@ -65,15 +65,19 @@ const LAST = [
   'Sato',
   'Weber',
 ];
-const DEPARTMENTS = [
-  'Teaching',
-  'Administration',
-  'IT',
-  'Facilities',
-  'Year 5',
-  'Year 6',
-  'Library',
+/** The demo departments (the same six as the API seed, apps/api/src/seed): id n is `uid('department', n)`. */
+export const DEPARTMENT_SEED: Array<{ name: string; code: string; description: string }> = [
+  { name: 'IT', code: 'IT', description: 'Devices, network and support.' },
+  { name: 'Science', code: 'SCI', description: 'Laboratories and science teaching.' },
+  { name: 'Mathematics', code: 'MATH', description: 'Mathematics teaching.' },
+  { name: 'Administration', code: 'ADM', description: 'Office, finance and sales.' },
+  { name: 'Library', code: 'LIB', description: 'Reading room and loan desk.' },
+  { name: 'Facilities', code: 'FAC', description: 'Buildings, storage and equipment.' },
 ];
+const departmentId = (name: string): string | null => {
+  const index = DEPARTMENT_SEED.findIndex((d) => d.name === name);
+  return index < 0 ? null : uid('department', index + 1);
+};
 
 /** People who also have a login: user id, name, e-mail. The first rows of the People list. */
 const LOGIN_PEOPLE: Array<[string, string, string]> = [
@@ -116,6 +120,7 @@ export function seedCustody(input: {
       phone: null,
       employee_ref: null,
       department: null,
+      department_id: null,
       job_title: null,
       location_id: null,
       company_id: companyId,
@@ -137,7 +142,7 @@ export function seedCustody(input: {
       last_name: rest.join(' ') || null,
       email,
       employee_ref: `E-${1000 + n}`,
-      department: n === 0 ? 'Administration' : n === 3 ? 'Library' : 'IT',
+      department_id: departmentId(n === 0 ? 'Administration' : n === 3 ? 'Library' : 'IT'),
       job_title: n === 2 ? 'Technician' : null,
       user_id: userId,
     });
@@ -148,7 +153,7 @@ export function seedCustody(input: {
     last_name: 'Okafor',
     kind: 'student',
     employee_ref: 'S-2001',
-    department: 'Year 5',
+    department_id: departmentId('Science'),
     location_id: input.locationIds[0] ?? null,
   });
   add({
@@ -157,7 +162,7 @@ export function seedCustody(input: {
     last_name: 'Reyes',
     email: 'maria.reyes@school.example',
     employee_ref: 'E-1010',
-    department: 'Teaching',
+    department_id: departmentId('Mathematics'),
     job_title: 'Class teacher',
   });
   for (let i = 0; i < 28; i += 1) {
@@ -171,7 +176,7 @@ export function seedCustody(input: {
       kind: student ? 'student' : i < 25 ? 'employee' : i < 27 ? 'contractor' : 'external',
       email: student ? null : `${first}.${last}@school.example`.toLowerCase(),
       employee_ref: i === 27 ? null : `${student ? 'S' : 'E'}-${(student ? 2100 : 1100) + i}`,
-      department: DEPARTMENTS[i % DEPARTMENTS.length] ?? null,
+      department_id: uid('department', (i % DEPARTMENT_SEED.length) + 1),
       location_id: input.locationIds[i % input.locationIds.length] ?? null,
     });
   }
@@ -182,7 +187,7 @@ export function seedCustody(input: {
     email: 'olivia.leaver@school.example',
     employee_ref: 'E-0999',
     status: 'inactive',
-    department: 'Teaching',
+    department_id: departmentId('Mathematics'),
   });
 
   // ---- custody -----------------------------------------------------------------------------------

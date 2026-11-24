@@ -56,6 +56,53 @@ describe('PeopleScreen', () => {
     expect(await screen.findByText('Dana Reyes added.')).toBeVisible();
   });
 
+  it('shows the department of each person and filters by it with the picker', async () => {
+    const user = userEvent.setup();
+    renderApp(<PeopleScreen />);
+    expect(await screen.findByRole('row', { name: /Alice Owner/ })).toHaveTextContent(
+      'Administration',
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Department' }));
+    await user.click(await screen.findByRole('option', { name: /^Library/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole('row', { name: /Alice Owner/ })).not.toBeInTheDocument(),
+    );
+    for (const row of screen.getAllByRole('row').slice(1)) expect(row).toHaveTextContent('Library');
+    await user.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]!);
+    expect(await screen.findByRole('row', { name: /Alice Owner/ })).toBeVisible();
+  });
+
+  it('opens filtered by the department of the link (?department=)', async () => {
+    window.history.pushState({}, '', '/people/?department=0190a6b2-0014-7000-8000-000000000001');
+    renderApp(<PeopleScreen />);
+    expect(await screen.findByRole('row', { name: /Sam Lee/ })).toHaveTextContent('IT');
+    expect(screen.queryByRole('row', { name: /Alice Owner/ })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Department' })).toHaveValue('IT'),
+    );
+  });
+
+  it('the add dialog chooses the department from the list, and sends its id (never free text)', async () => {
+    const user = userEvent.setup();
+    renderApp(<PeopleScreen />);
+    await user.click(await screen.findByRole('button', { name: 'Add person' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add a person' });
+    await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Dept Dana');
+    const picker = within(dialog).getByRole('combobox', { name: 'Department' });
+    await user.click(picker);
+    await user.type(picker, 'sci');
+    await user.click(await screen.findByRole('option', { name: /^Science/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Add person' }));
+    expect(await screen.findByText('Dept Dana added.')).toBeVisible();
+    const created = (await (await fetch('/v1/people?q=Dept%20Dana')).json()) as {
+      data: Array<{ department: string; department_id: string }>;
+    };
+    expect(created.data[0]).toMatchObject({
+      department: 'Science',
+      department_id: '0190a6b2-0014-7000-8000-000000000002',
+    });
+  });
+
   it('opens a person with Enter on the row', async () => {
     const user = userEvent.setup();
     renderApp(<PeopleScreen />);

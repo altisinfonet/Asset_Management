@@ -4,6 +4,7 @@ import { AuthModule } from './auth/index.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/env.js';
 import { ControlPlaneModule } from './control-plane/index.js';
+import { DepartmentsModule } from './departments/index.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/index.js';
 import { LifecycleModule } from './lifecycle/index.js';
@@ -54,6 +55,7 @@ export class AppModule {
               RegistryModule,
               LocationsModule,
               PeopleModule,
+              DepartmentsModule,
               LifecycleModule,
               FilesModule,
               StockModule,

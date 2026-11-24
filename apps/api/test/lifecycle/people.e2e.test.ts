@@ -74,6 +74,7 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
 
   it('creates a person without a login: fields, ETag, Location, audit, outbox; never sends mail', async () => {
     const mails = testPorts.mail.sent.length;
+    const year5 = (await a().post('/v1/departments', { name: unique('Year 5') })).body;
     const res = await a().post('/v1/people', {
       kind: 'student',
       display_name: 'Ada Lovelace',
@@ -81,7 +82,7 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
       last_name: 'Lovelace',
       email: 'ADA@Students.Example',
       employee_ref: unique('S'),
-      department: 'Year 5',
+      department_id: year5.id,
       job_title: null,
       phone: '+47 555 0100',
     });
@@ -92,6 +93,8 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
       status: 'active',
       user_id: null,
       assets_held: 0,
+      department_id: year5.id,
+      department: year5.name, // the read-only name of the managed department (ED-17)
     });
     expect(res.headers.etag).toBe('W/"1"');
     expect(res.headers.location).toBe(`/v1/people/${res.body.id}`);
@@ -152,12 +155,14 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
   it('lists, searches, filters and pages people', async () => {
     const marker = unique('Qx');
     const loc = await newLocation(a());
+    const maths = (await a().post('/v1/departments', { name: unique('Maths') })).body;
+    const art = (await a().post('/v1/departments', { name: unique('Art') })).body;
     for (let i = 0; i < 5; i++) {
       await newPerson(a(), {
         display_name: `${marker} Person ${i}`,
         email: `${marker}.${i}@lists.example`.toLowerCase(),
         kind: i % 2 === 0 ? 'student' : 'contractor',
-        department: i < 2 ? 'Maths' : 'Art',
+        department_id: i < 2 ? maths.id : art.id,
         location_id: loc.id,
         employee_ref: `${marker}-${i}`,
       });
@@ -169,7 +174,7 @@ describe.skipIf(!dbEnabled)(`people (${mode})`, () => {
     expect((await q(`q=${marker}-4`)).body.data).toHaveLength(1); // by employee number
     expect((await q(`q=${marker}&kind=student`)).body.data).toHaveLength(3);
     expect((await q(`q=${marker}&kind=student,contractor`)).body.data).toHaveLength(5);
-    expect((await q(`q=${marker}&department=Maths`)).body.data).toHaveLength(2);
+    expect((await q(`q=${marker}&department_id=${maths.id}`)).body.data).toHaveLength(2);
     expect((await q(`location_id=${loc.id}&include_total=true`)).body.page.total).toBe(5);
     expect((await q(`employee_ref=${marker}-2`)).body.data).toHaveLength(1);
     expect((await q(`q=${marker}&has_login=false`)).body.data).toHaveLength(5);

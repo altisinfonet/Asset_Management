@@ -20,7 +20,13 @@ export function registry(): RegistryData {
       saved.tagTemplate ??= { prefix: '', width: 5, use_category_prefix: true };
       saved.settingsVersion ??= 1;
       // ... and M2 data (people, custody, attachments): start from the current seed instead.
-      if (saved.people && saved.assignments && saved.attachments && saved.filesSettings) {
+      if (
+        saved.people &&
+        saved.assignments &&
+        saved.attachments &&
+        saved.filesSettings &&
+        saved.departments
+      ) {
         memory = saved;
         return memory;
       }

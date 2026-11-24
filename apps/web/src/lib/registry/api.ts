@@ -19,6 +19,9 @@ import type {
   CheckoutRequest,
   CustodyResult,
   HistoryEvent,
+  Department,
+  DepartmentCreate,
+  DepartmentUpdate,
   Location,
   LocationCreate,
   LocationUpdate,
@@ -472,6 +475,46 @@ export const locationsApi = {
     const ifMatch = await freshEtag(etag, () => locationsApi.get(id));
     await http().DELETE('/v1/locations/{id}', {
       params: { path: { id }, header: { 'If-Match': ifMatch } },
+    });
+  },
+};
+
+// ---- departments (ED-17) -----------------------------------------------------------------------------
+
+export const departmentsApi = {
+  async list(query: Query<'listDepartments'> = {}): Promise<Page<Department>> {
+    const { data } = await http().GET('/v1/departments', { params: { query } });
+    return data as Page<Department>;
+  },
+  async get(id: string): Promise<Versioned<Department>> {
+    const { data } = await http().GET('/v1/departments/{id}', { params: { path: { id } } });
+    return versioned(data as Department, `/v1/departments/${id}`);
+  },
+  async create(body: DepartmentCreate): Promise<Versioned<Department>> {
+    const { data } = await http().POST('/v1/departments', { body });
+    const created = data as Department;
+    return versioned(created, `/v1/departments/${created.id}`);
+  },
+  async update(id: string, body: DepartmentUpdate, etag?: string): Promise<Versioned<Department>> {
+    const ifMatch = await freshEtag(etag, () => departmentsApi.get(id));
+    const { data } = await http().PATCH('/v1/departments/{id}', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+      body,
+    });
+    return versioned(data as Department, `/v1/departments/${id}`);
+  },
+  /**
+   * Archive a department. While people or assets use it the answer is a `409` with `usage`;
+   * `reassignTo` moves them all to that department first (a merge).
+   */
+  async archive(id: string, options: { reassignTo?: string; etag?: string } = {}): Promise<void> {
+    const ifMatch = await freshEtag(options.etag, () => departmentsApi.get(id));
+    await http().DELETE('/v1/departments/{id}', {
+      params: {
+        path: { id },
+        header: { 'If-Match': ifMatch },
+        ...(options.reassignTo ? { query: { reassign_to: options.reassignTo } } : {}),
+      },
     });
   },
 };

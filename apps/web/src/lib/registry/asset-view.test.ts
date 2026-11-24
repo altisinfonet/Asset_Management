@@ -66,6 +66,16 @@ describe('assets list state', () => {
     expect(toAssetQuery(defaultViewState()).assigned).toBeUndefined();
   });
 
+  it('the department filter goes to the API, counts as active and opens from a link', () => {
+    const state = { ...defaultViewState(), department_id: 'd1' };
+    expect(toAssetQuery(state).department_id).toBe('d1');
+    expect(toAssetQuery(defaultViewState()).department_id).toBeUndefined();
+    expect(hasActiveFilters(state)).toBe(true);
+    expect(stateFromLink(new URLSearchParams('department=d9')).department_id).toBe('d9');
+    expect(sanitiseState({ department_id: 'd2' }).department_id).toBe('d2');
+    expect(sanitiseState({ department_id: 7 }).department_id).toBe('');
+  });
+
   it('custody filters count as active filters', () => {
     expect(hasActiveFilters({ ...defaultViewState(), assigned: 'no' })).toBe(true);
     expect(hasActiveFilters({ ...defaultViewState(), person_id: 'p' })).toBe(true);

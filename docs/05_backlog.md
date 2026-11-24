@@ -645,6 +645,7 @@ Status: done - Founder walk-through completed 2026-11-19. Findings fixed during 
 | E2.9 Notifications and saved views | NOT, REG | 4 |
 | E2.10 Quality, docs, acceptance | SEC, OPS, DOC, UX | 5 |
 | E2.11 Deferred from wave 1 integration | LIFE, REG, USR, UX | 4 |
+| E2.12 Founder requests 2026-11-24 | LOC, ORG | 3 |
 
 **Suggested build order.** LOC-01/02, USR-01, LIFE-01..03 and FILE-01 first (everything else depends on custody and files); then TAG, ACC, MNT, NOT-01 in parallel; IMP-01..05 in parallel with the UI work; LOAN after NOT-01; LOC-03 (scoping) last because it touches every query path.
 
@@ -1026,6 +1027,33 @@ Size: S - Owner: Both - Deps: M2-LIFE-07 - Priority: Could
 Deferred from wave 1 integration. A mistaken check-out needs a second dialog today.
 - [ ] After check-out, check-in or transfer the success toast offers "Undo" for 10 seconds, implemented as the inverse action (never a delete) so the history stays truthful.
 - [ ] Keyboard reachable, announced to screen readers, and absent when the inverse is no longer valid (the asset changed meanwhile).
+
+### E2.12 Founder requests 2026-11-24
+
+#### M2-LOC-05 - Editing a location never fails without saying why
+Size: M - Owner: Claude - Deps: M2-LOC-01, M2-LOC-04 - Priority: Must
+Status: done - Founder request 2026-11-24 ("location edit for a site: an error at edit time, none later"). Root cause and rules: ED-16.
+- [x] Every edit path replayed against the real stack and the web UI (name, kind including site/building/room with children and assets, parent, move under a descendant, duplicate name, stale ETag, archived location, ETag right after a create, each role): none answers 5xx; each answers a documented problem.
+- [x] `kind` stays freely editable; no rule ties `kind` to the parent or the children (documented in ED-16).
+- [x] A problem on a value inside an object (`/address/country`) is shown on its own field with the limit, nothing is sent when a limit is broken, a problem without a field is listed in the banner, a `412` offers "Reload latest"; the address is kept when the type changes and `line2` is no longer dropped.
+- [x] `address.country` is exactly two letters, stored upper-case (contract pattern).
+- [x] Regression tests: API e2e (`locations.e2e.test.ts`, every scenario), web unit (`form-dialog.test.tsx`, `locations-screen.test.tsx`), real-stack e2e (`e2e-real/locations-departments.spec.ts`).
+
+#### M2-ORG-01 - Managed departments (data and API)
+Size: L - Owner: Claude - Deps: M2-USR-01, M2-REG-01 - Priority: Must
+Status: done - Founder request 2026-11-24 ("free text causes mistakes"). Decision: ED-17; migration 0100.
+- [x] `app.department` tenant table (name unique among live rows ignoring case, optional code / description / manager person, archive), RLS and composite FKs; isolation covered by the route-replay test.
+- [x] `person.department_id` and optional `asset.department_id` (owning / cost-centre department next to the location); the free-text column is deprecated and unused, kept one release; existing text becomes departments (deduplicated per tenant) in the same migration, versions of the people unchanged.
+- [x] `/v1/departments` list (search, counts of people and assets), create, get, patch with If-Match, archive: `409` with `usage` while people or assets reference it, `reassign_to` merges; `department_id` filter on people and assets, `expand=department`, bulk edit and clone carry it; CSV exports include the department name.
+- [x] Permissions `department:read` (every role) and `department:manage` (Asset manager, Administrator) through migration 0100 (existing tenants and `provision_tenant`); role-matrix, route-rules and route-replay cover every route.
+- [x] Demo seed: IT, Science, Mathematics, Administration, Library, Facilities linked to the demo people and two thirds of the assets; idempotent, also topped up in tenants seeded earlier.
+
+#### M2-ORG-02 - Departments UI
+Size: M - Owner: Claude - Deps: M2-ORG-01, M2-USR-02 - Priority: Must
+Status: done - Founder request 2026-11-24.
+- [x] Settings -> Departments (list with counts, create, rename, archive with the usage message, merge into another department), read-only for roles without `department:manage`.
+- [x] `DepartmentPicker` (type-ahead over name and code) on the person form, the asset form and the bulk edit; department column and filter on People and Assets; shown on both detail views; saved views carry the filter.
+- [x] i18n, axe in light and dark, mocks that mirror the real API, mock and real-stack e2e (`e2e/departments.spec.ts`, `e2e-real/locations-departments.spec.ts`).
 
 ---
 

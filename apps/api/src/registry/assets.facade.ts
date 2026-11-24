@@ -47,7 +47,7 @@ import { AssetTagService, tagExists } from './asset-tags.js';
 import { ScanResolverRegistry } from './scan-resolvers.js';
 import { ScanResolveThrottle } from './scan-throttle.js';
 import { mergeCustomData, missingRequired, validateProvided } from './custom-fields.js';
-import { categoryDto, locationDto, modelDto, vendorDto } from './dto.js';
+import { categoryDto, departmentDto, locationDto, modelDto, vendorDto } from './dto.js';
 import {
   RegistryBase,
   type TxScope,
@@ -76,7 +76,7 @@ import {
 /** Maximum number of assets one bulk request may touch (documented in the contract). */
 export const BULK_MAX = 100;
 
-type Expandable = 'model' | 'category' | 'vendor' | 'location';
+type Expandable = 'model' | 'category' | 'vendor' | 'location' | 'department';
 export interface AssetWithVersion {
   asset: AssetDto;
   version: number;
@@ -283,10 +283,21 @@ export class AssetsFacade extends RegistryBase {
     const vendors = expand.includes('vendor')
       ? byId(await trx.vendor.findMany({ where: { id: { in: ids((r) => r.vendor_id) } } }))
       : null;
+    const departments = expand.includes('department')
+      ? byId(await trx.department.findMany({ where: { id: { in: ids((r) => r.department_id) } } }))
+      : null;
     const locations = expand.includes('location')
       ? byId(await trx.location.findMany({ where: { id: { in: ids((r) => r.location_id) } } }))
       : null;
     return rows.map((r) => ({
+      ...(departments
+        ? {
+            department:
+              r.department_id && departments.get(r.department_id)
+                ? departmentDto(departments.get(r.department_id)!)
+                : null,
+          }
+        : {}),
       ...(locations
         ? {
             location:
@@ -456,6 +467,7 @@ export class AssetsFacade extends RegistryBase {
           model_id: body.model_id ?? null,
           status_id: status!.id,
           location_id: body.location_id ?? null,
+          department_id: body.department_id ?? null,
           vendor_id: body.vendor_id ?? null,
           parent_asset_id: body.parent_asset_id ?? null,
           purchase_date: toDate(body.purchase_date) ?? null,
@@ -589,6 +601,8 @@ export class AssetsFacade extends RegistryBase {
         parent_asset_id:
           body.parent_asset_id !== current.parent_asset_id ? body.parent_asset_id : undefined,
         location_id: body.location_id !== current.location_id ? body.location_id : undefined,
+        department_id:
+          body.department_id !== current.department_id ? body.department_id : undefined,
         external_source: body.external_source,
         external_id: body.external_id,
       },
@@ -633,6 +647,7 @@ export class AssetsFacade extends RegistryBase {
     if (body.model_id !== undefined) set('model_id', body.model_id);
     if (body.status_id !== undefined) set('status_id', body.status_id);
     if (body.location_id !== undefined) set('location_id', body.location_id);
+    if (body.department_id !== undefined) set('department_id', body.department_id);
     if (body.vendor_id !== undefined) set('vendor_id', body.vendor_id);
     if (body.parent_asset_id !== undefined) set('parent_asset_id', body.parent_asset_id);
     if (body.company_id !== undefined) set('company_id', body.company_id);
@@ -1308,6 +1323,7 @@ export class AssetsFacade extends RegistryBase {
       ...(copy.has('model_id') ? { model_id: source.model_id } : {}),
       ...(copy.has('status_id') ? { status_id: source.status_id } : {}),
       ...(copy.has('vendor_id') ? { vendor_id: source.vendor_id } : {}),
+      ...(copy.has('department_id') ? { department_id: source.department_id } : {}),
       ...(copy.has('parent_asset_id') ? { parent_asset_id: source.parent_asset_id } : {}),
       ...(copy.has('purchase_date') ? { purchase_date: date(source.purchase_date) } : {}),
       ...(copy.has('purchase_cost') ? { purchase_cost: cost } : {}),
@@ -1416,7 +1432,12 @@ export class AssetsFacade extends RegistryBase {
     refs: AssetRefs,
     v: Pick<
       AssetUpdate,
-      'vendor_id' | 'parent_asset_id' | 'location_id' | 'external_source' | 'external_id'
+      | 'vendor_id'
+      | 'parent_asset_id'
+      | 'location_id'
+      | 'department_id'
+      | 'external_source'
+      | 'external_id'
     >,
     errors: FieldError[],
     current?: AssetRow,
@@ -1459,6 +1480,12 @@ export class AssetsFacade extends RegistryBase {
       const location = await refs.location(v.location_id);
       if (!location || location.archived_at) {
         errors.push(invalidRef(at('/location_id'), 'No such location.'));
+      }
+    }
+    if (v.department_id) {
+      const department = await refs.department(v.department_id);
+      if (!department || department.archived_at) {
+        errors.push(invalidRef(at('/department_id'), 'No such department.'));
       }
     }
     const source = v.external_source !== undefined ? v.external_source : current?.external_source;

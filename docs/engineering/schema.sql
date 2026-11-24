@@ -345,7 +345,8 @@ CREATE TABLE app.person (
   email        text CHECK (email IS NULL OR position('@' IN email) > 1),
   phone        text,
   employee_ref text,
-  department   text,
+  department   text,                                   -- DEPRECATED (migration 0100, ED-17): unused, use department_id; dropped in a later release
+  department_id uuid,                                  -- managed department (ED-17), FK person_department_fk below
   job_title    text,
   location_id  uuid,                                   -- primary / home location
   status       text NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
@@ -369,6 +370,37 @@ CREATE UNIQUE INDEX person_email_uq ON app.person (tenant_id, lower(email))
 CREATE INDEX person_name_idx ON app.person (tenant_id, lower(display_name), id);
 CREATE INDEX person_name_trgm ON app.person USING gin (tenant_id, display_name public.gin_trgm_ops);
 CREATE INDEX person_company_idx ON app.person (tenant_id, company_id);
+CREATE INDEX person_department_idx ON app.person (tenant_id, department_id) WHERE department_id IS NOT NULL;
+
+-- Managed departments (ED-17, migration 0100). Defined after person: its manager is a person, and
+-- person.department_id references it (the foreign key is added below). A department is archived, never
+-- deleted; its name (and its code) are unique among the live ones, case-insensitively, through stored keys.
+CREATE TABLE app.department (
+  id                uuid PRIMARY KEY,
+  tenant_id         uuid NOT NULL REFERENCES app.tenant (id),
+  name              text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 200),
+  code              text CHECK (code IS NULL OR length(btrim(code)) BETWEEN 1 AND 50),
+  description       text,
+  manager_person_id uuid,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  created_by        uuid,
+  updated_by        uuid,
+  archived_at       timestamptz,
+  version           integer NOT NULL DEFAULT 1,
+  name_key          text GENERATED ALWAYS AS (lower(btrim(name))) STORED,
+  code_key          text GENERATED ALWAYS AS (lower(btrim(code))) STORED,
+  UNIQUE (tenant_id, id),
+  FOREIGN KEY (tenant_id, manager_person_id) REFERENCES app.person (tenant_id, id)
+);
+CREATE UNIQUE INDEX department_name_uq ON app.department (tenant_id, name_key) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX department_code_uq ON app.department (tenant_id, code_key)
+  WHERE code IS NOT NULL AND archived_at IS NULL;
+CREATE INDEX department_manager_idx ON app.department (tenant_id, manager_person_id)
+  WHERE manager_person_id IS NOT NULL;
+ALTER TABLE app.person
+  ADD CONSTRAINT person_department_fk
+  FOREIGN KEY (tenant_id, department_id) REFERENCES app.department (tenant_id, id);
 
 -- -----------------------------------------------------------------------------
 -- B5. [M1] Registry catalogue
@@ -537,6 +569,7 @@ CREATE TABLE app.asset (
   model_id            uuid,
   status_id           uuid NOT NULL,
   location_id         uuid,
+  department_id       uuid,                                -- owning / cost-centre department (ED-17), optional
   vendor_id           uuid,
   parent_asset_id     uuid,
   purchase_date       date,
@@ -562,6 +595,7 @@ CREATE TABLE app.asset (
   FOREIGN KEY (tenant_id, model_id, category_id)      REFERENCES app.asset_model (tenant_id, id, category_id),
   FOREIGN KEY (tenant_id, status_id)   REFERENCES app.status_label (tenant_id, id),
   FOREIGN KEY (tenant_id, location_id) REFERENCES app.location (tenant_id, id),
+  FOREIGN KEY (tenant_id, department_id) REFERENCES app.department (tenant_id, id),
   FOREIGN KEY (tenant_id, vendor_id)   REFERENCES app.vendor (tenant_id, id),
   FOREIGN KEY (tenant_id, parent_asset_id) REFERENCES app.asset (tenant_id, id),
   CHECK (parent_asset_id IS DISTINCT FROM id),
@@ -576,6 +610,7 @@ CREATE INDEX asset_category_idx ON app.asset (tenant_id, category_id, id DESC) W
 CREATE INDEX asset_model_idx    ON app.asset (tenant_id, model_id) WHERE model_id IS NOT NULL;
 CREATE INDEX asset_company_idx  ON app.asset (tenant_id, company_id);
 CREATE INDEX asset_vendor_idx   ON app.asset (tenant_id, vendor_id) WHERE vendor_id IS NOT NULL;
+CREATE INDEX asset_department_idx ON app.asset (tenant_id, department_id) WHERE department_id IS NOT NULL;
 CREATE INDEX asset_parent_idx   ON app.asset (tenant_id, parent_asset_id) WHERE parent_asset_id IS NOT NULL;
 CREATE INDEX asset_warranty_idx ON app.asset (tenant_id, warranty_end) WHERE warranty_end IS NOT NULL AND archived_at IS NULL;
 CREATE INDEX asset_updated_idx  ON app.asset (tenant_id, updated_at DESC, id DESC);
@@ -1582,7 +1617,7 @@ LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 DECLARE
   v_read text[] := ARRAY[
     'asset:read','catalog:read','location:read','person:read','accessory:read','consumable:read',
-    'loaner:read','repair:read','import:read','attachment:read','company:read'];
+    'loaner:read','repair:read','import:read','attachment:read','company:read','department:read'];
 BEGIN
   IF p_tenant_id IS DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::uuid THEN
     RAISE EXCEPTION 'app.tenant_id must be set to the new tenant id before provisioning'
@@ -1602,7 +1637,7 @@ BEGIN
        v_read || ARRAY['asset:create','asset:update','asset:delete','asset:checkout','asset:checkin','asset:transfer','asset:label',
                        'catalog:manage','location:manage','person:manage','accessory:manage','accessory:checkout',
                        'consumable:manage','consumable:adjust','loaner:manage','loaner:checkout','repair:manage',
-                       'import:run','attachment:write','audit:read','user:read','role:read'], true),
+                       'import:run','attachment:write','audit:read','user:read','role:read','department:manage'], true),
     (gen_random_uuid(), p_tenant_id, 'technician',    'Technician',     'Field flows: scan, check-out/in, transfer, repair log, photos',
        v_read || ARRAY['asset:update','asset:checkout','asset:checkin','asset:transfer','asset:label','accessory:checkout',
                        'consumable:adjust','loaner:checkout','repair:manage','attachment:write'], true),

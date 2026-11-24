@@ -255,7 +255,17 @@ function Overview({ person, locationLabel }: { person: Person; locationLabel: st
       t('people.form.employeeRef'),
       person.employee_ref ? <span className="font-tag">{person.employee_ref}</span> : null,
     ],
-    [t('people.form.department'), person.department],
+    [
+      t('people.form.department'),
+      person.department_id && person.department ? (
+        <Link
+          href={routes.peopleInDepartment(person.department_id)}
+          className="rounded-sm text-primary-text underline underline-offset-2"
+        >
+          {person.department}
+        </Link>
+      ) : null,
+    ],
     [t('people.form.jobTitle'), person.job_title],
     [t('people.form.location'), locationLabel],
     [

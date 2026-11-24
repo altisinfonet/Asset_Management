@@ -5485,6 +5485,257 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /v1/import-mapping-templates:
+    get:
+      tags:
+        - Imports
+      operationId: listImportMappingTemplates
+      summary: Saved column mappings
+      description: Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: entity_type
+          in: query
+          description: Only this entity.
+          schema:
+            type: string
+            enum:
+              - asset
+              - accessory
+              - consumable
+              - location
+              - person
+              - manufacturer
+              - asset_model
+              - category
+              - department
+      responses:
+        "200":
+          description: A page of saved mappings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportMappingTemplateList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    post:
+      tags:
+        - Imports
+      operationId: createImportMappingTemplate
+      summary: Save a column mapping
+      description: |-
+        A named mapping (and options) that can be applied to a later file of the same entity and source. Names are unique per entity.
+
+        Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportMappingTemplateCreate"
+      responses:
+        "201":
+          description: Saved.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Location:
+              $ref: "#/components/headers/Location"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportMappingTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/import-mapping-templates/{id}:
+    delete:
+      tags:
+        - Imports
+      operationId: deleteImportMappingTemplate
+      summary: Delete a saved column mapping
+      description: Requires permission `import:run`.
+      x-permission: import:run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Deleted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/import-target-fields:
+    get:
+      tags:
+        - Imports
+      operationId: listImportTargetFields
+      summary: Fields a column can be mapped to
+      description: |-
+        The core fields of the entity plus the custom fields of the category (`category_id`) for assets.
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - name: entity_type
+          in: query
+          description: The entity being imported.
+          schema:
+            type: string
+            enum:
+              - asset
+              - accessory
+              - consumable
+              - location
+              - person
+              - manufacturer
+              - asset_model
+              - category
+              - department
+          required: true
+        - name: category_id
+          in: query
+          description: Include the custom fields of this category.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The target fields.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportTargetFieldList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/import-templates/{entity_type}:
+    get:
+      tags:
+        - Imports
+      operationId: downloadImportTemplate
+      summary: Download a CSV template
+      description: |-
+        A CSV with the header row and example rows of the entity (`source=csv`), or the headers of the Google Admin ChromeOS device export (`source=google_admin_csv`, assets only).
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - name: entity_type
+          in: path
+          required: true
+          description: The entity.
+          schema:
+            type: string
+            enum:
+              - asset
+              - accessory
+              - consumable
+              - location
+              - person
+              - manufacturer
+              - asset_model
+              - category
+              - department
+        - name: source
+          in: query
+          description: Default `csv`.
+          schema:
+            type: string
+            enum:
+              - csv
+              - google_admin_csv
+      responses:
+        "200":
+          description: The template.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: Attachment file name.
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/imports:
     get:
       tags:
@@ -5689,6 +5940,43 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/{id}/analysis:
+    get:
+      tags:
+        - Imports
+      operationId: getImportAnalysis
+      summary: What the uploaded file contains
+      description: |-
+        Headers, sample values and column statistics of the uploaded file with the suggested target field of every column. `status=pending` until the file has passed its virus scan and was read (poll it).
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The analysis.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportAnalysis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/imports/{id}/cancel:
     post:
       tags:
@@ -5820,6 +6108,78 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/{id}/error-report:
+    get:
+      tags:
+        - Imports
+      operationId: getImportErrorReport
+      summary: Download the rows that failed as CSV
+      description: |-
+        The source row, its row number and the messages, for every row with outcome `error` of the latest phase, so the file can be fixed and uploaded again.
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The error report.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            Content-Disposition:
+              description: Attachment file name.
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/imports/{id}/lookups:
+    get:
+      tags:
+        - Imports
+      operationId: listImportLookups
+      summary: Values that refer to other records
+      description: |-
+        For every mapped reference field (category, manufacturer, model, location, person, department, vendor, status) the distinct values of the file, how many rows carry each and the existing record it matches by name. The answers go back in `options.value_map`.
+
+        Requires permission `import:read`.
+      x-permission: import:read
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The lookups.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportLookupList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/imports/{id}/rows:
@@ -6624,6 +6984,50 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/loans/activity:
+    get:
+      tags:
+        - Loaners
+      operationId: listLoanActivity
+      summary: Recent loans and returns
+      description: |-
+        The latest check-outs and returns of loaner pool devices, newest first.
+
+        Requires permission `loaner:read`.
+      x-permission: loaner:read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: loaner_pool_id
+          in: query
+          description: Only this pool.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of activity.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoanActivityList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /v1/loans/overdue:
@@ -9491,6 +9895,92 @@ paths:
           $ref: "#/components/responses/PreconditionRequired"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /v1/settings/loans:
+    get:
+      tags:
+        - Loaners
+      operationId: getLoanSettings
+      summary: Get the organisation loan defaults
+      description: Requires permission `loaner:read`.
+      x-permission: loaner:read
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoanSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+    put:
+      tags:
+        - Loaners
+      operationId: putLoanSettings
+      summary: Replace the organisation loan defaults
+      description: |-
+        `If-Match` is the ETag of `GET` (the tenant settings version).
+
+        Requires permission `loaner:manage`.
+      x-permission: loaner:manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoanSettings"
+      responses:
+        "200":
+          description: The new settings.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoanSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /v1/status-labels:
     get:
       tags:
@@ -11067,6 +11557,7 @@ components:
         - too-many-requests
         - internal
         - unavailable
+        - loan-limit-reached
     FieldError:
       type: object
       properties:
@@ -13177,6 +13668,17 @@ components:
         overdue_count:
           type: integer
           readOnly: true
+        max_loans_per_person:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          description: How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`.
+        due_today_count:
+          type: integer
+          minimum: 0
+          description: Open loans of this pool whose `expected_return` is today (UTC).
+          readOnly: true
       required:
         - id
         - name
@@ -13209,6 +13711,12 @@ components:
         is_active:
           type: boolean
           default: true
+        max_loans_per_person:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          description: How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`.
       required:
         - name
       additionalProperties: false
@@ -13241,6 +13749,12 @@ components:
         is_active:
           type: boolean
           default: true
+        max_loans_per_person:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          description: How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`.
       additionalProperties: false
       description: "Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field."
     LoanerPoolList:
@@ -13746,6 +14260,13 @@ components:
             - "null"
           format: uuid
           description: "Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create."
+        loaner_pool_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The loaner pool the asset belongs to, or null. Lets the quick-loan desk refuse a device that is not in a pool without a second request.
+          readOnly: true
       required:
         - id
         - asset_tag
@@ -14703,11 +15224,32 @@ components:
         days_overdue:
           type: integer
           minimum: 1
+        asset_tag:
+          type: string
+        asset_name:
+          type:
+            - string
+            - "null"
+        person_name:
+          type:
+            - string
+            - "null"
+          description: Display name of the borrower (the holder when it is a person).
+        person_email:
+          type:
+            - string
+            - "null"
+          description: Contact of the borrower, so staff can chase the device without opening the person.
+        person_phone:
+          type:
+            - string
+            - "null"
       required:
         - assignment_id
         - asset_id
         - expected_return
         - days_overdue
+        - asset_tag
     OverdueCheckoutList:
       type: object
       properties:
@@ -15425,6 +15967,7 @@ components:
             - manufacturer
             - asset_model
             - category
+            - department
         state:
           type: string
           enum:
@@ -15481,6 +16024,13 @@ components:
             date_format:
               type: string
               default: YYYY-MM-DD
+            value_map:
+              type: object
+              additionalProperties:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/ImportValueChoice"
+              description: "Decisions for source values that do not match an existing record: target field key -> source value -> choice. Written with `PATCH /v1/imports/{id}` and read back unchanged."
           additionalProperties: true
         rows_total:
           type: integer
@@ -15534,6 +16084,12 @@ components:
             - "null"
           format: uuid
           readOnly: true
+        commit_progress:
+          oneOf:
+            - $ref: "#/components/schemas/ImportCommitProgress"
+            - type: "null"
+          readOnly: true
+          description: Null until a commit has been queued.
       required:
         - id
         - source
@@ -15562,6 +16118,7 @@ components:
             - manufacturer
             - asset_model
             - category
+            - department
         file_attachment_id:
           type: string
           format: uuid
@@ -15587,6 +16144,10 @@ components:
         options:
           type: object
           additionalProperties: true
+        file_attachment_id:
+          type: string
+          format: uuid
+          description: Attach (or replace) the uploaded `import_file` of a `draft` job. The attachment must belong to this job, be `clean` and not be archived.
       additionalProperties: false
       description: Editing mapping/options is allowed in `draft` and `dry_run_complete` (the latter returns the job to `draft` and invalidates the digest).
     ImportJobList:
@@ -17220,6 +17781,427 @@ components:
       required:
         - data
         - page
+    ImportValueChoice:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+            - map
+            - create
+            - skip
+          description: "`map`: use the existing record `id`; `create`: create the missing record from the source value; `skip`: leave the field empty for these rows."
+        id:
+          type: string
+          format: uuid
+          description: The existing record, with `action=map`.
+      required:
+        - action
+      additionalProperties: false
+    ImportCommitProgress:
+      type: object
+      properties:
+        processed:
+          type: integer
+          minimum: 0
+        created:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+      required:
+        - processed
+        - created
+        - updated
+        - skipped
+        - failed
+      description: Rows handled so far by the commit (equals the totals once `state=committed`). `processed / rows_total` drives the progress bar.
+    ImportColumn:
+      type: object
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+          description: The header cell as it is in the file.
+        sample_values:
+          type: array
+          items:
+            type: string
+          description: Up to five distinct non-empty values from the first rows.
+        distinct_count:
+          type: integer
+          minimum: 0
+        empty_count:
+          type: integer
+          minimum: 0
+        detected_type:
+          type: string
+          enum:
+            - text
+            - number
+            - date
+            - boolean
+        suggested_field:
+          type:
+            - string
+            - "null"
+          description: The target field key the heuristics propose (core field, or `custom_data.<key>`); null when none fits.
+      required:
+        - index
+        - name
+        - sample_values
+        - distinct_count
+        - empty_count
+        - detected_type
+        - suggested_field
+    ImportAnalysis:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - ready
+            - failed
+          description: "`pending` while the file waits for its virus scan or is being read."
+        error:
+          type:
+            - string
+            - "null"
+          description: An actionable sentence (line number and reason) when `status=failed`; never a stack trace.
+        encoding:
+          type:
+            - string
+            - "null"
+          description: Detected text encoding (`utf-8`, `utf-16le`, `windows-1252`).
+        delimiter:
+          type:
+            - string
+            - "null"
+          maxLength: 1
+        rows_total:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportColumn"
+      required:
+        - status
+        - error
+        - encoding
+        - delimiter
+        - rows_total
+        - columns
+    ImportTargetField:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Field key, `custom_data.<key>` for a custom field.
+        label:
+          type: string
+        required:
+          type: boolean
+        type:
+          type: string
+          enum:
+            - text
+            - number
+            - date
+            - boolean
+            - money
+            - enum
+            - reference
+        reference:
+          oneOf:
+            - type: string
+              enum:
+                - category
+                - manufacturer
+                - asset_model
+                - location
+                - person
+                - department
+                - vendor
+                - status_label
+            - type: "null"
+          description: The kind of record a `reference` field points at; its values go through the value-mapping step.
+        custom:
+          type: boolean
+          description: A custom field of the category.
+      required:
+        - key
+        - label
+        - required
+        - type
+        - reference
+        - custom
+    ImportTargetFieldList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportTargetField"
+      required:
+        - data
+    ImportLookupValue:
+      type: object
+      properties:
+        value:
+          type: string
+          description: The value as written in the file.
+        rows:
+          type: integer
+          minimum: 1
+          description: How many rows carry it.
+        match:
+          oneOf:
+            - type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+              required:
+                - id
+                - name
+            - type: "null"
+          description: "The existing record it matches by name, or null (needs a choice: map, create or skip)."
+      required:
+        - value
+        - rows
+        - match
+    ImportLookup:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Target field key.
+        reference:
+          type: string
+          enum:
+            - category
+            - manufacturer
+            - asset_model
+            - location
+            - person
+            - department
+            - vendor
+            - status_label
+        values:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportLookupValue"
+      required:
+        - field
+        - reference
+        - values
+    ImportLookupList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportLookup"
+      required:
+        - data
+    ImportMappingTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - accessory
+            - consumable
+            - location
+            - person
+            - manufacturer
+            - asset_model
+            - category
+            - department
+        source:
+          type: string
+          enum:
+            - csv
+            - xlsx
+            - snipe_it
+            - google_admin_csv
+        mapping:
+          type: object
+          additionalProperties:
+            type: string
+        options:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - id
+        - name
+        - entity_type
+        - source
+        - mapping
+    ImportMappingTemplateCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        entity_type:
+          type: string
+          enum:
+            - asset
+            - accessory
+            - consumable
+            - location
+            - person
+            - manufacturer
+            - asset_model
+            - category
+            - department
+        source:
+          type: string
+          enum:
+            - csv
+            - xlsx
+            - snipe_it
+            - google_admin_csv
+        mapping:
+          type: object
+          additionalProperties:
+            type: string
+        options:
+          type: object
+          additionalProperties: true
+      required:
+        - name
+        - entity_type
+        - source
+        - mapping
+      additionalProperties: false
+    ImportMappingTemplateList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportMappingTemplate"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
+    LoanSettings:
+      type: object
+      properties:
+        default_loan_days:
+          type: integer
+          minimum: 1
+          default: 7
+          description: Due date offered when a pool does not set its own (today + this many days).
+        max_loan_days:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          description: Longest loan any pool may allow; null = no limit. Must be >= default_loan_days.
+        reminder_lead_days:
+          type: integer
+          minimum: 0
+          default: 1
+          description: How many days before the due date the borrower is reminded (`loan.due_soon`).
+      required:
+        - default_loan_days
+        - max_loan_days
+        - reminder_lead_days
+      additionalProperties: false
+    LoanActivity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum:
+            - checked_out
+            - returned
+        asset_id:
+          type: string
+          format: uuid
+        asset_tag:
+          type: string
+        asset_name:
+          type:
+            - string
+            - "null"
+        person_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        person_name:
+          type:
+            - string
+            - "null"
+        loaner_pool_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        expected_return:
+          type:
+            - string
+            - "null"
+          format: date
+      required:
+        - id
+        - at
+        - kind
+        - asset_id
+        - asset_tag
+        - loaner_pool_id
+    LoanActivityList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoanActivity"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+      required:
+        - data
+        - page
 x-problem-codes:
   bad-request:
     status:
@@ -17386,3 +18368,7 @@ x-problem-codes:
     status:
       - 503
     description: A dependency is down or the service is starting.
+  loan-limit-reached:
+    status:
+      - 409
+    description: The borrower already holds the most devices the pool allows (`max_loans_per_person`).

@@ -1377,6 +1377,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/import-mapping-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Saved column mappings
+         * @description Requires permission `import:read`.
+         */
+        get: operations["listImportMappingTemplates"];
+        put?: never;
+        /**
+         * Save a column mapping
+         * @description A named mapping (and options) that can be applied to a later file of the same entity and source. Names are unique per entity.
+         *
+         *     Requires permission `import:run`.
+         */
+        post: operations["createImportMappingTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-mapping-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a saved column mapping
+         * @description Requires permission `import:run`.
+         */
+        delete: operations["deleteImportMappingTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-target-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fields a column can be mapped to
+         * @description The core fields of the entity plus the custom fields of the category (`category_id`) for assets.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["listImportTargetFields"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/import-templates/{entity_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a CSV template
+         * @description A CSV with the header row and example rows of the entity (`source=csv`), or the headers of the Google Admin ChromeOS device export (`source=google_admin_csv`, assets only).
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["downloadImportTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/imports": {
         parameters: {
             query?: never;
@@ -1425,6 +1515,28 @@ export interface paths {
          * @description Requires permission `import:run`.
          */
         patch: operations["updateImport"];
+        trace?: never;
+    };
+    "/v1/imports/{id}/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the uploaded file contains
+         * @description Headers, sample values and column statistics of the uploaded file with the suggested target field of every column. `status=pending` until the file has passed its virus scan and was read (poll it).
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["getImportAnalysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/imports/{id}/cancel": {
@@ -1487,6 +1599,50 @@ export interface paths {
          *     Requires permission `import:run`.
          */
         post: operations["startImportDryRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/error-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the rows that failed as CSV
+         * @description The source row, its row number and the messages, for every row with outcome `error` of the latest phase, so the file can be fixed and uploaded again.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["getImportErrorReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports/{id}/lookups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Values that refer to other records
+         * @description For every mapped reference field (category, manufacturer, model, location, person, department, vendor, status) the distinct values of the file, how many rows carry each and the existing record it matches by name. The answers go back in `options.value_map`.
+         *
+         *     Requires permission `import:read`.
+         */
+        get: operations["listImportLookups"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1732,6 +1888,28 @@ export interface paths {
          *     Requires permission `loaner:manage`.
          */
         delete: operations["removeLoanerPoolMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loans/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent loans and returns
+         * @description The latest check-outs and returns of loaner pool devices, newest first.
+         *
+         *     Requires permission `loaner:read`.
+         */
+        get: operations["listLoanActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2500,6 +2678,32 @@ export interface paths {
          *     Requires permission `catalog:manage`.
          */
         put: operations["putFilesSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/loans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the organisation loan defaults
+         * @description Requires permission `loaner:read`.
+         */
+        get: operations["getLoanSettings"];
+        /**
+         * Replace the organisation loan defaults
+         * @description `If-Match` is the ETag of `GET` (the tenant settings version).
+         *
+         *     Requires permission `loaner:manage`.
+         */
+        put: operations["putLoanSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3849,6 +4053,10 @@ export interface components {
             readonly member_count?: number;
             readonly checked_out_count?: number;
             readonly overdue_count?: number;
+            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            max_loans_per_person?: number | null;
+            /** @description Open loans of this pool whose `expected_return` is today (UTC). */
+            readonly due_today_count?: number;
         };
         LoanerPoolCreate: {
             name: string;
@@ -3861,6 +4069,8 @@ export interface components {
             max_loan_days?: number | null;
             /** @default true */
             is_active?: boolean;
+            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            max_loans_per_person?: number | null;
         };
         /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
         LoanerPoolUpdate: {
@@ -3874,6 +4084,8 @@ export interface components {
             max_loan_days?: number | null;
             /** @default true */
             is_active?: boolean;
+            /** @description How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`. */
+            max_loans_per_person?: number | null;
         };
         LoanerPoolList: {
             data: components["schemas"]["LoanerPool"][];
@@ -4109,6 +4321,11 @@ export interface components {
              * @description Primary picture: an image attachment (`entity_type=asset`) of this asset. Upload it with `POST /v1/attachments`, then set its id here; `null` clears it. Not accepted on create.
              */
             image_attachment_id?: string | null;
+            /**
+             * Format: uuid
+             * @description The loaner pool the asset belongs to, or null. Lets the quick-loan desk refuse a device that is not in a pool without a second request.
+             */
+            readonly loaner_pool_id?: string | null;
         };
         AssetCreate: {
             /** @description Unique per tenant (case-insensitive). If omitted on create, generated from the category `tag_prefix`. */
@@ -4562,6 +4779,13 @@ export interface components {
             /** Format: date */
             expected_return: string;
             days_overdue: number;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** @description Display name of the borrower (the holder when it is a person). */
+            person_name?: string | null;
+            /** @description Contact of the borrower, so staff can chase the device without opening the person. */
+            person_email?: string | null;
+            person_phone?: string | null;
         };
         OverdueCheckoutList: {
             data: components["schemas"]["OverdueCheckout"][];
@@ -4852,7 +5076,7 @@ export interface components {
             /** @enum {string} */
             source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
+            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
             /** @enum {string} */
             readonly state: "draft" | "dry_run_queued" | "dry_run_running" | "dry_run_complete" | "commit_queued" | "committing" | "committed" | "failed" | "cancelled";
             /**
@@ -4885,6 +5109,12 @@ export interface components {
                 delimiter?: string;
                 /** @default YYYY-MM-DD */
                 date_format?: string;
+                /** @description Decisions for source values that do not match an existing record: target field key -> source value -> choice. Written with `PATCH /v1/imports/{id}` and read back unchanged. */
+                value_map?: {
+                    [key: string]: {
+                        [key: string]: components["schemas"]["ImportValueChoice"];
+                    };
+                };
             } & {
                 [key: string]: unknown;
             };
@@ -4906,12 +5136,14 @@ export interface components {
             readonly updated_at?: string;
             /** Format: uuid */
             readonly created_by?: string | null;
+            /** @description Null until a commit has been queued. */
+            readonly commit_progress?: components["schemas"]["ImportCommitProgress"] | null;
         };
         ImportJobCreate: {
             /** @enum {string} */
             source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
             /** @enum {string} */
-            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category";
+            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
             /**
              * Format: uuid
              * @description Required for file sources; omit for `snipe_it` (credentials are passed in `options.snipe_it`).
@@ -4932,6 +5164,11 @@ export interface components {
             options?: {
                 [key: string]: unknown;
             };
+            /**
+             * Format: uuid
+             * @description Attach (or replace) the uploaded `import_file` of a `draft` job. The attachment must belong to this job, be `clean` and not be archived.
+             */
+            file_attachment_id?: string;
         };
         ImportJobList: {
             data: components["schemas"]["ImportJob"][];
@@ -5616,6 +5853,161 @@ export interface components {
         };
         ExportList: {
             data: components["schemas"]["Export"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        ImportValueChoice: {
+            /**
+             * @description `map`: use the existing record `id`; `create`: create the missing record from the source value; `skip`: leave the field empty for these rows.
+             * @enum {string}
+             */
+            action: "map" | "create" | "skip";
+            /**
+             * Format: uuid
+             * @description The existing record, with `action=map`.
+             */
+            id?: string;
+        };
+        /** @description Rows handled so far by the commit (equals the totals once `state=committed`). `processed / rows_total` drives the progress bar. */
+        ImportCommitProgress: {
+            processed: number;
+            created: number;
+            updated: number;
+            skipped: number;
+            failed: number;
+        };
+        ImportColumn: {
+            index: number;
+            /** @description The header cell as it is in the file. */
+            name: string;
+            /** @description Up to five distinct non-empty values from the first rows. */
+            sample_values: string[];
+            distinct_count: number;
+            empty_count: number;
+            /** @enum {string} */
+            detected_type: "text" | "number" | "date" | "boolean";
+            /** @description The target field key the heuristics propose (core field, or `custom_data.<key>`); null when none fits. */
+            suggested_field: string | null;
+        };
+        ImportAnalysis: {
+            /**
+             * @description `pending` while the file waits for its virus scan or is being read.
+             * @enum {string}
+             */
+            status: "pending" | "ready" | "failed";
+            /** @description An actionable sentence (line number and reason) when `status=failed`; never a stack trace. */
+            error: string | null;
+            /** @description Detected text encoding (`utf-8`, `utf-16le`, `windows-1252`). */
+            encoding: string | null;
+            delimiter: string | null;
+            rows_total: number | null;
+            columns: components["schemas"]["ImportColumn"][];
+        };
+        ImportTargetField: {
+            /** @description Field key, `custom_data.<key>` for a custom field. */
+            key: string;
+            label: string;
+            required: boolean;
+            /** @enum {string} */
+            type: "text" | "number" | "date" | "boolean" | "money" | "enum" | "reference";
+            /** @description The kind of record a `reference` field points at; its values go through the value-mapping step. */
+            reference: ("category" | "manufacturer" | "asset_model" | "location" | "person" | "department" | "vendor" | "status_label") | null;
+            /** @description A custom field of the category. */
+            custom: boolean;
+        };
+        ImportTargetFieldList: {
+            data: components["schemas"]["ImportTargetField"][];
+        };
+        ImportLookupValue: {
+            /** @description The value as written in the file. */
+            value: string;
+            /** @description How many rows carry it. */
+            rows: number;
+            /** @description The existing record it matches by name, or null (needs a choice: map, create or skip). */
+            match: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+            } | null;
+        };
+        ImportLookup: {
+            /** @description Target field key. */
+            field: string;
+            /** @enum {string} */
+            reference: "category" | "manufacturer" | "asset_model" | "location" | "person" | "department" | "vendor" | "status_label";
+            values: components["schemas"]["ImportLookupValue"][];
+        };
+        ImportLookupList: {
+            data: components["schemas"]["ImportLookup"][];
+        };
+        ImportMappingTemplate: {
+            /** Format: uuid */
+            readonly id: string;
+            name: string;
+            /** @enum {string} */
+            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
+            /** @enum {string} */
+            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
+            mapping: {
+                [key: string]: string;
+            };
+            options?: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            readonly created_at?: string;
+        };
+        ImportMappingTemplateCreate: {
+            name: string;
+            /** @enum {string} */
+            entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
+            /** @enum {string} */
+            source: "csv" | "xlsx" | "snipe_it" | "google_admin_csv";
+            mapping: {
+                [key: string]: string;
+            };
+            options?: {
+                [key: string]: unknown;
+            };
+        };
+        ImportMappingTemplateList: {
+            data: components["schemas"]["ImportMappingTemplate"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        LoanSettings: {
+            /**
+             * @description Due date offered when a pool does not set its own (today + this many days).
+             * @default 7
+             */
+            default_loan_days: number;
+            /** @description Longest loan any pool may allow; null = no limit. Must be >= default_loan_days. */
+            max_loan_days: number | null;
+            /**
+             * @description How many days before the due date the borrower is reminded (`loan.due_soon`).
+             * @default 1
+             */
+            reminder_lead_days: number;
+        };
+        LoanActivity: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            at: string;
+            /** @enum {string} */
+            kind: "checked_out" | "returned";
+            /** Format: uuid */
+            asset_id: string;
+            asset_tag: string;
+            asset_name?: string | null;
+            /** Format: uuid */
+            person_id?: string | null;
+            person_name?: string | null;
+            /** Format: uuid */
+            loaner_pool_id: string | null;
+            /** Format: date */
+            expected_return?: string | null;
+        };
+        LoanActivityList: {
+            data: components["schemas"]["LoanActivity"][];
             page: components["schemas"]["PageInfo"];
         };
     };
@@ -10421,6 +10813,183 @@ export interface operations {
             };
         };
     };
+    listImportMappingTemplates: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Only this entity. */
+                entity_type?: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of saved mappings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportMappingTemplateList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createImportMappingTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportMappingTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportMappingTemplate"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteImportMappingTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportTargetFields: {
+        parameters: {
+            query: {
+                /** @description The entity being imported. */
+                entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
+                /** @description Include the custom fields of this category. */
+                category_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The target fields. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportTargetFieldList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    downloadImportTemplate: {
+        parameters: {
+            query?: {
+                /** @description Default `csv`. */
+                source?: "csv" | "google_admin_csv";
+            };
+            header?: never;
+            path: {
+                /** @description The entity. */
+                entity_type: "asset" | "accessory" | "consumable" | "location" | "person" | "manufacturer" | "asset_model" | "category" | "department";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description Attachment file name. */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listImports: {
         parameters: {
             query?: {
@@ -10581,6 +11150,37 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    getImportAnalysis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The analysis. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnalysis"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     cancelImport: {
         parameters: {
             query?: never;
@@ -10695,6 +11295,67 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getImportErrorReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The error report. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    /** @description Attachment file name. */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listImportLookups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lookups. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportLookupList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -11349,6 +12010,41 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    listLoanActivity: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Only this pool. */
+                loaner_pool_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of activity. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanActivityList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -13638,6 +14334,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FilesSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getLoanSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    putLoanSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoanSettings"];
+            };
+        };
+        responses: {
+            /** @description The new settings. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoanSettings"];
                 };
             };
             400: components["responses"]["BadRequest"];

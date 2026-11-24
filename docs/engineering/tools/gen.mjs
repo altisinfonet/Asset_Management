@@ -2334,6 +2334,177 @@ S_.Me.required.push('mfa_policy');
 }
 // ================================================================ [M2-W2 NOT] END
 
+// ================================================================ [M2-W3 WEB proposal] BEGIN
+// PROPOSAL of the web wave 3 (M2-IMP-08 import wizard, M2-LOAN-02 loaner desk, M2-LOAN-04 loaner dashboard). The web
+// is built against these shapes; the backend waves (IMP-01..07, LOAN-01/03, LIFE-09) reconcile them with what they
+// really build. Everything of the proposal lives in this block (and nowhere else in this file) so it merges cleanly.
+
+// ---- imports: what the wizard needs beyond the first draft
+// the Departments entity (ED-17) is importable too
+S_.ImportJob.properties.entity_type.enum.push('department');
+S_.ImportJobCreate.properties.entity_type.enum.push('department');
+// the file is attached to a draft job after it was uploaded: an attachment needs its owner (`entity_type=import_job`)
+// to exist, so the web creates the draft job first, uploads against it, then attaches the clean file here
+S_.ImportJobUpdate.properties.file_attachment_id = uuid('Attach (or replace) the uploaded `import_file` of a `draft` job. The attachment must belong to this job, be `clean` and not be archived.');
+S_.ImportValueChoice = obj({
+  action: en(['map', 'create', 'skip'], { description: '`map`: use the existing record `id`; `create`: create the missing record from the source value; `skip`: leave the field empty for these rows.' }),
+  id: uuid('The existing record, with `action=map`.'),
+}, ['action'], { additionalProperties: false });
+S_.ImportJob.properties.options.properties.value_map = { type: 'object', additionalProperties: { type: 'object', additionalProperties: S('ImportValueChoice') }, description: 'Decisions for source values that do not match an existing record: target field key -> source value -> choice. Written with `PATCH /v1/imports/{id}` and read back unchanged.' };
+S_.ImportCommitProgress = obj({
+  processed: int({ minimum: 0 }), created: int({ minimum: 0 }), updated: int({ minimum: 0 }), skipped: int({ minimum: 0 }), failed: int({ minimum: 0 }),
+}, ['processed', 'created', 'updated', 'skipped', 'failed'], { description: 'Rows handled so far by the commit (equals the totals once `state=committed`). `processed / rows_total` drives the progress bar.' });
+S_.ImportJob.properties.commit_progress = { oneOf: [S('ImportCommitProgress'), { type: 'null' }], readOnly: true, description: 'Null until a commit has been queued.' };
+S_.ImportColumn = obj({
+  index: int({ minimum: 0 }),
+  name: str({ description: 'The header cell as it is in the file.' }),
+  sample_values: arr(str(), { description: 'Up to five distinct non-empty values from the first rows.' }),
+  distinct_count: int({ minimum: 0 }),
+  empty_count: int({ minimum: 0 }),
+  detected_type: en(['text', 'number', 'date', 'boolean']),
+  suggested_field: nstr({ description: 'The target field key the heuristics propose (core field, or `custom_data.<key>`); null when none fits.' }),
+}, ['index', 'name', 'sample_values', 'distinct_count', 'empty_count', 'detected_type', 'suggested_field']);
+S_.ImportAnalysis = obj({
+  status: en(['pending', 'ready', 'failed'], { description: '`pending` while the file waits for its virus scan or is being read.' }),
+  error: nstr({ description: 'An actionable sentence (line number and reason) when `status=failed`; never a stack trace.' }),
+  encoding: nstr({ description: 'Detected text encoding (`utf-8`, `utf-16le`, `windows-1252`).' }),
+  delimiter: nstr({ maxLength: 1 }),
+  rows_total: { type: ['integer', 'null'], minimum: 0 },
+  columns: arr(S('ImportColumn')),
+}, ['status', 'error', 'encoding', 'delimiter', 'rows_total', 'columns']);
+const IMPORT_REFERENCES = ['category', 'manufacturer', 'asset_model', 'location', 'person', 'department', 'vendor', 'status_label'];
+S_.ImportTargetField = obj({
+  key: str({ description: 'Field key, `custom_data.<key>` for a custom field.' }),
+  label: str(),
+  required: bool(),
+  type: en(['text', 'number', 'date', 'boolean', 'money', 'enum', 'reference']),
+  reference: { oneOf: [en(IMPORT_REFERENCES), { type: 'null' }], description: 'The kind of record a `reference` field points at; its values go through the value-mapping step.' },
+  custom: bool({ description: 'A custom field of the category.' }),
+}, ['key', 'label', 'required', 'type', 'reference', 'custom']);
+S_.ImportTargetFieldList = obj({ data: arr(S('ImportTargetField')) }, ['data']);
+S_.ImportLookupValue = obj({
+  value: str({ description: 'The value as written in the file.' }),
+  rows: int({ minimum: 1, description: 'How many rows carry it.' }),
+  match: { oneOf: [obj({ id: uuid(), name: str() }, ['id', 'name']), { type: 'null' }], description: 'The existing record it matches by name, or null (needs a choice: map, create or skip).' },
+}, ['value', 'rows', 'match']);
+S_.ImportLookup = obj({
+  field: str({ description: 'Target field key.' }),
+  reference: en(IMPORT_REFERENCES),
+  values: arr(S('ImportLookupValue')),
+}, ['field', 'reference', 'values']);
+S_.ImportLookupList = obj({ data: arr(S('ImportLookup')) }, ['data']);
+S_.ImportMappingTemplate = obj({
+  id: ro(uuid()),
+  name: str({ minLength: 1, maxLength: 120 }),
+  entity_type: S_.ImportJob.properties.entity_type,
+  source: S_.ImportJob.properties.source,
+  mapping: { type: 'object', additionalProperties: str() },
+  options: { type: 'object', additionalProperties: true },
+  created_at: ro(dt()),
+}, ['id', 'name', 'entity_type', 'source', 'mapping']);
+S_.ImportMappingTemplateCreate = obj({
+  name: str({ minLength: 1, maxLength: 120 }),
+  entity_type: S_.ImportJob.properties.entity_type,
+  source: S_.ImportJob.properties.source,
+  mapping: { type: 'object', additionalProperties: str() },
+  options: { type: 'object', additionalProperties: true },
+}, ['name', 'entity_type', 'source', 'mapping'], { additionalProperties: false });
+S_.ImportMappingTemplateList = obj({ data: arr(S('ImportMappingTemplate')), page: S('PageInfo') }, ['data', 'page']);
+const csvResp = (description) => ({ description, headers: { 'X-Request-Id': H('RequestId'), 'Content-Disposition': { description: 'Attachment file name.', schema: str() } }, content: { 'text/csv': { schema: str() } } });
+addOp('/v1/imports/{id}/analysis', 'get', {
+  tag: 'Imports', id: 'getImportAnalysis', summary: 'What the uploaded file contains', perm: 'import:read', params: [ID],
+  description: 'Headers, sample values and column statistics of the uploaded file with the suggested target field of every column. `status=pending` until the file has passed its virus scan and was read (poll it).',
+  success: { 200: okResp(200, 'The analysis.', S('ImportAnalysis'), { replay: false }) },
+});
+addOp('/v1/import-target-fields', 'get', {
+  tag: 'Imports', id: 'listImportTargetFields', summary: 'Fields a column can be mapped to', perm: 'import:read', hasId: false,
+  description: 'The core fields of the entity plus the custom fields of the category (`category_id`) for assets.',
+  params: [{ ...qp('entity_type', S_.ImportJob.properties.entity_type, 'The entity being imported.'), required: true }, qp('category_id', uuid(), 'Include the custom fields of this category.')],
+  success: { 200: okResp(200, 'The target fields.', S('ImportTargetFieldList'), { replay: false }) },
+});
+addOp('/v1/imports/{id}/lookups', 'get', {
+  tag: 'Imports', id: 'listImportLookups', summary: 'Values that refer to other records', perm: 'import:read', params: [ID],
+  description: 'For every mapped reference field (category, manufacturer, model, location, person, department, vendor, status) the distinct values of the file, how many rows carry each and the existing record it matches by name. The answers go back in `options.value_map`.',
+  success: { 200: okResp(200, 'The lookups.', S('ImportLookupList'), { replay: false }) },
+});
+addOp('/v1/imports/{id}/error-report', 'get', {
+  tag: 'Imports', id: 'getImportErrorReport', summary: 'Download the rows that failed as CSV', perm: 'import:read', params: [ID],
+  description: 'The source row, its row number and the messages, for every row with outcome `error` of the latest phase, so the file can be fixed and uploaded again.',
+  success: { 200: csvResp('The error report.') },
+});
+addOp('/v1/import-templates/{entity_type}', 'get', {
+  tag: 'Imports', id: 'downloadImportTemplate', summary: 'Download a CSV template', perm: 'import:read', hasId: false,
+  description: 'A CSV with the header row and example rows of the entity (`source=csv`), or the headers of the Google Admin ChromeOS device export (`source=google_admin_csv`, assets only).',
+  params: [{ name: 'entity_type', in: 'path', required: true, description: 'The entity.', schema: S_.ImportJob.properties.entity_type }, qp('source', en(['csv', 'google_admin_csv']), 'Default `csv`.')],
+  success: { 200: csvResp('The template.') },
+});
+addOp('/v1/import-mapping-templates', 'get', {
+  tag: 'Imports', id: 'listImportMappingTemplates', summary: 'Saved column mappings', perm: 'import:read', hasId: false,
+  params: [P('Cursor'), P('Limit'), qp('entity_type', S_.ImportJob.properties.entity_type, 'Only this entity.')],
+  success: { 200: okResp(200, 'A page of saved mappings.', S('ImportMappingTemplateList'), { replay: false }) },
+});
+addOp('/v1/import-mapping-templates', 'post', {
+  tag: 'Imports', id: 'createImportMappingTemplate', summary: 'Save a column mapping', perm: 'import:run', hasId: false,
+  description: 'A named mapping (and options) that can be applied to a later file of the same entity and source. Names are unique per entity.',
+  body: jsonBody(S('ImportMappingTemplateCreate')),
+  success: { 201: okResp(201, 'Saved.', S('ImportMappingTemplate'), { location: true }) },
+});
+addOp('/v1/import-mapping-templates/{id}', 'delete', {
+  tag: 'Imports', id: 'deleteImportMappingTemplate', summary: 'Delete a saved column mapping', perm: 'import:run', params: [ID], conflict: false,
+  success: { 204: okResp(204, 'Deleted.') },
+});
+
+// ---- loaners: what the desk and the dashboard need beyond the first draft
+S_.Asset.properties.loaner_pool_id = ro(nuuid('The loaner pool the asset belongs to, or null. Lets the quick-loan desk refuse a device that is not in a pool without a second request.'));
+for (const name of ['LoanerPool', 'LoanerPoolCreate', 'LoanerPoolUpdate']) {
+  S_[name].properties.max_loans_per_person = { type: ['integer', 'null'], minimum: 1, description: 'How many devices of this pool one borrower may hold at once; null = no limit. A further check-out fails with 409 `loan-limit-reached`.' };
+}
+S_.LoanerPool.properties.due_today_count = ro(int({ minimum: 0, description: 'Open loans of this pool whose `expected_return` is today (UTC).' }));
+S_.OverdueCheckout.properties.asset_tag = str();
+S_.OverdueCheckout.properties.asset_name = nstr();
+S_.OverdueCheckout.properties.person_name = nstr({ description: 'Display name of the borrower (the holder when it is a person).' });
+S_.OverdueCheckout.properties.person_email = nstr({ description: 'Contact of the borrower, so staff can chase the device without opening the person.' });
+S_.OverdueCheckout.properties.person_phone = nstr();
+S_.OverdueCheckout.required.push('asset_tag');
+S_.LoanSettings = obj({
+  default_loan_days: int({ minimum: 1, default: 7, description: 'Due date offered when a pool does not set its own (today + this many days).' }),
+  max_loan_days: { type: ['integer', 'null'], minimum: 1, description: 'Longest loan any pool may allow; null = no limit. Must be >= default_loan_days.' },
+  reminder_lead_days: int({ minimum: 0, default: 1, description: 'How many days before the due date the borrower is reminded (`loan.due_soon`).' }),
+}, ['default_loan_days', 'max_loan_days', 'reminder_lead_days'], { additionalProperties: false });
+addOp('/v1/settings/loans', 'get', {
+  tag: 'Loaners', id: 'getLoanSettings', summary: 'Get the organisation loan defaults', perm: 'loaner:read', hasId: false,
+  success: { 200: okResp(200, 'The settings.', S('LoanSettings'), { etag: true, replay: false }) },
+});
+addOp('/v1/settings/loans', 'put', {
+  tag: 'Loaners', id: 'putLoanSettings', summary: 'Replace the organisation loan defaults', perm: 'loaner:manage', hasId: false, ifMatch: true, conflict: false,
+  description: '`If-Match` is the ETag of `GET` (the tenant settings version).',
+  body: jsonBody(S('LoanSettings')),
+  success: { 200: okResp(200, 'The new settings.', S('LoanSettings'), { etag: true }) },
+});
+S_.LoanActivity = obj({
+  id: uuid(),
+  at: dt(),
+  kind: en(['checked_out', 'returned']),
+  asset_id: uuid(),
+  asset_tag: str(),
+  asset_name: nstr(),
+  person_id: nuuid(),
+  person_name: nstr(),
+  loaner_pool_id: nuuid(),
+  expected_return: ndate(),
+}, ['id', 'at', 'kind', 'asset_id', 'asset_tag', 'loaner_pool_id']);
+S_.LoanActivityList = obj({ data: arr(S('LoanActivity')), page: S('PageInfo') }, ['data', 'page']);
+addOp('/v1/loans/activity', 'get', {
+  tag: 'Loaners', id: 'listLoanActivity', summary: 'Recent loans and returns', perm: 'loaner:read', hasId: false,
+  description: 'The latest check-outs and returns of loaner pool devices, newest first.',
+  params: [P('Cursor'), P('Limit'), qp('loaner_pool_id', uuid(), 'Only this pool.')],
+  success: { 200: okResp(200, 'A page of activity.', S('LoanActivityList'), { replay: false }) },
+});
+PROBLEM_CODES['loan-limit-reached'] = [[409], 'The borrower already holds the most devices the pool allows (`max_loans_per_person`).'];
+doc['x-problem-codes'] = Object.fromEntries(Object.entries(PROBLEM_CODES).map(([code, [status, description]]) => [code, { status, description }]));
+S_.ProblemCode['x-known-values'] = Object.keys(PROBLEM_CODES);
+// ================================================================ [M2-W3 WEB proposal] END
+
 // ---------------------------------------------------------------- prune unused components, order, emit
 const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {

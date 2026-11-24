@@ -58,3 +58,11 @@ A pool's `member_count`, `available_count` (live, `deployable`, not out), `check
 - Migration 0120 (pools, members, `loan_alert`, the foreign key, two indexes); queue `loan.alerts` and the daily producer; contract tag Loaners grows from five contract-only operations to 18 implemented ones; two new problem codes (`loan-limit-reached`, `loaner-pool-inactive`); the asset list filters `loaner_pool_id` and `in_loaner_pool`; the demo seed adds one pool of ten Chromebooks per tenant with five loans, two overdue (the demo tenants now have 210 assets).
 - Not built: a tenant time zone; per-pool reminder lead time; recipients configurable per pool beyond the owner; pool membership events in the asset history; the K-12 vocabulary (homeroom, device number), which the founder has to confirm.
 - Open questions for the founder: (1) should the tenant default for the expected return also be the default of a pool that has none of its own? (2) alert only the borrower's login, or also mail an address held by a person without a login? (3) is "lowest asset tag first" the right order for the next device?
+
+## Amendment, 2026-11-24 (ED-24)
+
+The founder answered the open questions: (1) yes, a pool without its own loan length takes the organisation's default
+return days, else 7 days (the order is request, pool, organisation, 7; `default_loan_days` of a pool became optional,
+migration 0140); (2) borrowers without a login but with an address are mailed when the pool's
+`email_borrowers_without_login` allows it (automatic: every kind except students); overdue always also goes to the owner
+or the loaner managers. "Next available" lends the device idle the longest. The K-12 vocabulary needs no new fields.

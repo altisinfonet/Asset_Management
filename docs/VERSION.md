@@ -77,11 +77,11 @@ M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (
   (a ledger table makes a second run silent); the borrower (when they have a login) and the pool owner or managers are
   notified in-app and by e-mail, with a text that escalates; per-user opt-out through the notification preferences.
 - **Custody settings** (M2-LIFE-09): `GET` / `PUT /v1/settings/custody` with the default number of days for the expected return
-  (a pre-fill for the dialogs; the API never applies it) and the reminder lead time of due-soon alerts.
+  (a pre-fill for the dialogs; ordinary check-outs stay open-ended, a loaner pool without its own loan length takes it, ED-24) and the reminder lead time of due-soon alerts.
 - Demo data: a Chromebook cart per demo tenant with ten devices, five on loan, two of them overdue (the demo tenants now have
   210 assets).
 - Migration `0120` (pools, members, alert ledger, the loan foreign key), queue `loan.alerts`, problem codes
-  `loan-limit-reached` and `loaner-pool-inactive`; the 10 loaner operations that were contract-only are implemented, 8 new ones and the 2 custody settings operations are added (189 operations in all).
+  `loan-limit-reached` and `loaner-pool-inactive`; the 10 loaner operations that were contract-only are implemented, 8 new ones and the 2 custody settings operations are added (203 operations in all with the deferred stories).
 - **Sort the asset list by location, assignee and due date** (M2-REG-03, ED-22): the Location, Assigned to and Due back
   columns of the Assets table sort through the server (`?sort=location|assignee|due`, also `-`). An asset with no value (no
   location, in stock, no expected return) is listed last in both directions and paging never skips or repeats a row.
@@ -94,7 +94,30 @@ M2 wave 3, part 1: the import backend (M2-IMP-01..07), the loaner pool backend (
   (never a delete), guarded by `If-Match`, the newest history event and a five-minute window; a new history event
   `custody_undone` (migration `0130`). New problem codes `undo-expired`, `undo-asset-changed`, `undo-not-possible`.
   F8 moves keyboard focus to the notifications (listed in the shortcuts help).
-
+- **Import wizard** (M2-IMP-08): Assets > Import and Settings > Imports. Choose the kind of data (assets, people, locations,
+  departments, or a Google Admin ChromeOS export), download a CSV or Excel template with its data dictionary, upload a CSV or
+  XLSX file (virus-scanned first), check the column suggestions (profile, confidence, date formats, saved mappings), decide
+  the values that match nothing, see the dry run (nothing is saved) with filters and the error report, then import with
+  progress and cancel; an import can be resumed from the list after a reload. Built against the real import API and tested
+  with a mock that mirrors it exactly, with axe in light and dark.
+- **Loaner desk, dashboard and pools** (M2-LOAN-02, M2-LOAN-04): Loaners menu: the desk (scan devices, scan or find the
+  borrower, the due date is filled in, Enter lends; bulk return by scanning), the dashboard (cards per pool, overdue loans
+  with the borrower, extend a loan, recent activity) and the pool settings with the organisation's loan defaults. The
+  check-out and transfer dialogs pre-fill the organisation's default return date (M2-LIFE-09).
+- **Loan length and mail rules for loaner pools** (founder decisions of 2026-11-24, ED-24, migration `0140`): the due date
+  of a loan is the date typed, else the pool's loan length (now optional), else the organisation's default return days,
+  else 7 days, never beyond the pool's maximum (`LoanerPool.effective_default_loan_days` shows the result);
+  "next available" lends the device idle the longest (never-lent first, ties by tag); the new pool option
+  `email_borrowers_without_login` (automatic: everybody except students; always; never) sends due-soon and overdue mail to
+  borrowers who have an address but no login; overdue loans always also go to the owner or the loaner managers. The school
+  vocabulary needs no new fields (student ID = employee ref, homeroom = department or room, device number = asset tag):
+  see getting-started.md.
+- **Import data retention** (ED-25, migration `0141`): the rows, sample cells, value map and uploaded file of a finished
+  import are removed after `IMPORT_ROW_RETENTION_DAYS` (default 30) by the scheduled sweep; the job, its counts, summary and
+  audit trail stay (`ImportJob.data_purged_at`). The sweep's six-hour give-up on a stuck import is now tested with an
+  injected clock.
+- The registry, custody, search and import performance suites record their numbers in the ordinary test run and enforce
+  the real budgets only when `PERF` is set (the nightly perf job sets it and now runs them).
 ### Changed
 
 - The contract-only placeholders of the first drafts for imports (`ImportJob` states `dry_run_queued`..., source `snipe_it`) are

@@ -58,5 +58,11 @@ Throughput came from four decisions: the audit rows, events and asset-history ro
 - New tables `import_job`, `import_row`, `import_template` (migration 0110) with the tenant conventions, isolation tests (`test/isolation/imports-isolation.e2e.test.ts`) and route-replay cases for every route; permissions are the catalogue's `import:read` (list, get, templates, presets) and `import:run` (everything that changes anything and everything that shows rows); the entity's own write permission and, for created references, the catalogue's, are checked when the dry run and the commit are requested.
 - New queues `import.analyze`, `import.step`, `import.sweep`; notification `import.completed` is wired (subscription in `notifications/subscriptions.ts`).
 - Dependencies: `yauzl`, `saxes`, `fflate`.
-- Not built: import undo (v1.1; the before-images are stored), accessories, consumables, models and categories as import targets, a retention job for old `import_row` data, AI-assisted mapping (Could), per-row progress push (the wizard polls), the Snipe-IT source (M5).
+- Not built: import undo (v1.1; the before-images are stored), accessories, consumables, models and categories as import targets, AI-assisted mapping (Could), per-row progress push (the wizard polls), the Snipe-IT source (M5).
 - Performance and the measured numbers are in `docs/STATUS.md` and `docs/AUDIT.md`; the nightly gate is `apps/api/test/perf/import-perf.e2e.test.ts`.
+
+## Amendment, 2026-11-24 (ED-25)
+
+The retention job exists: `import.sweep` removes the rows, samples, value map and uploaded file of imports that finished
+more than `IMPORT_ROW_RETENTION_DAYS` (default 30) ago (migration 0141, `import_job.data_purged_at`). The sweep takes its
+clock as a parameter, so the six-hour give-up and the purge are tested without waiting.

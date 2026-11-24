@@ -24,6 +24,7 @@ import {
 } from './registry-handlers';
 import { mutateRegistry, registry } from './registry-state';
 import { onMockReset } from './state';
+import { rememberImportUpload } from './w3-state';
 
 /**
  * Mock handlers of the M2 wave 1 endpoints of docs/engineering/openapi.yaml: locations, people (with
@@ -888,7 +889,7 @@ const personHandlers: HttpHandler[] = [
  * `Assignment` of the contract: `overdue` is computed (open, due before today UTC); the lists of a
  * person and of an asset also carry the asset's tag and name, the custody results do not.
  */
-function assignmentView(a: MockAssignment, withAsset: boolean) {
+export function assignmentView(a: MockAssignment, withAsset: boolean) {
   const { _v: _ignored, ...pub } = a;
   const asset = a.asset_id ? registry().assets.find((x) => x.id === a.asset_id) : undefined;
   return {
@@ -1090,7 +1091,7 @@ const holds = (permissions: string[], needed: string) =>
 type ActionRefusal = { code: keyof typeof CATALOG; detail: string };
 
 /** `null` when the action is allowed, otherwise why not. */
-function refuseAssetAction(
+export function refuseAssetAction(
   action: 'checkout' | 'checkin' | 'transfer' | 'update',
   asset: MockAsset,
 ): ActionRefusal | null {
@@ -1157,7 +1158,7 @@ onMockReset(() => replays.clear());
  * same request replays the stored answer with `Idempotent-Replayed: true`; the same key with a
  * different request is `422 idempotency-key-reuse`. Only successful answers are stored.
  */
-async function idempotent(
+export async function idempotent(
   request: Request,
   userId: string,
   body: unknown,
@@ -1201,7 +1202,7 @@ async function idempotent(
   return response;
 }
 
-type Target =
+export type Target =
   | { type: 'person'; id: string; name: string }
   | { type: 'location'; id: string; name: string }
   | { type: 'asset'; id: string; name: string };
@@ -1342,14 +1343,14 @@ function checkDue(body: Body): FieldError[] {
 }
 
 /** The tenant's first active label of a state type (the default one when it has the type and `preferDefault`). */
-function statusOfType(stateType: 'deployed' | 'deployable', preferDefault = false) {
+export function statusOfType(stateType: 'deployed' | 'deployable', preferDefault = false) {
   const labels = registry()
     .statusLabels.filter((s) => s.state_type === stateType && !s.archived_at)
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name));
   return (preferDefault ? labels.find((s) => s.is_default) : undefined) ?? labels[0];
 }
 
-const noLabel = (stateType: string) =>
+export const noLabel = (stateType: string) =>
   fail('conflict', {
     detail: `The tenant has no active status label of type "${stateType}". Create one in the status labels first.`,
   });
@@ -1394,7 +1395,7 @@ function linkPhotos(data: RegistryData, ids: readonly string[], assignmentId: st
 const photoIds = (body: Body): string[] =>
   Array.isArray(body.attachment_ids) ? [...new Set(body.attachment_ids as string[])] : [];
 
-function custodyResponse(
+export function custodyResponse(
   asset: MockAsset,
   body: Record<string, unknown>,
   status: number,
@@ -1424,7 +1425,8 @@ function lockAsset(request: Request, id: string): { asset: MockAsset } | { respo
   return { asset };
 }
 
-const statusName = (id: string) => registry().statusLabels.find((s) => s.id === id)?.name ?? '';
+export const statusName = (id: string) =>
+  registry().statusLabels.find((s) => s.id === id)?.name ?? '';
 
 function openAssignmentOf(assetId: string) {
   return registry().assignments.find((a) => a.asset_id === assetId && !a.checked_in_at);
@@ -1445,7 +1447,7 @@ function summaryOf(
   };
 }
 
-function pushEvent(
+export function pushEvent(
   data: RegistryData,
   asset: MockAsset,
   type: S['HistoryEvent']['event_type'],
@@ -1468,7 +1470,7 @@ function pushEvent(
   });
 }
 
-function openAssignment(
+export function openAssignment(
   data: RegistryData,
   asset: MockAsset,
   target: Target,
@@ -2249,7 +2251,12 @@ const attachmentHandlers: HttpHandler[] = [
   http.put('/mock-storage/:id', async ({ request, params }) => {
     const target = registry().attachments.find((a) => a.id === params.id);
     if (!target) return new HttpResponse(null, { status: 404 });
-    const bytes = (await request.arrayBuffer()).byteLength;
+    const buffer = await request.arrayBuffer();
+    const bytes = buffer.byteLength;
+    // an import file is read again by the mock import worker (analysis, dry run)
+    if (target.kind === 'import_file') {
+      rememberImportUpload(target.id, new TextDecoder().decode(buffer));
+    }
     mutateRegistry(() => {
       target.stored_bytes = bytes;
     });

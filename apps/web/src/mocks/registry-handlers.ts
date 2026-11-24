@@ -1159,6 +1159,8 @@ export function expandAsset(asset: MockAsset, expand: string[]): Record<string, 
   const holder = asset.current_assignment;
   return {
     ...pub,
+    // the loaner pool the asset belongs to (`[M2-W3 WEB proposal]`): set by the pool's member endpoints
+    loaner_pool_id: asset.loaner_pool_id ?? null,
     // `overdue` is the server's: the custody is open and its due date is before today (UTC)
     current_assignment: holder
       ? {

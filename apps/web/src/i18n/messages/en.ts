@@ -1,5 +1,7 @@
 import { departmentsMessages } from './departments';
+import { importsMessages } from './imports';
 import { labelsMessages } from './labels';
+import { loanersMessages } from './loaners';
 import { m2Messages } from './m2';
 import { notificationsMessages } from './notifications';
 import { repairsMessages } from './repairs';
@@ -71,7 +73,7 @@ export const en = {
     locations: 'Locations',
     people: 'People',
     stock: 'Stock',
-    loanerPool: 'Loaner pool',
+    loanerPool: 'Loaners',
     repairs: 'Repairs',
     stocktake: 'Stocktake',
     labels: 'Labels',
@@ -118,6 +120,8 @@ export const en = {
     categories: 'Categories',
     openAsset: 'Open asset {code}',
     batchScan: 'Scan assets (check out or in many)',
+    importData: 'Import data from a file',
+    loanerDesk: 'Loaner desk: lend and return devices',
     security: 'Account security',
     notificationSettings: 'Notification settings',
     shortcuts: 'Keyboard shortcuts',
@@ -210,6 +214,7 @@ export const en = {
       due: 'Due {date}',
       heldBy: 'Held by {name}',
       noHolder: 'Holder not shown',
+      loanerLink: 'Loaner dashboard',
     },
     stockPanel: {
       title: 'Low stock',
@@ -240,6 +245,7 @@ export const en = {
       notifications: 'Notification rules',
       departments: 'Departments',
     },
+    links: { imports: 'Imports', loanerPools: 'Loaner pools' },
     placeholderTitle: '{section} is not built yet',
     placeholderDescription: 'This settings page is a placeholder for a later story.',
   },
@@ -475,6 +481,8 @@ export const en = {
   ...repairsMessages,
   ...notificationsMessages,
   ...viewsMessages,
+  ...loanersMessages,
+  ...importsMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

@@ -78,12 +78,24 @@ export abstract class ServiceHandler implements EntityHandler {
     const key = `service:${mode}`;
     let r = env.memo.get(key) as RefResolver | undefined;
     if (!r) {
-      r = new RefResolver(env.tx, env.auth, env.options, env.valueMap, env.refs, mode, (kind) =>
-        this.refField(kind),
+      r = new RefResolver(
+        env.tx,
+        env.auth,
+        env.options,
+        env.valueMap,
+        env.refs,
+        mode,
+        (kind) => this.refField(kind),
+        { import_job_id: env.job.id },
       );
       env.memo.set(key, r);
     }
     return r;
+  }
+
+  /** Was this record created by the import itself (as the missing parent of an earlier row)? */
+  protected createdByThisImport(_env: HandlerEnv, _id: string): Promise<boolean> {
+    return Promise.resolve(false);
   }
 
   protected refField(kind: string): string {
@@ -200,7 +212,9 @@ export abstract class ServiceHandler implements EntityHandler {
     const find = await this.lookup(env, [row.mapped], [prep]);
     const { hit, issue } = find(0);
     if (issue) return { result: 'error', errors: [issue], warnings };
-    const policy = env.options.on_match;
+    // a record this very import created as a missing parent of an earlier row is the row's own record: apply the row to it
+    const adopted = hit ? await this.createdByThisImport(env, hit.id) : false;
+    const policy = adopted ? 'update' : env.options.on_match;
     const meta = { import_job_id: env.job.id, import_row: row.row_no };
 
     try {

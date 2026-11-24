@@ -417,9 +417,7 @@ export async function applyPreset(
 }
 
 /** The template headers of a preset, and the data dictionary rows (all entity types share `FIELD_SPECS`). */
-export function dictionary(
-  preset: Preset,
-): Array<{
+export function dictionary(preset: Preset): Array<{
   column: string;
   target: string;
   description: string;

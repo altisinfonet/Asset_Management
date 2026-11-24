@@ -1,4 +1,5 @@
 import {
+  MAX_LOCATION_DEPTH,
   locationCreateSchema,
   locationUpdateSchema,
   type LocationsService,
@@ -90,6 +91,15 @@ export class LocationHandler extends ServiceHandler {
     }
     prep.name = place.name;
     prep.fullPath = place.full;
+    if (place.full.length > MAX_LOCATION_DEPTH + 1) {
+      // known from the path alone, also when the parents do not exist yet
+      prep.issues.push({
+        field: 'path',
+        code: 'too-deep',
+        message: `A location can be at most ${MAX_LOCATION_DEPTH + 1} levels deep; this path has ${place.full.length}.`,
+      });
+      return prep;
+    }
     if (place.parent.length > 0) {
       const res = await resolver.resolve('location', place.parent.join(' > '));
       if (res.kind === 'found') prep.parentId = res.id;
@@ -169,6 +179,15 @@ export class LocationHandler extends ServiceHandler {
         hit: hit ? { id: hit.id, version: hit.version, label: p.fullPath.join(' > ') } : null,
       };
     };
+  }
+
+  /** A parent the import created for an earlier row (its audit entry names this job). */
+  protected override async createdByThisImport(env: HandlerEnv, id: string): Promise<boolean> {
+    const rows = await env.tx.$queryRaw<Array<{ one: number }>>`
+      select 1 as one from app.audit_log
+       where entity_type = 'location' and entity_id = ${id}::uuid and action = 'location.created'
+         and diff->'meta'->>'import_job_id' = ${env.job.id} limit 1`;
+    return rows.length > 0;
   }
 
   protected async doCreate(

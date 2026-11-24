@@ -36,10 +36,26 @@ export interface RefServices {
   vendors: { create(auth: AuthContext, body: never): Promise<{ data: Record<string, unknown> }> };
   models: { create(auth: AuthContext, body: never): Promise<{ data: Record<string, unknown> }> };
   departments: {
-    create(auth: AuthContext, body: never): Promise<{ data: Record<string, unknown> }>;
+    create(
+      auth: AuthContext,
+      body: never,
+      meta?: Record<string, unknown>,
+    ): Promise<{ data: Record<string, unknown> }>;
   };
-  locations: { create(auth: AuthContext, body: never): Promise<{ data: Record<string, unknown> }> };
-  people: { create(auth: AuthContext, body: never): Promise<{ data: Record<string, unknown> }> };
+  locations: {
+    create(
+      auth: AuthContext,
+      body: never,
+      meta?: Record<string, unknown>,
+    ): Promise<{ data: Record<string, unknown> }>;
+  };
+  people: {
+    create(
+      auth: AuthContext,
+      body: never,
+      meta?: Record<string, unknown>,
+    ): Promise<{ data: Record<string, unknown> }>;
+  };
 }
 
 interface Named {
@@ -97,6 +113,8 @@ export class RefResolver {
     private readonly services: RefServices,
     private readonly mode: 'dry' | 'commit',
     private readonly overrideField?: (kind: RefKind) => string,
+    /** Recorded with the audit entry of every location, department and person this resolver creates. */
+    private readonly meta?: Record<string, unknown>,
   ) {}
 
   private field(kind: RefKind): string {
@@ -322,11 +340,15 @@ export class RefResolver {
     let id: string | null = parent;
     let name = last?.name ?? parts[0]!;
     for (let i = depth; i < parts.length; i++) {
-      const created = await this.services.locations.create(this.auth, {
-        parent_id: id,
-        name: parts[i]!,
-        kind: this.options.location_kind,
-      } as never);
+      const created = await this.services.locations.create(
+        this.auth,
+        {
+          parent_id: id,
+          name: parts[i]!,
+          kind: this.options.location_kind,
+        } as never,
+        this.meta,
+      );
       this.children.delete(id ?? 'root');
       this.allLocations = undefined;
       id = created.data.id as string;
@@ -405,9 +427,13 @@ export class RefResolver {
           } as never));
           break;
         case 'department':
-          ({ data } = await this.services.departments.create(this.auth, {
-            name: clean.slice(0, 200),
-          } as never));
+          ({ data } = await this.services.departments.create(
+            this.auth,
+            {
+              name: clean.slice(0, 200),
+            } as never,
+            this.meta,
+          ));
           break;
         case 'model': {
           if (!scope.categoryId) {
@@ -429,10 +455,14 @@ export class RefResolver {
         }
         case 'person': {
           const email = clean.includes('@') ? clean.toLowerCase() : null;
-          ({ data } = await this.services.people.create(this.auth, {
-            display_name: email ? (email.split('@')[0] ?? clean) : clean,
-            ...(email ? { email } : {}),
-          } as never));
+          ({ data } = await this.services.people.create(
+            this.auth,
+            {
+              display_name: email ? (email.split('@')[0] ?? clean) : clean,
+              ...(email ? { email } : {}),
+            } as never,
+            this.meta,
+          ));
           break;
         }
         default:

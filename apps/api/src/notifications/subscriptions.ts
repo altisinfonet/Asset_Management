@@ -19,7 +19,7 @@ import type { NotificationType } from './types.js';
  * is unique per recipient, which makes a second delivery a no-op.
  *
  * Events that other M2 stories emit and that are NOT mapped yet (types and texts already exist):
- *   `loan.overdue`, `loan.due_soon` (M2-LOAN-03), `import.completed` (M2-IMP). Add their entry when
+ *   `loan.overdue`, `loan.due_soon` (M2-LOAN-03). Add their entry when
  *   the producer exists; `loan.overdue` should use `anyOf(loginOfPerson('personId'), holdersOf('loaner:manage'))`.
  *
  * PAYLOADS ARE IDS ONLY (ids/ids-only.ts): a `describe` function never expects a name in the event; it
@@ -223,6 +223,31 @@ export const NOTIFICATION_SUBSCRIPTIONS: readonly Subscription[] = [
         vars: { count: batch.label_count },
         entity: { type: 'label_batch', id: batch.id },
         link: `/assets?label_batch=${encodeURIComponent(batch.id)}`,
+      };
+    },
+  },
+
+  // Imports (M2-IMP-05): a commit finished. Payload { requestedBy } on the import job; the counts are read
+  // here, under RLS. The link opens the import, whose results page offers the error report.
+  {
+    event: 'import.completed',
+    type: 'import.completed',
+    recipients: payloadUser('requestedBy'),
+    async describe(event, tx) {
+      const job = await tx.import_job.findUnique({
+        where: { id: event.aggregateId },
+        select: { id: true, filename: true, done_create: true, done_update: true, done_error: true },
+      });
+      if (!job) return null;
+      return {
+        vars: {
+          filename: job.filename ?? 'the file',
+          created: job.done_create,
+          updated: job.done_update,
+          failed: job.done_error,
+        },
+        entity: { type: 'import_job', id: job.id },
+        link: `/imports/view?id=${encodeURIComponent(job.id)}`,
       };
     },
   },

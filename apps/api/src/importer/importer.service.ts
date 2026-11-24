@@ -647,7 +647,7 @@ export class ImportsService extends RegistryBase {
           state: 'analyzing',
           file_attachment_id: att!.id,
           filename: att!.filename,
-          source: job.preset_key ? job.source : format === 'xlsx' ? 'xlsx' : 'csv',
+          source: job.source === 'google_admin_csv' ? job.source : format,
           parse: parse as never,
           error: null,
           started_at: new Date(),

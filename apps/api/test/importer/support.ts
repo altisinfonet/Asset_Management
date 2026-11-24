@@ -19,8 +19,9 @@ export interface ImportHarness {
   engine: ImportEngine;
 }
 
-export async function startImportApp(): Promise<ImportHarness> {
-  const h = await startFilesApp({ driver: 'local', scanner: 'fake' });
+export async function startImportApp(extra: Record<string, string> = {}): Promise<ImportHarness> {
+  const h = await startFilesApp({ driver: 'local', scanner: 'fake', extra });
+
   return {
     h,
     runtime: h.app.get(TenancyService, { strict: false }),
@@ -211,8 +212,8 @@ export async function registryCounts(tenantId: string): Promise<Counts> {
        (select count(*) from app.vendor)::int as vendors,
        (select count(*) from app.assignment)::int as assignments,
        (select count(*) from app.asset_history)::int as history,
-       (select count(*) from app.audit_log where entity_type <> 'import_job')::int as audit_other,
-       (select count(*) from app.outbox_event where aggregate_type <> 'import_job')::int as outbox_other`,
+       (select count(*) from app.audit_log where entity_type not in ('import_job', 'attachment'))::int as audit_other,
+       (select count(*) from app.outbox_event where aggregate_type not in ('import_job', 'attachment'))::int as outbox_other`,
   );
   return res.rows[0] as Counts;
 }

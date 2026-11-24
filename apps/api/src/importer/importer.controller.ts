@@ -190,6 +190,7 @@ export class ImportsController {
 
   @Post(':id/apply-template')
   @RequirePermission('import:run')
+  @HttpCode(200)
   async applyTemplate(
     @CurrentAuth() auth: AuthContext,
     @Param('id', idParam()) id: string,

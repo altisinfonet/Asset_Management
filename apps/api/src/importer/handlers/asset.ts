@@ -112,7 +112,16 @@ export class AssetHandler implements EntityHandler {
       select: { id: true, name: true, state_type: true, is_default: true },
     });
     const cache: AssetStepCache = {
-      resolver: new RefResolver(env.tx, env.auth, env.options, env.valueMap, env.refs, mode),
+      resolver: new RefResolver(
+        env.tx,
+        env.auth,
+        env.options,
+        env.valueMap,
+        env.refs,
+        mode,
+        undefined,
+        { import_job_id: env.job.id },
+      ),
       defs: defRows.map((r) => ({ ...toFieldDef(r), categoryId: r.category_id })),
       statuses: new Map(statusRows.map((s) => [s.id, s])),
       defaultStatusId: statusRows.find((s) => s.is_default)?.id ?? null,
@@ -524,9 +533,6 @@ export class AssetHandler implements EntityHandler {
     version: number,
     warnings: RowIssue[],
   ): Promise<Verdict> {
-    const parsed = assetUpdateSchema.safeParse(prep.update);
-    if (!parsed.success)
-      return { plan: 'error', errors: zodIssues(parsed.error.issues, assetPointer), warnings };
     const current = await loadAsset(env.tx, id);
     if (!current)
       return {
@@ -534,6 +540,9 @@ export class AssetHandler implements EntityHandler {
         errors: [{ field: null, code: 'not-found', message: 'The asset no longer exists.' }],
         warnings,
       };
+    const parsed = assetUpdateSchema.safeParse(this.forCustody(prep.update, current, warnings));
+    if (!parsed.success)
+      return { plan: 'error', errors: zodIssues(parsed.error.issues, assetPointer), warnings };
     let changed: string[];
     try {
       const res = await this.assets.updateInTx(
@@ -558,6 +567,27 @@ export class AssetHandler implements EntityHandler {
       return { plan: 'skip', errors: [], warnings, entityId: id, entityVersion: version };
     }
     return { plan: 'update', errors: [], warnings, entityId: id, entityVersion: version };
+  }
+
+  /**
+   * The custody of an asset owns its status: while it is checked out, the status of the file (which says
+   * "Active", "Provisioned"...) is not applied, so a re-import never un-deploys a device somebody holds.
+   */
+  private forCustody(
+    update: Record<string, unknown>,
+    current: AssetRow,
+    warnings: RowIssue[],
+  ): Record<string, unknown> {
+    if (!current.assignment || update.status_id === undefined) return update;
+    const { status_id: wanted, ...rest } = update;
+    if (wanted !== current.status_id && !warnings.some((w) => w.code === 'status-kept')) {
+      warnings.push({
+        field: 'status',
+        code: 'status-kept',
+        message: 'The asset is checked out: its status is left as it is.',
+      });
+    }
+    return rest;
   }
 
   private assignWarnings(prep: Prepared, warnings: RowIssue[]): void {
@@ -714,7 +744,7 @@ export class AssetHandler implements EntityHandler {
         warnings,
       };
     }
-    const parsed = assetUpdateSchema.safeParse(prep.update);
+    const parsed = assetUpdateSchema.safeParse(this.forCustody(prep.update, current, warnings));
     if (!parsed.success)
       return { result: 'error', errors: zodIssues(parsed.error.issues, assetPointer), warnings };
     const body = parsed.data as AssetUpdate;

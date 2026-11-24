@@ -149,7 +149,7 @@ export const plainPointer =
     const parts = p.replace(/^\//, '').split('/');
     const first = parts[0] ?? '';
     if (first === 'address' && parts[1])
-      return `address_${parts[1] === 'line1' ? 'line1' : parts[1] === 'line2' ? 'line2' : parts[1]}`;
+      return parts[1] === 'line1' || parts[1] === 'line2' ? `address_${parts[1]}` : parts[1]!;
     return first === '' ? null : (extra[first] ?? COLUMN_OF_POINTER[first] ?? first);
   };
 

@@ -96,7 +96,8 @@ export function checkMapping(
     }
     seen.set(col.target, col.index);
   }
-  const has = (k: string) => seen.has(k);
+  const consts = (mapping as { constants?: Record<string, string> }).constants ?? {};
+  const has = (k: string) => seen.has(k) || k in consts;
   switch (entity) {
     case 'asset':
       if (!has('category') && !options.defaults.category) {

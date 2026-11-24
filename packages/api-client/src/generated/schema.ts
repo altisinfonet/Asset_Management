@@ -588,7 +588,7 @@ export interface paths {
         put?: never;
         /**
          * Edit many assets
-         * @description Applies the same `changes` (status, category, model, vendor, `custom_data` merge) to every listed asset.
+         * @description Applies the same `changes` (status, category, model, vendor, department, `custom_data` merge) to every listed asset.
          *
          *     At most 100 ids per request. The response is `200` with one result per id, in request order (`results[].status` is the status the single-asset operation would have returned, `results[].error` the problem document when it failed); a failing item does not roll back the others. Each item writes its own audit record and outbox event, plus one `bulk_operation` audit record for the request. Idempotent with `Idempotency-Key`.
          *
@@ -1225,6 +1225,58 @@ export interface paths {
          * @description Requires permission `catalog:manage`.
          */
         patch: operations["updateCustomFieldDef"];
+        trace?: never;
+    };
+    "/v1/departments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List departments
+         * @description Cursor-paginated list. `q` matches the name and the code (case-insensitive). Every row carries `person_count` and `asset_count` (live people / assets), so the settings page needs one call.
+         */
+        get: operations["listDepartments"];
+        put?: never;
+        /**
+         * Create department
+         * @description Creates a department. The name (and the code, when set) must be unique among live departments, ignoring case (409 `conflict`, pointer `/name` or `/code`). The manager must be a live person (422).
+         */
+        post: operations["createDepartment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/departments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get department
+         * @description Requires permission `department:read`.
+         */
+        get: operations["getDepartment"];
+        put?: never;
+        post?: never;
+        /**
+         * Archive department
+         * @description Soft delete. While live people or assets still reference the department the answer is `409 conflict` with `usage` (`people`, `assets`), unless `reassign_to` names another live department: then every person and asset (archived ones included) moves there in the same transaction and the department is archived (this is how two departments are merged). The move is recorded in the audit entry (`meta.reassigned_to`, `people`, `assets`).
+         */
+        delete: operations["archiveDepartment"];
+        options?: never;
+        head?: never;
+        /**
+         * Update department
+         * @description Merge semantics. Renaming keeps every person and asset linked: they reference the id.
+         */
+        patch: operations["updateDepartment"];
         trace?: never;
     };
     "/v1/exports": {
@@ -2763,7 +2815,7 @@ export interface components {
             /** @default 1 */
             count?: number;
             /** @description Fields to copy from the source. Default - all of them. */
-            copy_fields?: ("name" | "model_id" | "status_id" | "vendor_id" | "location_id" | "parent_asset_id" | "purchase_date" | "purchase_cost" | "order_number" | "warranty_end" | "notes" | "custom_data")[];
+            copy_fields?: ("name" | "model_id" | "status_id" | "vendor_id" | "location_id" | "department_id" | "parent_asset_id" | "purchase_date" | "purchase_cost" | "order_number" | "warranty_end" | "notes" | "custom_data")[];
             /** @description One explicit tag per copy; omit to generate them from the numbering template. */
             asset_tags?: string[];
         };
@@ -2785,6 +2837,11 @@ export interface components {
                 model_id?: string | null;
                 /** Format: uuid */
                 vendor_id?: string | null;
+                /**
+                 * Format: uuid
+                 * @description [ED-17] Department for every listed asset; `null` clears it.
+                 */
+                department_id?: string | null;
                 custom_data?: components["schemas"]["CustomData"];
             };
         };
@@ -3398,7 +3455,11 @@ export interface components {
             phone?: string | null;
             /** @description Unique per tenant when set (employee / student number). */
             employee_ref?: string | null;
-            department?: string | null;
+            /**
+             * Format: uuid
+             * @description [ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department.
+             */
+            department_id?: string | null;
             job_title?: string | null;
             /**
              * Format: uuid
@@ -3418,6 +3479,8 @@ export interface components {
              * @description Linked login account, if this person can sign in.
              */
             readonly user_id?: string | null;
+            /** @description [ED-17] The NAME of the linked department (read-only; write `department_id`). Kept so readers of the old free-text field keep working. */
+            readonly department?: string | null;
             /** @description Number of assets currently checked out to this person. */
             readonly assets_held?: number;
         };
@@ -3435,7 +3498,11 @@ export interface components {
             phone?: string | null;
             /** @description Unique per tenant when set (employee / student number). */
             employee_ref?: string | null;
-            department?: string | null;
+            /**
+             * Format: uuid
+             * @description [ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department.
+             */
+            department_id?: string | null;
             job_title?: string | null;
             /**
              * Format: uuid
@@ -3466,7 +3533,11 @@ export interface components {
             phone?: string | null;
             /** @description Unique per tenant when set (employee / student number). */
             employee_ref?: string | null;
-            department?: string | null;
+            /**
+             * Format: uuid
+             * @description [ED-17] A managed department (`POST /v1/departments`); `null` = none. Replaces the free-text department.
+             */
+            department_id?: string | null;
             job_title?: string | null;
             /**
              * Format: uuid
@@ -3491,6 +3562,62 @@ export interface components {
         };
         PersonList: {
             data: components["schemas"]["Person"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /** @description A managed department: chosen from a list instead of typed, so the same department is never spelled three ways. People and assets reference it by id. */
+        Department: {
+            /** Format: uuid */
+            readonly id: string;
+            /** Format: date-time */
+            readonly created_at?: string;
+            /** Format: date-time */
+            readonly updated_at?: string;
+            /** Format: date-time */
+            readonly archived_at?: string | null;
+            /** @description Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
+            name: string;
+            /** @description Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none. */
+            code?: string | null;
+            description?: string | null;
+            /**
+             * Format: uuid
+             * @description The head of the department: a live person (422 on `/manager_person_id` otherwise).
+             */
+            manager_person_id?: string | null;
+            /** @description Display name of the manager. */
+            readonly manager_name?: string | null;
+            /** @description Live (not archived) people in this department. Present on the department endpoints only. */
+            readonly person_count?: number;
+            /** @description Live (not archived) assets owned by this department. Present on the department endpoints only. */
+            readonly asset_count?: number;
+        };
+        DepartmentCreate: {
+            /** @description Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
+            name: string;
+            /** @description Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none. */
+            code?: string | null;
+            description?: string | null;
+            /**
+             * Format: uuid
+             * @description The head of the department: a live person (422 on `/manager_person_id` otherwise).
+             */
+            manager_person_id?: string | null;
+        };
+        /** @description Partial update (RFC 7396 merge semantics): omitted fields are unchanged, `null` clears a nullable field. */
+        DepartmentUpdate: {
+            /** @description Unique among the live departments of the tenant, ignoring case and surrounding spaces (409 `conflict`, pointer `/name`). */
+            name?: string;
+            /** @description Short code or cost-centre number; unique among live departments when set (409, pointer `/code`). An empty string means none. */
+            code?: string | null;
+            description?: string | null;
+            /**
+             * Format: uuid
+             * @description The head of the department: a live person (422 on `/manager_person_id` otherwise).
+             */
+            manager_person_id?: string | null;
+        };
+        DepartmentList: {
+            data: components["schemas"]["Department"][];
             page: components["schemas"]["PageInfo"];
         };
         Accessory: {
@@ -3935,6 +4062,11 @@ export interface components {
             location_id?: string | null;
             /**
              * Format: uuid
+             * @description [ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`.
+             */
+            department_id?: string | null;
+            /**
+             * Format: uuid
              * @description Defaults to the tenant default company.
              */
             company_id?: string;
@@ -3968,7 +4100,7 @@ export interface components {
                 name: string;
                 state_type: string;
             };
-            /** @description Related objects requested through `expand` (model, category, location, vendor). */
+            /** @description Related objects requested through `expand` (model, category, location, vendor, department). */
             readonly expanded?: {
                 [key: string]: unknown;
             };
@@ -3997,6 +4129,11 @@ export interface components {
             status_id?: string;
             /** Format: uuid */
             location_id?: string | null;
+            /**
+             * Format: uuid
+             * @description [ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`.
+             */
+            department_id?: string | null;
             /**
              * Format: uuid
              * @description Defaults to the tenant default company.
@@ -4041,6 +4178,11 @@ export interface components {
             status_id?: string;
             /** Format: uuid */
             location_id?: string | null;
+            /**
+             * Format: uuid
+             * @description [ED-17] The owning / cost-centre department (optional); where the asset is stays `location_id`.
+             */
+            department_id?: string | null;
             /**
              * Format: uuid
              * @description Defaults to the tenant default company.
@@ -6210,6 +6352,8 @@ export interface operations {
                 manufacturer_id?: string;
                 /** @description Assets at this location. */
                 location_id?: string;
+                /** @description [ED-17] Assets of this department. */
+                department_id?: string;
                 /** @description With `location_id`: include the whole subtree. */
                 include_sublocations?: boolean;
                 /** @description Filter by company. */
@@ -6241,7 +6385,7 @@ export interface operations {
                     [key: string]: string;
                 };
                 /** @description Embed related objects under `expanded`. */
-                expand?: ("model" | "category" | "location" | "vendor")[];
+                expand?: ("model" | "category" | "location" | "vendor" | "department")[];
                 /** @description Sparse fieldset: return only these top-level properties (`id` is always included). */
                 fields?: string[];
                 /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: created_at, updated_at, asset_tag, name, purchase_date, warranty_end. A unique tiebreaker (`id`) is always appended. */
@@ -6330,7 +6474,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Embed related objects under `expanded`. */
-                expand?: ("model" | "category" | "location" | "vendor")[];
+                expand?: ("model" | "category" | "location" | "vendor" | "department")[];
             };
             header?: never;
             path: {
@@ -9702,6 +9846,215 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    listDepartments: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `page.next_cursor` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Also return `page.total` (an extra count query; avoid on large lists). */
+                include_total?: components["parameters"]["IncludeTotal"];
+                /** @description Free-text search (trigram / prefix match). */
+                q?: components["parameters"]["Q"];
+                /** @description Archived (soft-deleted) records: `exclude` (default), `include` or `only`. */
+                archived?: components["parameters"]["Archived"];
+                /** @description Comma-separated sort keys, `-` prefix = descending. Allowed: name, code, created_at. A unique tiebreaker (`id`) is always appended. */
+                sort?: ("name" | "-name" | "code" | "-code" | "created_at" | "-created_at")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of results. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepartmentList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    createDepartment: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepartmentCreate"];
+            };
+        };
+        responses: {
+            /** @description Department created. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Department"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["Unprocessable"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getDepartment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The department. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Department"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    archiveDepartment: {
+        parameters: {
+            query?: {
+                /** @description Move the people and assets of this department to that department before archiving (merge). Must be another live department (422 on `query:reassign_to` otherwise). */
+                reassign_to?: string;
+            };
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    updateDepartment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepartmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated department. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Department"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
     listExports: {
         parameters: {
             query?: {
@@ -12106,8 +12459,8 @@ export interface operations {
                 kind?: ("employee" | "student" | "contractor" | "external")[];
                 /** @description Filter by status. */
                 status?: "active" | "inactive";
-                /** @description Exact department. */
-                department?: string;
+                /** @description [ED-17] People of this department. */
+                department_id?: string;
                 /** @description Home location. */
                 location_id?: string;
                 /** @description Exact employee / student number. */

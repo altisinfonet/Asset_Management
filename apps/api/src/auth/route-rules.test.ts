@@ -7,6 +7,7 @@ import { loadConfig } from '../config/env.js';
 import { PROBLEM_CATALOG } from '../platform/index.js';
 import {
   ACC_TAGS,
+  DEPT_TAGS,
   M2_OPERATIONS,
   FILES_TAGS,
   LABELS_TAGS,
@@ -95,6 +96,16 @@ describe('route access rules', async () => {
     const wave1 = operations.filter((o) => WAVE1_TAGS.has(o.tag));
     expect(wave1.length).toBeGreaterThanOrEqual(15);
     const missing = wave1
+      .filter((o) => !implemented.has(`${o.method} ${o.path}`))
+      .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('implements every Departments operation of the contract (ED-17)', () => {
+    const implemented = new Set(routes.map((r) => `${r.method} ${toTemplate(r.path)}`));
+    const departments = operations.filter((o) => DEPT_TAGS.has(o.tag));
+    expect(departments.length).toBe(5);
+    const missing = departments
       .filter((o) => !implemented.has(`${o.method} ${o.path}`))
       .map((o) => `${o.method.toUpperCase()} ${o.path} (${o.operationId})`);
     expect(missing).toEqual([]);

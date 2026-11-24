@@ -137,8 +137,9 @@ export class SearchService {
       department: string | null;
     };
     const rows = await trx.$queryRaw<Row[]>`
-      select p.id, p.display_name, p.email, p.employee_ref, p.department
+      select p.id, p.display_name, p.email, p.employee_ref, d.name as department
         from app.person p
+        left join app.department d on d.tenant_id = p.tenant_id and d.id = p.department_id
        where p.archived_at is null and strpos(p.search_text, lower(${q})) > 0
        order by case when p.email_key = lower(${q}) or lower(p.employee_ref) = lower(${q}) then 0
                      when starts_with(p.search_text, lower(${q})) then 1 else 2 end,

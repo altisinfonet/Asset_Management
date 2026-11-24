@@ -22,6 +22,8 @@ export interface AssetRow {
   model_id: string | null;
   status_id: string;
   location_id: string | null;
+  /** ED-17: the owning / cost-centre department (optional). */
+  department_id: string | null;
   company_id: string;
   vendor_id: string | null;
   parent_asset_id: string | null;
@@ -66,7 +68,7 @@ export const ASSET_COLUMNS = Prisma.sql`a.id, a.asset_tag, a.label_code, a.name,
   a.model_id, a.status_id, a.location_id, a.company_id, a.vendor_id, a.parent_asset_id, a.purchase_date,
   a.purchase_cost_minor, a.currency, a.order_number, a.warranty_end, a.notes, a.custom_data,
   a.external_source, a.external_id, a.created_at, a.updated_at, a.archived_at, a.version,
-  a.disposed_on, a.disposal_reason, a.disposal_note, a.image_attachment_id`;
+  a.disposed_on, a.disposal_reason, a.disposal_note, a.image_attachment_id, a.department_id`;
 
 /** Row of the asset queries before the status label and the open custody period are attached. */
 export type BareAssetRow = Omit<AssetRow, 'status_name' | 'status_state_type' | 'assignment'>;
@@ -191,6 +193,7 @@ export function assetDto(r: AssetRow, expanded?: Record<string, unknown>) {
     model_id: r.model_id,
     status_id: r.status_id,
     location_id: r.location_id,
+    department_id: r.department_id,
     company_id: r.company_id,
     vendor_id: r.vendor_id,
     parent_asset_id: r.parent_asset_id,
@@ -228,6 +231,7 @@ export const ASSET_FIELDS = Object.keys(
     model_id: null,
     status_id: '',
     location_id: null,
+    department_id: null,
     company_id: '',
     vendor_id: null,
     parent_asset_id: null,
@@ -449,6 +453,7 @@ export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Pri
     const overdue = Prisma.sql`${open} and s.expected_return < (now() at time zone 'UTC')::date`;
     c.push(q.overdue ? Prisma.sql`exists (${overdue})` : Prisma.sql`not exists (${overdue})`);
   }
+  if (q.department_id) c.push(Prisma.sql`a.department_id = ${q.department_id}::uuid`);
   if (q.company_id) c.push(Prisma.sql`a.company_id = ${q.company_id}::uuid`);
   if (q.vendor_id) c.push(Prisma.sql`a.vendor_id = ${q.vendor_id}::uuid`);
   if (q.parent_asset_id) c.push(Prisma.sql`a.parent_asset_id = ${q.parent_asset_id}::uuid`);

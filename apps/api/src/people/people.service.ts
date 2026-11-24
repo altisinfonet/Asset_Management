@@ -38,8 +38,11 @@ const SPEC: ListSpec = {
   defaultSort: 'display_name',
 };
 
-/** Schema `Person`. `assets_held` is computed per request. */
-export function personDto(r: PersonRow, assetsHeld?: number) {
+/**
+ * Schema `Person`. `assets_held` is computed per request. `department` is the NAME of the linked managed
+ * department (read-only, kept so older readers of the field keep working); `department_id` is what is written.
+ */
+export function personDto(r: PersonRow, assetsHeld?: number, departmentName?: string | null) {
   return {
     id: r.id,
     created_at: r.created_at.toISOString(),
@@ -52,7 +55,8 @@ export function personDto(r: PersonRow, assetsHeld?: number) {
     email: r.email,
     phone: r.phone,
     employee_ref: r.employee_ref,
-    department: r.department,
+    department_id: r.department_id,
+    department: departmentName ?? null,
     job_title: r.job_title,
     location_id: r.location_id,
     company_id: r.company_id,
@@ -100,7 +104,7 @@ export class PeopleService extends RegistryBase {
           query.q ? { search_text: { contains: query.q.toLowerCase() } } : {},
           query.kind?.length ? { kind: { in: query.kind } } : {},
           query.status ? { status: query.status } : {},
-          query.department ? { department: query.department } : {},
+          query.department_id ? { department_id: query.department_id } : {},
           query.location_id ? { location_id: query.location_id } : {},
           query.employee_ref ? { employee_ref: query.employee_ref } : {},
           query.has_login === true
@@ -118,7 +122,7 @@ export class PeopleService extends RegistryBase {
           q: query.q,
           kind: query.kind,
           status: query.status,
-          department: query.department,
+          department_id: query.department_id,
           location_id: query.location_id,
           employee_ref: query.employee_ref,
           has_login: query.has_login,
@@ -131,11 +135,22 @@ export class PeopleService extends RegistryBase {
           }) as unknown as Promise<Array<PersonRow & Record<string, unknown>>>,
         count: () => trx.person.count({ where: filter }),
       });
-      const held = await this.assetsHeld(
-        trx,
-        page.data.map((p) => p.id),
-      );
-      return { data: page.data.map((r) => personDto(r, held.get(r.id) ?? 0)), page: page.page };
+      const [held, departments] = await Promise.all([
+        this.assetsHeld(
+          trx,
+          page.data.map((p) => p.id),
+        ),
+        this.departmentNames(
+          trx,
+          page.data.map((p) => p.department_id),
+        ),
+      ]);
+      return {
+        data: page.data.map((r) =>
+          personDto(r, held.get(r.id) ?? 0, this.nameOf(departments, r.department_id)),
+        ),
+        page: page.page,
+      };
     });
   }
 
@@ -146,9 +161,32 @@ export class PeopleService extends RegistryBase {
     return this.tx(auth, async (trx) => {
       const row = await trx.person.findUnique({ where: { id } });
       if (!row) throw problem.notFound('Person not found.');
-      const held = await this.assetsHeld(trx, [id]);
-      return { data: personDto(row, held.get(id) ?? 0), version: row.version };
+      return { data: await this.view(trx, row), version: row.version };
     });
+  }
+
+  /** The person with its computed members (assets held, department name). */
+  private async view(trx: Tx, row: PersonRow): Promise<Record<string, unknown>> {
+    const [held, departments] = await Promise.all([
+      this.assetsHeld(trx, [row.id]),
+      this.departmentNames(trx, [row.department_id]),
+    ]);
+    return personDto(row, held.get(row.id) ?? 0, this.nameOf(departments, row.department_id));
+  }
+
+  /** Names of the given departments (archived ones included: a person may still point at one). */
+  private async departmentNames(trx: Tx, ids: Array<string | null>): Promise<Map<string, string>> {
+    const wanted = [...new Set(ids.filter((v): v is string => v !== null))];
+    if (wanted.length === 0) return new Map();
+    const rows = await trx.department.findMany({
+      where: { id: { in: wanted } },
+      select: { id: true, name: true },
+    });
+    return new Map(rows.map((d) => [d.id, d.name]));
+  }
+
+  private nameOf(names: Map<string, string>, id: string | null): string | null {
+    return id ? (names.get(id) ?? null) : null;
   }
 
   /** Assets currently checked out to each person (open, asset-bound assignments). */
@@ -190,7 +228,7 @@ export class PeopleService extends RegistryBase {
             email: body.email ?? null,
             phone: body.phone ?? null,
             employee_ref: body.employee_ref ?? null,
-            department: body.department ?? null,
+            department_id: body.department_id ?? null,
             job_title: body.job_title ?? null,
             location_id: body.location_id ?? null,
             status: body.status ?? 'active',
@@ -206,7 +244,7 @@ export class PeopleService extends RegistryBase {
           before: null,
           after: auditView(personDto(row)),
         });
-        return { data: personDto(row, 0), version: row.version };
+        return { data: await this.view(trx, row), version: row.version };
       });
     } catch (err) {
       throw this.translate(err);
@@ -226,9 +264,12 @@ export class PeopleService extends RegistryBase {
         assertIfMatch(ifMatch, row.version);
 
         const errors: FieldError[] = [];
-        const refs: Pick<PersonUpdate, 'location_id'> = {
+        const refs: Pick<PersonUpdate, 'location_id' | 'department_id'> = {
           ...(body.location_id !== undefined && body.location_id !== row.location_id
             ? { location_id: body.location_id }
+            : {}),
+          ...(body.department_id !== undefined && body.department_id !== row.department_id
+            ? { department_id: body.department_id }
             : {}),
         };
         await this.checkRefs(trx, refs, errors);
@@ -247,7 +288,7 @@ export class PeopleService extends RegistryBase {
           'email',
           'phone',
           'employee_ref',
-          'department',
+          'department_id',
           'job_title',
           'location_id',
           'company_id',
@@ -280,8 +321,7 @@ export class PeopleService extends RegistryBase {
         }
 
         if (Object.keys(changes).length === 0) {
-          const held = await this.assetsHeld(trx, [id]);
-          return { data: personDto(row, held.get(id) ?? 0), version: row.version };
+          return { data: await this.view(trx, row), version: row.version };
         }
         await this.assertUnique(
           trx,
@@ -306,8 +346,7 @@ export class PeopleService extends RegistryBase {
           after: auditView(personDto(updated)),
           ...(meta ? { meta } : {}),
         });
-        const held = await this.assetsHeld(trx, [id]);
-        return { data: personDto(updated, held.get(id) ?? 0), version: updated.version };
+        return { data: await this.view(trx, updated), version: updated.version };
       });
     } catch (err) {
       throw this.translate(err);
@@ -346,13 +385,19 @@ export class PeopleService extends RegistryBase {
 
   private async checkRefs(
     trx: Tx,
-    body: Pick<PersonCreate, 'location_id'>,
+    body: Pick<PersonCreate, 'location_id' | 'department_id'>,
     errors: FieldError[],
   ): Promise<void> {
     if (body.location_id) {
       const location = await trx.location.findUnique({ where: { id: body.location_id } });
       if (!location || location.archived_at) {
         errors.push(invalidRef('/location_id', 'No such location.'));
+      }
+    }
+    if (body.department_id) {
+      const department = await trx.department.findUnique({ where: { id: body.department_id } });
+      if (!department || department.archived_at) {
+        errors.push(invalidRef('/department_id', 'No such department.'));
       }
     }
   }

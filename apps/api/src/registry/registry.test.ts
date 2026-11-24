@@ -147,6 +147,7 @@ describe('query helpers', () => {
       model_id: null,
       status_id: 's',
       location_id: null,
+      department_id: null,
       company_id: 'co',
       vendor_id: null,
       parent_asset_id: null,

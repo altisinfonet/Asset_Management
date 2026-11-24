@@ -22,6 +22,7 @@ export const ASSET_SELECTION_KEYS = [
   'model_id',
   'manufacturer_id',
   'location_id',
+  'department_id',
   'include_sublocations',
   'assigned',
   'assigned_person_id',

@@ -16,6 +16,7 @@ import {
   analyzed,
   commit,
   contractViolations,
+  createUser,
   createTenant,
   csv,
   drain,
@@ -552,6 +553,170 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, () => {
     expect((await registryCounts(t.tenantId)).assets).toBe(before.assets + 48);
     const upd = (await allRows(admin(), j3.id)).find((r) => r.result === 'updated')!;
     expect(upd.before_image).toMatchObject({ custom_data: { os_version: '126.0.6478.102' } });
+  });
+
+  it('reads Windows-1252, UTF-16 and semicolon files through the upload pipeline (M2-IMP-02)', async () => {
+    const rows = 'Serial;Name;Category\r\nENC-1;Müller Größe;Laptops\r\nENC-2;Café mat;Laptops\r\n';
+    const cp1252 = Buffer.from(
+      rows.replace('Müller Größe', 'Müller Größe').replace('Café', 'Café'),
+      'latin1',
+    );
+    const a = await analyzed(ih, admin(), t.tenantId, 'asset', {
+      filename: 'win.csv',
+      body: cp1252,
+    });
+    expect(a).toMatchObject({
+      state: 'analyzed',
+      parse: { encoding: 'windows-1252', delimiter: ';' },
+      rows_total: 2,
+    });
+    expect(a.samples[0][1]).toBe('Müller Größe');
+    const u16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('Serial\tName\tCategory\r\nENC-3\tÅse\tLaptops\r\n', 'utf16le'),
+    ]);
+    const b = await analyzed(ih, admin(), t.tenantId, 'asset', { filename: 'u16.csv', body: u16 });
+    expect(b).toMatchObject({
+      state: 'analyzed',
+      parse: { encoding: 'utf-16le', delimiter: '\t' },
+      rows_total: 1,
+    });
+    expect(b.samples[0][1]).toBe('Åse');
+    const bom = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('Serial,Name,Category\r\nENC-4,"two\r\nlines",Laptops\r\n', 'utf8'),
+    ]);
+    const c = await analyzed(ih, admin(), t.tenantId, 'asset', { filename: 'bom.csv', body: bom });
+    expect(c.samples[0][1]).toBe('two\r\nlines'.replace('\r\n', '\n'));
+    expect(c.headers).toEqual(['Serial', 'Name', 'Category']);
+    // the user can override what the analysis detected
+    const forced = await admin().post(`/v1/imports/${a.id}/analyze`, {
+      parse: { encoding: 'windows-1252', delimiter: ',' },
+    });
+    expect(forced.status).toBe(202);
+    const re = await drain(ih, admin(), t.tenantId, a.id);
+    expect(re.headers).toEqual(['Serial;Name;Category']);
+  });
+
+  it('maps values, creates what the policy allows, asks for an explicit date order and applies the duplicate policy', async () => {
+    const status = (await admin().get('/v1/status-labels?limit=50')).body.data as Json[];
+    const retired = status.find((s) => s.state_type === 'archived') ?? status[status.length - 1]!;
+    const body = csv([
+      ['Serial', 'Category', 'Status', 'Bought', 'Cost', 'Currency', 'Vendor'],
+      ['VM-1', 'PCs', 'in use', '03/04/2024', '1.234,50', 'eur', 'Acme'],
+      ['VM-2', 'PCs', 'gone', '05/06/2024', '99', '', 'Acme'],
+      ['VM-3', 'Unknown thing', '', '', '', '', ''],
+      ['VM-1', 'PCs', 'in use', '', '', '', ''],
+    ]);
+    const job = await analyzed(ih, admin(), t.tenantId, 'asset', { filename: 'vm.csv', body });
+    expect(job.profile[3]).toMatchObject({ type: 'date', date_order: 'ambiguous' });
+    const targets = Object.fromEntries(
+      job.mapping.columns.map((c: Json) => [job.headers[c.index], c.target]),
+    );
+    expect(targets).toMatchObject({
+      Bought: 'purchase_date',
+      Cost: 'purchase_cost',
+      Currency: 'currency',
+      Vendor: 'vendor',
+    });
+    // the value mapping step: what are the statuses called, and what do they match?
+    const values = await admin().get(`/v1/imports/${job.id}/values?field=status`);
+    expect(values.body.data.map((v: Json) => [v.value, v.count, v.suggestion])).toEqual([
+      ['in use', 2, null],
+      ['gone', 1, null],
+    ]);
+    const cats = await admin().get(`/v1/imports/${job.id}/values?field=category&q=pc`);
+    expect(cats.body).toMatchObject({
+      column: 'Category',
+      distinct: 2,
+      data: [{ value: 'PCs', count: 3 }],
+    });
+    expect((await admin().get(`/v1/imports/${job.id}/values?field=person`)).status).toBe(422);
+
+    const deployable = status.find((s) => s.state_type === 'deployable')!;
+    let res = await patchImport(admin(), job.id, {
+      value_map: {
+        status: { 'in use': { id: deployable.id }, gone: { id: retired.id } },
+        category: {
+          pcs: { create: true, name: 'Personal computers' },
+          'unknown thing': { skip: true },
+        },
+      },
+      options: { references: { vendor: 'must_exist' }, on_match: 'error', number_format: 'comma' },
+    });
+    expect(res.status, res.raw).toBe(200);
+    let dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    let rows = await allRows(admin(), job.id);
+    // an ambiguous date is reported on the cell with the way out; a row is judged one kind of problem at a time
+    expect(rows[0]!.errors).toEqual([
+      expect.objectContaining({ field: 'purchase_date', code: 'ambiguous-date' }),
+    ]);
+    expect(rows[0]!.errors[0].message).toMatch(/day first or month first/);
+    expect(rows[2]!.errors[0]).toMatchObject({ field: 'category', code: 'required' });
+    expect(rows[3]!.errors[0]).toMatchObject({ code: 'duplicate-in-file' });
+    expect(dry.counts.dry_run.error).toBe(4);
+    // with the date order chosen, the missing vendor (policy must_exist) is what is left
+    res = await patchImport(admin(), job.id, { options: { date_format: 'dmy' } });
+    expect(res.status).toBe(200);
+    dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    rows = await allRows(admin(), job.id);
+    expect(rows[0]!.errors[0]).toMatchObject({ field: 'vendor', code: 'not-found' });
+    res = await patchImport(admin(), job.id, { options: { references: { vendor: 'create' } } });
+    expect(res.status).toBe(200);
+    dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    rows = await allRows(admin(), job.id);
+    expect(rows.map((r) => r.outcome)).toEqual(['create', 'create', 'error', 'error']);
+    const fin = await commit(ih, admin(), t.tenantId, job.id, dry.dry_run_digest);
+    expect(
+      fin.counts.commit,
+      JSON.stringify((await allRows(admin(), job.id)).map((r) => [r.outcome, r.errors])),
+    ).toEqual({ created: 2, updated: 0, skipped: 0, error: 2 });
+    const made = (await allRows(admin(), job.id)).filter((r) => r.created_id);
+    const one = (await admin().get(`/v1/assets/${made[0]!.created_id}?expand=category,vendor`))
+      .body;
+    expect(one).toMatchObject({
+      serial: 'VM-1',
+      purchase_date: '2024-04-03',
+      purchase_cost: { amount_minor: 123450, currency: 'EUR' },
+      status: { id: deployable.id },
+    });
+    expect(one.expanded.category.name).toBe('Personal computers');
+    expect(one.expanded.vendor.name).toBe('Acme');
+    const two = (await admin().get(`/v1/assets/${made[1]!.created_id}`)).body;
+    expect(two).toMatchObject({
+      purchase_date: '2024-06-05',
+      purchase_cost: { amount_minor: 9900, currency: 'USD' },
+      status: { id: retired.id },
+    });
+  });
+
+  it('lists imports with filters, and keeps import:run (and the raw rows) from roles without it', async () => {
+    const list = await admin().get(
+      '/v1/imports?entity_type=asset&state=completed,cancelled&limit=5',
+    );
+    expect(list.status, list.raw).toBe(200);
+    expect(list.body.data.length).toBeGreaterThan(0);
+    expect(list.body.data.every((j: Json) => ['completed', 'cancelled'].includes(j.state))).toBe(
+      true,
+    );
+    expect(list.body.data[0]).not.toHaveProperty('profile');
+    const page1 = await admin().get('/v1/imports?limit=2');
+    expect(page1.body.page.has_more).toBe(true);
+    const page2 = await admin().get(`/v1/imports?limit=2&cursor=${page1.body.page.next_cursor}`);
+    expect(page2.body.data[0].id).not.toBe(page1.body.data[0].id);
+
+    const viewer = await createUser(ih.h.app, t, 'viewer');
+    const tech = await createUser(ih.h.app, t, 'technician');
+    const manager = await createUser(ih.h.app, t, 'asset_manager');
+    const id = list.body.data[0].id as string;
+    expect((await viewer.client.get('/v1/imports')).status).toBe(200);
+    expect((await viewer.client.get(`/v1/imports/${id}`)).status).toBe(200);
+    expect((await viewer.client.get(`/v1/imports/${id}/rows`)).status).toBe(403);
+    expect((await viewer.client.get(`/v1/imports/${id}/errors.csv`)).status).toBe(403);
+    expect((await viewer.client.post('/v1/imports', { entity_type: 'asset' })).status).toBe(403);
+    expect((await tech.client.post('/v1/imports', { entity_type: 'asset' })).status).toBe(403);
+    expect((await tech.client.get('/v1/imports/presets')).status).toBe(200);
+    expect((await manager.client.post('/v1/imports', { entity_type: 'asset' })).status).toBe(201);
   });
 
   it('exports re-import cleanly: the formula guard is stripped again (M2-REG-02 round trip)', async () => {

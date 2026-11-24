@@ -197,7 +197,8 @@ export class RefResolver {
     if (entry) {
       if ('skip' in entry) return { kind: 'none' };
       if ('id' in entry) return this.byId(kind, entry.id, text);
-      return this.createOrAnnounce(kind, entry.name ?? text, scope);
+      // "create it" must not create it twice: the records made by earlier rows (or already there) are found first
+      return this.findOrCreate(kind, entry.name ?? text, scope);
     }
     switch (kind) {
       case 'location':
@@ -394,6 +395,42 @@ export class RefResolver {
   }
 
   // ---------------------------------------------------------------------------------- creation
+
+  /** An explicit "create it" of the value map: the record of that name if there is one, else created. */
+  private async findOrCreate(
+    kind: RefKind,
+    name: string,
+    scope: { categoryId?: string | null; manufacturerId?: string | null },
+  ): Promise<Resolution> {
+    switch (kind) {
+      case 'location':
+        return this.location(name);
+      case 'person': {
+        const found = await this.findPerson(name);
+        return found
+          ? { kind: 'found', id: found.id, name: found.name }
+          : this.createOrAnnounce(kind, name, scope);
+      }
+      case 'model': {
+        const key = normKey(name);
+        const hit = (await this.modelList()).find(
+          (m) =>
+            normKey(m.name) === key && (!scope.categoryId || m.category_id === scope.categoryId),
+        );
+        return hit
+          ? { kind: 'found', id: hit.id, name: hit.name }
+          : this.createOrAnnounce(kind, name, scope);
+      }
+      case 'status':
+        return this.missing(kind, name);
+      default: {
+        const hit = (await this.list(kind)).find((n) => normKey(n.name) === normKey(name));
+        return hit
+          ? { kind: 'found', id: hit.id, name: hit.name }
+          : this.createOrAnnounce(kind, name, scope);
+      }
+    }
+  }
 
   private async createOrAnnounce(
     kind: RefKind,

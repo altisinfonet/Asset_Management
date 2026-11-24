@@ -117,14 +117,24 @@ export async function analyseFile(input: AnalysisInput): Promise<Analysis> {
   }
 
   const suggestions = suggestMapping(input.entity, headers!, input.custom);
+  const profile = profiler!.result(rowNo);
   const mapping: Mapping = {
-    columns: suggestions.map((s) => ({ index: s.index, target: s.target })),
+    columns: suggestions.map((s) => {
+      // a date column whose values only make sense in one order (a 25/04 somewhere) needs no question asked;
+      // an ambiguous or mixed one is left to the job's date format (and reported per row)
+      const order = profile[s.index]?.date_order;
+      return {
+        index: s.index,
+        target: s.target,
+        ...(s.target && (order === 'dmy' || order === 'mdy') ? { date_format: order } : {}),
+      };
+    }),
   };
   const confidence = Object.fromEntries(suggestions.map((s) => [s.index, s.confidence]));
   return {
     parse,
     headers: headers!,
-    profile: profiler!.result(rowNo),
+    profile,
     samples,
     rowsTotal: rowNo,
     mapping,

@@ -114,7 +114,21 @@ describe.skipIf(!dbEnabled)(`asset import (${mode})`, () => {
       ],
       ['', '', 'No serial, no problem', 'Thin clients', '', '', '', '', '', '', '', '', ''],
       ['', 'SN-1001', 'Duplicate of row 1', 'Laptops', '', '', '', '', '', '', '', '', ''],
-      ['', 'SN-1005', 'Bad cost', 'Laptops', '', '', '', '', '', '', 'someday', 'abc', ''],
+      [
+        '',
+        'SN-1005',
+        'Bad cost',
+        'Laptops',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        'someday',
+        'abc',
+        '=HYPERLINK("http://evil","x")',
+      ],
     ]);
     const job = await analyzed(ih, admin(), t.tenantId, 'asset', {
       filename: 'assets.csv',
@@ -201,6 +215,9 @@ describe.skipIf(!dbEnabled)(`asset import (${mode})`, () => {
     expect(report.raw.startsWith('﻿Row,Line,Fields,Problems,Warnings,Asset Tag')).toBe(true);
     expect(report.raw.split('\r\n').filter(Boolean)).toHaveLength(2);
     expect(report.raw).toContain('purchase_cost');
+    // CSV injection: a formula in the file comes back neutralised in the report (and the importer strips it again)
+    expect(report.raw).toContain(`"'=HYPERLINK(""http://evil""`);
+    expect(report.raw).not.toMatch(/,=HYPERLINK/);
 
     // commit: stale digest, then the real one
     const stale = await admin().post(

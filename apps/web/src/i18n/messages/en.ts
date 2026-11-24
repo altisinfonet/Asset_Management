@@ -58,6 +58,10 @@ export const en = {
   form: {
     required: 'This field is required.',
     duplicate: 'This value is already in use.',
+    tooLong: 'Use at most {max} characters.',
+    staleTitle: 'Someone saved this before you',
+    stale: 'This item was changed by someone else after you opened it. Your edits were not saved.',
+    reload: 'Reload latest',
   },
   nav: {
     primary: 'Primary',

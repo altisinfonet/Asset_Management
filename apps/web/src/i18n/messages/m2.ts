@@ -86,11 +86,13 @@ export const m2Messages = {
       topLevel: 'Top level (not inside another location)',
       notes: 'Notes',
       addressLine: 'Street address',
+      addressLine2: 'Address line 2',
       city: 'City',
       region: 'State or region',
       postalCode: 'Postal code',
       country: 'Country',
       countryHint: 'Two letters, for example US.',
+      countryInvalid: 'Use the two-letter country code, for example US or NO.',
     },
     moveForm: {
       title: 'Move {name}',

@@ -312,7 +312,7 @@ S_.PageInfo = obj({
 }, ['next_cursor', 'has_more']);
 S_.Money = obj({ amount_minor: int({ format: 'int64', minimum: 0, description: 'Integer minor units (cents).' }), currency: str({ pattern: '^[A-Z]{3}$', description: 'ISO 4217.' }) }, ['amount_minor', 'currency']);
 S_.CustomData = { type: 'object', additionalProperties: true, description: 'Custom field values keyed by `custom_field_def.key`; validated against the definitions.' };
-S_.Address = obj({ line1: nstr(), line2: nstr(), city: nstr(), region: nstr(), postal_code: nstr(), country: nstr({ description: 'ISO 3166-1 alpha-2.' }) });
+S_.Address = obj({ line1: nstr(), line2: nstr(), city: nstr(), region: nstr(), postal_code: nstr(), country: nstr({ description: 'ISO 3166-1 alpha-2: exactly two letters, stored upper-case (`no` is saved as `NO`); anything else is a 422 on `/address/country`.', pattern: '^[A-Za-z]{2}$' }) });
 S_.AssignmentTarget = {
   type: 'object',
   description: 'Exactly one target: a person, a location, or another asset.',

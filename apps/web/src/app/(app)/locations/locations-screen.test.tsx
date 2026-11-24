@@ -95,6 +95,52 @@ describe('LocationsScreen', () => {
     expect(await within(again).findByText('This value is already in use.')).toBeVisible();
   });
 
+  it('editing a site: a country name is refused on the Country field (the founder report), the code saves upper-case', async () => {
+    const user = userEvent.setup();
+    renderApp(<LocationsScreen />);
+    await user.click(within(await tree()).getByRole('treeitem', { name: /^Riverside Elementary/ }));
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit Riverside Elementary' });
+    await user.type(within(dialog).getByLabelText(/^City/), 'Oslo');
+    await user.type(within(dialog).getByLabelText(/^Address line 2/), 'Wing B');
+    await user.type(within(dialog).getByLabelText(/^Country/), 'Norway');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    // named on the field, with the fix; nothing was sent
+    expect(within(dialog).getByLabelText(/^Country/)).toHaveAccessibleDescription(
+      /two-letter country code/,
+    );
+    expect(within(dialog).queryByText(/request body failed/i)).not.toBeInTheDocument();
+
+    await user.clear(within(dialog).getByLabelText(/^Country/));
+    await user.type(within(dialog).getByLabelText(/^Country/), 'no');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Location "Riverside Elementary" saved.')).toBeVisible();
+    const saved = await (await fetch('/v1/locations?q=Riverside')).json();
+    expect(saved.data[0].address).toMatchObject({ city: 'Oslo', line2: 'Wing B', country: 'NO' });
+  });
+
+  it('changing a site to another type keeps its address; changing it back shows it again', async () => {
+    const user = userEvent.setup();
+    renderApp(<LocationsScreen />);
+    await user.click(within(await tree()).getByRole('treeitem', { name: /^Riverside Elementary/ }));
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Edit Riverside Elementary' });
+    await user.type(within(dialog).getByLabelText(/^City/), 'Bergen');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Location "Riverside Elementary" saved.')).toBeVisible();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    dialog = await screen.findByRole('dialog', { name: 'Edit Riverside Elementary' });
+    await user.click(within(dialog).getByRole('combobox', { name: /^Type/ }));
+    await user.click(await screen.findByRole('option', { name: 'Building' }));
+    expect(within(dialog).queryByLabelText(/^City/)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(async () => {
+      const after = await (await fetch('/v1/locations?q=Riverside')).json();
+      expect(after.data[0]).toMatchObject({ kind: 'building', address: { city: 'Bergen' } });
+    });
+  });
+
   it('the move dialog cannot put a location inside itself', async () => {
     const user = userEvent.setup();
     renderApp(<LocationsScreen />);

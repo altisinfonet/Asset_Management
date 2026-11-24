@@ -32,7 +32,14 @@ const address = z
     city: nullableText(100).optional(),
     region: nullableText(100).optional(),
     postal_code: nullableText(40).optional(),
-    country: nullableText(2).optional(),
+    // ISO 3166-1 alpha-2: exactly two letters, stored upper-case ("no" and "NO" are the same country)
+    country: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{2}$/, 'must be a two-letter country code (ISO 3166-1 alpha-2)')
+      .transform((v) => v.toUpperCase())
+      .nullable()
+      .optional(),
   })
   .nullable();
 

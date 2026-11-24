@@ -19,7 +19,8 @@ import { defineConfig, type PlaywrightTestConfig } from '@playwright/test';
  */
 const target = process.env.E2E_TARGET ?? 'static';
 const fallback = process.env.E2E_FALLBACK ?? '404';
-const port = target === 'dev' ? 3101 : target === 'real' ? 4174 : 4173;
+const port =
+  Number(process.env.E2E_PORT) || (target === 'dev' ? 3101 : target === 'real' ? 4174 : 4173);
 const apiUrl = process.env.E2E_API_URL ?? 'http://localhost:3000';
 
 const common: PlaywrightTestConfig = {

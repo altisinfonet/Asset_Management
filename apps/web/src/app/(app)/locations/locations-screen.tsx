@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { AssetStatusBadge } from '@/components/registry/asset-details';
 import { ConfirmDialog } from '@/components/registry/confirm-dialog';
-import { FormDialog, type FormValues } from '@/components/registry/form-dialog';
+import { FormDialog, type FormFieldSpec, type FormValues } from '@/components/registry/form-dialog';
 import { LocationPicker } from '@/components/registry/location-picker';
 import { LocationTree } from '@/components/registry/location-tree';
 import { ExportButton } from '@/components/exports/export-button';
@@ -39,6 +39,9 @@ type Dialog =
   | { kind: 'archive'; location: Location };
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+/** ISO 3166-1 alpha-2, what the API accepts for `address.country` (it stores it upper-case). */
+const COUNTRY_CODE = /^[A-Za-z]{2}$/;
 
 /**
  * Locations admin (WEB-12, M2-LOC-04): the hierarchy as a keyboard-operable tree with the asset
@@ -229,6 +232,7 @@ export function LocationsScreen() {
         dialog={dialog}
         locations={locations}
         onClose={() => setDialog(null)}
+        onReload={(location, as) => (as === 'move' ? openMove(location) : openEdit(location))}
         onDone={async (message, selectId) => {
           await refresh();
           if (selectId) {
@@ -423,12 +427,15 @@ function LocationFormDialogs({
   dialog,
   locations,
   onClose,
+  onReload,
   onDone,
   onArchived,
 }: {
   dialog: Dialog | null;
   locations: Location[];
   onClose: () => void;
+  /** Loads the latest version of a location and re-opens the edit dialog with it (after a 412). */
+  onReload: (location: Location, dialog: 'edit' | 'move') => Promise<void>;
   onDone: (message: string, selectId?: string) => Promise<void>;
   onArchived: () => Promise<void>;
 }) {
@@ -439,50 +446,96 @@ function LocationFormDialogs({
   }));
   const isSite = (values: FormValues) => values.kind === 'site';
 
-  const baseFields = [
-    { name: 'name', label: t('locations.form.name'), kind: 'text' as const, required: true },
+  // The limits are the API's (`Location` schema); checking them here names the field and the limit
+  // instead of leaving the person with a generic "the request failed validation".
+  const baseFields: FormFieldSpec[] = [
+    {
+      name: 'name',
+      label: t('locations.form.name'),
+      kind: 'text',
+      required: true,
+      maxLength: 200,
+    },
     {
       name: 'kind',
       label: t('locations.form.kind'),
-      kind: 'select' as const,
+      kind: 'select',
       options: kindOptions,
       required: true,
     },
     {
       name: 'code',
       label: t('locations.form.code'),
-      kind: 'text' as const,
+      kind: 'text',
       hint: t('locations.form.codeHint'),
       mono: true,
+      maxLength: 100,
     },
-    { name: 'notes', label: t('locations.form.notes'), kind: 'textarea' as const },
+    { name: 'notes', label: t('locations.form.notes'), kind: 'textarea', maxLength: 10_000 },
     {
       name: 'line1',
       label: t('locations.form.addressLine'),
-      kind: 'text' as const,
+      kind: 'text',
       visible: isSite,
+      maxLength: 200,
+      pointers: ['/address/line1'],
     },
-    { name: 'city', label: t('locations.form.city'), kind: 'text' as const, visible: isSite },
-    { name: 'region', label: t('locations.form.region'), kind: 'text' as const, visible: isSite },
+    {
+      name: 'line2',
+      label: t('locations.form.addressLine2'),
+      kind: 'text',
+      visible: isSite,
+      maxLength: 200,
+      pointers: ['/address/line2'],
+    },
+    {
+      name: 'city',
+      label: t('locations.form.city'),
+      kind: 'text',
+      visible: isSite,
+      maxLength: 100,
+      pointers: ['/address/city'],
+    },
+    {
+      name: 'region',
+      label: t('locations.form.region'),
+      kind: 'text',
+      visible: isSite,
+      maxLength: 100,
+      pointers: ['/address/region'],
+    },
     {
       name: 'postal_code',
       label: t('locations.form.postalCode'),
-      kind: 'text' as const,
+      kind: 'text',
       visible: isSite,
+      maxLength: 40,
+      pointers: ['/address/postal_code'],
     },
     {
       name: 'country',
       label: t('locations.form.country'),
-      kind: 'text' as const,
+      kind: 'text',
       hint: t('locations.form.countryHint'),
       visible: isSite,
+      pointers: ['/address/country'],
+      validate: (value) =>
+        text(value) && !COUNTRY_CODE.test(text(value))
+          ? t('locations.form.countryInvalid')
+          : undefined,
     },
   ];
 
+  /**
+   * The address to send, or `undefined` to leave it as it is: only a site shows the address fields,
+   * so changing a site to another type must not wipe the address it has (change it back and it is
+   * still there). An address with every field emptied is cleared (`null`).
+   */
   const addressOf = (values: FormValues) => {
-    if (!isSite(values)) return null;
+    if (!isSite(values)) return undefined;
     const address = {
       line1: text(values.line1) || null,
+      line2: text(values.line2) || null,
       city: text(values.city) || null,
       region: text(values.region) || null,
       postal_code: text(values.postal_code) || null,
@@ -511,6 +564,7 @@ function LocationFormDialogs({
           notes: '',
           parent: create?.parentId ?? '',
           line1: '',
+          line2: '',
           city: '',
           region: '',
           postal_code: '',
@@ -540,6 +594,7 @@ function LocationFormDialogs({
         onSubmit={async (values) => {
           const address = addressOf(values);
           const created = await locationsApi.create({
+            // (`address` is only ever sent for a site; null means "no address")
             name: text(values.name),
             kind: values.kind as LocationKind,
             parent_id: text(values.parent) || null,
@@ -552,6 +607,8 @@ function LocationFormDialogs({
       />
 
       <FormDialog
+        // a reloaded version (new ETag) starts the form over with its values
+        key={edit ? `${edit.location.id}:${edit.etag ?? ''}` : 'edit'}
         open={!!edit}
         onOpenChange={(open) => !open && onClose()}
         title={t('locations.form.editTitle', { name: edit?.location.name ?? '' })}
@@ -562,14 +619,17 @@ function LocationFormDialogs({
           code: edit?.location.code ?? '',
           notes: edit?.location.notes ?? '',
           line1: edit?.location.address?.line1 ?? '',
+          line2: edit?.location.address?.line2 ?? '',
           city: edit?.location.address?.city ?? '',
           region: edit?.location.address?.region ?? '',
           postal_code: edit?.location.address?.postal_code ?? '',
           country: edit?.location.address?.country ?? '',
         }}
         fields={baseFields}
+        onReload={edit ? () => onReload(edit.location, 'edit') : undefined}
         onSubmit={async (values) => {
           if (!edit) return;
+          const address = addressOf(values);
           await locationsApi.update(
             edit.location.id,
             {
@@ -577,7 +637,7 @@ function LocationFormDialogs({
               kind: values.kind as LocationKind,
               code: text(values.code) || null,
               notes: text(values.notes) || null,
-              address: addressOf(values),
+              ...(address !== undefined ? { address } : {}),
             },
             edit.etag,
           );
@@ -586,7 +646,9 @@ function LocationFormDialogs({
       />
 
       <FormDialog
+        key={move ? `${move.location.id}:${move.etag ?? ''}` : 'move'}
         open={!!move}
+        onReload={move ? () => onReload(move.location, 'move') : undefined}
         onOpenChange={(open) => !open && onClose()}
         title={t('locations.moveForm.title', { name: move?.location.name ?? '' })}
         description={t('locations.moveForm.description')}

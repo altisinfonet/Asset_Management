@@ -2902,7 +2902,7 @@ export interface components {
             city?: string | null;
             region?: string | null;
             postal_code?: string | null;
-            /** @description ISO 3166-1 alpha-2. */
+            /** @description ISO 3166-1 alpha-2: exactly two letters, stored upper-case (`no` is saved as `NO`); anything else is a 422 on `/address/country`. */
             country?: string | null;
         };
         /** @description Exactly one target: a person, a location, or another asset. */

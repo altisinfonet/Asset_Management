@@ -10879,7 +10879,8 @@ components:
           type:
             - string
             - "null"
-          description: ISO 3166-1 alpha-2.
+          description: "ISO 3166-1 alpha-2: exactly two letters, stored upper-case (`no` is saved as `NO`); anything else is a 422 on `/address/country`."
+          pattern: ^[A-Za-z]{2}$
     AssignmentTarget:
       type: object
       description: "Exactly one target: a person, a location, or another asset."

@@ -234,10 +234,27 @@ function validateLocationBody(body: Body, creating: boolean): FieldError[] {
       errors.push(
         ...checkTexts(
           address,
-          { line1: 200, line2: 200, city: 100, region: 100, postal_code: 40, country: 2 },
-          ['line1', 'line2', 'city', 'region', 'postal_code', 'country'],
+          { line1: 200, line2: 200, city: 100, region: 100, postal_code: 40 },
+          ['line1', 'line2', 'city', 'region', 'postal_code'],
         ).map((e) => ({ ...e, pointer: `/address${e.pointer}` })),
       );
+      // ISO 3166-1 alpha-2: exactly two letters (the API stores it upper-case)
+      const country = address.country;
+      if (country !== undefined && country !== null) {
+        if (typeof country !== 'string') {
+          errors.push({
+            pointer: '/address/country',
+            message: 'Invalid input: expected string',
+            code: 'invalid_type',
+          });
+        } else if (!/^[A-Za-z]{2}$/.test(country.trim())) {
+          errors.push({
+            pointer: '/address/country',
+            message: 'must be a two-letter country code (ISO 3166-1 alpha-2)',
+            code: 'invalid_format',
+          });
+        }
+      }
     }
   }
   for (const [key, limit] of [
@@ -261,6 +278,17 @@ function validateLocationBody(body: Body, creating: boolean): FieldError[] {
     }
   }
   return errors;
+}
+
+/** The address as the API stores it: the country code upper-cased, text trimmed. */
+function storedAddress(value: unknown): MockLocation['address'] {
+  if (value === null || value === undefined) return null;
+  const out: Record<string, string | null> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    out[key] =
+      typeof v === 'string' ? (key === 'country' ? v.trim().toUpperCase() : v.trim()) : null;
+  }
+  return out as MockLocation['address'];
 }
 
 /** Recompute `depth` and `ancestor_ids` of a location and everything below it after a move. */
@@ -348,7 +376,7 @@ const locationHandlers: HttpHandler[] = [
         name,
         kind: (body.kind as MockLocation['kind']) ?? 'other',
         code: (body.code as string | null | undefined) ?? null,
-        address: (body.address as MockLocation['address']) ?? null,
+        address: storedAddress(body.address),
         latitude: (body.latitude as number | null | undefined) ?? null,
         longitude: (body.longitude as number | null | undefined) ?? null,
         notes: (body.notes as string | null | undefined) ?? null,
@@ -431,7 +459,7 @@ const locationHandlers: HttpHandler[] = [
       if (body.kind !== undefined) set('kind', body.kind as MockLocation['kind']);
       if (body.code !== undefined) set('code', body.code as string | null);
       if (body.notes !== undefined) set('notes', body.notes as string | null);
-      if (body.address !== undefined) set('address', body.address as MockLocation['address']);
+      if (body.address !== undefined) set('address', storedAddress(body.address));
       if (body.latitude !== undefined) set('latitude', body.latitude as number | null);
       if (body.longitude !== undefined) set('longitude', body.longitude as number | null);
       if (move !== undefined) {

@@ -88,6 +88,92 @@ describe('FormDialog', () => {
   });
 });
 
+describe('FormDialog problems the form cannot place', () => {
+  const FIELDS_WITH_POINTER: FormFieldSpec[] = [
+    { name: 'name', label: 'Name', kind: 'text', required: true, maxLength: 5 },
+    {
+      name: 'country',
+      label: 'Country',
+      kind: 'text',
+      pointers: ['/address/country'],
+      validate: (value) => (value === 'bad' ? 'Use a two-letter code.' : undefined),
+    },
+  ];
+
+  function open(
+    onSubmit: (values: Record<string, string | boolean>) => Promise<void>,
+    onReload?: () => void,
+  ) {
+    render(
+      <I18nProvider locale="en">
+        <FormDialog
+          open
+          onOpenChange={vi.fn()}
+          title="Edit site"
+          fields={FIELDS_WITH_POINTER}
+          initial={{ name: 'Main', country: '' }}
+          submitLabel="Save"
+          onSubmit={onSubmit}
+          onReload={onReload}
+        />
+      </I18nProvider>,
+    );
+  }
+
+  it('puts a nested pointer (/address/country) on the field that claims it', async () => {
+    open(async () => {
+      throw new ApiError('x', 422, {
+        code: 'validation',
+        detail: 'The request body failed validation (1 problem).',
+        errors: [{ pointer: '/address/country', message: 'must be a two-letter country code' }],
+      });
+    });
+    await userEvent.type(screen.getByLabelText('Country'), 'Norway');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const country = screen.getByLabelText('Country');
+    await waitFor(() => expect(country).toBeInvalid());
+    expect(country).toHaveAccessibleDescription('must be a two-letter country code');
+    // every problem landed on a field: no generic banner on top
+    expect(screen.queryByText(/request body failed validation/)).not.toBeInTheDocument();
+  });
+
+  it('lists a problem that matches no field in the banner instead of hiding it', async () => {
+    open(async () => {
+      throw new ApiError('x', 422, {
+        code: 'validation',
+        detail: 'The request body failed validation (1 problem).',
+        errors: [{ pointer: '/address/line9', message: 'Too big' }],
+      });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The request body failed validation');
+    expect(alert).toHaveTextContent('address / line9: Too big');
+  });
+
+  it('checks the length limit and a custom rule before it calls the server', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    open(onSubmit);
+    await userEvent.type(screen.getByLabelText(/^Name/), 'toolong');
+    await userEvent.type(screen.getByLabelText('Country'), 'bad');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/^Name/)).toHaveAccessibleDescription('Use at most 5 characters.');
+    expect(screen.getByLabelText('Country')).toHaveAccessibleDescription('Use a two-letter code.');
+  });
+
+  it('a 412 says someone saved first and offers to reload the latest version', async () => {
+    const onReload = vi.fn();
+    open(async () => {
+      throw new ApiError('x', 412, { code: 'precondition-failed', detail: 'Stale.' });
+    }, onReload);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Someone saved this before you')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Reload latest' }));
+    expect(onReload).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('ConfirmDialog', () => {
   it('states the impact, shows a refusal from the API in place and stays open', async () => {
     const onConfirm = vi.fn(async () => {

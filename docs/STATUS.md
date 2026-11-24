@@ -62,6 +62,8 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Dashboard: real counts (Ready, Assigned, Not deployable, Overdue) + "Needs attention" panels (overdue check-outs, low stock, open repairs); tiles link to the filtered asset list | ✅ |
 | Sidebar: "Accessories and consumables" shortened to "Stock"; tooltips for truncated / collapsed items | ✅ |
 | "In repair" state renamed "Not deployable" (it covers every undeployable status, e.g. Broken) | ✅ |
+| Demo data: every asset labelled "In repair" now has an open repair (the Repairs page, dashboard and status labels agree); "Broken" assets have none | ✅ |
+| Asset form, asset page and bulk edit say so when an asset is not deployable but has no open repair, with a "Log a repair" shortcut (never blocks); a repair logged for an asset already "In repair" takes the status over and returns it to ready when closed | ✅ |
 
 ### Wave 3 — not started ⏳
 

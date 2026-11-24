@@ -360,6 +360,147 @@ describe.skipIf(!dbEnabled)(
       }
     }, 300_000);
 
+    it(`global search p95 < ${BUDGET.search} ms`, async () => {
+      const exact = await measure('search exact tag', SAMPLES, async (i) => {
+        const res = await get(`/v1/search?q=${sample.tags[i % sample.tags.length]}`);
+        if (res.body.data[0]?.id !== sample.ids[i % sample.ids.length])
+          throw new Error('exact tag not ranked first');
+      });
+      const serial = await measure('search exact serial', SAMPLES, async (i) => {
+        const res = await get(`/v1/search?q=${sample.serials[i % sample.serials.length]}`);
+        if (res.body.data[0]?.id !== sample.ids[i % sample.ids.length])
+          throw new Error('exact serial not ranked first');
+      });
+      const partialTag = await measure('search partial tag (LAP-0123)', SAMPLES, async () => {
+        await get('/v1/search?q=LAP-0123&limit=5');
+      });
+      const word = await measure('search word (thinkpad)', SAMPLES, async () => {
+        await get('/v1/search?q=thinkpad&limit=5');
+      });
+      const short = await measure('search 2 chars (la)', SAMPLES, async () => {
+        await get('/v1/search?q=la&limit=5');
+      });
+      const typed = await measure('search model/category (maker)', SAMPLES, async () => {
+        await get('/v1/search?q=maker&limit=5&types=model,category');
+      });
+      for (const s of [exact, serial, partialTag, word, short, typed]) {
+        expect(s.p95, s.name).toBeLessThan(BUDGET.search);
+      }
+    }, 300_000);
+
+    it('holds the budget under concurrency (8 clients, mixed list / lookup / search)', async () => {
+      const times: number[] = [];
+      const worker = async (w: number) => {
+        const c = A.admin.clone();
+        for (let i = 0; i < 40; i++) {
+          const urls = [
+            '/v1/assets?limit=50',
+            `/v1/assets?tag=${sample.tags[(w * 40 + i) % sample.tags.length]}`,
+            `/v1/search?q=${sample.tags[(w * 40 + i) % sample.tags.length]}`,
+            `/v1/assets?limit=50&category_id=${categoryIds[i % 8]}&sort=name`,
+          ];
+          const url = urls[i % urls.length]!;
+          const t0 = performance.now();
+          const res = await c.get(url);
+          times.push(performance.now() - t0);
+          if (res.status !== 200) throw new Error(`${url} -> ${res.status}`);
+        }
+      };
+      await Promise.all(Array.from({ length: 8 }, (_, w) => worker(w)));
+      times.sort((x, y) => x - y);
+      stats.push({
+        name: 'mixed, 8 concurrent clients',
+        samples: times.length,
+        p50: Math.round(pct(times, 50) * 10) / 10,
+        p95: Math.round(pct(times, 95) * 10) / 10,
+        p99: Math.round(pct(times, 99) * 10) / 10,
+        max: Math.round(times.at(-1)! * 10) / 10,
+      });
+      expect(pct(times, 95)).toBeLessThan(BUDGET.list);
+    }, 300_000);
+
+    it('the hot statements use index plans (query plans captured)', async () => {
+      const explain = async (
+        name: string,
+        query: Record<string, string>,
+        expectIndexes: RegExp[],
+        forbid: RegExp[] = [/Seq Scan on asset /],
+      ) => {
+        const q = assetListSchema.parse(query);
+        const stmt = assetListSql(q, [], assetSortTerms(q.sort), undefined);
+        const plan = await withClient(env.migratorUrl!, async (c) => {
+          await c.query('begin');
+          try {
+            await c.query(`select set_config('app.tenant_id', $1, true)`, [A.tenantId]);
+            const res = await c.query(`explain (costs off) ${stmt.text}`, stmt.values);
+            return res.rows.map((r: { 'QUERY PLAN': string }) => r['QUERY PLAN']).join('\n');
+          } finally {
+            await c.query('rollback');
+          }
+        });
+        plans[name] = plan;
+        for (const re of expectIndexes) expect(plan, `${name}\n${plan}`).toMatch(re);
+        for (const re of forbid) expect(plan, `${name}\n${plan}`).not.toMatch(re);
+      };
+      const plans: Record<string, string> = {};
+      await explain('default list', { limit: '50' }, [/asset_created_idx/]);
+      await explain('tag lookup', { tag: 'LAP-000008' }, [/asset_tag_uq/]);
+      await explain('serial lookup', { serial: 'SN1234567890' }, [/asset_serial_idx/]);
+      // ILIKE / strpos are not leakproof: the scan is bounded to the tenant by the index, never the table
+      await explain('text q', { q: 'thinkpad', limit: '50' }, [/Index Cond: \(tenant_id =/]);
+      await explain('category filter', { category_id: categoryIds[0]!, sort: 'name' }, [
+        /asset_category_idx|asset_created_idx/,
+      ]);
+      await explain('archived only', { archived: 'only', limit: '50' }, [/Index Scan|Bitmap/]);
+      const dir = join(process.cwd(), 'test-results');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'registry-plans.txt'),
+        Object.entries(plans)
+          .map(([n, p]) => `== ${n}\n${p}\n`)
+          .join('\n'),
+      );
+      console.log(
+        `\nquery plans (default list, tag lookup, text q):\n${plans['default list']}\n--\n${plans['tag lookup']}\n--\n${plans['text q']}`,
+      );
+    }, 120_000);
+
+    it("results never include another tenant's rows on the perf dataset", async () => {
+      const idsOf = async (url: string) =>
+        (await get(url)).body.data.map((r: { id: string }) => r.id as string);
+      const checks = [
+        '/v1/assets?limit=200',
+        '/v1/assets?limit=200&sort=asset_tag',
+        '/v1/assets?limit=200&q=device',
+        '/v1/assets?limit=200&cf[os]=macOS',
+        `/v1/assets?limit=200&category_id=${categoryIds[2]}`,
+        `/v1/assets?tag=${sample.tags[0]}`,
+        `/v1/search?q=${sample.tags[1]}&limit=50`,
+      ];
+      for (const url of checks) {
+        const res = await get(url);
+        const ids: string[] = (res.body.data as Array<{ id: string }>).map((r) => r.id);
+        expect(ids.length, url).toBeGreaterThan(0);
+        const mine = await ownerTenantSql(
+          A.tenantId,
+          'select count(*)::int as n from app.asset where id = any($1::uuid[])',
+          [`{${ids.join(',')}}`],
+        );
+        const theirs = await ownerTenantSql(
+          B.tenantId,
+          'select count(*)::int as n from app.asset where id = any($1::uuid[])',
+          [`{${ids.join(',')}}`],
+        );
+        expect(mine.rows[0].n, url).toBe(ids.length);
+        expect(theirs.rows[0].n, url).toBe(0);
+      }
+      // B's admin sees B's rows only, with the very same tags
+      const b = await B.admin.get(`/v1/assets?tag=${sample.tags[0]}`);
+      expect(b.body.data).toHaveLength(1);
+      expect(b.body.data[0].id).not.toBe(sample.ids[0]);
+      expect((await idsOf(`/v1/assets?tag=${sample.tags[0]}`))[0]).toBe(sample.ids[0]);
+    }, 120_000);
+
     it(`sorts by location, assignee and due date p95 < ${BUDGET.list} ms with locations and open custody on the 50k tenant (M2-REG-03, ED-22)`, async () => {
       // 5 sites x 4 floors x 5 rooms = 125 locations, 40 people; 90% of the assets sit in a room, 40% are
       // checked out (3 in 4 to a person, the rest to a location), 70% of those with an expected return
@@ -506,146 +647,5 @@ describe.skipIf(!dbEnabled)(
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'registry-plans-sorts.txt'), plans.join('\n'));
     }, 600_000);
-
-    it(`global search p95 < ${BUDGET.search} ms`, async () => {
-      const exact = await measure('search exact tag', SAMPLES, async (i) => {
-        const res = await get(`/v1/search?q=${sample.tags[i % sample.tags.length]}`);
-        if (res.body.data[0]?.id !== sample.ids[i % sample.ids.length])
-          throw new Error('exact tag not ranked first');
-      });
-      const serial = await measure('search exact serial', SAMPLES, async (i) => {
-        const res = await get(`/v1/search?q=${sample.serials[i % sample.serials.length]}`);
-        if (res.body.data[0]?.id !== sample.ids[i % sample.ids.length])
-          throw new Error('exact serial not ranked first');
-      });
-      const partialTag = await measure('search partial tag (LAP-0123)', SAMPLES, async () => {
-        await get('/v1/search?q=LAP-0123&limit=5');
-      });
-      const word = await measure('search word (thinkpad)', SAMPLES, async () => {
-        await get('/v1/search?q=thinkpad&limit=5');
-      });
-      const short = await measure('search 2 chars (la)', SAMPLES, async () => {
-        await get('/v1/search?q=la&limit=5');
-      });
-      const typed = await measure('search model/category (maker)', SAMPLES, async () => {
-        await get('/v1/search?q=maker&limit=5&types=model,category');
-      });
-      for (const s of [exact, serial, partialTag, word, short, typed]) {
-        expect(s.p95, s.name).toBeLessThan(BUDGET.search);
-      }
-    }, 300_000);
-
-    it('holds the budget under concurrency (8 clients, mixed list / lookup / search)', async () => {
-      const times: number[] = [];
-      const worker = async (w: number) => {
-        const c = A.admin.clone();
-        for (let i = 0; i < 40; i++) {
-          const urls = [
-            '/v1/assets?limit=50',
-            `/v1/assets?tag=${sample.tags[(w * 40 + i) % sample.tags.length]}`,
-            `/v1/search?q=${sample.tags[(w * 40 + i) % sample.tags.length]}`,
-            `/v1/assets?limit=50&category_id=${categoryIds[i % 8]}&sort=name`,
-          ];
-          const url = urls[i % urls.length]!;
-          const t0 = performance.now();
-          const res = await c.get(url);
-          times.push(performance.now() - t0);
-          if (res.status !== 200) throw new Error(`${url} -> ${res.status}`);
-        }
-      };
-      await Promise.all(Array.from({ length: 8 }, (_, w) => worker(w)));
-      times.sort((x, y) => x - y);
-      stats.push({
-        name: 'mixed, 8 concurrent clients',
-        samples: times.length,
-        p50: Math.round(pct(times, 50) * 10) / 10,
-        p95: Math.round(pct(times, 95) * 10) / 10,
-        p99: Math.round(pct(times, 99) * 10) / 10,
-        max: Math.round(times.at(-1)! * 10) / 10,
-      });
-      expect(pct(times, 95)).toBeLessThan(BUDGET.list);
-    }, 300_000);
-
-    it('the hot statements use index plans (query plans captured)', async () => {
-      const explain = async (
-        name: string,
-        query: Record<string, string>,
-        expectIndexes: RegExp[],
-        forbid: RegExp[] = [/Seq Scan on asset /],
-      ) => {
-        const q = assetListSchema.parse(query);
-        const stmt = assetListSql(q, [], assetSortTerms(q.sort), undefined);
-        const plan = await withClient(env.migratorUrl!, async (c) => {
-          await c.query('begin');
-          try {
-            await c.query(`select set_config('app.tenant_id', $1, true)`, [A.tenantId]);
-            const res = await c.query(`explain (costs off) ${stmt.text}`, stmt.values);
-            return res.rows.map((r: { 'QUERY PLAN': string }) => r['QUERY PLAN']).join('\n');
-          } finally {
-            await c.query('rollback');
-          }
-        });
-        plans[name] = plan;
-        for (const re of expectIndexes) expect(plan, `${name}\n${plan}`).toMatch(re);
-        for (const re of forbid) expect(plan, `${name}\n${plan}`).not.toMatch(re);
-      };
-      const plans: Record<string, string> = {};
-      await explain('default list', { limit: '50' }, [/asset_created_idx/]);
-      await explain('tag lookup', { tag: 'LAP-000008' }, [/asset_tag_uq/]);
-      await explain('serial lookup', { serial: 'SN1234567890' }, [/asset_serial_idx/]);
-      // ILIKE / strpos are not leakproof: the scan is bounded to the tenant by the index, never the table
-      await explain('text q', { q: 'thinkpad', limit: '50' }, [/Index Cond: \(tenant_id =/]);
-      await explain('category filter', { category_id: categoryIds[0]!, sort: 'name' }, [
-        /asset_category_idx|asset_created_idx/,
-      ]);
-      await explain('archived only', { archived: 'only', limit: '50' }, [/Index Scan|Bitmap/]);
-      const dir = join(process.cwd(), 'test-results');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'registry-plans.txt'),
-        Object.entries(plans)
-          .map(([n, p]) => `== ${n}\n${p}\n`)
-          .join('\n'),
-      );
-      console.log(
-        `\nquery plans (default list, tag lookup, text q):\n${plans['default list']}\n--\n${plans['tag lookup']}\n--\n${plans['text q']}`,
-      );
-    }, 120_000);
-
-    it("results never include another tenant's rows on the perf dataset", async () => {
-      const idsOf = async (url: string) =>
-        (await get(url)).body.data.map((r: { id: string }) => r.id as string);
-      const checks = [
-        '/v1/assets?limit=200',
-        '/v1/assets?limit=200&sort=asset_tag',
-        '/v1/assets?limit=200&q=device',
-        '/v1/assets?limit=200&cf[os]=macOS',
-        `/v1/assets?limit=200&category_id=${categoryIds[2]}`,
-        `/v1/assets?tag=${sample.tags[0]}`,
-        `/v1/search?q=${sample.tags[1]}&limit=50`,
-      ];
-      for (const url of checks) {
-        const res = await get(url);
-        const ids: string[] = (res.body.data as Array<{ id: string }>).map((r) => r.id);
-        expect(ids.length, url).toBeGreaterThan(0);
-        const mine = await ownerTenantSql(
-          A.tenantId,
-          'select count(*)::int as n from app.asset where id = any($1::uuid[])',
-          [`{${ids.join(',')}}`],
-        );
-        const theirs = await ownerTenantSql(
-          B.tenantId,
-          'select count(*)::int as n from app.asset where id = any($1::uuid[])',
-          [`{${ids.join(',')}}`],
-        );
-        expect(mine.rows[0].n, url).toBe(ids.length);
-        expect(theirs.rows[0].n, url).toBe(0);
-      }
-      // B's admin sees B's rows only, with the very same tags
-      const b = await B.admin.get(`/v1/assets?tag=${sample.tags[0]}`);
-      expect(b.body.data).toHaveLength(1);
-      expect(b.body.data[0].id).not.toBe(sample.ids[0]);
-      expect((await idsOf(`/v1/assets?tag=${sample.tags[0]}`))[0]).toBe(sample.ids[0]);
-    }, 120_000);
   },
 );

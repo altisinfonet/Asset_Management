@@ -148,7 +148,7 @@ test.describe('link a person to a login', () => {
     await page.goto('/people');
     await page.getByRole('link', { name: 'Jamie Okafor' }).click();
     await expect(page.getByTestId('person-name')).toHaveText('Jamie Okafor');
-    await expect(page.getByText('No login', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Link to a login' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Link to a login' }).click();
     const dialog = page.getByRole('dialog', { name: 'Link Jamie Okafor to a login' });

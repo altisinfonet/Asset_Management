@@ -146,7 +146,7 @@ test('undoes a check-out from the toast (the history keeps both events)', async 
   await pick(page, /Person/, `Ana ${id}`, new RegExp(`Ana ${id}`));
   await dialog.getByRole('button', { name: 'Check out', exact: true }).click();
   await expect(page.getByText(`${asset.tag} checked out to Ana ${id}.`).first()).toBeVisible();
-  await expect(page.getByText('You can undo this for 10 seconds.')).toBeVisible();
+  await expect(page.getByText('You can undo this for 10 seconds.').first()).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByText(`Undone: ${asset.tag} is back as it was.`).first()).toBeVisible();
   await expect(page.getByTestId('asset-holder')).toHaveCount(0);
@@ -210,7 +210,7 @@ test('links a person to a login from the person page and unlinks it again', asyn
 
   const pupil = people[1]!;
   await page.goto(`/people/view?id=${pupil}`);
-  await expect(page.getByText('No login', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Link to a login' })).toBeVisible();
   await page.getByRole('button', { name: 'Link to a login' }).click();
   const dialog = page.getByRole('dialog', { name: `Link Bruno ${id} to a login` });
   await pick(page, /Login account/, `Login ${id}`, new RegExp(`Login ${id}`));

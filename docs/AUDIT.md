@@ -120,6 +120,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.14 | 2026-11-19 | Test stability and scanner false positives                         | Four root causes fixed                                                     |
 | B.15 | 2026-11-24 | Founder review of M2 and fixes (0.2.3)                             | UX and data consistency fixes; slow-test flake root cause fixed            |
 | B.16 | 2026-11-24 | Managed departments and location edit fixes (0.2.4)                | 588/588 API e2e pooled, 54/54 real-stack; edit error root cause found      |
+| B.17 | 2026-11-24 | Three deferred M2 stories: list sorts, link a login, undo toast    | 622/622 API e2e pooled and direct, 59/59 real-stack; sort p95 50-100 ms    |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -318,6 +319,27 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Incident noted:** during this work the founder's local default Compose stack (containers and named volumes) was found
   removed. All automated runs used their own project names and ports; the cause was not determined. Only local demo data was
   affected; `docker compose up -d --build` recreates it.
+
+### B.17 Sort by location / assignee / due, link a person and a login, undo toast - 2026-11-24 (Unreleased)
+
+- **Scope:** M2-REG-03, M2-USR-03 and M2-UX-02 (ED-22, ED-23): keyset paging with empty values last, `link-user` / `undo-custody`
+  operations, migration `0130` (history event type), three new groups of problem codes.
+- **Method:** each story built end to end (API, contract through `gen.mjs`, web, MSW mock) with its own tests: API e2e that
+  compare every page of every sort with an independent SQL order, replay of every new route as another tenant, a contract
+  walk of the new operations, mock-handler tests, web unit tests with axe, mock browser tests (axe in light and dark) and real-stack
+  browser tests. The 50,000-asset performance suite gained the sort scenarios (15 scenarios x 120 samples, plans captured).
+- **Result:** clean-state build 21/21; API unit 565, web unit 606; API e2e **622/622 through PgBouncer and 622/622 direct**, 0
+  skipped; mock browser tests **572/572**; real-stack browser tests **59/59**; `schema:lint` 0 violations, Prisma drift clean.
+  Sort p95 between 50 and 100 ms on 50,000 assets per tenant (budget 500 ms; table in ED-22).
+- **Findings fixed during the work:** (1) the first version of the sorts sorted wide rows (100-500 ms): now two-phase, index-only
+  scan of the existing partial indexes; (2) a join to a derived location-path table was evaluated once per asset when the planner
+  under-estimated a tenant (RLS makes the tenant unknown at plan time): 450 ms in the full suite although 38 ms alone, now a single
+  jsonb map; (3) the new perf test updated 45,000 assets and slowed the search measurements that followed: it is now the last test.
+- **Known flake:** one pooled run of the full API e2e suite failed the pre-existing "custody check-in p95 < 300 ms" check (p95
+  573 ms, max 4.7 s; p50 28 ms) and the next two pooled runs passed, as did the direct run; the host was shared with other
+  Compose stacks. The perf suite measures wall-clock time and is sensitive to a busy machine.
+- **Follow-ups:** scan-batch mode has no undo; there is no person merge; the web sorts of Location sort by the whole path, not the
+  leaf name.
 
 ---
 

@@ -253,7 +253,7 @@ test.describe('asset list: custody columns, filters and bulk actions', () => {
     await expect(
       page.getByText(`${asset.asset_tag} checked out to Maria Reyes.`).first(),
     ).toBeVisible();
-    await expect(page.getByText('You can undo this for 10 seconds.')).toBeVisible();
+    await expect(page.getByText('You can undo this for 10 seconds.').first()).toBeVisible();
     await expect(page.getByTestId('asset-holder')).toContainText('Assigned to Maria Reyes');
 
     // F8 jumps to the notifications region; Undo is reachable and used with Enter

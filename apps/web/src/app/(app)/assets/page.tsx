@@ -1,6 +1,6 @@
 'use client';
 
-import { Plus } from 'lucide-react';
+import { Plus, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { PageHeader } from '@/components/page-header';
@@ -23,7 +23,14 @@ export default function AssetsPage() {
         description={t('assets.description')}
         actions={
           <>
-            <Button disabled>{t('assets.import')}</Button>
+            {can('import:run') ? (
+              <Button asChild>
+                <Link href={routes.importNew('asset')}>
+                  <Upload aria-hidden className="size-4" />
+                  {t('assets.import')}
+                </Link>
+              </Button>
+            ) : null}
             {can('asset:create') ? (
               <Button asChild variant="primary">
                 <Link href={routes.assetNew}>

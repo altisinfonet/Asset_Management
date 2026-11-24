@@ -26,7 +26,7 @@ export interface FormFieldSpec {
   kind:
     'text' | 'textarea' | 'number' | 'select' | 'date' | 'checkbox' | 'email' | 'url' | 'custom';
   required?: boolean;
-  hint?: string;
+  hint?: ReactNode;
   placeholder?: string;
   options?: SelectOption[];
   /** Select: offer an empty choice with this label. */

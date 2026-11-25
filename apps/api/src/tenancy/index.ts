@@ -23,6 +23,7 @@ export {
   NoTenantTransactionError,
   currentTenantContext,
   currentTenantTx,
+  runWithLocationScope,
   withPreTenantTx,
   withTenantTx,
   type TenantContext,

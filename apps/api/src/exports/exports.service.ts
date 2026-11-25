@@ -135,6 +135,9 @@ export class ExportsService extends RegistryBase {
           resource: body.resource,
           format: body.format,
           filters,
+          // M2-LOC-03 (ED-26): the worker applies the requester's scope as it was at request time
+          location_scoped: auth.locationScope != null,
+          location_scope: auth.locationScope ? [...auth.locationScope] : [],
           created_by: auth.userId,
         },
       });

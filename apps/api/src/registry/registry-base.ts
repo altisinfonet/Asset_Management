@@ -21,7 +21,10 @@ import { isUniqueViolation, sqlStateOf, TenancyService, type Tx } from '../tenan
  * Who a transaction acts for: the tenant and the principal (user or API key id). Every request's
  * AuthContext has it, and so can a background job (an export runs as the user that asked for it).
  */
-export type TxScope = Pick<AuthContext, 'tenantId' | 'principalId'>;
+export type TxScope = Pick<AuthContext, 'tenantId' | 'principalId'> & {
+  /** M2-LOC-03: the location scope to apply (a job acting for a user); absent = the request's. */
+  locationScope?: readonly string[] | null | undefined;
+};
 
 /** What a state-changing registry operation records next to the change (DoD 7). */
 export interface ChangeRecord {
@@ -47,7 +50,14 @@ export abstract class RegistryBase {
 
   /** Joins the keyed-request transaction when there is one, otherwise opens its own. */
   protected tx<T>(auth: TxScope, fn: (trx: Tx) => Promise<T>): Promise<T> {
-    return this.tenancy.withTenantTx({ tenantId: auth.tenantId, actorId: auth.principalId }, fn);
+    return this.tenancy.withTenantTx(
+      {
+        tenantId: auth.tenantId,
+        actorId: auth.principalId,
+        ...(auth.locationScope !== undefined ? { locationScope: auth.locationScope } : {}),
+      },
+      fn,
+    );
   }
 
   /** Audit row + outbox event, in the caller's transaction. */

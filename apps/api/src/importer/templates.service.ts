@@ -17,7 +17,7 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { RegistryBase, duplicate, stalePrecondition } from '../registry/index.js';
-import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import { TenancyService, isLocationScoped, isUniqueViolation, type Tx } from '../tenancy/index.js';
 import { type EntityType, specOf, CUSTOM_PREFIX } from './fields.js';
 import { ImportsService } from './importer.service.js';
 import type { TemplateCreate, TemplateListQuery, TemplateUpdate } from './schemas.js';
@@ -125,7 +125,13 @@ export class ImportTemplatesService extends RegistryBase {
         let columns = body.columns;
         let options: Record<string, unknown> = body.options ?? {};
         if (body.from_import_id) {
-          const job = await trx.import_job.findUnique({ where: { id: body.from_import_id } });
+          // M2-LOC-03 (ED-26): a scoped principal can only copy the mapping of its own imports
+          const job = await trx.import_job.findFirst({
+            where: {
+              id: body.from_import_id,
+              ...(isLocationScoped() ? { requested_by: auth.userId } : {}),
+            },
+          });
           if (!job)
             throw problem.validation([
               { pointer: '/from_import_id', message: 'No such import.', code: 'not-found' },

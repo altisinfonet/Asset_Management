@@ -3,6 +3,7 @@ import { Prisma, type Tx } from '../tenancy/index.js';
 import {
   ASSET_FROM,
   assetConditions,
+  assetScopeSql,
   assetSortTerms,
   orderBySql,
   sortJoinsSql,
@@ -116,7 +117,7 @@ export interface LabelAssetRow {
 
 /**
  * The label data of `ids`, IN THE ORDER OF `ids` (print order). An id that does not exist in the
- * tenant is simply absent (RLS: another tenant's asset does not exist here); compare lengths.
+ * tenant, or outside the caller's location scope (M2-LOC-03), is simply absent; compare lengths.
  */
 export async function loadLabelAssets(trx: Tx, ids: readonly string[]): Promise<LabelAssetRow[]> {
   if (ids.length === 0) return [];
@@ -127,5 +128,6 @@ export async function loadLabelAssets(trx: Tx, ids: readonly string[]): Promise<
       join app.asset a on a.id = want.id
       left join app.asset_model m on m.tenant_id = a.tenant_id and m.id = a.model_id
       left join app.location l on l.tenant_id = a.tenant_id and l.id = a.location_id
+     where ${assetScopeSql()}
      order by want.n`;
 }

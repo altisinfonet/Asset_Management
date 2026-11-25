@@ -1,3 +1,4 @@
+import { locationScopeWhere } from '../../tenancy/index.js';
 import {
   MAX_LOCATION_DEPTH,
   locationCreateSchema,
@@ -160,6 +161,8 @@ export class LocationHandler extends ServiceHandler {
       ? await env.tx.location.findMany({
           where: {
             archived_at: null,
+            // M2-LOC-03 (ED-26): a scoped import only matches locations inside the caller's scope
+            ...(await locationScopeWhere(env.tx, 'id')),
             OR: [
               ...(parents.has(null) ? [{ parent_id: null }] : []),
               { parent_id: { in: [...parents].filter((p): p is string => p !== null) } },

@@ -110,6 +110,13 @@ export async function withTenantTx<T>(
         `nested withTenantTx for a different tenant (${tenantId}) inside tenant ${outer.ctx.tenantId}`,
       );
     }
+    // M2-LOC-03 (ED-26): an explicit scope on a nested call (a job acting for a scoped user inside
+    // the job's own transaction) narrows the context for that call; it never widens a scoped one.
+    if (ctx.locationScope !== undefined && outer.ctx.locationScope == null && locationScope) {
+      return active.run({ trx: outer.trx, ctx: { ...outer.ctx, locationScope } }, () =>
+        fn(outer.trx),
+      );
+    }
     return fn(outer.trx);
   }
 
@@ -131,6 +138,19 @@ export async function withTenantTx<T>(
       timeout: options.timeoutMs ?? DEFAULT_TX_OPTIONS.timeoutMs,
     },
   );
+}
+
+/**
+ * M2-LOC-03 (ED-26): runs `fn` inside the enclosing tenant transaction with a location scope (a
+ * worker job acting for a scoped user, for example an import step). `null` leaves the context as
+ * it is; a scope never widens an already scoped context. Throws outside a tenant transaction.
+ */
+export function runWithLocationScope<T>(scope: readonly string[] | null, fn: () => T): T {
+  const store = active.getStore();
+  if (!store) throw new NoTenantTransactionError();
+  if (scope === null || store.ctx.locationScope != null) return fn();
+  const locationScope = scope.map((id) => uuid.parse(id));
+  return active.run({ trx: store.trx, ctx: { ...store.ctx, locationScope } }, fn);
 }
 
 /**

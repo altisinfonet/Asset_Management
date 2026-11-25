@@ -1,3 +1,4 @@
+import { locationScopeWhere } from '../../tenancy/index.js';
 import type { CustodyService } from '../../lifecycle/index.js';
 import {
   type AssetCreate,
@@ -399,17 +400,26 @@ export class AssetHandler implements EntityHandler {
       archived_at: true,
       external_id: true,
     } as const;
+    // M2-LOC-03 (ED-26): a scoped import only matches assets inside the caller's scope
+    const inScope = await locationScopeWhere(env.tx, 'location_id');
     const [byTag, bySerial, byExt]: [ExistingAsset[], ExistingAsset[], ExistingAsset[]] =
       await Promise.all([
         tags.size
-          ? env.tx.asset.findMany({ where: { asset_tag_key: { in: [...tags] } }, select })
+          ? env.tx.asset.findMany({
+              where: { asset_tag_key: { in: [...tags] }, ...inScope },
+              select,
+            })
           : [],
         serials.size
-          ? env.tx.asset.findMany({ where: { serial_key: { in: [...serials] } }, select })
+          ? env.tx.asset.findMany({
+              where: { serial_key: { in: [...serials] }, ...inScope },
+              select,
+            })
           : [],
         ext.size
           ? env.tx.asset.findMany({
               where: {
+                ...inScope,
                 external_source: env.options.external_source ?? 'import',
                 external_id: { in: [...ext] },
               },

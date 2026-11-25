@@ -172,6 +172,9 @@ export interface JobRow {
   rows_processed: number;
   cancel_requested: boolean;
   dry_run_digest: string | null;
+  /** M2-LOC-03 (ED-26): the location scope the dry run / commit was requested with. */
+  location_scoped: boolean;
+  location_scope: string[];
   version: number;
 }
 

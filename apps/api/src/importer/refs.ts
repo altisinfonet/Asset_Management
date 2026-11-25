@@ -1,6 +1,12 @@
 import type { AuthContext } from '../auth/index.js';
 import { ApiProblem } from '../platform/index.js';
-import type { Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  currentLocationScope,
+  locationScopeSql,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import type { RefKind } from './fields.js';
 import type { ImportOptions, RowIssue, ValueMap } from './types.js';
 import { normKey } from './values.js';
@@ -292,8 +298,13 @@ export class RefResolver {
     const key = parentId ?? 'root';
     let hit = this.children.get(key);
     if (!hit) {
+      // M2-LOC-03 (ED-26): for a scoped import the top level is the caller's scope roots
+      const roots = currentLocationScope();
       hit = this.tx.location.findMany({
-        where: { parent_id: parentId, archived_at: null },
+        where:
+          parentId === null && roots !== null
+            ? { id: { in: [...roots] }, archived_at: null }
+            : { parent_id: parentId, archived_at: null },
         select: { id: true, name: true },
       });
       this.children.set(key, hit);
@@ -318,10 +329,12 @@ export class RefResolver {
     if (depth === parts.length && last) return { kind: 'found', id: last.id, name: last.name };
     if (parts.length === 1 && depth === 0) {
       // a bare name: fine when exactly one live location has it, wherever it sits
-      this.allLocations ??= this.tx.location.findMany({
-        where: { archived_at: null },
-        select: { id: true, name: true, parent_id: true },
-      });
+      this.allLocations ??= locationScopeWhere(this.tx, 'id').then((inScope) =>
+        this.tx.location.findMany({
+          where: { archived_at: null, ...inScope },
+          select: { id: true, name: true, parent_id: true },
+        }),
+      );
       const same = (await this.allLocations).filter((l) => normKey(l.name) === normKey(parts[0]!));
       if (same.length === 1) return { kind: 'found', id: same[0]!.id, name: same[0]!.name };
       if (same.length > 1) {
@@ -378,7 +391,8 @@ export class RefResolver {
   private async findPerson(text: string): Promise<Named | null> {
     const key = normKey(text);
     const select = { id: true, display_name: true } as const;
-    const live = { archived_at: null };
+    // M2-LOC-03 (ED-26): only the people inside the caller's scope can be referenced
+    const live = { archived_at: null, ...(await locationScopeWhere(this.tx, 'location_id')) };
     if (key.includes('@')) {
       const p = await this.tx.person.findFirst({ where: { ...live, email_key: key }, select });
       return p ? { id: p.id, name: p.display_name } : null;
@@ -390,7 +404,8 @@ export class RefResolver {
     if (byRef) return { id: byRef.id, name: byRef.display_name };
     const rows = await this.tx.$queryRaw<Array<{ id: string; display_name: string }>>`
       select id, display_name from app.person
-       where archived_at is null and lower(btrim(display_name)) = ${key} limit 2`;
+       where archived_at is null and lower(btrim(display_name)) = ${key}
+         and ${locationScopeSql(Prisma.sql`location_id`)} limit 2`;
     return rows.length === 1 ? { id: rows[0]!.id, name: rows[0]!.display_name } : null;
   }
 

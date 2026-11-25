@@ -11,7 +11,7 @@ const TILES = [
 ] as const;
 
 async function tileCount(page: Page, id: string): Promise<number> {
-  const text = await page.getByTestId(`tile-${id}`).locator('span').first().innerText();
+  const text = await page.getByTestId(`tile-${id}`).locator('[data-tile-count]').innerText();
   return Number(text.replace(/[^\d]/g, ''));
 }
 
@@ -23,7 +23,7 @@ async function openDashboard(page: Page): Promise<void> {
 }
 
 test.describe('dashboard', () => {
-  test('shows real counts in the four tiles and the needs-attention panels, no placeholder', async ({
+  test('shows real counts in the tiles, the status charts and the needs-attention panels, no placeholder', async ({
     page,
   }) => {
     await openDashboard(page);
@@ -34,6 +34,8 @@ test.describe('dashboard', () => {
       expect(await link.getAttribute('href')).toContain(tile.href.split('?')[1]!);
       expect(await tileCount(page, tile.id)).toBeGreaterThan(0);
     }
+    await expect(page.getByTestId('chart-status').getByRole('img')).toBeVisible();
+    await expect(page.getByTestId('chart-utilisation').getByRole('img')).toBeVisible();
     await expect(page.getByText('Counts and attention lists arrive')).toHaveCount(0);
     await expect(page.getByText('API status')).toHaveCount(0);
 
@@ -69,16 +71,17 @@ test.describe('dashboard', () => {
     await page.keyboard.press('Tab');
     await expect(page.getByTestId('tile-assigned')).toBeFocused();
     const row = page.getByTestId('panel-overdue').getByRole('listitem').first().getByRole('link');
-    const tag = (await row.locator('span.font-mono').innerText()).trim();
+    const tag = (await row.locator('span.font-tag').innerText()).trim();
     await row.focus();
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('asset-tag')).toHaveText(tag);
   });
 
   for (const [width, columns] of [
-    [375, 1],
+    // the "All assets" tile spans both columns below 1024px
+    [375, 2],
     [768, 2],
-    [1440, 4],
+    [1440, 5],
   ] as const) {
     test(`tiles lay out in ${columns} column(s) at ${width}px with no horizontal scroll`, async ({
       page,

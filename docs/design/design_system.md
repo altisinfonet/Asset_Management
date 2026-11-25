@@ -36,7 +36,8 @@ Each principle maps to a product principle in plan section 3.
 ## 2. Visual direction (brand-neutral)
 
 - **Tone:** calm, utilitarian, trustworthy: a tool that disappears. Think "well-lit stockroom", not "marketing site".
-- **Neutral-first:** greys with a slight cool tint carry 90% of the UI. One accent (primary blue, **placeholder, founder to confirm**) marks the primary action, links, selection and focus. Status colours (green, amber, red, teal-blue) are reserved for state and never decorative.
+- **Neutral-first:** slate greys carry 90% of the UI. One accent (primary teal, from the 2026-11-25 dashboard mockup) marks the primary action, links and selection; the focus ring stays blue so it is never confused with a teal fill. Status colours (green, amber, red, sky blue) are reserved for state and never decorative.
+- **Console look (2026-11-25):** a dark navy sidebar in every theme, white (light) or deep-navy (dark) cards with a 12px radius and a soft shadow, count tiles with a 4px coloured top edge, and charts drawn with the categorical `chart.*` tokens.
 - **Shape:** 6px radius on controls, 8px on cards/menus, 12px on dialogs/drawers/bottom sheets. 1px borders, shadows only for floating layers (menus, dialogs, toasts, drawers).
 - **Imagery:** asset photos and model images are the only imagery; empty states use a single-colour line illustration slot (16:9, 120px tall, optional), not stock art.
 - **Logo slot:** 24px mark + wordmark in sidebar; monochrome-capable so it works in both themes.
@@ -140,6 +141,8 @@ Semantic tokens only; components never reference raw hex. Tokens exist for **lig
 | danger | `danger.solid`, `.on`, `.subtle`, `.text` | Overdue, lost, errors, destructive actions |
 | info | `info.solid`, `.on`, `.subtle`, `.text` | Neutral notices, loaned, dry-run info |
 | focus | `focus` | Focus ring: 2px, 2px offset |
+| sidebar | `sidebar.solid`, `.hover`, `.active`, `.text`, `.muted`, `.accent`, `.border` | Navigation sidebar, dark navy in every theme. Inside it (`.sidebar-scope` in globals.css) the semantic roles are remapped to these, and `focus` becomes `sidebar.accent` |
+| chart | `chart.1` to `chart.5`, `chart.track` | Categorical series (teal, blue, indigo, amber, green) and the unfilled track of gauges and meters. Graphical objects: >= 3:1 on `surface` |
 
 Sub-role meaning: `solid` = filled backgrounds, icons and borders; `on` = text/icon on `solid`; `subtle` = badge/banner background; `text` = coloured text (on `bg`, `surface`, `sunken` or its own `subtle`).
 
@@ -163,9 +166,11 @@ Admins rename labels (e.g. "Deployed", "Out for fix") but cannot change the stat
 
 Method: WCAG 2.x relative luminance and contrast ratio, computed by `scratchpad/contrast.js` reading `tokens.json` directly (so it cannot drift from the tokens). Thresholds: **text pairs >= 4.5:1; UI components, focus ring and graphical objects >= 3:1** (1.4.3, 1.4.11). Pairs checked per mode: `text`, `muted`, `primary.text` and each status `.text` on `bg`, `surface` and `sunken`; each role's `.on` on `.solid`; each role's `.text`, `text` and `muted` on its `.subtle`; `border-strong`, `focus` and each `.solid` against `bg`/`surface`/`sunken`; `.solid` and `focus` on `.subtle`.
 
-**Result: 146 pairs checked, 0 failures. Lowest ratio 3.35:1 (light `border-strong` on `sunken`, a 3:1 UI pair). Lowest text-pair ratio: 6.31:1 (dark `muted` on `primary.subtle`), well above 4.5:1.**
+Since 2026-11-25 the check also covers the sidebar (`sidebar.text` on `sidebar.solid`, `.hover` and `.active`; `sidebar.muted` on `sidebar.solid`; `sidebar.accent` on `sidebar.solid` and `.active`) and each `chart.N` on `surface`. It runs as a unit test in `packages/ui-tokens` (`checkTokenContrast`).
 
-Key pairs (full 146-row table in Appendix A):
+**Result: 168 pairs checked, 0 failures. Lowest ratio 3.19:1 (light `chart.4` amber on `surface`, a 3:1 graphical pair). Lowest text-pair ratio: 4.83:1 (light `danger.on` on `danger.solid`).**
+
+Key pairs (values before the 2026-11-25 palette change; the current values are in the generated Appendix A, 168 rows):
 
 | Pair | Light | Dark | Req. |
 |---|---|---|---|
@@ -311,7 +316,7 @@ React Native components, one `theme` object generated from `tokens.json`, fonts 
 ## 11. Design decisions (2026-11-17)
 
 **Decided (founder accepted):**
-- **Theme:** follow the OS theme (`prefers-color-scheme`) with a manual light/dark override stored in the user profile (D6, section 3).
+- **Theme:** three choices, System (follow `prefers-color-scheme`, the default), Light and Dark, stored as a manual override (D6, section 3). Set from the top bar's Theme menu or the System / Light / Dark switch in the sidebar footer. All three share one token set; components never use a `dark:` variant.
 - **Web density:** as proposed. 14px body, 13px table cells, 36px comfortable rows, 28px compact option (sections 2 and 3.1 to 3.2).
 - **Row click:** opens the 480px detail drawer (W11). Enter opens the full asset page.
 - **Mobile home:** the Scan screen (M1, section 7).
@@ -324,7 +329,7 @@ React Native components, one `theme` object generated from `tokens.json`, fonts 
 
 **Deferred (placeholders kept):**
 - **Product name:** "Asset Tracker" (placeholder, see the note at the top of this file).
-- **Primary colour:** blue placeholder `#2A55D6` (light) and `#7AA2FF` (dark) (sections 2 and 4, Appendix A).
+- **Primary colour:** teal `#0F766E` (light) and `#2DD4BF` (dark), taken from the 2026-11-25 dashboard mockup (sections 2 and 4, Appendix A). Replaces the blue placeholder `#2A55D6` / `#7AA2FF`.
 - **Brand visuals:** logo (section 2 logo slot), empty-state illustrations (section 2) and tone of voice (section 2).
 - **Decide before M3 store testing.** All names come from one config, so a rename is a small change.
 
@@ -332,160 +337,182 @@ React Native components, one `theme` object generated from `tokens.json`, fonts 
 
 ## Appendix A. Full contrast table (generated)
 
-Generated by `contrast.js` from `tokens.json` (146 pairs, 0 failures).
+Generated by `checkTokenContrast` (packages/ui-tokens/src/contrast.ts) from `tokens.json` (168 pairs, 0 failures).
 
 ### light
 | Foreground | Background | Ratio | Required | Result |
 |---|---|---|---|---|
-| text #14171F | bg #F6F7F9 | 16.71:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | bg #F6F7F9 | 7.21:1 | 4.5:1 (text) | PASS |
-| primary.text #1E43AD | bg #F6F7F9 | 7.96:1 | 4.5:1 (text) | PASS |
-| success.text #0F6035 | bg #F6F7F9 | 7.14:1 | 4.5:1 (text) | PASS |
-| warning.text #7A3B05 | bg #F6F7F9 | 7.98:1 | 4.5:1 (text) | PASS |
-| danger.text #9C1C22 | bg #F6F7F9 | 7.53:1 | 4.5:1 (text) | PASS |
-| info.text #085777 | bg #F6F7F9 | 7.42:1 | 4.5:1 (text) | PASS |
-| border-strong #7A8294 | bg #F6F7F9 | 3.60:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | bg #F6F7F9 | 6.21:1 | 3:1 (UI) | PASS |
-| primary.solid #2A55D6 | bg #F6F7F9 | 5.82:1 | 3:1 (UI) | PASS |
-| success.solid #157A45 | bg #F6F7F9 | 5.02:1 | 3:1 (UI) | PASS |
-| warning.solid #A8510A | bg #F6F7F9 | 5.09:1 | 3:1 (UI) | PASS |
-| danger.solid #C0262D | bg #F6F7F9 | 5.51:1 | 3:1 (UI) | PASS |
-| info.solid #0B6E99 | bg #F6F7F9 | 5.29:1 | 3:1 (UI) | PASS |
-| text #14171F | surface #FFFFFF | 17.92:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | surface #FFFFFF | 7.73:1 | 4.5:1 (text) | PASS |
-| primary.text #1E43AD | surface #FFFFFF | 8.53:1 | 4.5:1 (text) | PASS |
-| success.text #0F6035 | surface #FFFFFF | 7.65:1 | 4.5:1 (text) | PASS |
-| warning.text #7A3B05 | surface #FFFFFF | 8.55:1 | 4.5:1 (text) | PASS |
-| danger.text #9C1C22 | surface #FFFFFF | 8.07:1 | 4.5:1 (text) | PASS |
-| info.text #085777 | surface #FFFFFF | 7.95:1 | 4.5:1 (text) | PASS |
-| border-strong #7A8294 | surface #FFFFFF | 3.85:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | surface #FFFFFF | 6.65:1 | 3:1 (UI) | PASS |
-| primary.solid #2A55D6 | surface #FFFFFF | 6.23:1 | 3:1 (UI) | PASS |
-| success.solid #157A45 | surface #FFFFFF | 5.38:1 | 3:1 (UI) | PASS |
-| warning.solid #A8510A | surface #FFFFFF | 5.46:1 | 3:1 (UI) | PASS |
-| danger.solid #C0262D | surface #FFFFFF | 5.90:1 | 3:1 (UI) | PASS |
-| info.solid #0B6E99 | surface #FFFFFF | 5.67:1 | 3:1 (UI) | PASS |
-| text #14171F | sunken #EDEFF3 | 15.56:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | sunken #EDEFF3 | 6.72:1 | 4.5:1 (text) | PASS |
-| primary.text #1E43AD | sunken #EDEFF3 | 7.41:1 | 4.5:1 (text) | PASS |
-| success.text #0F6035 | sunken #EDEFF3 | 6.65:1 | 4.5:1 (text) | PASS |
-| warning.text #7A3B05 | sunken #EDEFF3 | 7.43:1 | 4.5:1 (text) | PASS |
-| danger.text #9C1C22 | sunken #EDEFF3 | 7.01:1 | 4.5:1 (text) | PASS |
-| info.text #085777 | sunken #EDEFF3 | 6.91:1 | 4.5:1 (text) | PASS |
-| border-strong #7A8294 | sunken #EDEFF3 | 3.35:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | sunken #EDEFF3 | 5.78:1 | 3:1 (UI) | PASS |
-| primary.solid #2A55D6 | sunken #EDEFF3 | 5.41:1 | 3:1 (UI) | PASS |
-| success.solid #157A45 | sunken #EDEFF3 | 4.68:1 | 3:1 (UI) | PASS |
-| warning.solid #A8510A | sunken #EDEFF3 | 4.74:1 | 3:1 (UI) | PASS |
-| danger.solid #C0262D | sunken #EDEFF3 | 5.13:1 | 3:1 (UI) | PASS |
-| info.solid #0B6E99 | sunken #EDEFF3 | 4.92:1 | 3:1 (UI) | PASS |
-| primary.on #FFFFFF | primary.solid #2A55D6 | 6.23:1 | 4.5:1 (text) | PASS |
-| primary.text #1E43AD | primary.subtle #E7EDFC | 7.28:1 | 4.5:1 (text) | PASS |
-| text #14171F | primary.subtle #E7EDFC | 15.29:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | primary.subtle #E7EDFC | 6.60:1 | 4.5:1 (text) | PASS |
-| primary.solid #2A55D6 | primary.subtle #E7EDFC | 5.32:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | primary.subtle #E7EDFC | 5.68:1 | 3:1 (UI) | PASS |
-| success.on #FFFFFF | success.solid #157A45 | 5.38:1 | 4.5:1 (text) | PASS |
-| success.text #0F6035 | success.subtle #E3F4EA | 6.70:1 | 4.5:1 (text) | PASS |
-| text #14171F | success.subtle #E3F4EA | 15.69:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | success.subtle #E3F4EA | 6.77:1 | 4.5:1 (text) | PASS |
-| success.solid #157A45 | success.subtle #E3F4EA | 4.71:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | success.subtle #E3F4EA | 5.83:1 | 3:1 (UI) | PASS |
-| warning.on #FFFFFF | warning.solid #A8510A | 5.46:1 | 4.5:1 (text) | PASS |
-| warning.text #7A3B05 | warning.subtle #FDF0D5 | 7.58:1 | 4.5:1 (text) | PASS |
-| text #14171F | warning.subtle #FDF0D5 | 15.87:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | warning.subtle #FDF0D5 | 6.85:1 | 4.5:1 (text) | PASS |
-| warning.solid #A8510A | warning.subtle #FDF0D5 | 4.84:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | warning.subtle #FDF0D5 | 5.89:1 | 3:1 (UI) | PASS |
-| danger.on #FFFFFF | danger.solid #C0262D | 5.90:1 | 4.5:1 (text) | PASS |
-| danger.text #9C1C22 | danger.subtle #FCE8E8 | 6.86:1 | 4.5:1 (text) | PASS |
-| text #14171F | danger.subtle #FCE8E8 | 15.23:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | danger.subtle #FCE8E8 | 6.57:1 | 4.5:1 (text) | PASS |
-| danger.solid #C0262D | danger.subtle #FCE8E8 | 5.02:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | danger.subtle #FCE8E8 | 5.65:1 | 3:1 (UI) | PASS |
-| info.on #FFFFFF | info.solid #0B6E99 | 5.67:1 | 4.5:1 (text) | PASS |
-| info.text #085777 | info.subtle #E1F2F9 | 6.92:1 | 4.5:1 (text) | PASS |
-| text #14171F | info.subtle #E1F2F9 | 15.59:1 | 4.5:1 (text) | PASS |
-| muted #4A5365 | info.subtle #E1F2F9 | 6.73:1 | 4.5:1 (text) | PASS |
-| info.solid #0B6E99 | info.subtle #E1F2F9 | 4.93:1 | 3:1 (UI) | PASS |
-| focus #1B4FD8 | info.subtle #E1F2F9 | 5.79:1 | 3:1 (UI) | PASS |
-| primary.on #FFFFFF | primary.hover #2147B8 | 7.90:1 | 4.5:1 (text) | PASS |
+| text #0F172A | bg #F1F5F9 | 16.30:1 | 4.5:1 (text) | PASS |
+| muted #475569 | bg #F1F5F9 | 6.92:1 | 4.5:1 (text) | PASS |
+| primary.text #0F6A63 | bg #F1F5F9 | 5.88:1 | 4.5:1 (text) | PASS |
+| success.text #166534 | bg #F1F5F9 | 6.51:1 | 4.5:1 (text) | PASS |
+| warning.text #92400E | bg #F1F5F9 | 6.47:1 | 4.5:1 (text) | PASS |
+| danger.text #B91C1C | bg #F1F5F9 | 5.91:1 | 4.5:1 (text) | PASS |
+| info.text #075985 | bg #F1F5F9 | 6.90:1 | 4.5:1 (text) | PASS |
+| border-strong #64748B | bg #F1F5F9 | 4.34:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | bg #F1F5F9 | 6.12:1 | 3:1 (UI) | PASS |
+| primary.solid #0F766E | bg #F1F5F9 | 5.00:1 | 3:1 (UI) | PASS |
+| success.solid #15803D | bg #F1F5F9 | 4.58:1 | 3:1 (UI) | PASS |
+| warning.solid #B45309 | bg #F1F5F9 | 4.58:1 | 3:1 (UI) | PASS |
+| danger.solid #DC2626 | bg #F1F5F9 | 4.41:1 | 3:1 (UI) | PASS |
+| info.solid #0369A1 | bg #F1F5F9 | 5.42:1 | 3:1 (UI) | PASS |
+| text #0F172A | surface #FFFFFF | 17.85:1 | 4.5:1 (text) | PASS |
+| muted #475569 | surface #FFFFFF | 7.58:1 | 4.5:1 (text) | PASS |
+| primary.text #0F6A63 | surface #FFFFFF | 6.44:1 | 4.5:1 (text) | PASS |
+| success.text #166534 | surface #FFFFFF | 7.13:1 | 4.5:1 (text) | PASS |
+| warning.text #92400E | surface #FFFFFF | 7.09:1 | 4.5:1 (text) | PASS |
+| danger.text #B91C1C | surface #FFFFFF | 6.47:1 | 4.5:1 (text) | PASS |
+| info.text #075985 | surface #FFFFFF | 7.56:1 | 4.5:1 (text) | PASS |
+| border-strong #64748B | surface #FFFFFF | 4.76:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | surface #FFFFFF | 6.70:1 | 3:1 (UI) | PASS |
+| primary.solid #0F766E | surface #FFFFFF | 5.47:1 | 3:1 (UI) | PASS |
+| success.solid #15803D | surface #FFFFFF | 5.02:1 | 3:1 (UI) | PASS |
+| warning.solid #B45309 | surface #FFFFFF | 5.02:1 | 3:1 (UI) | PASS |
+| danger.solid #DC2626 | surface #FFFFFF | 4.83:1 | 3:1 (UI) | PASS |
+| info.solid #0369A1 | surface #FFFFFF | 5.93:1 | 3:1 (UI) | PASS |
+| text #0F172A | sunken #E9EEF4 | 15.30:1 | 4.5:1 (text) | PASS |
+| muted #475569 | sunken #E9EEF4 | 6.50:1 | 4.5:1 (text) | PASS |
+| primary.text #0F6A63 | sunken #E9EEF4 | 5.52:1 | 4.5:1 (text) | PASS |
+| success.text #166534 | sunken #E9EEF4 | 6.11:1 | 4.5:1 (text) | PASS |
+| warning.text #92400E | sunken #E9EEF4 | 6.08:1 | 4.5:1 (text) | PASS |
+| danger.text #B91C1C | sunken #E9EEF4 | 5.55:1 | 4.5:1 (text) | PASS |
+| info.text #075985 | sunken #E9EEF4 | 6.48:1 | 4.5:1 (text) | PASS |
+| border-strong #64748B | sunken #E9EEF4 | 4.08:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | sunken #E9EEF4 | 5.74:1 | 3:1 (UI) | PASS |
+| primary.solid #0F766E | sunken #E9EEF4 | 4.69:1 | 3:1 (UI) | PASS |
+| success.solid #15803D | sunken #E9EEF4 | 4.30:1 | 3:1 (UI) | PASS |
+| warning.solid #B45309 | sunken #E9EEF4 | 4.30:1 | 3:1 (UI) | PASS |
+| danger.solid #DC2626 | sunken #E9EEF4 | 4.14:1 | 3:1 (UI) | PASS |
+| info.solid #0369A1 | sunken #E9EEF4 | 5.09:1 | 3:1 (UI) | PASS |
+| primary.on #FFFFFF | primary.solid #0F766E | 5.47:1 | 4.5:1 (text) | PASS |
+| primary.text #0F6A63 | primary.subtle #E6F6F3 | 5.78:1 | 4.5:1 (text) | PASS |
+| text #0F172A | primary.subtle #E6F6F3 | 16.02:1 | 4.5:1 (text) | PASS |
+| muted #475569 | primary.subtle #E6F6F3 | 6.80:1 | 4.5:1 (text) | PASS |
+| primary.solid #0F766E | primary.subtle #E6F6F3 | 4.91:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | primary.subtle #E6F6F3 | 6.01:1 | 3:1 (UI) | PASS |
+| success.on #FFFFFF | success.solid #15803D | 5.02:1 | 4.5:1 (text) | PASS |
+| success.text #166534 | success.subtle #DCFCE7 | 6.49:1 | 4.5:1 (text) | PASS |
+| text #0F172A | success.subtle #DCFCE7 | 16.26:1 | 4.5:1 (text) | PASS |
+| muted #475569 | success.subtle #DCFCE7 | 6.90:1 | 4.5:1 (text) | PASS |
+| success.solid #15803D | success.subtle #DCFCE7 | 4.57:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | success.subtle #DCFCE7 | 6.10:1 | 3:1 (UI) | PASS |
+| warning.on #FFFFFF | warning.solid #B45309 | 5.02:1 | 4.5:1 (text) | PASS |
+| warning.text #92400E | warning.subtle #FEF3C7 | 6.37:1 | 4.5:1 (text) | PASS |
+| text #0F172A | warning.subtle #FEF3C7 | 16.03:1 | 4.5:1 (text) | PASS |
+| muted #475569 | warning.subtle #FEF3C7 | 6.81:1 | 4.5:1 (text) | PASS |
+| warning.solid #B45309 | warning.subtle #FEF3C7 | 4.51:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | warning.subtle #FEF3C7 | 6.02:1 | 3:1 (UI) | PASS |
+| danger.on #FFFFFF | danger.solid #DC2626 | 4.83:1 | 4.5:1 (text) | PASS |
+| danger.text #B91C1C | danger.subtle #FEE2E2 | 5.30:1 | 4.5:1 (text) | PASS |
+| text #0F172A | danger.subtle #FEE2E2 | 14.61:1 | 4.5:1 (text) | PASS |
+| muted #475569 | danger.subtle #FEE2E2 | 6.20:1 | 4.5:1 (text) | PASS |
+| danger.solid #DC2626 | danger.subtle #FEE2E2 | 3.95:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | danger.subtle #FEE2E2 | 5.49:1 | 3:1 (UI) | PASS |
+| info.on #FFFFFF | info.solid #0369A1 | 5.93:1 | 4.5:1 (text) | PASS |
+| info.text #075985 | info.subtle #E0F2FE | 6.59:1 | 4.5:1 (text) | PASS |
+| text #0F172A | info.subtle #E0F2FE | 15.56:1 | 4.5:1 (text) | PASS |
+| muted #475569 | info.subtle #E0F2FE | 6.60:1 | 4.5:1 (text) | PASS |
+| info.solid #0369A1 | info.subtle #E0F2FE | 5.17:1 | 3:1 (UI) | PASS |
+| focus #1D4ED8 | info.subtle #E0F2FE | 5.84:1 | 3:1 (UI) | PASS |
+| primary.on #FFFFFF | primary.hover #115E59 | 7.58:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.solid #0F172A | 14.48:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.hover #18233A | 12.71:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.active #1E293B | 11.87:1 | 4.5:1 (text) | PASS |
+| sidebar.muted #94A3B8 | sidebar.solid #0F172A | 6.96:1 | 4.5:1 (text) | PASS |
+| sidebar.accent #2DD4BF | sidebar.solid #0F172A | 9.59:1 | 3:1 (UI) | PASS |
+| sidebar.accent #2DD4BF | sidebar.active #1E293B | 7.86:1 | 3:1 (UI) | PASS |
+| chart.1 #0D9488 | surface #FFFFFF | 3.74:1 | 3:1 (UI) | PASS |
+| chart.2 #0284C7 | surface #FFFFFF | 4.10:1 | 3:1 (UI) | PASS |
+| chart.3 #6366F1 | surface #FFFFFF | 4.47:1 | 3:1 (UI) | PASS |
+| chart.4 #D97706 | surface #FFFFFF | 3.19:1 | 3:1 (UI) | PASS |
+| chart.5 #059669 | surface #FFFFFF | 3.77:1 | 3:1 (UI) | PASS |
 
 ### dark
 | Foreground | Background | Ratio | Required | Result |
 |---|---|---|---|---|
-| text #E9ECF2 | bg #0E1117 | 15.97:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | bg #0E1117 | 8.47:1 | 4.5:1 (text) | PASS |
-| primary.text #9DBAFF | bg #0E1117 | 9.81:1 | 4.5:1 (text) | PASS |
-| success.text #6FD9A3 | bg #0E1117 | 10.92:1 | 4.5:1 (text) | PASS |
-| warning.text #F2C068 | bg #0E1117 | 11.26:1 | 4.5:1 (text) | PASS |
-| danger.text #FF9A9F | bg #0E1117 | 9.34:1 | 4.5:1 (text) | PASS |
-| info.text #82CDEE | bg #0E1117 | 10.72:1 | 4.5:1 (text) | PASS |
-| border-strong #7C8699 | bg #0E1117 | 5.15:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | bg #0E1117 | 8.65:1 | 3:1 (UI) | PASS |
-| primary.solid #7AA2FF | bg #0E1117 | 7.59:1 | 3:1 (UI) | PASS |
-| success.solid #3DBE82 | bg #0E1117 | 8.00:1 | 3:1 (UI) | PASS |
-| warning.solid #E8A23A | bg #0E1117 | 8.69:1 | 3:1 (UI) | PASS |
-| danger.solid #F0686E | bg #0E1117 | 6.22:1 | 3:1 (UI) | PASS |
-| info.solid #4DB6E3 | bg #0E1117 | 8.20:1 | 3:1 (UI) | PASS |
-| text #E9ECF2 | surface #161A22 | 14.73:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | surface #161A22 | 7.81:1 | 4.5:1 (text) | PASS |
-| primary.text #9DBAFF | surface #161A22 | 9.05:1 | 4.5:1 (text) | PASS |
-| success.text #6FD9A3 | surface #161A22 | 10.07:1 | 4.5:1 (text) | PASS |
-| warning.text #F2C068 | surface #161A22 | 10.39:1 | 4.5:1 (text) | PASS |
-| danger.text #FF9A9F | surface #161A22 | 8.61:1 | 4.5:1 (text) | PASS |
-| info.text #82CDEE | surface #161A22 | 9.89:1 | 4.5:1 (text) | PASS |
-| border-strong #7C8699 | surface #161A22 | 4.75:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | surface #161A22 | 7.98:1 | 3:1 (UI) | PASS |
-| primary.solid #7AA2FF | surface #161A22 | 7.00:1 | 3:1 (UI) | PASS |
-| success.solid #3DBE82 | surface #161A22 | 7.37:1 | 3:1 (UI) | PASS |
-| warning.solid #E8A23A | surface #161A22 | 8.02:1 | 3:1 (UI) | PASS |
-| danger.solid #F0686E | surface #161A22 | 5.73:1 | 3:1 (UI) | PASS |
-| info.solid #4DB6E3 | surface #161A22 | 7.57:1 | 3:1 (UI) | PASS |
-| text #E9ECF2 | sunken #1E232D | 13.31:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | sunken #1E232D | 7.05:1 | 4.5:1 (text) | PASS |
-| primary.text #9DBAFF | sunken #1E232D | 8.17:1 | 4.5:1 (text) | PASS |
-| success.text #6FD9A3 | sunken #1E232D | 9.10:1 | 4.5:1 (text) | PASS |
-| warning.text #F2C068 | sunken #1E232D | 9.39:1 | 4.5:1 (text) | PASS |
-| danger.text #FF9A9F | sunken #1E232D | 7.78:1 | 4.5:1 (text) | PASS |
-| info.text #82CDEE | sunken #1E232D | 8.94:1 | 4.5:1 (text) | PASS |
-| border-strong #7C8699 | sunken #1E232D | 4.29:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | sunken #1E232D | 7.21:1 | 3:1 (UI) | PASS |
-| primary.solid #7AA2FF | sunken #1E232D | 6.33:1 | 3:1 (UI) | PASS |
-| success.solid #3DBE82 | sunken #1E232D | 6.66:1 | 3:1 (UI) | PASS |
-| warning.solid #E8A23A | sunken #1E232D | 7.24:1 | 3:1 (UI) | PASS |
-| danger.solid #F0686E | sunken #1E232D | 5.18:1 | 3:1 (UI) | PASS |
-| info.solid #4DB6E3 | sunken #1E232D | 6.84:1 | 3:1 (UI) | PASS |
-| primary.on #0A1228 | primary.solid #7AA2FF | 7.47:1 | 4.5:1 (text) | PASS |
-| primary.text #9DBAFF | primary.subtle #1B2A4F | 7.31:1 | 4.5:1 (text) | PASS |
-| text #E9ECF2 | primary.subtle #1B2A4F | 11.90:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | primary.subtle #1B2A4F | 6.31:1 | 4.5:1 (text) | PASS |
-| primary.solid #7AA2FF | primary.subtle #1B2A4F | 5.66:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | primary.subtle #1B2A4F | 6.45:1 | 3:1 (UI) | PASS |
-| success.on #04170E | success.solid #3DBE82 | 7.84:1 | 4.5:1 (text) | PASS |
-| success.text #6FD9A3 | success.subtle #12301F | 8.26:1 | 4.5:1 (text) | PASS |
-| text #E9ECF2 | success.subtle #12301F | 12.09:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | success.subtle #12301F | 6.41:1 | 4.5:1 (text) | PASS |
-| success.solid #3DBE82 | success.subtle #12301F | 6.05:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | success.subtle #12301F | 6.55:1 | 3:1 (UI) | PASS |
-| warning.on #1C1000 | warning.solid #E8A23A | 8.60:1 | 4.5:1 (text) | PASS |
-| warning.text #F2C068 | warning.subtle #38270B | 8.55:1 | 4.5:1 (text) | PASS |
-| text #E9ECF2 | warning.subtle #38270B | 12.13:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | warning.subtle #38270B | 6.43:1 | 4.5:1 (text) | PASS |
-| warning.solid #E8A23A | warning.subtle #38270B | 6.60:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | warning.subtle #38270B | 6.57:1 | 3:1 (UI) | PASS |
-| danger.on #1F0507 | danger.solid #F0686E | 6.38:1 | 4.5:1 (text) | PASS |
-| danger.text #FF9A9F | danger.subtle #3B1518 | 7.94:1 | 4.5:1 (text) | PASS |
-| text #E9ECF2 | danger.subtle #3B1518 | 13.58:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | danger.subtle #3B1518 | 7.20:1 | 4.5:1 (text) | PASS |
-| danger.solid #F0686E | danger.subtle #3B1518 | 5.29:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | danger.subtle #3B1518 | 7.36:1 | 3:1 (UI) | PASS |
-| info.on #041823 | info.solid #4DB6E3 | 7.86:1 | 4.5:1 (text) | PASS |
-| info.text #82CDEE | info.subtle #0F2E3D | 8.06:1 | 4.5:1 (text) | PASS |
-| text #E9ECF2 | info.subtle #0F2E3D | 12.00:1 | 4.5:1 (text) | PASS |
-| muted #A5AEBF | info.subtle #0F2E3D | 6.36:1 | 4.5:1 (text) | PASS |
-| info.solid #4DB6E3 | info.subtle #0F2E3D | 6.17:1 | 3:1 (UI) | PASS |
-| focus #8CAEFF | info.subtle #0F2E3D | 6.50:1 | 3:1 (UI) | PASS |
-| primary.on #0A1228 | primary.hover #93B3FF | 8.97:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | bg #0B1120 | 15.46:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | bg #0B1120 | 7.64:1 | 4.5:1 (text) | PASS |
+| primary.text #5EEAD4 | bg #0B1120 | 12.73:1 | 4.5:1 (text) | PASS |
+| success.text #86EFAC | bg #0B1120 | 13.41:1 | 4.5:1 (text) | PASS |
+| warning.text #FCD34D | bg #0B1120 | 13.06:1 | 4.5:1 (text) | PASS |
+| danger.text #FCA5A5 | bg #0B1120 | 9.92:1 | 4.5:1 (text) | PASS |
+| info.text #7DD3FC | bg #0B1120 | 11.29:1 | 4.5:1 (text) | PASS |
+| border-strong #6B7A90 | bg #0B1120 | 4.31:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | bg #0B1120 | 7.61:1 | 3:1 (UI) | PASS |
+| primary.solid #2DD4BF | bg #0B1120 | 10.12:1 | 3:1 (UI) | PASS |
+| success.solid #4ADE80 | bg #0B1120 | 10.81:1 | 3:1 (UI) | PASS |
+| warning.solid #FBBF24 | bg #0B1120 | 11.28:1 | 3:1 (UI) | PASS |
+| danger.solid #F87171 | bg #0B1120 | 6.81:1 | 3:1 (UI) | PASS |
+| info.solid #38BDF8 | bg #0B1120 | 8.79:1 | 3:1 (UI) | PASS |
+| text #E5E9F0 | surface #111827 | 14.57:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | surface #111827 | 7.20:1 | 4.5:1 (text) | PASS |
+| primary.text #5EEAD4 | surface #111827 | 11.99:1 | 4.5:1 (text) | PASS |
+| success.text #86EFAC | surface #111827 | 12.63:1 | 4.5:1 (text) | PASS |
+| warning.text #FCD34D | surface #111827 | 12.30:1 | 4.5:1 (text) | PASS |
+| danger.text #FCA5A5 | surface #111827 | 9.35:1 | 4.5:1 (text) | PASS |
+| info.text #7DD3FC | surface #111827 | 10.64:1 | 4.5:1 (text) | PASS |
+| border-strong #6B7A90 | surface #111827 | 4.06:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | surface #111827 | 7.17:1 | 3:1 (UI) | PASS |
+| primary.solid #2DD4BF | surface #111827 | 9.53:1 | 3:1 (UI) | PASS |
+| success.solid #4ADE80 | surface #111827 | 10.18:1 | 3:1 (UI) | PASS |
+| warning.solid #FBBF24 | surface #111827 | 10.63:1 | 3:1 (UI) | PASS |
+| danger.solid #F87171 | surface #111827 | 6.41:1 | 3:1 (UI) | PASS |
+| info.solid #38BDF8 | surface #111827 | 8.28:1 | 3:1 (UI) | PASS |
+| text #E5E9F0 | sunken #1A2233 | 13.06:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | sunken #1A2233 | 6.45:1 | 4.5:1 (text) | PASS |
+| primary.text #5EEAD4 | sunken #1A2233 | 10.75:1 | 4.5:1 (text) | PASS |
+| success.text #86EFAC | sunken #1A2233 | 11.33:1 | 4.5:1 (text) | PASS |
+| warning.text #FCD34D | sunken #1A2233 | 11.03:1 | 4.5:1 (text) | PASS |
+| danger.text #FCA5A5 | sunken #1A2233 | 8.38:1 | 4.5:1 (text) | PASS |
+| info.text #7DD3FC | sunken #1A2233 | 9.54:1 | 4.5:1 (text) | PASS |
+| border-strong #6B7A90 | sunken #1A2233 | 3.64:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | sunken #1A2233 | 6.42:1 | 3:1 (UI) | PASS |
+| primary.solid #2DD4BF | sunken #1A2233 | 8.54:1 | 3:1 (UI) | PASS |
+| success.solid #4ADE80 | sunken #1A2233 | 9.13:1 | 3:1 (UI) | PASS |
+| warning.solid #FBBF24 | sunken #1A2233 | 9.53:1 | 3:1 (UI) | PASS |
+| danger.solid #F87171 | sunken #1A2233 | 5.75:1 | 3:1 (UI) | PASS |
+| info.solid #38BDF8 | sunken #1A2233 | 7.42:1 | 3:1 (UI) | PASS |
+| primary.on #042F2E | primary.solid #2DD4BF | 7.77:1 | 4.5:1 (text) | PASS |
+| primary.text #5EEAD4 | primary.subtle #0D2E2D | 9.82:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | primary.subtle #0D2E2D | 11.93:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | primary.subtle #0D2E2D | 5.89:1 | 4.5:1 (text) | PASS |
+| primary.solid #2DD4BF | primary.subtle #0D2E2D | 7.80:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | primary.subtle #0D2E2D | 5.87:1 | 3:1 (UI) | PASS |
+| success.on #052E16 | success.solid #4ADE80 | 8.55:1 | 4.5:1 (text) | PASS |
+| success.text #86EFAC | success.subtle #0F2A1C | 10.93:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | success.subtle #0F2A1C | 12.60:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | success.subtle #0F2A1C | 6.23:1 | 4.5:1 (text) | PASS |
+| success.solid #4ADE80 | success.subtle #0F2A1C | 8.81:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | success.subtle #0F2A1C | 6.20:1 | 3:1 (UI) | PASS |
+| warning.on #1C1000 | warning.solid #FBBF24 | 11.20:1 | 4.5:1 (text) | PASS |
+| warning.text #FCD34D | warning.subtle #33260A | 10.24:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | warning.subtle #33260A | 12.12:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | warning.subtle #33260A | 5.99:1 | 4.5:1 (text) | PASS |
+| warning.solid #FBBF24 | warning.subtle #33260A | 8.84:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | warning.subtle #33260A | 5.96:1 | 3:1 (UI) | PASS |
+| danger.on #1F0507 | danger.solid #F87171 | 7.01:1 | 4.5:1 (text) | PASS |
+| danger.text #FCA5A5 | danger.subtle #3A1518 | 8.51:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | danger.subtle #3A1518 | 13.26:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | danger.subtle #3A1518 | 6.55:1 | 4.5:1 (text) | PASS |
+| danger.solid #F87171 | danger.subtle #3A1518 | 5.84:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | danger.subtle #3A1518 | 6.52:1 | 3:1 (UI) | PASS |
+| info.on #041823 | info.solid #38BDF8 | 8.45:1 | 4.5:1 (text) | PASS |
+| info.text #7DD3FC | info.subtle #0C2A3B | 8.93:1 | 4.5:1 (text) | PASS |
+| text #E5E9F0 | info.subtle #0C2A3B | 12.23:1 | 4.5:1 (text) | PASS |
+| muted #9AA6B8 | info.subtle #0C2A3B | 6.04:1 | 4.5:1 (text) | PASS |
+| info.solid #38BDF8 | info.subtle #0C2A3B | 6.95:1 | 3:1 (UI) | PASS |
+| focus #7DA2FF | info.subtle #0C2A3B | 6.02:1 | 3:1 (UI) | PASS |
+| primary.on #042F2E | primary.hover #5EEAD4 | 9.78:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.solid #070B14 | 15.96:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.hover #111A2B | 14.12:1 | 4.5:1 (text) | PASS |
+| sidebar.text #E2E8F0 | sidebar.active #162032 | 13.24:1 | 4.5:1 (text) | PASS |
+| sidebar.muted #94A3B8 | sidebar.solid #070B14 | 7.68:1 | 4.5:1 (text) | PASS |
+| sidebar.accent #2DD4BF | sidebar.solid #070B14 | 10.57:1 | 3:1 (UI) | PASS |
+| sidebar.accent #2DD4BF | sidebar.active #162032 | 8.77:1 | 3:1 (UI) | PASS |
+| chart.1 #2DD4BF | surface #111827 | 9.53:1 | 3:1 (UI) | PASS |
+| chart.2 #38BDF8 | surface #111827 | 8.28:1 | 3:1 (UI) | PASS |
+| chart.3 #818CF8 | surface #111827 | 5.95:1 | 3:1 (UI) | PASS |
+| chart.4 #FBBF24 | surface #111827 | 10.63:1 | 3:1 (UI) | PASS |
+| chart.5 #34D399 | surface #111827 | 9.23:1 | 3:1 (UI) | PASS |
 
-PAIRS: 146  FAILURES: 0  LOWEST: 3.35 (light border-strong on sunken)
+PAIRS: 168  FAILURES: 0  LOWEST: 3.19 (light chart.4 on surface)

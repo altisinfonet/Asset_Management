@@ -70,6 +70,29 @@
     background: color-mix(in srgb, var(--color-scrim) var(--scrim-alpha), transparent);
   }
 
+  /*
+   * The navigation sidebar is dark navy in every theme. Inside it the semantic colours are remapped
+   * to the sidebar tokens, so its components keep using bg-sunken, text-muted, bg-primary-subtle and
+   * so on, and its focus ring switches to the sidebar accent (contrast-checked against the sidebar).
+   */
+  .sidebar-scope {
+    --color-surface: var(--color-sidebar);
+    --color-bg: var(--color-sidebar);
+    --color-sunken: var(--color-sidebar-hover);
+    --color-text: var(--color-sidebar-text);
+    --color-muted: var(--color-sidebar-muted);
+    --color-border: var(--color-sidebar-border);
+    --color-border-strong: var(--color-sidebar-muted);
+    --color-focus: var(--color-sidebar-accent);
+    --color-primary: var(--color-sidebar-accent);
+    --color-primary-on: var(--color-sidebar);
+    --color-primary-subtle: var(--color-sidebar-active);
+    --color-primary-text: var(--color-sidebar-text);
+    color-scheme: dark;
+    background: var(--color-sidebar);
+    color: var(--color-sidebar-text);
+  }
+
   /* Tags, serials and scan codes use the mono face so 0/O and 1/l/I are distinguishable. */
   .font-tag {
     font-family: var(--font-mono);

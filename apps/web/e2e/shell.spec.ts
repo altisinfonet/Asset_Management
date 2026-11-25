@@ -7,22 +7,22 @@ test.describe('theme', () => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto('/assets');
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(await bg()).toBe('rgb(14, 17, 23)'); // dark `bg` token #0E1117
+    expect(await bg()).toBe('rgb(11, 17, 32)'); // dark `bg` token #0B1120
 
     await page.getByRole('button', { name: 'Theme' }).click();
     await page.getByRole('menuitemradio', { name: 'Light' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    expect(await bg()).toBe('rgb(246, 247, 249)'); // light `bg` token #F6F7F9
+    expect(await bg()).toBe('rgb(241, 245, 249)'); // light `bg` token #F1F5F9
 
     await page.reload();
     // the inline init script applies the stored choice before first paint
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    expect(await bg()).toBe('rgb(246, 247, 249)');
+    expect(await bg()).toBe('rgb(241, 245, 249)');
 
     await page.getByRole('button', { name: 'Theme' }).click();
     await page.getByRole('menuitemradio', { name: 'Use system setting' }).click();
     await expect(page.locator('html')).not.toHaveAttribute('data-theme', /.+/);
-    expect(await bg()).toBe('rgb(14, 17, 23)');
+    expect(await bg()).toBe('rgb(11, 17, 32)');
   });
 });
 

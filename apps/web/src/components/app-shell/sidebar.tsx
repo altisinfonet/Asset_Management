@@ -18,7 +18,7 @@ interface SidebarNavProps {
   items?: NavItem[];
 }
 
-/** Logo slot: 24px mark and wordmark, monochrome so it works in both themes. */
+/** Logo slot: 32px mark and wordmark on the navy sidebar (the same in every theme). */
 export function Brand({
   collapsed = false,
   tenantName,
@@ -29,12 +29,14 @@ export function Brand({
 }) {
   const t = useT();
   return (
-    <div className="flex min-h-14 items-center gap-2 px-3">
+    <div
+      className={cn('flex min-h-16 items-center gap-3 px-4', collapsed && 'justify-center px-2')}
+    >
       <span
         aria-hidden
-        className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-on"
+        className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-on"
       >
-        <Package className="size-4" />
+        <Package className="size-[18px]" />
       </span>
       {collapsed ? (
         <span className="sr-only">
@@ -43,7 +45,7 @@ export function Brand({
         </span>
       ) : (
         <span className="flex min-w-0 flex-col leading-tight">
-          <span className="text-lg font-semibold">{t('app.name')}</span>
+          <span className="text-base font-semibold tracking-wide uppercase">{t('app.name')}</span>
           {tenantName ? (
             <span data-testid="tenant-name" className="truncate text-xs text-muted">
               {tenantName}
@@ -85,7 +87,7 @@ export function SidebarNav({ collapsed = false, onNavigate, items = NAV_ITEMS }:
   const pathname = normalizePathname(usePathname());
 
   return (
-    <nav aria-label={t('nav.primary')} className="flex flex-col gap-0.5 px-2">
+    <nav aria-label={t('nav.primary')} className="flex flex-col gap-1 px-3">
       {items
         .filter((item) => item.available)
         .map((item) => {
@@ -99,18 +101,18 @@ export function SidebarNav({ collapsed = false, onNavigate, items = NAV_ITEMS }:
               aria-current={active ? 'page' : undefined}
               aria-label={collapsed ? label : undefined}
               className={cn(
-                'relative flex min-h-(--size-control) items-center gap-3 rounded-md px-2.5 text-base text-text hover:bg-sunken',
+                'relative flex min-h-10 items-center gap-3 rounded-lg px-3 text-base text-muted hover:bg-sunken hover:text-text',
                 collapsed && 'justify-center px-0',
-                active && 'bg-primary-subtle font-medium text-primary-text hover:bg-primary-subtle',
+                active && 'bg-primary-subtle font-semibold text-text hover:bg-primary-subtle',
               )}
             >
               {active ? (
                 <span
                   aria-hidden
-                  className="absolute top-1.5 bottom-1.5 -left-2 w-[3px] rounded-full bg-primary"
+                  className="absolute top-2 bottom-2 -left-3 w-[3px] rounded-r-full bg-primary"
                 />
               ) : null}
-              <item.icon aria-hidden className="size-5 shrink-0" />
+              <item.icon aria-hidden className={cn('size-5 shrink-0', active && 'text-primary')} />
               {collapsed ? null : <NavLabel label={label} />}
             </Link>
           );

@@ -52,6 +52,7 @@ import { ScopeIndicator } from './scope-indicator';
 import { ShortcutsDialog } from './shortcuts-dialog';
 import { WorkflowProviders } from './workflow-providers';
 import { Brand, SidebarCollapseButton, SidebarNav } from './sidebar';
+import { ThemeSwitch } from './theme-switch';
 import { ThemeToggle } from './theme-toggle';
 import { useShortcuts, type GoToTarget } from './use-shortcuts';
 
@@ -418,28 +419,32 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
         {t('common.skipToContent')}
       </a>
 
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-border bg-surface lg:flex">
+      <aside className="sidebar-scope sticky top-0 hidden h-screen flex-col lg:flex">
         <Brand collapsed={collapsed} tenantName={auth.me?.tenant.name} />
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="flex-1 overflow-y-auto py-3">
           <SidebarNav collapsed={collapsed} items={visibleItems} />
         </div>
         <div
           className={cn(
-            'flex border-t border-border p-2',
-            collapsed ? 'justify-center' : 'justify-end',
+            'flex flex-col gap-2 border-t border-border p-3',
+            collapsed ? 'items-center px-2' : 'items-end',
           )}
         >
+          {collapsed ? null : <ThemeSwitch className="w-full" />}
           <SidebarCollapseButton collapsed={collapsed} onToggle={toggleCollapsed} />
         </div>
       </aside>
 
       <Drawer open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <DrawerContent side="left" className="w-(--size-sidebar)">
+        <DrawerContent side="left" className="sidebar-scope w-(--size-sidebar)">
           <DrawerTitle className="sr-only">{t('nav.primary')}</DrawerTitle>
           <DrawerDescription className="sr-only">{t('nav.openNavigation')}</DrawerDescription>
           <Brand tenantName={auth.me?.tenant.name} />
           <div className="flex-1 overflow-y-auto py-2">
             <SidebarNav items={visibleItems} onNavigate={() => setMobileNavOpen(false)} />
+          </div>
+          <div className="border-t border-border p-3">
+            <ThemeSwitch />
           </div>
         </DrawerContent>
       </Drawer>

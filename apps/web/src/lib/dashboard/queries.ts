@@ -52,6 +52,46 @@ export function useAssetCount(id: Exclude<TileId, 'overdue'>, enabled: boolean) 
   });
 }
 
+/** Every asset the list shows by default (the denominator of the tiles' shares). */
+export function useTotalAssets(enabled: boolean) {
+  return useQuery({
+    queryKey: ['dashboard', 'count', 'total'],
+    queryFn: () => assetsApi.list({ limit: 1, include_total: true }),
+    select: (page) => page.page.total ?? 0,
+    enabled,
+  });
+}
+
+/**
+ * The state types the status chart splits the fleet into. Every status label has exactly one state
+ * type, so these counts partition the assets the list shows (archived records are left out by
+ * default; assets with an `archived` status label are counted).
+ */
+export const CHART_STATE_TYPES = [
+  'deployable',
+  'deployed',
+  'pending',
+  'undeployable',
+  'lost',
+  'archived',
+] as const;
+export type ChartStateType = (typeof CHART_STATE_TYPES)[number];
+
+/** One count per state type. `deployable` and `undeployable` share their cache with the tiles. */
+export function useStateTypeCount(stateType: ChartStateType, enabled: boolean) {
+  const tile =
+    stateType === 'deployable' ? 'ready' : stateType === 'undeployable' ? 'inRepair' : null;
+  return useQuery({
+    queryKey: tile ? ['dashboard', 'count', tile] : ['dashboard', 'state', stateType],
+    queryFn: () =>
+      assetsApi.list(
+        tile ? countQuery(tile) : { state_type: [stateType], limit: 1, include_total: true },
+      ),
+    select: (page) => page.page.total ?? 0,
+    enabled,
+  });
+}
+
 export function useOverdueAssets(enabled: boolean) {
   return useQuery({
     queryKey: ['dashboard', 'overdue'],

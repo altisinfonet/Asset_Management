@@ -1582,20 +1582,24 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
    */
   const NO_ROWS_OF_A: Record<string, string> = {};
 
-  it('every tenant table: B sees none of A’s rows, A sees all of them (auto-discovered, both modes)', async () => {
-    const r = await visibilityProbe(A.tenantId, B.tenantId);
-    expect(r.leaks, 'tables in which tenant B reads rows of tenant A').toEqual([]);
-    expect(r.ownMismatch, 'tables in which tenant A does not see its own rows').toEqual([]);
-    expect(
-      r.empty.filter((t) => !(t in NO_ROWS_OF_A)),
-      'tenant tables without a fixture row of A: give them one in this file',
-    ).toEqual([]);
-    expect(
-      Object.keys(NO_ROWS_OF_A).filter((t) => !r.empty.includes(t)),
-      'stale NO_ROWS_OF_A entries',
-    ).toEqual([]);
-    expect(r.checked.length).toBeGreaterThanOrEqual(40);
-  });
+  // the probe reads each table's truth as the owner (ADMIN_DATABASE_URL); without it the test is skipped
+  it.skipIf(!env.adminUrl)(
+    'every tenant table: B sees none of A’s rows, A sees all of them (auto-discovered, both modes)',
+    async () => {
+      const r = await visibilityProbe(A.tenantId, B.tenantId);
+      expect(r.leaks, 'tables in which tenant B reads rows of tenant A').toEqual([]);
+      expect(r.ownMismatch, 'tables in which tenant A does not see its own rows').toEqual([]);
+      expect(
+        r.empty.filter((t) => !(t in NO_ROWS_OF_A)),
+        'tenant tables without a fixture row of A: give them one in this file',
+      ).toEqual([]);
+      expect(
+        Object.keys(NO_ROWS_OF_A).filter((t) => !r.empty.includes(t)),
+        'stale NO_ROWS_OF_A entries',
+      ).toEqual([]);
+      expect(r.checked.length).toBeGreaterThanOrEqual(40);
+    },
+  );
 
   it.skipIf(!env.adminUrl)(
     'every foreign key between tenant tables refuses a reference into another tenant (auto-discovered)',

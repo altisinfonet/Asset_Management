@@ -85,7 +85,7 @@ use another project name and other host ports: `docker compose -p other up -d` w
 | `DATABASE_URL`                         | api, worker, scheduler, tests | Runtime role `app_user` (non-owner, NOBYPASSRLS), normally THROUGH PgBouncer (`...@localhost:6432/app`)  |
 | `MIGRATOR_DATABASE_URL`                | migrate, scheduler, tests, CLI | Owner `app_owner`, **direct** to Postgres (`...@localhost:5433/app`), never through the pooler    |
 | `MAINTENANCE_DATABASE_URL`             | scheduler              | Owner credentials for partition rotation, direct. The only long-running role that holds them             |
-| `ADMIN_DATABASE_URL`                   | e2e only (optional)    | Superuser (`postgres`), used by one schema-lint test that flips BYPASSRLS inside a rolled-back transaction |
+| `ADMIN_DATABASE_URL`                   | e2e (full run)         | Superuser (`postgres`) for the isolation catalogue probes (tenant visibility, foreign keys) and one schema-lint fixture; without it those skip. Required for a full run (CI, merge check) |
 | `ISOLATION_MODE`                       | e2e                    | `direct` or `pooled` (labels the suite and selects the negative control)                                  |
 | `POOLED_ONE_URL`                       | e2e, pooled mode       | `app_user` on the `app_one` PgBouncer alias (`pool_size=1`) for the negative control                      |
 | `SMTP_URL`, `MAIL_FROM`                | api, worker            | `smtp://localhost:1025` for Mailpit                                                                       |
@@ -165,7 +165,8 @@ tests in 43 files and takes two to three minutes per mode.
 - The suite uses its own pg-boss schema (`pgboss_e2e`, provisioned by `test/support/global-setup.ts`), so
   it is safe to run while the compose `worker` and `scheduler` are up.
 - Without a database the suite runs only what needs none. Without `MAILPIT_API_URL` the mail block
-  skips; without `ADMIN_DATABASE_URL` one schema-lint fixture skips.
+  skips; without `ADMIN_DATABASE_URL` the two isolation catalogue probes (every tenant table, every
+  foreign key) and one schema-lint fixture skip. CI and the merge check set it (0 skipped).
 - `test/files` always runs the local-filesystem storage driver with a fake scanner. `S3_ENDPOINT`
   (MinIO, bucket `e2e-files` is created; `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` default to the
   dev `minioadmin` pair) adds the S3 variant with real presigned URLs, and `CLAMD_HOST` / `CLAMD_PORT`

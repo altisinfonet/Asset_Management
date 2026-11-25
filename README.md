@@ -116,9 +116,13 @@ dev-only `/v1` proxy exists only in the dev-server phase of `next.config.ts` (ta
 
   ```bash
   export MIGRATOR_DATABASE_URL=postgres://app_owner:dev@localhost:5433/app
+  export ADMIN_DATABASE_URL=postgres://postgres:dev@localhost:5433/app
   ISOLATION_MODE=direct DATABASE_URL=postgres://app_user:dev@localhost:5433/app pnpm test:e2e
   ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app     POOLED_ONE_URL=postgres://app_user:dev@localhost:6432/app_one pnpm test:e2e
   ```
+
+  `ADMIN_DATABASE_URL` (superuser) is needed for a full run: without it the isolation catalogue probes
+  and one schema-lint fixture skip. The merge check expects 0 skipped.
 
   The e2e suite runs on its own pg-boss schema (`JOBS_SCHEMA=pgboss_e2e`, provisioned by
   `apps/api/test/support/global-setup.ts`), so it is safe to run while the compose `worker` and

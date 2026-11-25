@@ -442,6 +442,31 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **By design (ED-26):** catalogue records stay tenant-wide; uniqueness conflicts (tag, serial, email) remain tenant-wide
   signals; an in-scope asset's own history and current holder may name places or people outside the scope; company
   scope is still not enforced.
+- **Independent verification and security review (2026-11-25):** every check passed again (API e2e 725/725 direct and
+  pooled twice, real-stack 65, contract and drift checks). The founder confirmed the three ED-26 questions as built (a
+  scoped Administrator is a site administrator; records without a location stay hidden; the holder's name shows on
+  in-scope assets). Review findings and what was done:
+  (1) **Accepted and documented:** an in-scope asset names an out-of-scope holder (id and name in `current_assignment`,
+  history, custody list, CSV export), and filtering by that holder id returns those in-scope assets; the person record stays
+  `404`. ED-26 states it, an e2e test asserts the boundary, and the scoped replay now has an in-scope asset lent to a
+  person outside the scope (the holder is reachable on the asset and `404` as a person).
+  (2) **Fixed:** the saved-view reference check was an existence oracle (an out-of-scope location or person gave no
+  warning, an unknown id `not-found`); both now warn `not-found`.
+  (3) **Fixed:** the import default location accepted an out-of-scope id (200) where an unknown id was `422`, and the value
+  mapping by id resolved out-of-scope locations and people (their names in the dry-run preview); both now behave exactly
+  like an unknown id. While fixing it, a second bug of the same family was found and fixed: a Prisma `where` of the form
+  `{ id: x, ...locationScopeWhere(trx, 'id') }` lets the spread replace the `id` match, so any in-scope location matched;
+  those filters are now `AND: [...]` (the saved-view check had passed by accident).
+  (4) **Info items:** ED-26 now documents the ancestor path in `/auth/me` and that a location filter on an ancestor of the
+  scope root returns the in-scope descendants (the earlier wording "outside the scope returns nothing" is corrected).
+  Scan resolve's `allowed_actions` now follows the scope of each action's permission (small change, tested).
+  Regression tests: 5 more in `test/scoping` (28), the scoped replay 4 tests.
+- **Re-verification after the fixes:** clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit
+  647, web 792, client 14, ui-tokens 15, schemas 3); `format:check` clean; gen.mjs reproduces openapi.yaml with no diff,
+  `gen-api-md --check` and client `generate:check` up to date, Redocly valid; drift clean, schema lint 0 violations; API
+  e2e 731/731 in 58 files direct, pooled and pooled again, 0 skipped. No web code changed after the earlier mock (736) and
+  real-stack (65) runs.
+
 
 ---
 

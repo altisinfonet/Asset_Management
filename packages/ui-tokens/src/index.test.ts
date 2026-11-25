@@ -22,7 +22,7 @@ describe('tokens.ts matches tokens.json', () => {
   it('has every colour in both modes with the exact value', () => {
     for (const mode of ['light', 'dark'] as const) {
       const entries = leaves(source.color[mode]);
-      expect(entries).toHaveLength(30);
+      expect(entries).toHaveLength(43);
       for (const [p, leaf] of entries) {
         const value = p.reduce<unknown>(
           (cursor, key) => (cursor as Record<string, unknown>)[key],
@@ -103,6 +103,6 @@ describe('tokens.css matches tokens.json', () => {
     expect(tw).toContain('@theme static');
     expect(tw).toContain('--text-sm: 13px;');
     expect(tw).toContain('--text-sm--line-height: 20px;');
-    expect(tw).toContain('--color-primary: #2A55D6;');
+    expect(tw).toContain('--color-primary: #0F766E;');
   });
 });

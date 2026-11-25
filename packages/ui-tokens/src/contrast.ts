@@ -2,7 +2,7 @@
  * WCAG 2.x contrast checks over the colour tokens (design_system.md section 5).
  *
  * Thresholds: text pairs need 4.5:1 (1.4.3), UI components, focus rings and graphical objects need
- * 3:1 (1.4.11). `checkTokenContrast` enumerates the same 146 pairs the design document lists and is
+ * 3:1 (1.4.11). `checkTokenContrast` enumerates the same 168 pairs the design document lists and is
  * run as a unit test, so a token change that breaks contrast fails the build. It is also exported so
  * a future "custom status colour" feature can validate a colour at save time.
  */
@@ -59,6 +59,7 @@ function pick(mode: ColorMode, dotted: string): string {
 
 const ROLES = ['primary', 'success', 'warning', 'danger', 'info'] as const;
 const SURFACES = ['bg', 'surface', 'sunken'] as const;
+const CHART_SERIES = ['1', '2', '3', '4', '5'] as const;
 
 /** `[foreground token, background token, kind]` for one mode. Matches design_system.md section 5. */
 export function contrastPairs(): Array<[string, string, ContrastKind]> {
@@ -78,6 +79,16 @@ export function contrastPairs(): Array<[string, string, ContrastKind]> {
     pairs.push(['focus', `${role}.subtle`, 'ui']);
   }
   pairs.push(['primary.on', 'primary.hover', 'text']);
+  // The navigation sidebar is dark navy in every theme; its labels, headings and current-item accent
+  // (also its focus ring) are checked against its own fills.
+  for (const bg of ['sidebar.solid', 'sidebar.hover', 'sidebar.active']) {
+    pairs.push(['sidebar.text', bg, 'text']);
+  }
+  pairs.push(['sidebar.muted', 'sidebar.solid', 'text']);
+  pairs.push(['sidebar.accent', 'sidebar.solid', 'ui']);
+  pairs.push(['sidebar.accent', 'sidebar.active', 'ui']);
+  // Chart series are graphical objects on cards.
+  for (const series of CHART_SERIES) pairs.push([`chart.${series}`, 'surface', 'ui']);
   return pairs;
 }
 

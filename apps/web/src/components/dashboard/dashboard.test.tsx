@@ -42,7 +42,7 @@ describe('Dashboard', () => {
     seedSession(MOCK_ACCOUNTS.owner);
   });
 
-  it('shows the four counts from the API, each a link to the asset list with the same filter', async () => {
+  it('shows the counts from the API, each a link to the asset list with the same filter', async () => {
     const [ready, assigned, inRepair, overdue] = await Promise.all([
       assetsApi.list({ state_type: ['deployable'], limit: 1, include_total: true }),
       assetsApi.list({ assigned: true, limit: 1, include_total: true }),
@@ -108,6 +108,36 @@ describe('Dashboard', () => {
       'href',
       expect.stringMatching(/^\/repairs\?id=/),
     );
+  });
+
+  it('splits the fleet by status in a chart whose legend opens each list, and shows utilisation', async () => {
+    const count = async (state: 'deployable' | 'deployed') =>
+      (await assetsApi.list({ state_type: [state], limit: 1, include_total: true })).page.total!;
+    const [deployable, deployed] = await Promise.all([count('deployable'), count('deployed')]);
+
+    const { container } = renderApp(<Dashboard />);
+    const chart = await screen.findByTestId('chart-status');
+    await waitFor(() => expect(chart).toHaveAttribute('aria-busy', 'false'));
+    expect(within(chart).getByRole('img')).toHaveAccessibleName(
+      /^Ready: \d+ \(\d+%\), Checked out/,
+    );
+    expect(within(chart).getByRole('link', { name: /^Ready/ })).toHaveAttribute(
+      'href',
+      '/assets?state_type=deployable',
+    );
+    expect(within(chart).getByRole('link', { name: /^Lost/ })).toHaveAttribute(
+      'href',
+      '/assets?state_type=lost',
+    );
+
+    const gauge = screen.getByTestId('chart-utilisation');
+    const percent = `${Math.round((deployed / (deployed + deployable)) * 100)}%`;
+    expect(within(gauge).getByRole('img')).toHaveAccessibleName(
+      `Utilisation: ${percent} of usable assets are checked out`,
+    );
+    expect(gauge).toHaveTextContent(`${deployed} of ${deployed + deployable} usable assets`);
+    await waitFor(() => expect(container.querySelectorAll('[data-skeleton]')).toHaveLength(0));
+    await expectNoA11yViolations(container);
   });
 
   it('shows friendly empty states when nothing needs attention', async () => {

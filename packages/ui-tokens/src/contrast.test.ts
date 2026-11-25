@@ -23,9 +23,9 @@ describe('contrastRatio', () => {
 describe('design token contrast (WCAG 2.2 AA)', () => {
   const results = checkTokenContrast(tokens.color);
 
-  it('checks the 146 pairs documented in design_system.md section 5', () => {
-    expect(contrastPairs()).toHaveLength(73);
-    expect(results).toHaveLength(146);
+  it('checks the 168 pairs documented in design_system.md section 5', () => {
+    expect(contrastPairs()).toHaveLength(84);
+    expect(results).toHaveLength(168);
   });
 
   it(`every text pair is at least ${TEXT_MIN_RATIO}:1 and every UI pair at least ${UI_MIN_RATIO}:1`, () => {
@@ -40,10 +40,10 @@ describe('design token contrast (WCAG 2.2 AA)', () => {
 
   it('reproduces the lowest ratios reported in the design document', () => {
     const lowest = Math.min(...results.map((r) => r.ratio));
-    expect(lowest).toBeCloseTo(3.35, 1);
-    // lowest text pair is success.on on success.solid (5.38); muted on primary.subtle is the lowest "reading" pair (6.31)
+    expect(lowest).toBeCloseTo(3.19, 1);
+    // lowest UI pair is light chart.4 (amber) on surface (3.19); lowest text pair is light danger.on on danger.solid (4.83)
     const lowestText = Math.min(...results.filter((r) => r.kind === 'text').map((r) => r.ratio));
-    expect(lowestText).toBeCloseTo(5.38, 1);
+    expect(lowestText).toBeCloseTo(4.83, 1);
   });
 
   it('fails when a token regresses (the gate really gates)', () => {

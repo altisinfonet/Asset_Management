@@ -289,9 +289,10 @@ describe('mock registry (owner)', () => {
 
     const admins = (
       await usersApi.list({ role_id: roles.find((r) => r.key === 'tenant_admin')!.id })
-    ).data;
+    ).data.filter((u) => u.role_assignments.some((r) => r.scope_type === 'tenant'));
     expect(admins).toHaveLength(2);
-    // disable one of the two admins: fine; the last one: refused
+    // disable one of the two org-wide admins: fine; the last one: refused (a location
+    // administrator does not keep the organisation manageable)
     const [a, b] = admins;
     await usersApi.update(a!.id, { status: 'disabled' });
     const last = await fails(usersApi.update(b!.id, { status: 'disabled' }));

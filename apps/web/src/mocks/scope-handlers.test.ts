@@ -134,17 +134,8 @@ describe('mock scoped technician (Room 101)', () => {
 });
 
 describe('mock scoped writes (location administrator)', () => {
-  beforeEach(async () => {
-    seedSession(MOCK_ACCOUNTS.owner);
-    const priya = (await usersApi.list({ q: 'priya' })).data[0]!;
-    await usersApi.update(priya.id, {
-      role_assignments: [
-        { role_id: roleIdFor('tenant_admin'), scope_type: 'location', location_id: MAIN_BUILDING },
-      ],
-    });
-    // Priya's login id is the one of the policy-enforced mock account
-    seedSession(MOCK_ACCOUNTS.mfaEnforced);
-  });
+  // Lara Local: an Administrator limited to Main building
+  beforeEach(() => seedSession(MOCK_ACCOUNTS.scopedAdmin));
 
   it('a scoped Administrator holds no org-only permission and must give writes a location', async () => {
     const me = (await getApi().http.GET('/v1/auth/me')).data!;

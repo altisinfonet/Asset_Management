@@ -178,6 +178,15 @@ export const SEED_USERS: Record<string, MockUser> = {
     mfa: false,
     tenantName: ACME,
   },
+  [MOCK_ACCOUNTS.scopedAdmin]: {
+    id: '0190a6b2-0000-7000-8000-000000000012',
+    email: MOCK_ACCOUNTS.scopedAdmin,
+    display_name: 'Lara Local',
+    role: 'tenant_admin',
+    permissions: VIEWER_PERMISSIONS,
+    mfa: false,
+    tenantName: ACME,
+  },
 };
 
 function fresh(): MockState {

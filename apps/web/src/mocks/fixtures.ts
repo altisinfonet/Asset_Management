@@ -59,6 +59,12 @@ export const MOCK_ACCOUNTS = {
    * only what is inside it.
    */
   scopedTechnician: 'theo.scoped@example.org',
+  /**
+   * Administrator limited to Main building (M2-LOC-03): a location administrator without the org-only
+   * permissions (no Users, roles, catalogue or notification rules), who must give every new record a
+   * location inside the building.
+   */
+  scopedAdmin: 'lara.local@example.org',
 } as const;
 
 export const MOCK_TENANTS = [

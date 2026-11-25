@@ -657,6 +657,22 @@ export function buildSeed(): RegistryData {
       mfa_enabled: false,
       last_login_at: iso(NOW - 4 * DAY),
     }),
+    // ... and an Administrator limited to Main building (a location administrator)
+    userBase({
+      id: '0190a6b2-0000-7000-8000-000000000012',
+      email: MOCK_ACCOUNTS.scopedAdmin,
+      display_name: 'Lara Local',
+      status: 'active',
+      role_assignments: [
+        {
+          role_id: roleIdFor('tenant_admin'),
+          scope_type: 'location',
+          location_id: uid('location', 2),
+        },
+      ],
+      mfa_enabled: false,
+      last_login_at: iso(NOW - 6 * DAY),
+    }),
   ] as MockUserRecord[];
   // every assignment as the API returns it: its id, and company_id / location_id always present
   let assignmentN = 0;

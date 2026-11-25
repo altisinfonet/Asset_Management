@@ -56,7 +56,7 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
   const i18n = useI18n();
   const { t } = i18n;
   const router = useRouter();
-  const { me } = useAuth();
+  const { me, locationScope } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const formRef = useRef<HTMLFormElement>(null);
@@ -182,6 +182,10 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
     setFormError(null);
     setStale(false);
     const problems = validateAssetForm(state, fields);
+    // M2-LOC-03: a location-scoped user keeps every asset inside the scope (the API refuses none)
+    if (locationScope && !state.location_id) {
+      problems.push({ key: 'location_id', problem: 'required' });
+    }
     if (problems.length > 0) {
       reportErrors(Object.fromEntries(problems.map((p) => [p.key, messageFor(p.problem)])));
       return;
@@ -470,14 +474,20 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
               />
             )}
           </Field>
-          <Field label={t('assetForm.location')} error={errors.location_id || undefined}>
+          <Field
+            label={t('assetForm.location')}
+            required={!!locationScope}
+            hint={locationScope ? t('locationScope.requiredHint') : undefined}
+            error={errors.location_id || undefined}
+          >
             {(c) => (
               <LocationPicker
                 {...c}
                 invalid={!!errors.location_id}
-                clearable
+                // no "none" for a location-scoped user: the API requires a location in scope
+                clearable={!locationScope}
                 value={state.location_id}
-                placeholder={t('common.none')}
+                placeholder={locationScope ? undefined : t('common.none')}
                 onChange={(id) => set('location_id', id)}
               />
             )}

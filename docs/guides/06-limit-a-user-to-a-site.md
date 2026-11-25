@@ -7,10 +7,6 @@ administrator" fits in, and how to undo it.
 **Who can do this:** Administrators (the people who manage users).
 **How long it takes:** a minute per person.
 
-> **This guide will be refreshed.** The Users screen is being extended so that a person can hold several roles, each
-> with its own site (add and remove a role assignment). The steps and the first two pictures below show the dialog as it
-> is today, **Change role and access**; the rest of the guide does not change.
-
 ## Before you start
 
 - **Your places must form a tree.** A role limited to a location covers that location **and everything inside it**: if
@@ -25,28 +21,49 @@ administrator" fits in, and how to undo it.
 
 ## Steps
 
-### 1. Open the person's role
+### 1. Open the person's access
 
 Go to **Settings**, **Users and roles**. In the row of the person, press the **...** button (**Actions for Demo
-Technician**) and choose **Change role and access**.
+Technician**) and choose **Change role and access**. The window **Role and access of Demo Technician** lists every
+access the person has, one per line, each with a **Remove** button. Here the technician has one: **Technician**, for the
+**Whole organisation**. The only access of a user cannot be removed ("This is the only access of the user. Add another
+first, or deactivate the user instead."), so the button is greyed out.
 
-![Role and access of a user, as it is today](img/06-access-dialog.png)
+![The access of a user: one role for the whole organisation](img/06-access-dialog.png)
 
-### 2. Limit the role to a location
+### 2. Add the role, limited to a location
 
-1. **Access**: choose **Limited to a location** (the other choice is **Whole organisation**).
-2. **Location**: choose the site, for example **Bergen campus**. The text under it says: "The role applies to this
-   location and everything inside it."
-3. Press **Save**. The toast says "Role and access of Demo Technician saved."
+1. Press **Add access**. The window **Add access for Demo Technician** opens.
+2. **Role**: choose **Technician**.
+3. **Access**: choose **Limited to a location** (the other choice is **Whole organisation**).
+4. **Location**: choose the site, for example **Bergen campus**. The text under it says: "The role applies to
+   this location and everything inside it."
+5. Press **Add access**. The toast says "Access added for Demo Technician." The list now shows **Technician at Bergen
+   campus** as well.
 
-![Limited to Bergen campus](img/06-access-dialog-limited.png)
+![Adding Technician, limited to Bergen campus](img/06-access-dialog-limited.png)
 
-On the **Users** tab, the role now shows the place: **Technician at Bergen campus**.
+### 3. Remove the access for the whole organisation
+
+A person with two accesses uses the wider one, so the old **Technician** for the whole organisation must go. Press
+**Remove** next to it. The question names what is removed: "Demo Technician will no longer have Technician. They are
+signed out of every device and sign in again with the access that remains." Press **Remove**. The toast says "Access
+removed from Demo Technician."
+
+![Removing the access for the whole organisation](img/06-remove-dialog.png)
+
+Press **Close**. On the **Users** tab, the role now shows the place: **Technician at Bergen campus**.
 
 ![The Users list with a role limited to a site](img/06-users-scoped.png)
 
-The window warns: "A role limited to a location never includes managing users, roles, the catalogue, departments or
-notification rules."
+Good to know about every change of access:
+
+- **Every change signs that user out** of every device (adding as well as removing). They sign in again with the access
+  they have now. When you change your own access, your current session stays.
+- **Some removals are refused**, and then nothing changes: the **only** access of a user (add another first, or
+  deactivate the user), the **last administrator** of the organisation, and **your own last administrator access**.
+- The window warns: "A role limited to a location never includes managing users, roles, the catalogue, departments or
+  notification rules."
 
 ## What a limited user sees
 
@@ -104,19 +121,22 @@ own site.
 
 ## Undo: give the access back
 
-Open **Change role and access** again, set **Access** to **Whole organisation**, and press **Save**.
+Open **Change role and access** again, press **Add access**, choose **Technician** and **Whole organisation**, and press
+**Add access**. Then press **Remove** next to **Technician at Bergen campus** and confirm.
 
-![Back to the whole organisation](img/06-undo-dialog.png)
+![Both accesses listed, before the limited one is removed](img/06-undo-dialog.png)
 
-The restriction is gone at once. To remove the access altogether, deactivate the user (**Actions**, **Deactivate**).
+The restriction is gone at once (the user is signed out and signs in again with the wider access). To remove the access
+altogether, deactivate the user (**Actions**, **Deactivate**): the only access of a user cannot be removed.
 
 ## If something goes wrong
 
 | What you see                                                    | What to do                                                                                                                                      |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Scoped to: no location (ask an administrator)" at the top      | The person's location is no longer available (archived). Choose a new one in **Change role and access**.                                        |
+| "Scoped to: no location (ask an administrator)" at the top      | The person's location is no longer available (archived). In **Change role and access**, add access for a new place and remove the old one.      |
 | "I cannot find an asset that I know exists"                     | It is outside their site, or it has no location. Check the asset's **Location** as an administrator.                                            |
-| Saving a role is refused                                        | You may give a role only for the places where you hold it yourself. Ask an Administrator for the whole organisation.                            |
+| Adding access is refused                                        | You may give a role only for the places where you hold it yourself. Ask an Administrator for the whole organisation.                            |
+| **Remove** is greyed out or refused                             | It is the user's only access, the last administrator, or your own last administrator access. Add another access first, or deactivate the user.  |
 | A limited user cannot create an asset or person                 | They must choose a location inside their site. Records without a location are refused.                                                          |
 | A new tag is "already used" and the user cannot find that asset | The tag is in use at another site. Tags are unique across the organisation, so the message is correct; the person is only told that it is used. |
 | A person at the site cannot open the Settings pages             | That is by design: a role limited to a location never includes the organisation-wide pages.                                                     |

@@ -80,5 +80,5 @@ its signatures, which takes minutes). Do not use it on a real installation.
 
 When a screen or a text changes, run the script again and look at every picture (the script cannot tell that a picture
 shows the wrong thing). The texts in the guides are copied from `apps/web/src/i18n/messages/`; search there for a
-button or label to find its exact wording. Guide 6 shows the dialog **Change role and access**; refresh it when the Users
-screen gets "add and remove role assignment".
+button or label to find its exact wording. Guide 6 shows the access dialog of **Change role and access** (add and remove
+access, ED-27).

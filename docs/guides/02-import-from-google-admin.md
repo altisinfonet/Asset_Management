@@ -4,7 +4,8 @@ Bring every Chromebook your school manages in Google Admin into the Asset Tracke
 Google device export looks like, so the columns are matched for you. This guide uses ten example Chromebooks.
 
 **Who can do this:** Administrators (the import creates the "Chromebook" category the first time, which needs permission
-to manage the catalogue) and Asset managers once the category exists.
+to manage the catalogue, and the departments of new organisational units, which needs `department:manage`) and Asset
+managers once the category and the departments exist.
 **How long it takes:** about five minutes, plus the time Google needs to prepare the export.
 
 ## Before you start
@@ -18,7 +19,10 @@ to manage the catalogue) and Asset managers once the category exists.
   e-mail address.
 - **Know what it will create.** The first import creates the **Chromebook** category and a set of custom fields for it
   (OS version, platform version, firmware version, last sync, annotated location, organisational unit, MAC address,
-  Ethernet MAC address, IP address, boot mode, auto-update expiration). Models and locations are created as needed.
+  Ethernet MAC address, IP address, boot mode, auto-update expiration). Models are created as needed, and each
+  organisational unit becomes a **department** (created if it does not exist yet, which needs `department:manage`). No
+  location is created from the export: if you want the Chromebooks in a place, add a column with your own location (for
+  example the school site) to the file and map it to **Location**.
 - A sample file for this guide is in [`tools/samples/chromeos-export.csv`](tools/samples/chromeos-export.csv).
 
 ## Steps
@@ -50,10 +54,11 @@ Press **Choose a file** and select the CSV. After a few seconds you see the colu
 Check these three things, which surprise people most:
 
 - The blue box **Fixed values** says **Category = Chromebook**: every row becomes a Chromebook.
-- Google's **Org unit path** (for example `/Students/Grade 9`) becomes the asset's **Location**, written as a path:
-  **Students > Grade 9**. Google's own **Location** note goes to the custom field **Annotated location (Chromebook)**.
-  If you would rather use the organisational unit as the **department**, change the target of that column in **Goes
-  to**.
+- Google's **Org unit path** (for example `/Students/Grade 9`) becomes the asset's **Department**, named
+  **Students / Grade 9**. An existing department with the same name, or named after the last part (**Grade 9**), is
+  used instead of a new one. Google's own **Location** note goes to the custom field **Annotated location
+  (Chromebook)**; it does not create a location. To give the devices a location, add your own location column and map it
+  to **Location**.
 - **User** goes to **Assigned to**: the Chromebook is checked out to that person. (The setting **Check an asset out to
   the person in "Assigned to"** under **Duplicates and settings** is ticked for you. Untick it if you only want the
   devices, not who has them.)
@@ -62,33 +67,38 @@ Press **Continue**.
 
 ### 4. Check how the statuses are matched
 
-If a **Match values** screen appears, look at the **Status** rows. Google's statuses are matched like this:
+If a **Match values** screen appears, look at the **Status** and **Department** rows. Google's statuses are matched
+like this:
 
 | Google says     | The tracker uses                                                    |
 | --------------- | ------------------------------------------------------------------- |
 | `ACTIVE`        | your default "ready" status (in the demo data: **Ready to deploy**) |
 | `PROVISIONED`   | the same                                                            |
-| `DISABLED`      | an undeployable status (in the demo data: **In repair**)            |
-| `DEPROVISIONED` | an archived status (in the demo data: **Retired**)                  |
+| `DISABLED`      | your archived status (in the demo data: **Retired**)                |
+| `DEPROVISIONED` | the same                                                            |
 
-Change any of them with **Your choice** if your school uses other words. Remember that a Chromebook with an
-undeployable status such as **In repair** cannot be lent from a loaner cart. The import does not write a repair record
-for it (see [Log a repair](05-log-a-repair.md)).
+Change any of them with **Your choice** if your school uses other words. A **Retired** Chromebook cannot be lent from a
+loaner cart; the import writes no repair record for it (see [Log a repair](05-log-a-repair.md)).
+
+Each organisational unit is a **Department** row. A unit that matches an existing department (same name, or the same last
+part) uses it; any other unit is created as a new department. Point a unit at one of your existing departments with
+**Use an existing one**, or skip it with **Leave it empty** (the devices of that unit get no department), if you do not
+want a new department for it.
 
 Press **Run the dry run**.
 
 ### 5. Read the dry run
 
 Nothing is saved yet. The boxes show how many devices will be created or updated. The list **Records the import would
-create on the way** shows the new models and locations (for example **Students > Grade 9**), and the table shows every
+create on the way** shows the new models and departments (for example **Students / Grade 9**), and the table shows every
 device.
 
 ![The dry run of the Google export](img/02-google-dryrun.png)
 
-Every row carries the note "A category, model or other reference is created by this import; the rest of the checks run
-when it is committed." That is normal on a first import: the checks of those fields can only be finished once the
-models and places exist. Rows that really have a problem are listed under **Errors**; see
-[Import your spreadsheet](01-import-your-spreadsheet.md) for how to read and fix them.
+Under the banner, one line says what was checked: every row was checked as it will be imported, including against the
+category, models and departments the import creates on the way. Only what changes before you press **Import** (a tag
+or serial number someone else takes in the meantime) is decided then. Rows that really have a problem are listed under
+**Errors**; see [Import your spreadsheet](01-import-your-spreadsheet.md) for how to read and fix them.
 
 ### 6. Import
 
@@ -96,7 +106,9 @@ Press **Import 10 rows**. When it is done, **Import finished** shows what was cr
 
 ![The finished import](img/02-google-done.png)
 
-Press **View assets**. The Chromebooks are in the register, with their holder, location and status.
+Press **View assets**. The Chromebooks are in the register, with their holder, department and status. The disabled and
+deprovisioned ones show **Retired**, and the departments from the organisational units are listed under **Settings**,
+**Departments**.
 
 ![The imported Chromebooks in the asset list](img/02-google-assets.png)
 
@@ -114,9 +126,9 @@ updated. An asset that is checked out to somebody keeps its status.
 | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Starting this import creates the Chromebook category … That needs permission to manage the catalogue." | Ask an Administrator to run the first import. Later imports need no extra permission.                                                                 |
 | A row says a record "does not exist" for the **User**                                                   | That person is not in **People** yet, or the e-mail address is different. Import the people first, or fix the address, and run the import again.      |
-| A device appears as **In repair** and nobody logged a repair                                            | It was **DISABLED** in Google. Change its status in the register, or log a real repair for it.                                                        |
+| A device shows **Retired**                                                                              | It was **DISABLED** or **DEPROVISIONED** in Google. Re-enable it in Google and import again, or change its status in the register.                    |
 | Devices have no asset tag you recognise                                                                 | Their **Asset ID** was empty in Google. The tracker gave them the next number of your tag numbering. Fill in the Asset ID in Google and import again. |
-| New top-level places such as **Students** or **Staff** appeared                                         | They come from the **Org unit path**. Move them under your site in **Locations**, or change the target of the column to **Department**.               |
+| New departments such as **Students / Grade 9** or **Staff** appeared                                    | They come from the **Org unit path**. Rename or merge them under **Departments**, or map the units to existing departments in **Match values**.       |
 | The same device is listed twice                                                                         | Two rows have the same serial number: the first wins and the second is **Skipped**.                                                                   |
 
 ## Related guides

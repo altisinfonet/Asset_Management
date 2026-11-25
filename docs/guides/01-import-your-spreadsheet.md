@@ -104,6 +104,12 @@ Nothing has been saved yet.**
 
 The four boxes tell you the story: **Will create**, **Will update**, **Skipped** and **Errors**. Under them:
 
+- One line under the banner says what was checked now: every row, including against the categories, models, locations
+  and departments the import creates on the way (they are made for the check and taken back). Only what can change
+  before you press **Import** (a tag or serial number someone else takes, a record someone edits) is decided then. In a
+  locations import, the rows below a parent location that the same import creates are counted in that line too: their
+  last checks run when you import.
+
 - **Why rows were rejected** lists the problems, in plain words, with the column they are about.
 - **Records the import would create on the way** lists the places and models that will be made, for example the new
   room in the example.

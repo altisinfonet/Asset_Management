@@ -30,6 +30,11 @@ user**:
 
 ![Inviting Alice with her new address](img/07-invite.png)
 
+Until Alice accepts, the login is listed on the **Users** tab with a **Pending** badge. From its **...** menu you can
+already give it access, link it to a person, resend or revoke the invitation.
+
+![A pending login on the Users tab](img/07-users-pending.png)
+
 Alice follows the link in her mail and chooses a password. Every login automatically gets a person record, so the
 tracker made an **empty** one with her name. **People** now shows two Alices:
 
@@ -50,7 +55,7 @@ the empty record is archived.
 ## Before you start
 
 - The **login exists**. It may still be an invitation that has not been accepted yet: it is offered, marked
-  "invited".
+  "pending invitation", and it is on the **Users** tab with a **Pending** badge, so it can be linked from there too.
 - The **person you want is not linked to another login**. A person has at most one login, and a login has one person.
 - The **empty record the login came with holds no devices**. If somebody already checked a device out to it by mistake,
   check it in or transfer it first.
@@ -66,7 +71,12 @@ Go to **People**, search for the person, and open them. The line **Login** says 
 ### 2. Link the login
 
 1. Press **Link to a login**. The window **Link Alice Johansen to a login** opens.
-2. In **Login account** type a name or an e-mail address and choose the account.
+2. In **Login account** type a name or an e-mail address and choose the account. Under each name the list shows the
+   e-mail address and the roles of the account (and "pending invitation" for one that is not accepted yet), so two
+   accounts with the same name can be told apart.
+
+   ![The login picker shows the e-mail address and the roles under each name](img/07-link-picker.png)
+
 3. Read the blue sentence. It says exactly what will happen: "Alice Johansen will sign in as alice.j@acme.example. The
    empty person record the login came with is archived. Everything Alice Johansen holds, and the whole history, stays as
    it is."
@@ -79,8 +89,8 @@ and shows the login, with a button **Unlink login**.
 
 ![The person after linking](img/07-person-linked.png)
 
-You can do the same from the other side: in **Settings**, **Users and roles**, press **...** at the login, choose **Link to
-a person**, and choose the person (only people without a login are offered). The list now shows the person in the
+You can do the same from the other side: in **Settings**, **Users and roles**, press **...** at the login (a pending one
+too), choose **Link to a person**, and choose the person (only people without a login are offered). The list now shows the person in the
 **Person** column.
 
 ![The Users list shows the person next to each login](img/07-users-person.png)
@@ -111,7 +121,7 @@ roles**.
 
 | What you see                                                 | What to do                                                                                                             |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| The login you want is not in the list                        | Type more of the name or the e-mail address: the list shows the accounts that match what you typed.                    |
+| The login you want is not in the list                        | Type more of the name or the e-mail address: the list shows the accounts that match what you typed, with their e-mail. |
 | The person you want is not offered on the Users screen       | They already have a login. Open them under **People** and unlink first.                                                |
 | A message says the person already has a login                | Unlink that login first, then link the new one.                                                                        |
 | A message says the login already has a person somebody chose | The login is linked to a person that someone picked on purpose. Unlink it first.                                       |

@@ -4,8 +4,8 @@ Step-by-step guides for the people who set up and run the Asset Tracker in a sch
 office administrators. No technical knowledge is assumed. Each guide has the same parts: **Before you start**, numbered
 **Steps** with screenshots, **If something goes wrong**, and links to related guides.
 
-These are **drafts** (backlog story M2-DOC-01). They describe the web app as of **version 0.2.6** and use the real button
-and label texts. The screenshots come from the demo data and are made by a script, so they can be remade after the
+These are **drafts** (backlog story M2-DOC-01). They describe the web app as of **version 0.2.6 plus the unreleased changes
+of wave 3 part 2** (add and remove access, the ED-29 fixes) and use the real button and label texts. The screenshots come from the demo data and are made by a script, so they can be remade after the
 screens change: see [`tools/README.md`](tools/README.md).
 
 ## The guides
@@ -31,8 +31,8 @@ A good order for a school that starts from nothing: 8 (decide what goes where), 
   Administrator.
 - **Words.** "Asset" is any device or item you track. A "person" is somebody who can hold assets; a "user" is somebody who
   signs in (see guide 7). A "pool" is a set of loaner devices.
-- **Drafts.** A guide that needs a screen that is still changing says so at the top (guide 6). Tell us where a guide is
-  unclear or wrong.
+- **Drafts.** A guide that needs a screen that is still changing says so at the top. Tell us where a guide is unclear or
+  wrong.
 
 Developers: the technical reference is in [`../engineering/developer-guide.md`](../engineering/developer-guide.md), the
 feature list in [`../FEATURES.md`](../FEATURES.md), and how to run the whole thing in

@@ -159,6 +159,9 @@ async function shot(
       window.scrollTo(0, 0);
       for (const el of document.querySelectorAll('main, [data-scroll], body > div'))
         if (el.scrollTop) el.scrollTop = 0;
+      // a table that scrolls sideways may have been scrolled by a focused button (the row's actions
+      // after a dialog closes): show it from its first column
+      for (const el of document.querySelectorAll('main *')) if (el.scrollLeft) el.scrollLeft = 0;
     });
     const locators = Array.isArray(region) ? region : [region];
     const boxes = [];
@@ -507,7 +510,8 @@ stages.loaners = async ({ admin }) => {
     admin,
     '04-desk-lend',
     [deskTitle, admin.getByRole('button', { name: /^Lend \d+ devices?$/ })],
-    { height: 1500, wide: true },
+    // padBottom: the hint under the button stays in the picture
+    { height: 1500, wide: true, padBottom: 40 },
   );
   await admin.getByRole('button', { name: /^Lend \d+ devices?$/ }).click();
   await admin.getByTestId('desk-feedback').waitFor();
@@ -532,6 +536,28 @@ stages.loaners = async ({ admin }) => {
   });
   await returned.fill('TAB-102');
   await returned.press('Enter');
+  await admin.getByText('TAB-102 returned.').first().waitFor();
+
+  // 5b. the next available device: TAB-101 and TAB-102 were just lent, TAB-103 never was, so the
+  // pool picks TAB-103 (idle the longest: never lent first, then the lowest tag)
+  await admin.goto(`${BASE_URL}/loaners/desk`);
+  await admin.getByRole('combobox', { name: 'Lend from' }).click();
+  await admin.getByRole('option', { name: POOL_NAME }).click();
+  const nextBorrower = admin.getByLabel('Borrower', { exact: true });
+  await nextBorrower.fill('S-2008');
+  await nextBorrower.press('Enter');
+  const nextButton = admin.getByRole('button', { name: 'Lend next available device' });
+  // click() waits until the button is enabled, that is until the borrower is chosen
+  await nextButton.click();
+  await admin.getByTestId('desk-feedback').waitFor();
+  await settle(admin, 600);
+  await park(admin);
+  await shot(
+    admin,
+    '04-desk-next',
+    [deskTitle, admin.getByTestId('desk-feedback'), nextButton, admin.locator('#desk-next-hint')],
+    { height: 1500, wide: true },
+  );
 
   // 6. the dashboard and the alerts
   await admin.goto(`${BASE_URL}/loaners`);
@@ -554,7 +580,7 @@ stages.loaners = async ({ admin }) => {
     '04-home-overdue',
     [
       admin.getByRole('heading', { name: 'Needs attention' }),
-      admin.getByRole('link', { name: 'Loaner dashboard' }),
+      admin.getByRole('link', { name: 'Overdue loans only' }),
     ],
     { height: 1500 },
   );
@@ -623,20 +649,17 @@ stages.repair = async ({ admin }) => {
     { height: 900 },
   );
 
-  // the desk refuses it
-  const pools = await must(api(admin, 'GET', '/v1/loaner-pools'), 'pools');
-  const cart = pools.data.find((p) => p.name === 'Chromebook cart');
+  // the desk refuses it the moment it is scanned, naming its status
   await admin.goto(`${BASE_URL}/loaners/desk`);
   await admin.getByRole('combobox', { name: 'Lend from' }).click();
   await admin.getByRole('option', { name: 'Chromebook cart' }).click();
   const device = admin.getByLabel('Device', { exact: true });
   await device.fill('CHR-00006');
   await device.press('Enter');
-  const borrower = admin.getByLabel('Borrower', { exact: true });
-  await borrower.fill('S-2011');
-  await borrower.press('Enter');
-  await admin.getByRole('button', { name: /^Lend \d+ devices?$/ }).click();
-  await admin.getByTestId('desk-feedback').waitFor();
+  await admin
+    .getByText('CHR-00006 is In repair and cannot be lent. Choose another device.')
+    .first()
+    .waitFor();
   await settle(admin, 800);
   await park(admin);
   await shot(
@@ -645,11 +668,9 @@ stages.repair = async ({ admin }) => {
     [
       admin.getByRole('heading', { name: 'Loaner desk', level: 1 }),
       admin.getByTestId('desk-feedback'),
-      admin.getByRole('list', { name: 'Devices to lend' }),
     ],
     { height: 1500, wide: true },
   );
-  void cart;
 
   // close the repair
   await admin.goto(`${BASE_URL}/repairs`);
@@ -752,6 +773,22 @@ stages.people = async (ctx, browser) => {
   await shot(owner, '07-invite', invite, { pad: 4 });
   await invite.getByRole('button', { name: 'Send invitation' }).click();
   await owner.getByText(`Invitation sent to ${loginEmail}.`).first().waitFor();
+  // until it is accepted, the login is on the Users tab with a "Pending" badge
+  await owner.keyboard.press('Escape');
+  await owner.goto(`${BASE_URL}/settings/users`);
+  await owner
+    .getByRole('row', { name: /Alice Johansen/ })
+    .first()
+    .waitFor();
+  await settle(owner, 800);
+  await park(owner);
+  await shot(
+    owner,
+    '07-users-pending',
+    [owner.getByRole('heading', { name: 'Users and roles' }), owner.locator('table').first()],
+    // wider than the 1280 px window: the Users table needs about 1400 px to show every column
+    { height: 1200, wide: true, width: 1500 },
+  );
   // Alice follows the link in her mail and chooses a password: now the login is a real one
   await acceptInvitation(browser, loginEmail, 'Alice Johansen', 'Alice-Johansen-Passw0rd-2026');
 
@@ -798,6 +835,15 @@ stages.people = async (ctx, browser) => {
   const dialog = owner.getByRole('dialog', { name: /^Link .* to a login$/ });
   await dialog.waitFor();
   await dialog.getByRole('combobox', { name: /^Login account/ }).fill('alice.j');
+  // the list shows the email and the roles under each name
+  const options = owner.getByRole('listbox');
+  await options
+    .getByRole('option', { name: /alice\.j@acme\.example/ })
+    .first()
+    .waitFor();
+  await settle(owner, 400);
+  await park(owner);
+  await shot(owner, '07-link-picker', [dialog, options], { pad: 4 });
   await owner
     .getByRole('option', { name: /alice\.j@acme\.example/ })
     .first()
@@ -827,7 +873,8 @@ stages.people = async (ctx, browser) => {
     owner,
     '07-users-person',
     [owner.getByRole('heading', { name: 'Users and roles' }), owner.locator('table').first()],
-    { height: 1200, wide: true },
+    // wider than the 1280 px window: the Users table needs about 1400 px to show every column
+    { height: 1200, wide: true, width: 1500 },
   );
 
   // unlinking: only look at the question, do not confirm
@@ -859,27 +906,34 @@ stages.scope = async (ctx, browser) => {
     );
   }
 
-  await owner.goto(`${BASE_URL}/settings/users`);
-  await settle(owner, 1000);
-  await owner.getByRole('button', { name: 'Actions for Demo Technician' }).click();
-  await owner.getByRole('menuitem', { name: 'Change role and access' }).click();
-  const dialog = owner.getByRole('dialog', { name: 'Role and access of Demo Technician' });
-  await dialog.waitFor();
+  // the access dialog: Technician for the whole organisation, the only access (cannot be removed)
+  const dialog = await openAccess(owner, 'Demo Technician');
   await park(owner);
   await shot(owner, '06-access-dialog', dialog, { pad: 4 });
-  await choose(owner, /^Access/, 'Limited to a location');
-  await choose(owner, /^Location/, /^Bergen campus \(BGO\)$/);
+  // add Technician limited to the Bergen campus, then remove the whole-organisation access
+  const add = await addAccess(owner, dialog, 'Demo Technician', 'Technician', 'Bergen campus');
   await park(owner);
-  await shot(owner, '06-access-dialog-limited', dialog, { pad: 4 });
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await owner.getByText('Role and access of Demo Technician saved.').first().waitFor();
+  await shot(owner, '06-access-dialog-limited', add, { pad: 4 });
+  await add.getByRole('button', { name: 'Add access' }).click();
+  await owner.getByText('Access added for Demo Technician.').first().waitFor();
+  await dialog.getByText('Technician at Bergen campus').waitFor();
+  await dialog.getByRole('button', { name: 'Remove access: Technician', exact: true }).click();
+  const confirm = owner.getByRole('dialog', { name: 'Remove this access?' });
+  await confirm.waitFor();
+  await park(owner);
+  await shot(owner, '06-remove-dialog', confirm, { pad: 4 });
+  await confirm.getByRole('button', { name: 'Remove' }).click();
+  await owner.getByText('Access removed from Demo Technician.').first().waitFor();
+  await settle(owner, 600);
+  await dialog.getByRole('button', { name: 'Close' }).first().click();
   await settle(owner, 800);
   await park(owner);
   await shot(
     owner,
     '06-users-scoped',
     [owner.getByRole('heading', { name: 'Users and roles' }), owner.locator('table').first()],
-    { height: 1200, wide: true },
+    // wider than the 1280 px window: the Users table needs about 1400 px to show every column
+    { height: 1200, wide: true, width: 1500 },
   );
 
   // what the technician sees now
@@ -931,19 +985,61 @@ stages.scope = async (ctx, browser) => {
   );
   await tech.context().close();
 
-  // undo: back to the whole organisation
-  await owner.goto(`${BASE_URL}/settings/users`);
-  await settle(owner, 1000);
-  await owner.getByRole('button', { name: 'Actions for Demo Technician' }).click();
-  await owner.getByRole('menuitem', { name: 'Change role and access' }).click();
-  const back = owner.getByRole('dialog', { name: 'Role and access of Demo Technician' });
-  await back.waitFor();
-  await choose(owner, /^Access/, 'Whole organisation');
+  // undo: add the whole organisation again, then remove the limited access
+  const back = await openAccess(owner, 'Demo Technician');
+  const whole = await addAccess(owner, back, 'Demo Technician', 'Technician', null);
+  await whole.getByRole('button', { name: 'Add access' }).click();
+  await owner.getByText('Access added for Demo Technician.').first().waitFor();
+  await back.getByRole('button', { name: 'Remove access: Technician', exact: true }).waitFor();
+  await settle(owner, 600);
   await park(owner);
   await shot(owner, '06-undo-dialog', back, { pad: 4 });
-  await back.getByRole('button', { name: 'Save' }).click();
-  await owner.getByText('Role and access of Demo Technician saved.').first().waitFor();
+  await back.getByRole('button', { name: 'Remove access: Technician at Bergen campus' }).click();
+  const undo = owner.getByRole('dialog', { name: 'Remove this access?' });
+  await undo.getByRole('button', { name: 'Remove' }).click();
+  await owner.getByText('Access removed from Demo Technician.').first().waitFor();
 };
+
+/** Opens Settings -> Users -> Actions -> Change role and access of a user; returns the dialog. */
+async function openAccess(owner, name) {
+  await owner.goto(`${BASE_URL}/settings/users`);
+  await settle(owner, 1000);
+  await owner.getByRole('button', { name: `Actions for ${name}` }).click();
+  await owner.getByRole('menuitem', { name: 'Change role and access' }).click();
+  const dialog = owner.getByRole('dialog', { name: `Role and access of ${name}` });
+  await dialog.waitFor();
+  await settle(owner, 400);
+  return dialog;
+}
+
+/**
+ * Presses "Add access" in the access dialog and fills in the role and the access (a location name,
+ * or null for the whole organisation). Returns the filled-in "Add access for ..." dialog, unsent.
+ */
+async function addAccess(owner, dialog, name, role, location) {
+  await dialog.getByRole('button', { name: 'Add access' }).click();
+  const add = owner.getByRole('dialog', { name: `Add access for ${name}` });
+  await add.waitFor();
+  await choose(owner, /^Role/, role);
+  if (location) {
+    await choose(owner, /^Access/, 'Limited to a location');
+    // the select hands the focus back to its trigger after it closes: wait, or the typing is lost
+    const access = add.getByRole('combobox', { name: /^Access/ });
+    for (let i = 0; i < 20; i++) {
+      if (await access.evaluate((el) => el === document.activeElement)) break;
+      await sleep(100);
+    }
+    await add.getByRole('combobox', { name: /^Location/ }).fill(location);
+    await owner
+      .getByRole('option', { name: new RegExp(location) })
+      .first()
+      .click();
+  } else {
+    await choose(owner, /^Access/, 'Whole organisation');
+  }
+  await settle(owner, 300);
+  return add;
+}
 
 /** Guide 8: schools (K-12). */
 stages.k12 = async (ctx, browser) => {

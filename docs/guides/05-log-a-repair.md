@@ -58,7 +58,8 @@ Open the asset. Its status is now **In repair**.
 
 ![The asset page after logging the repair](img/05-asset-in-repair.png)
 
-From now on the device is **not deployable**. At the loaner desk it is refused:
+From now on the device is **not deployable**. At the loaner desk it is refused the moment it is scanned: "CHR-00006 is
+In repair and cannot be lent. Choose another device."
 
 ![The loaner desk refuses a device that is in repair](img/05-desk-refuses.png)
 
@@ -98,7 +99,7 @@ The device is deployable again:
 ## When a status says "in repair" but no repair exists
 
 Changing a status by hand to **In repair** or **Broken** does **not** create a repair record. That also happens when
-devices come in with such a status, for example **Disabled** Chromebooks in a Google Admin import. The asset form and
+devices come in with such a status from a spreadsheet import. The asset form and
 the asset page then say: "No repair is logged for this asset. Log a repair to track the problem, supplier and cost."
 Press **Log a repair** there to open the repair window for that asset. Devices that are only **Broken** (nobody is fixing
 them yet) need no repair record, but then nobody tracks the cost either.
@@ -117,4 +118,5 @@ them yet) need no repair record, but then nobody tracks the cost either.
 ## Related guides
 
 - [Run a loaner day](04-run-a-loaner-day.md): a device in repair is shown as **Not available** in its pool.
-- [Import from Google Admin (ChromeOS)](02-import-from-google-admin.md): disabled devices arrive as **In repair**.
+- [Import from Google Admin (ChromeOS)](02-import-from-google-admin.md): disabled devices arrive as **Retired**, not **In
+  repair**.

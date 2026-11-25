@@ -15,8 +15,9 @@ open to Technicians. Everybody else can look at the dashboard.
 - **The borrowers are in People.** The desk finds a person by a scanned card or by typing a name, an e-mail address or a
   number. For students the number is the **Employee or student number**; see
   [Schools (K-12)](08-schools-k12-mapping.md).
-- **A device that is not deployable cannot be lent.** A device with a status such as **In repair** or **Broken** is
-  refused at the desk. See [Log a repair](05-log-a-repair.md).
+- **A device that is not deployable cannot be lent.** A device that is **In repair**, **Broken** or **Retired** is
+  refused at the desk the moment it is scanned: "CB-0007 is In repair and cannot be lent. Choose another device." See
+  [Log a repair](05-log-a-repair.md).
 - **A device is in one pool at most.**
 
 ## Part 1: Set up a pool
@@ -25,8 +26,10 @@ open to Technicians. Everybody else can look at the dashboard.
 
 Open **Loaners**, then the **Pools** tab. At the top, **Loan defaults** has two numbers for the whole organisation:
 
-- **Return date offered at check-out (days from today)**: the length of a loan for a pool that has no length of its own.
-  Leave it empty to use 7 days.
+- **Return date offered at check-out (days from today)**: the return date a regular check-out starts with, and the length
+  of a loan for a pool that has no length of its own. The hint under it reads "Leave empty to offer no date at check-out.
+  Loaner pools without their own length then lend for 7 days.": a pool with no length of its own, in an organisation that
+  leaves this empty, lends for 7 days.
 - **Remind the borrower (days before the due date)**: when the "due soon" reminder is sent. `0` sends no reminder.
 
 ![The pools page with the loan defaults](img/04-pools.png)
@@ -39,7 +42,8 @@ Press **New pool** and fill in the window **New loaner pool**:
 
 - **Name** and **Description**.
 - **Home location**: where returned devices go back to, unless the return says otherwise.
-- **Default loan length (days)**: how long a loan lasts. Leave it empty to use the organisation default, or 7 days.
+- **Default loan length (days)**: how long a loan lasts. Leave it empty to use the organisation default; if that is
+  empty too, the pool lends for 7 days.
 - **Longest loan (days)**: no loan can be longer. Empty means no limit.
 - **Devices per borrower**: for example 1 for a tablet cart. Empty means no limit.
 - **Who may borrow**: tick the kinds of people (**Employees**, **Students**, **Contractors**, **External people**) the pool
@@ -94,15 +98,25 @@ anywhere on the page, and with a keyboard.
 ![The desk, ready to lend two tablets to a student](img/04-desk-lend.png)
 
 The desk confirms in green, for example "2 devices lent to Ivar Moen, due Nov 28, 2026." If some devices could not be
-lent, the message says so and the list shows the reason next to each one (for instance "CHR-00006 cannot be lent right
-now.").
+lent, the message says so and the list shows the reason next to each one (for instance "CHR-00006 is already out.").
 
 ![The desk after lending](img/04-desk-lent.png)
 
-**Which device to hand out?** The desk lends the device you scan, so take any device that shows **Available** on the pool
-page. The tracker's own rule for "give me a device from this pool" is: the device that has been resting the longest (one
-that was never lent comes first, then by tag), so the wear is spread over the cart. That rule is used when something asks
-the pool for "the next available device" without naming one; the desk screen itself has no button for it today.
+### Lend the next available device
+
+No device in hand, or no preference? Let the pool choose:
+
+1. Choose the pool in **Lend from** and find the **Borrower** (scan the card or type a name). The button needs a
+   borrower; the device list stays empty.
+2. Check the **Due date**.
+3. Press **Lend next available device**.
+
+The pool picks the device that has been idle the longest (one that was never lent comes first; between equals, the
+lowest tag), so the wear is spread over the cart. It is lent to the borrower at once, and its tag is shown large: "TAB-103
+is the next available device: lent to Ivar Moen, due Nov 28, 2026. Hand over TAB-103." Take that device from the cart.
+If nothing is free, the desk says "No device of this pool is free."
+
+![The desk after lending the next available device](img/04-desk-next.png)
 
 ### Take devices back
 
@@ -121,7 +135,7 @@ The device goes back to the pool's **Home location**.
 ### The dashboard
 
 Open **Loaners**. At the top, the numbers for all pools together: **In pools**, **Available**, **On loan** and
-**Overdue**. Each pool has a card with its own **Available**, **On loan**, **Overdue** and **Due today**.
+**Overdue loans**. Each pool has a card with its own **Available**, **On loan**, **Overdue loans** and **Due today**.
 
 Under it, **Overdue loans** lists every overdue device with the borrower, how to reach them (e-mail and number) and **how
 late** it is. Use the list above the table to look at one pool. **Recent activity** shows the last loans and returns.
@@ -131,7 +145,9 @@ late** it is. Use the list above the table to look at one pool. **Recent activit
 To give a borrower more time, press **Extend** next to the loan, choose **New due date** (it must be later than the
 current one and within what the pool allows), add a reason if you want, and press **Extend loan**.
 
-The main **Dashboard** also has a panel **Overdue check-outs** with a link **Loaner dashboard**.
+The main **Dashboard** has a tile and a panel **Overdue check-outs**: every checked-out device past its return date,
+loans included, so its number can be higher than **Overdue loans**. The link **Overdue loans only** under the panel opens
+the loaner dashboard.
 
 ![Overdue check-outs on the main dashboard](img/04-home-overdue.png)
 
@@ -166,20 +182,20 @@ to it.
 
 ## If something goes wrong
 
-| What you see                                              | What to do                                                                                                                          |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| "No device matches …"                                     | The tag is wrong or the label is damaged. Type the tag by hand, or search for the device in **Assets**.                             |
-| "… is not in this loaner pool. Add it to the pool first." | Open the pool and press **Add device**.                                                                                             |
-| "… is already out."                                       | The device is on loan. Return it first (it may have come back without being scanned).                                               |
-| "… cannot be lent right now."                             | The device is not deployable (**In repair**, **Broken**, lost). Fix its status or log the repair as closed.                         |
-| "… already holds the most devices this pool allows."      | The borrower is at the limit. Take a device back first, or raise **Devices per borrower** (Administrators).                         |
-| "… is not one of the people this pool lends to."          | The pool lends only to some kinds of people. Change **Who may borrow**, or check the person's **Kind**.                             |
-| "… is inactive and cannot borrow."                        | The person is marked inactive in **People**. Make them active again.                                                                |
-| "Nobody matches that borrower."                           | Type a name or the number differently, or add the person under **People**.                                                          |
-| "This pool is switched off and lends nothing."            | Edit the pool and tick **Lend devices from this pool**.                                                                             |
-| "No device of this pool is free."                         | Everything is out. Check **Overdue loans** and call the borrowers.                                                                  |
-| "The new date must be later than the current one."        | Choose a later date when extending.                                                                                                 |
-| Nobody got a reminder                                     | Check that the borrower has an e-mail address, that the pool's e-mail setting allows it, and that **Remind the borrower** is not 0. |
+| What you see                                                | What to do                                                                                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| "No device matches …"                                       | The tag is wrong or the label is damaged. Type the tag by hand, or search for the device in **Assets**.                             |
+| "… is not in this loaner pool. Add it to the pool first."   | Open the pool and press **Add device**.                                                                                             |
+| "… is already out."                                         | The device is on loan. Return it first (it may have come back without being scanned).                                               |
+| "… is In repair and cannot be lent. Choose another device." | The device is not deployable (**In repair**, **Broken**, **Retired**). Lend another one, or close the repair first.                 |
+| "… already holds the most devices this pool allows."        | The borrower is at the limit. Take a device back first, or raise **Devices per borrower** (Administrators).                         |
+| "… is not one of the people this pool lends to."            | The pool lends only to some kinds of people. Change **Who may borrow**, or check the person's **Kind**.                             |
+| "… is inactive and cannot borrow."                          | The person is marked inactive in **People**. Make them active again.                                                                |
+| "Nobody matches that borrower."                             | Type a name or the number differently, or add the person under **People**.                                                          |
+| "This pool is switched off and lends nothing."              | Edit the pool and tick **Lend devices from this pool**.                                                                             |
+| "No device of this pool is free."                           | Everything is out. Check **Overdue loans** and call the borrowers.                                                                  |
+| "The new date must be later than the current one."          | Choose a later date when extending.                                                                                                 |
+| Nobody got a reminder                                       | Check that the borrower has an e-mail address, that the pool's e-mail setting allows it, and that **Remind the borrower** is not 0. |
 
 ## Related guides
 

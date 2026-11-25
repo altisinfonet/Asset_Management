@@ -31,12 +31,14 @@ import {
 import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
 import {
   CHROMEBOOK_CATEGORY,
+  deferredRowsOf,
   errorGroupsOf,
   isKnownCode,
   progressPercent,
   rowKey,
   rowQueryFor,
   rowsToWrite,
+  rowWarnings,
   setupOf,
   willCreateOf,
   type RowFilter,
@@ -57,7 +59,8 @@ const OUTCOME: Record<Plan, { tone: NonNullable<BadgeProps['tone']>; icon: Lucid
 /** The row's problems and notes, errors first; each with the field it is about when it has one. */
 export function RowProblems({ row }: { row: ImportRow }) {
   const { t } = useI18n();
-  if (row.errors.length === 0 && row.warnings.length === 0) {
+  const warnings = rowWarnings(row.warnings);
+  if (row.errors.length === 0 && warnings.length === 0) {
     return <span className="text-muted">{t('importReview.noProblem')}</span>;
   }
   return (
@@ -67,7 +70,7 @@ export function RowProblems({ row }: { row: ImportRow }) {
           {e.message}
         </span>
       ))}
-      {row.warnings.map((w) => (
+      {warnings.map((w) => (
         <span key={`w-${w.code}-${w.field}-${w.message}`} className="text-muted">
           {w.message}
         </span>
@@ -118,6 +121,7 @@ export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean })
   const toWrite = rowsToWrite(job);
   const errorGroups = errorGroupsOf(job);
   const willCreate = willCreateOf(job);
+  const deferred = deferredRowsOf(job);
   const setup = setupOf(job);
   const reasonOf = (code: string) => (isKnownCode(code) ? t(`importCodes.${code}`) : code);
   const setupText = setup
@@ -268,6 +272,12 @@ export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean })
       </div>
       <Banner tone="info">{t('importReview.banner')}</Banner>
       {setupText ? <Banner tone="info">{setupText}</Banner> : null}
+      <div className="flex flex-col gap-1 text-sm text-muted" data-testid="import-checks-note">
+        <p>{t('importReview.checksNote')}</p>
+        {deferred > 0 ? (
+          <p className="text-text">{t('importReview.deferred', { count: deferred })}</p>
+        ) : null}
+      </div>
 
       <ul
         aria-label={t('importReview.tilesLabel')}

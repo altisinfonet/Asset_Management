@@ -203,7 +203,8 @@ export const en = {
     ready: 'Ready',
     assigned: 'Assigned',
     inRepair: 'Not deployable',
-    overdue: 'Overdue',
+    // every checked-out asset past its return date, loans included (the asset list's "Overdue only")
+    overdue: 'Overdue check-outs',
     tileCount: '{label}: {count}',
     tileUnavailable: 'unavailable',
     total: 'All assets',
@@ -249,11 +250,12 @@ export const en = {
     noAccess: 'Your role has no dashboard summaries. Use the menu to open the lists you can see.',
     overduePanel: {
       title: 'Overdue check-outs',
+      hint: 'Every checked-out asset past its return date, loans included.',
       empty: 'Nothing is overdue. Every checked-out asset is within its return date.',
       due: 'Due {date}',
       heldBy: 'Held by {name}',
       noHolder: 'Holder not shown',
-      loanerLink: 'Loaner dashboard',
+      loanerLink: 'Overdue loans only',
     },
     stockPanel: {
       title: 'Low stock',

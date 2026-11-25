@@ -1618,7 +1618,7 @@ export interface paths {
         put?: never;
         /**
          * Run the import without writing
-         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
+         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. The references the commit would create (category, model, location, department, person...) are created for real inside a savepoint that is rolled back after each batch, so a row that needs one is checked like any other row (ED-29); only a location below a parent the same import creates is left to the commit (counted in `summary.validated_at_commit`, row warning `validated-at-commit`). **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
          *
          *     The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).
          *
@@ -3142,6 +3142,50 @@ export interface paths {
          *     Requires permission `user:manage`.
          */
         delete: operations["resetUserMfa"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{id}/role-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a role assignment to a user
+         * @description Adds ONE role assignment (a role for the whole organisation, or limited to a location subtree with `scope_type=location` and `location_id`, ED-26) to the user and returns the updated user with its new `ETag`. The rules of `PATCH /v1/users/{id}` apply: nobody grants a role with permissions they lack or wider than they hold them (`403`), a location-scoped assignment never grants the org-only permissions, an unknown or archived role or location is `422` (`/role_id`, `/location_id`). `409 conflict` when the user already holds the same role with the same scope or already has 20 assignments. The target's sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_assigned`).
+         *
+         *     Requires permission `user:manage`.
+         */
+        post: operations["addUserRoleAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{id}/role-assignments/{assignment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a role assignment of a user
+         * @description Removes ONE role assignment and returns the updated user with its new `ETag`. `404` for an assignment that is not this user's. `409 conflict` (the user is unchanged) when it is the user's only assignment (add another first, or disable or archive the user), when it is the assignment that makes the last active administrator an administrator, or when it would remove your own last administrator access (`user:manage` for the whole organisation). The target's sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_removed`).
+         *
+         *     Requires permission `user:manage`.
+         */
+        delete: operations["removeUserRoleAssignment"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5079,7 +5123,7 @@ export interface components {
             person_id: string;
             /**
              * Format: uuid
-             * @description A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).
+             * @description A specific pool member. If omitted, the next available member is chosen (ED-24: the member idle the longest, a device never lent first, ties by the lowest asset tag; the answer names it).
              */
             asset_id?: string;
             /**
@@ -6440,7 +6484,7 @@ export interface components {
             /** @description The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole. */
             field: string | null;
             message: string;
-            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`... */
+            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `validated-at-commit`, `unchanged`... */
             code: string;
         };
         ImportJob: {
@@ -6509,7 +6553,7 @@ export interface components {
             cancel_requested: boolean;
             /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
             error: string | null;
-            /** @description After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created). */
+            /** @description After a dry run: `counts`, `errors_by_code`, `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created). */
             summary: {
                 [key: string]: unknown;
             } | null;
@@ -6537,7 +6581,7 @@ export interface components {
         ImportCreate: {
             /** @enum {string} */
             entity_type: "asset" | "person" | "location" | "department";
-            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then). */
+            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then); it maps the org unit path to the department (one value-map entry per unit, created when missing: `department:manage`) and Disabled / Deprovisioned devices to the archived (Retired) status (ED-29). */
             preset_key?: string;
             options?: components["schemas"]["ImportOptions"];
         };
@@ -16624,6 +16668,100 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    addUserRoleAssignment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleAssignment"];
+            };
+        };
+        responses: {
+            /** @description The user with the new assignment. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    removeUserRoleAssignment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+                /** @description Id of a role assignment of this user (`User.role_assignments[].id`). */
+                assignment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user without the assignment. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

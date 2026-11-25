@@ -21,6 +21,7 @@ export {
 } from './catalogue.js';
 export {
   PgBossJobQueue,
+  assertEnqueueable,
   TenantPayloadError,
   UnknownQueueError,
   type EnqueueOptions,

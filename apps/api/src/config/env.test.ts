@@ -42,3 +42,28 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ DATABASE_URL: 'mysql://x' })).toThrow(/postgres/);
   });
 });
+
+describe('SESSION_COOKIE_SECURE', () => {
+  it('defaults to true', () => {
+    expect(loadConfig({ DATABASE_URL: dbUrl }).SESSION_COOKIE_SECURE).toBe(true);
+  });
+
+  it('can be turned off in development and test', () => {
+    for (const NODE_ENV of ['development', 'test']) {
+      expect(
+        loadConfig({ DATABASE_URL: dbUrl, NODE_ENV, SESSION_COOKIE_SECURE: 'false' })
+          .SESSION_COOKIE_SECURE,
+      ).toBe(false);
+    }
+  });
+
+  it('is refused when false and NODE_ENV=production', () => {
+    expect(() =>
+      loadConfig({ DATABASE_URL: dbUrl, NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'false' }),
+    ).toThrow(/SESSION_COOKIE_SECURE.*production/);
+    expect(
+      loadConfig({ DATABASE_URL: dbUrl, NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'true' })
+        .SESSION_COOKIE_SECURE,
+    ).toBe(true);
+  });
+});

@@ -124,6 +124,12 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.18 | 2026-11-24 | Three deferred M2 stories: list sorts, link a login, undo toast    | 622/622 API e2e pooled and direct, 59/59 real-stack; sort p95 50-100 ms    |
 | B.19 | 2026-11-24 | Import backend (CSV / XLSX, dry run, Google Admin preset)          | importer e2e suites green on the branch; two defects found in B.20          |
 | B.20 | 2026-11-24 | Wave 3 part 1 integration (four branches, follow-ups a-f)          | 699/699 API e2e direct and pooled, 21/21 clean builds, real-stack 64/64 |
+| B.24 | 2026-11-25 | Add and remove role assignments (M2-USR-04, unreleased)            | 745/745 API e2e direct and pooled twice, mock browser 745, real-stack 68; one deadlock flake root-caused |
+| B.25 | 2026-11-25 | Isolation and performance harness extension (M2-SEC-01, M2-OPS-01) | Catalogue-driven probes; attachment owner guard (0170); partition DDL yields |
+| B.26 | 2026-11-25 | User guides (M2-DOC-01, drafts)                                     | Eight guides, screenshots by script; eight findings, fixed by B.24 and B.27 |
+| B.27 | 2026-11-25 | Guide-writing fixes (ED-29)                                         | Seven fixes; root cause of the B.13 / B.22 deadlock flake (0180)          |
+| B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
+| B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -474,13 +480,139 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (203 operations), `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; API e2e through PgBouncer, default settings, full environment: 731/731 in 58 files, 0 skipped, twice (both runs green, no rerun needed); real-stack browser suite 65 passed on a fresh stack (port 4174 free before the run).
 - **Findings:** none. The deadlock flake of B.13 / B.22 did not recur in the two pooled runs.
 
+### B.24 Add and remove role assignments (M2-USR-04) - 2026-11-25 (unreleased, branch `worktree-agent-a9d418d6e26683175`)
+
+- **Scope:** `POST /v1/users/{id}/role-assignments` and `DELETE /v1/users/{id}/role-assignments/{assignment_id}` (ED-27), the "Add access" and per-assignment "Remove" actions of the access dialog on Settings > Users, mocks that mirror the API, no migration. The known gap of 0.2.6 (the screen could only edit existing assignments). Two Users-screen fixes added at the founder's request: pending logins are listed on the Users tab (badge, access, link to a person, resend, revoke; a pending login can be linked, decision in ED-27), and the "Link to a login" picker shows the email and role names under each name (search already matched the email).
+- **Method:** API e2e (`test/scoping/role-assignments.e2e.test.ts`, 14 tests): add and remove with the new ETag and the audit rows read back from `app.audit_log`; `If-Match` (428 / 412); 422 pointers at the one-assignment body; duplicate, unknown and archived user, foreign assignment; sessions revoked on add and on remove, and kept for the editor; each guard (the only assignment, the last active administrator, your own last administrator access with another administrator present); the ED-26 escalation refusals (a user manager who is a Technician at one site cannot add the role org-wide, at another site, as a bigger role, or to themselves, and cannot touch a more privileged user); a location administrator gets 403 on both routes; an Administrator assignment added at a location gives its holder no org-only permission. Route replay (tenant B against tenant A) and the scoped replay (location administrator, 403) have a case for each new route. Web: unit tests of the dialog (4) and of the mock handlers (3), mock browser e2e with axe in light and dark for the dialog, the add form, its error state and the remove confirmation, the pending logins (unit 4, mock e2e 1 plus an axe scenario in both themes), the picker (unit 1: two accounts of one name told apart by email and role, found by email) and real-stack e2e (3 tests: add a Technician limited to a site, read the assignment back, remove it, read back again; the 409 of the only assignment).
+- **Result:** clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 803, api-client 14); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (205 operations), `gen-api-md --check` and api-client `generate:check` up to date, Redocly valid; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; API e2e 745/745 in 59 files direct, pooled and pooled again, 0 skipped (the first direct run had one failure, see below); mock browser suite 745 passed, 0 skipped (`PW_CHANNEL=chrome`); real-stack suite 68 passed on a fresh stack (port 4174 free before the run).
+- **Findings:** (0) Review of the two founder fixes: the user picker already searched the email (the API `q` matches name or email) and showed it; what was missing was the role and a clear marker for a pending account, so the change is the second line, not the search. (1) The mock browser test "adds Viewer limited to Room 204" and the real-stack run first failed in the same way: after choosing "Limited to a location" the test typed into the location field at once, but the Radix select hands focus back to its own trigger as it closes (a moment later against the real API), the field lost focus and its list closed. The tests now wait for the trigger to be focused first (the real-stack scope spec of M2-LOC-03 had the same race and failed once in a full run (66 passed, 1 failed), so it got the same wait and then passed 68/68). (2) A web unit test, "cancels a running commit after the current batch" (`w3-import-handlers.test.ts`), timed out once in a full parallel run: it set the slow mock pace (300 ms per row) before reviewing the import, so the dry run before the commit was slow as well (2.2 s quiet, past the 15 s limit on a loaded machine). It now sets the slow pace after the review (0.7 s).
+- **Flake root-caused (not fixed, pre-existing):** the first direct API e2e run had one failure, `loaner-defaults` "lends the member that has been idle the longest": a `POST /v1/loans/return` answered 500. The Postgres log shows `deadlock detected`: the partition rotation test in `schema-lint.e2e.test.ts` runs `app.ensure_partitions` for a far-future year on the live `app.asset_history`, which takes SHARE ROW EXCLUSIVE locks on the history table and on `app.asset` (foreign key), in the opposite order to a request that updates the asset and then inserts its history row; Postgres picked the request as the victim. It is the family of B.13 / B.22 (DDL on the live hot tables while other test files write); the earlier fix covered a different fixture. It did not recur in a second direct run or in two pooled runs. The same exposure exists in production for the monthly rotation job (a user request can be the deadlock victim). Not changed here (it would be a migration of `app.ensure_partitions`, or a test that runs alone); tracked in section C.
+- **Review note:** the product has no separate Owner role: the Owner of a tenant is an Administrator, so ED-27's last-administrator guard is the last-Owner guard.
+
+### B.25 Isolation and performance harness extension (M2-SEC-01, M2-OPS-01) - 2026-11-25 (branch from `d52775c`, v0.2.6)
+
+- **Scope:** M2-SEC-01 (every acceptance criterion re-checked; what was missing added) and M2-OPS-01 (the nightly budgets that were open). Migration 0170, ED-28.
+- **Already covered before this change:** the schema lint and the route replay / scoped replay read the catalogue and the route table (an unregistered route fails both; checked again with a temporary dummy route `GET /v1/sec01-dummy/:id`, which both registration tests reported, then removed); per-wave isolation files for wave 1, stock, labels, wave 2 and imports (RLS, WITH CHECK, composite keys); attachment key CHECKs and fuzzed attachment / file-token URLs (`test/files`); the pooled `app_one` negative control; the perf suites for list, search, lookup, scan resolve, check-out, import throughput and dry run.
+- **Added (SEC-01):** catalogue-driven probes in the route replay (`catalogue-probes.ts`): all 43 tenant tables of schema `app` (B sees none of A's rows, A all of its own) and all 84 foreign keys between tenant tables (a row re-pointed at a clone of its referenced row that exists only in another tenant must fail with 23503), with a control (a composite key whose triggers are disabled is reported as accepting); fixture rows for every remaining table (import row, loan alert, mail outbox, delivery, preference, rule, transfer, scoped role assignments, identity rows). `loaners-isolation.e2e.test.ts`: the loaner tables' RLS and named cross-tenant inserts (assignment, loan, loan alert, repair, import row, import, pool memberships, pool owner, attachments). `storage-keys.e2e.test.ts` (local and S3 drivers): every object-key column carries the tenant-prefix CHECK, every stored key is under its tenant, tampered label PDF / export file / import upload URLs (another tenant's key, forged or truncated signature, junk) fail without serving the bytes, fuzzed ids in the file routes are a 4xx. `job-payloads.e2e.test.ts`: the e2e in-memory queue applies the adapter's payload lint (`assertEnqueueable`), and the real producer of each of the 16 catalogued queues runs through it (a queue nobody produces fails the test). Schema lint rule 8 now requires `tenant_id` paired with `tenant_id` (failing fixture added).
+- **Findings and fixes:** (1) **Isolation gap (database level, no leak through the API):** `app.attachment.entity_id` is polymorphic and was checked only by the API; a row written outside the API (script, future importer, bug) could name another tenant's record as its owner. Fixed by the trigger `attachment_owner_guard` (0170): 23503 for an owner that is not a record of the same tenant, also for the owner role and a superuser; regression tests in `loaners-isolation` and the adjusted `test/files/isolation` fixture. (2) Lint rule 8 accepted a key pairing `tenant_id` with an id column (no existing key did); tightened. (3) **Root cause of the intermittent e2e failure of B.13 / B.22:** a 500 on a check-in, from a deadlock between the partition DDL of the schema-lint test (`ensure_partitions` / dropping `asset_history` partitions locks `app.asset` and `app.assignment` one after the other) and a custody transaction holding one of them; the Postgres log of the baseline run showed it. The same can hit production when the rotation job creates a partition. Fixed: `ensurePartitions` runs with `lock_timeout = 200ms` (below `deadlock_timeout`) and retries, the test's partition drop does the same, so the DDL always yields.
+- **Added (OPS-01):** `labels-perf.e2e.test.ts` (500-label PDF, 5 renders, p95 < 30 s) and a location-scoped user (one site, one room) in `registry-perf` for list, search, tag lookup and scan resolve; `perf.yml` uploads `apps/api/test-results/*.json` and writes a summary (`scripts/ci/perf-summary.mjs`). One `PERF=1` run of the three perf files (651 s): labels and import green; the new scoped test failed on its own fixture (the chosen room held no assets), was fixed and `registry-perf` re-run with `PERF=1`: green. p95: check-out 26 ms, scan resolve 11 ms, tag lookup 10 ms, list 13 ms (worst shape 216 ms), search 42-61 ms, scoped site list 44 / search 35 / lookup 17 / scan 17 ms, scoped room 21 / 25 / 20 / 21 ms, 500-label PDF 1.94 s, import commit 17,477 rows/min, dry run of 100k rows 46 s (table in `ci.md` section 4). The machine also ran two other compose stacks (idle during the measurement).
+- **Verification** (compose project `atsec`, ports 150xx, torn down with `down -v`; founder stack untouched): clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff, `gen-api-md --check` and api-client `generate:check` up to date (no contract change); `db:pull` drift clean; `schema:lint` 0 violations, role audit OK; API e2e 750/750 in 62 files, 0 skipped: direct once, pooled twice. The first direct run after the guard found two test issues (an attachment fixture that relied on an asset id passing as a model owner, now expected 23503; the key probe picking a tenant without a referenced row), fixed. One pooled run had a 30 s timeout of the scoped replay while two other agents ran their suites (run 588 s against about 340 s); the two replays now have a 120 s timeout, and the repeated pooled run was green. The baseline run before any change (direct) had the check-in 500 of finding 3.
+
+### B.26 User guides (M2-DOC-01) - 2026-11-25 (documentation only, unreleased)
+
+- **Scope:** eight task-based guides for school and office administrators in `docs/guides/` (import, Google Admin,
+  labels, loaner day, repairs, location scoping, people and logins, schools / K-12), an index, and a script that remakes
+  the screenshots (`docs/guides/tools/shoot.mjs`, samples in `tools/samples`). No application code changed.
+- **Method:** every button and label in the guides was copied from `apps/web/src/i18n/messages/*.ts` and the behaviour
+  checked against ED-22, ED-24, ED-25 and ED-26. The screenshots were taken from a fresh seeded compose stack (project
+  `atdoc`, alternate ports, the founder's stack untouched) by driving the real screens as `admin@acme.example`,
+  `owner@acme.example` (with the authenticator code) and, for the scoping guide, `technician@acme.example` limited to one
+  site. The whole script ran end to end from a freshly created stack (`down -v`, `up`), 55 pictures, each under 200 KB
+  (about 3.5 MB together), and every picture was looked at. All image and file links in the guides resolve; the guides,
+  the script and the tool notes pass Prettier (checked explicitly, because `docs/` is in `.prettierignore`).
+- **Findings** (noticed while writing; none fixed, the guides describe the screens as they are):
+  1. The loaner desk has no "lend the next available device" action; ED-24's rule (the device idle the longest) exists
+     in the API only. The guide says so.
+  2. The desk accepts the tag of a not-deployable device (for example one that is In repair) into its list and refuses it
+     only when "Lend" is pressed.
+  3. On a first import every dry-run row repeats "A category, model or other reference is created by this import; the
+     rest of the checks run when it is committed.", which is noise to a reader and also means a row marked "Create" can
+     still fail at commit.
+  4. In a Google Admin import, DISABLED devices get the default undeployable status ("In repair") with no repair record,
+     and the Org unit path creates new top-level locations ("Students", "Staff", "Retired") beside the real sites.
+  5. On the People page at 1280 px the table is wider than the window and the Login column is partly hidden.
+  6. The Link-to-a-login picker lists accounts by display name only, so two accounts with the same name look alike until
+     one is chosen and the sentence under it shows the address.
+  7. The dashboard tile "Overdue" (all overdue check-outs, 5 in the demo data) and the loaner overview "Overdue" (loans
+     only, 2) are two different counts with the same word.
+  8. A login whose invitation is still pending is not in the Users tab, so it cannot be linked from that screen until it is
+     accepted (it can from the person page).
+- **Open:** the location-scoping guide shows the dialog "Change role and access" and must be refreshed when the Users
+  screen gets add / remove role assignment; the screenshots must be remade after any change to the screens they show;
+  review of the wording by the founder belongs to M2-UX-01.
+
+### B.27 Guide-writing fixes (ED-29) - 2026-11-25 (unreleased, branch `worktree-agent-a57e722d6ff88727d`)
+
+- **Scope:** seven issues found while writing the user guides: next available device at the loaner desk, not-deployable devices refused when scanned, the per-row "checked at commit" noise and the commit-only failures of the import dry run, the Google Admin mapping (org unit -> department, disabled -> Retired), the People table at 1280 px, the two meanings of "Overdue", and the hint of the loan default.
+- **Method:** unit, mock e2e (with axe in light and dark for the new desk states) and API e2e for each fix; the dry-run rehearsal is tested to leave every registry, audit and outbox count unchanged, to find a failure the old dry run left to the commit (a required custom field of a row whose model and location are new), and to agree with the commit row for row; the import throughput suite was run with its gates (3,000 rows: dry run 7.2 s, projected 4 min per 100,000 rows against a 10-minute budget; commit 15,009 rows/min against 10,000). Verification on a separate compose project (`atfix`, ports 17000-17099), torn down with `down -v`; the founder's stack was not touched.
+- **Result:** from a clean state `turbo run lint typecheck test build --force` 21/21 (API unit 650, web 800); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff, redocly lint valid, `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` no drift, `schema:lint` 0 violations and role audit OK; API e2e with the full environment on a fresh stack, 735/735 in 59 files with 0 skipped: once direct and twice through PgBouncer (after the fix of finding 2; the first direct run, before it, had the one deadlock failure); mock web e2e 749 passed with the two timing cases of finding 6 (scan burst passed on its retry; the auth axe file 54/54 twice alone); real-stack browser suite 65/65 on a fresh stack (port 4174 free before the run).
+- **Findings:** (1) the contract still described the next available device as "lowest asset tag first" (ED-24 changed the rule); corrected in `gen.mjs`. (2) **Root cause of the deadlock flake of B.13 / B.22:** the first direct API e2e run had one failure, a 500 on a check-in in `custody-undo.e2e.test.ts`. The Postgres log showed a deadlock between the check-in (holding `app.asset`, inserting into `asset_history`) and `app.ensure_partitions`, called by the partition-rotation test in `schema-lint.e2e.test.ts` (holding `asset_history` while creating a partition, waiting for `SHARE ROW EXCLUSIVE` on `app.asset` for the cloned foreign key). `ensurePartitions` retries its own deadlocks, but when Postgres picked the check-in as the victim the user got a 500; the monthly rotation and the migrate step can meet live traffic the same way. Fixed by migration 0180: the function takes every lock first, with NOWAIT, and never waits while holding one, so it cannot be part of a cycle (55P03, retried by the caller). A regression test (`schema-lint.e2e.test.ts`, "never deadlocks with a custody write") holds a writer's locks in the order of a check-in with a 400 ms lock timeout; it fails on the 0006 definition (the writer times out behind the rotation) and passes on 0180. (3) **Web unit flake** (`scan.test.tsx`, "reports a code nobody has"; seen once while the turbo run shared the machine with a Docker build): the wedge detector reads `event.timeStamp` and treats a gap over 80 ms as typing, and every `fireEvent` in the test flushes a React render of the shell, which took longer than that on the saturated machine, so the burst read as typing. Reproduced by giving the keys 100 ms gaps (5 of 14 tests fail the same way); the test now gives the burst its own clock (5 ms per key). (4) **Issue 3 seen on the real stack:** the real-stack Google Admin import now reports 4 errors in its dry run: the demo's Chromebook cart already holds the tags CHR-00001, -04, -07 and -10 of the sample file. Before this change those four rows showed "Create" (their new models made the dry run skip the facade, and so the tag check) and failed at commit; the old spec only asserted "at least 40 assets", which hid it. The spec now pins 44 created, 4 errors, 16 Retired, none in repair, the org-unit departments and no new location. (5) The mock e2e found a real bug in the new review sentence (the count was passed as a formatted string, so the plural form was not chosen and the key showed) and a mock gap (it did not count a location below a new parent given as a path); both fixed. (6) Two mock e2e failures outside this change, both timing on a shared machine: the scan spec's real keyboard burst (documented in the spec, passes on its retry) and one axe case of the auth pages whose page was still "Starting the mock API" after the 5 s `expect` timeout (the service worker's cold start); the file passes 54/54 twice alone. Left as is, recorded here.
+
+### B.28 Wave 3 part 2 integration - 2026-11-25 (version 0.2.6 plus four merges, unreleased)
+
+- **Scope:** the branches of B.25 (M2-SEC-01, M2-OPS-01), B.24 (M2-USR-04), B.27 (ED-29 fixes) and B.26 (M2-DOC-01)
+  merged in that order with no-fast-forward merges; the guide follow-ups; no version bump and no tag (a separate release
+  step does that after independent verification).
+- **Conflicts:** only the maintained docs (`AUDIT.md`, `VERSION.md`, `STATUS.md`, `decisions.md`), resolved by keeping both
+  sides (B.24 to B.27 and ED-27 to ED-29 in numeric order, one Unreleased section). `gen.mjs`, the route-replay tables and
+  the code merged cleanly; `openapi.yaml`, the api-client and `API.md` were regenerated with the tools and showed no diff.
+- **Partition locks, fixed twice and combined:** B.25 made `ensurePartitions` run the function in its own transaction with
+  a 200 ms `lock_timeout` and retry; B.27 (migration 0180) made `app.ensure_partitions` take every lock up front with
+  NOWAIT. Together: the function never waits while holding a lock, the timeout bounds any wait it still meets, and both
+  raise 55P03, which `ensurePartitions` retries (as well as 40P01) with a growing, jittered pause (250 ms x attempt plus
+  up to 100 ms, 10 attempts). New unit tests (`maintenance.test.ts`, 4) pin the retry of a NOWAIT 55P03, the give-up after
+  the last attempt and no retry of other errors; both e2e regression tests (the drop fixture's timeout-and-retry of B.25,
+  the writer-versus-rotation test of B.27) pass. The design is described once, in ED-28 "Partition DDL yields", and
+  ED-29 refers to it. `schema.sql` now shows the 0180 `ensure_partitions` and the 0170 `attachment_owner_guard()` function
+  (it showed the 0006 version and only the trigger); `data_model.md` lists the trigger function. The open item of the
+  B.13 / B.22 / B.24 deadlock is closed (section C): no `deadlock detected` in the Postgres log of the three API runs.
+- **Guides:** guide 1 explains the dry-run summary line; guide 2 the org unit as department (`department:manage`, reuse
+  by name or last part, Leave it empty), DISABLED / DEPROVISIONED as Retired and the single summary line; guide 4 the
+  refusal at scan, the 7-day fallback of the loan-default hint, "Lend next available device", "Overdue loans" and
+  "Overdue check-outs" with "Overdue loans only"; guide 5 the refusal at scan and Retired Google devices; guide 6 "Add
+  access" and "Remove" with the guards and the sign-out (the "to be refreshed" note removed); guide 7 pending logins on
+  the Users tab and the picker with email and roles. `shoot.mjs` drives the new screens (the access dialog, the next
+  available device, the pending login, the picker list) and resets sideways-scrolled tables; 59 screenshots (four new:
+  `04-desk-next`, `06-remove-dialog`, `07-users-pending`, `07-link-picker`), re-shot from a fresh stack and each affected
+  one looked at; 114 links and every image resolve; the guides pass Prettier.
+- **Verification** (compose project `atint7`, ports 180xx, torn down with `down -v`; the founder's stack untouched):
+  `pnpm install --frozen-lockfile` clean; clean-state `turbo run lint typecheck test build --force` 21/21 twice (0 cached;
+  API unit 654, web 811, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces
+  `openapi.yaml` (205 operations, 138 paths), `gen-api-md --check`, api-client `generate:check` and Redocly clean;
+  `db:pull` drift clean and `schema:lint` 0 violations on a fresh stack; API e2e 768/768 in 64 files, 0 skipped, once
+  direct and twice through PgBouncer; real-stack browser suite 68/68 on a fresh stack; mock browser suite (`PW_CHANNEL=chrome`) at the old
+  default 758/759 then 759/759, and with the new default 759/759 twice (3.6 min each).
+- **Finding (root cause of the mock e2e timeouts):** the first mock run had one failure, `a11y-w2` "consumable page with
+  the ledger (light)": the ledger table was not visible within 5 s. The trace shows the page frozen for 5.9 s after the
+  click (no screencast frame; two prefetches held by the mock service worker for 5.8 s and passed to the server only
+  afterwards). A CPU sample of the next run at the default 14 workers (28 logical cores): above 95 % for 95 s, run queue
+  up to 618. The renderer was starved; the scan-burst and auth axe timeouts of B.27 are the same cause. With a quarter of
+  the cores (7 workers): average 55 %, queue above 28 for 6 s only, 759/759, 3.7 min instead of 2.8. The mock
+  configuration now uses `workers: '25%'` outside CI (`apps/web/playwright.config.ts`).
+- **Open:** none from this integration.
+
+### B.29 LAN access in local development (ED-30) - 2026-11-25 (unreleased, branch `lan-dev-access`)
+
+- **Scope:** the founder wants to open the portal at `http://<LAN-IP>:3001` as well as `http://localhost:3001` in local
+  development over plain HTTP (static build served by `serve-static.mjs` against the compose API).
+- **Root cause (verified):** `SessionService` always named the cookie `__Host-at_session` and always set `Secure`. A browser
+  stores a `Secure` cookie received over HTTP only in a secure context, which `localhost` is and a LAN IP is not, so the
+  login succeeded and the cookie was dropped. A `__Host-` cookie must be `Secure`, so the name had to change with the flag.
+- **Change (ED-30):** `SESSION_COOKIE_SECURE` (default `true`; `false` = `at_session` without `Secure`, rest unchanged),
+  refused by `loadConfig` when `NODE_ENV=production`, one start-up warning from the api role, only the active mode's cookie
+  name is read. Compose passes `SESSION_COOKIE_SECURE`, `WEB_BASE_URL` and `S3_PUBLIC_ENDPOINT` from `.env` (defaults
+  unchanged); `next.config.ts` reads `DEV_ALLOWED_ORIGINS` into `allowedDevOrigins` in the dev-server phase only;
+  `.env.example`, getting-started, developer guide (firewall command, HTTPS alternative), threat model T-AUTH-4 / T-SH-2.
+- **Tests:** unit 6 new in 2 files (config: default true, false allowed in development and test, refused in production;
+  `session.service.test.ts`: cookie strings in both modes and reading only the active name); API e2e file
+  `session-cookie-insecure.e2e.test.ts` (3: attributes of `at_session`, me / CSRF / logout, the secure-mode name is not
+  accepted). The e2e `Client` learns the cookie name from `Set-Cookie`, so the existing suites are unchanged.
+- **Result** (compose project `atlan`, ports 20xxx, torn down with `down -v`; the founder's stack untouched):
+  `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build` 21/21 (API unit 660, web 811);
+  `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (contract unchanged); API e2e direct 771/771 in
+  65 files, 0 skipped. A real container started with `SESSION_COOKIE_SECURE=false` logged the warning and a `curl` login
+  returned `Set-Cookie: at_session=...; Path=/; HttpOnly; SameSite=Lax; Max-Age=...` that `GET /v1/auth/me` accepted.
+- **Accepted risk:** with the flag off the cookie travels in clear text on the LAN and loses the `__Host-` guard against a
+  sibling-subdomain write; acceptable for a trusted development network with demo data, hence the production refusal and
+  the warning. Not tested: a real second machine and browser (the cookie behaviour follows from the browser rule above).
+- **Open:** none.
+
 ---
 
 ## C. Open items
 
 | Item                                                                                                     | Why it matters                                                        | Owner / where tracked                                                                                    |
 | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Intermittent API test failure seen once in 5 runs (B.13): very likely the schema-lint fixture deadlock fixed in B.22; did not recur in the two pooled runs of B.23 | Confirm it does not recur | Claude; watch CI |
 | Label die-lines and print calibration unverified                                                         | Labels may be off the physical stock until printed and measured       | Founder 👤, M2-TAG-04, F-02                                                                              |
 | Real USB scanner not yet tested                                                                          | Scanner input timing is only simulated                                | Founder 👤, LIFE-08, F-02                                                                                |
 | **External penetration test** before the Cloud launch                                                    | Independent test of a multi-tenant internet-facing service            | M6-SEC-02; vendor to be booked at the start of M5 (F-21); no open cross-tenant finding allowed at launch |

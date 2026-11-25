@@ -171,6 +171,12 @@ const envSchema = z
     WEB_BASE_URL: z.url().default('http://localhost:3001'),
     /** `<slug>.<suffix>` hostnames identify a tenant (vanity host); a host that disagrees with the credential's tenant is refused. */
     TENANT_HOST_SUFFIX: z.string().min(1).optional(),
+    /**
+     * Session cookie: `true` (default) = `__Host-at_session` with `Secure`. `false` = `at_session` without `Secure`, so a
+     * browser keeps it over plain HTTP from a LAN address (http://192.168.x.y:3001): browsers accept a `Secure`
+     * cookie over HTTP only on localhost. Local development only; refused when NODE_ENV=production (ED-30).
+     */
+    SESSION_COOKIE_SECURE: z.stringbool().default(true),
     /** A browser session ends after this long without activity... */
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
     /** ...and, regardless of activity, after this long. */
@@ -199,6 +205,14 @@ const envSchema = z
     GIT_SHA: z.string().min(1).default('dev'),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production' && !env.SESSION_COOKIE_SECURE) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SESSION_COOKIE_SECURE'],
+        message:
+          'false is for local development only and is refused when NODE_ENV=production (serve the app over HTTPS)',
+      });
+    }
     if (env.APP_ROLE === 'migrate') {
       if (!env.MIGRATOR_DATABASE_URL) {
         ctx.addIssue({

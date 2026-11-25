@@ -837,7 +837,7 @@ S_.LoanerPoolMemberBulkResult = obj({
 }, ['results', 'summary']);
 S_.LoanerCheckoutRequest = obj({
   person_id: uuid(),
-  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).'),
+  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (ED-24: the member idle the longest, a device never lent first, ties by the lowest asset tag; the answer names it).'),
   expected_return: date({ description: 'Defaults to today (UTC) + the pool\'s `default_loan_days`, else + the organisation\'s `default_expected_return_days`, else + 7 days (ED-24), cut to `max_loan_days`; an explicit date must not exceed the start day + pool.max_loan_days.' }),
   note: str({ maxLength: 2000 }),
 }, ['person_id'], { additionalProperties: false });
@@ -1570,6 +1570,20 @@ addOp('/v1/users/{id}/mfa', 'delete', {
   description: 'For a user who lost their device and recovery codes: removes all MFA factors and recovery codes and revokes all their sessions. If tenant policy requires MFA the user must enrol again at the next sign-in. You cannot reset your own MFA this way (`409 conflict`; use `DELETE /v1/auth/mfa`). Audited.',
   success: { 204: okResp(204, 'MFA reset.') },
 });
+// ================================================================ [M2-USR-04] role assignments, one at a time (ED-27)
+addOp('/v1/users/{id}/role-assignments', 'post', {
+  tag: 'Access', id: 'addUserRoleAssignment', summary: 'Add a role assignment to a user', perm: 'user:manage', params: [ID], ifMatch: true,
+  description: 'Adds ONE role assignment (a role for the whole organisation, or limited to a location subtree with `scope_type=location` and `location_id`, ED-26) to the user and returns the updated user with its new `ETag`. The rules of `PATCH /v1/users/{id}` apply: nobody grants a role with permissions they lack or wider than they hold them (`403`), a location-scoped assignment never grants the org-only permissions, an unknown or archived role or location is `422` (`/role_id`, `/location_id`). `409 conflict` when the user already holds the same role with the same scope or already has 20 assignments. The target\'s sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_assigned`).',
+  body: jsonBody(S('RoleAssignment')),
+  success: { 201: okResp(201, 'The user with the new assignment.', S('User'), { etag: true }) },
+});
+addOp('/v1/users/{id}/role-assignments/{assignment_id}', 'delete', {
+  tag: 'Access', id: 'removeUserRoleAssignment', summary: 'Remove a role assignment of a user', perm: 'user:manage', ifMatch: true,
+  params: [ID, { name: 'assignment_id', in: 'path', required: true, description: 'Id of a role assignment of this user (`User.role_assignments[].id`).', schema: uuid() }],
+  description: 'Removes ONE role assignment and returns the updated user with its new `ETag`. `404` for an assignment that is not this user\'s. `409 conflict` (the user is unchanged) when it is the user\'s only assignment (add another first, or disable or archive the user), when it is the assignment that makes the last active administrator an administrator, or when it would remove your own last administrator access (`user:manage` for the whole organisation). The target\'s sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_removed`).',
+  success: { 200: okResp(200, 'The user without the assignment.', S('User'), { etag: true }) },
+});
+// ================================================================ [M2-USR-04] END
 addOp('/v1/roles', 'get', { tag: 'Access', id: 'listRoles', summary: 'List roles', perm: 'role:read', hasId: false, description: 'Built-in roles in the MVP (custom roles arrive in v2).', success: { 200: okResp(200, 'All roles of the tenant.', S('RoleList'), { replay: false }) } });
 addOp('/v1/companies', 'get', { tag: 'Access', id: 'listCompanies', summary: 'List companies', perm: 'company:read', hasId: false, description: 'Every tenant has a default company; multi-company management UI arrives in v2.', success: { 200: okResp(200, 'All companies of the tenant.', S('CompanyList'), { replay: false }) } });
 addOp('/v1/api-keys', 'get', {
@@ -2566,7 +2580,7 @@ S_.Me.required.push('mfa_policy');
   }, ['index', 'header', 'non_blank', 'blank', 'distinct', 'distinct_capped', 'duplicates', 'type', 'date_order', 'max_length', 'samples']);
   S_.RowIssue = obj({
     field: nstr({ description: 'The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole.' }),
-    message: str(), code: str({ description: 'Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`...' }),
+    message: str(), code: str({ description: 'Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `validated-at-commit`, `unchanged`...' }),
   }, ['field', 'message', 'code']);
   S_.ImportJob = obj({
     id: uuid(),
@@ -2594,7 +2608,7 @@ S_.Me.required.push('mfa_policy');
     data_purged_at: ndt({ description: 'When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.' }),
     cancel_requested: bool(),
     error: nstr({ description: 'Why a failed import failed (a sentence; for a bad file it names the line).' }),
-    summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created).' },
+    summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code`, `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created).' },
     requested_by: uuid(),
     created_at: dt(), updated_at: dt(),
     profile: { type: ['array', 'null'], items: S('ImportColumnProfile'), description: 'Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.' },
@@ -2605,7 +2619,7 @@ S_.Me.required.push('mfa_policy');
   S_.ImportList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
   S_.ImportCreate = obj({
     entity_type: en(ENTITY),
-    preset_key: str({ minLength: 1, maxLength: 64, description: 'A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then).' }),
+    preset_key: str({ minLength: 1, maxLength: 64, description: 'A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then); it maps the org unit path to the department (one value-map entry per unit, created when missing: `department:manage`) and Disabled / Deprovisioned devices to the archived (Retired) status (ED-29).' }),
     options: S('ImportOptions'),
   }, ['entity_type'], { additionalProperties: false });
   S_.ImportUpdate = obj({
@@ -2739,7 +2753,7 @@ S_.Me.required.push('mfa_policy');
   addOp('/v1/imports/{id}/dry-run', 'post', {
     tag: 'Imports', id: 'startImportDryRun', summary: 'Run the import without writing', perm: 'import:run', params: [ID], idem: 'none', extraErrors: [422],
     description: [
-      'Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.',
+      'Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. The references the commit would create (category, model, location, department, person...) are created for real inside a savepoint that is rolled back after each batch, so a row that needs one is checked like any other row (ED-29); only a location below a parent the same import creates is left to the commit (counted in `summary.validated_at_commit`, row warning `validated-at-commit`). **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.',
       'The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).',
       IMPORT_NOTE,
     ].join('\n\n'),

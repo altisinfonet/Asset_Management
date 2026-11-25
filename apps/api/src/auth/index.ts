@@ -43,7 +43,7 @@ export {
   type PolicySubject,
 } from './policy.service.js';
 export { AUTH_PROBLEM_CODES, authProblem } from './problems.js';
-export { SESSION_COOKIE } from './session.service.js';
+export { SESSION_COOKIE, SESSION_COOKIE_INSECURE, sessionCookieName } from './session.service.js';
 export {
   DEMO_OWNER_TOTP_SECRET,
   DEMO_PASSWORD,

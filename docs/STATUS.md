@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, user guides and the import trial to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides and the ED-29 fixes merged (unreleased); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -96,9 +96,39 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | ---- | ------- |
 | Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | M2-LOC-03 done |
 
+### Wave 3 — part 2: test harnesses ✅ (unreleased)
+
+| Area | Stories |
+| ---- | ------- |
+| Isolation harness extension: every tenant table and every foreign key probed across tenants from the database catalogue, named cross-tenant inserts (assignment, loan, repair, import row, pool membership, attachment), tenant-prefixed object keys and tampered file URLs refused (local and S3), every job type through the payload lint; direct and through PgBouncer. Found and fixed: attachment owners are now checked by the database (migration 0170, ED-28), and the root cause of the intermittent check-in 500 (partition DDL deadlock) ✅ | M2-SEC-01 done |
+| Performance harness extension: nightly budgets for check-out, scan resolve, the 500-label PDF, a location-scoped user's list / search / lookups (ED-26) and import throughput and dry run, published as `test-results/*.json` ✅ | M2-OPS-01 done |
+
+### Wave 3 — part 2: add and remove access ✅ (unreleased)
+
+| Area | Stories |
+| ---- | ------- |
+| Settings → Users: "Add access" (a role for the whole organisation or limited to a location) and "Remove" per assignment, with the guards (only access, last administrator, own last administrator access) and a sign-out of the user on every change (ED-27); pending logins listed on the Users tab with a "Pending" badge and linkable; the login picker shows the email and roles under each name ✅ | M2-USR-04 done |
+
+### Fixes found while writing the user guides (ED-29) ✅ (unreleased)
+
+| Fix | Status |
+| --- | ------ |
+| Loaner desk: "Lend next available device" (shows the device the pool picked); a device In repair, Broken or Retired is refused when scanned, naming its status | ✅ |
+| Import dry run: rows that need a new category, model, location, department or person are checked like the others (rehearsed and rolled back), so no per-row "checked at commit"; what still waits for the commit is said once | ✅ |
+| Google Admin import: org unit -> department (no locations created), Disabled / Deprovisioned -> Retired | ✅ |
+| People and Stock fit a 1280 px window; Assets scrolls inside its table with the tag pinned | ✅ |
+| "Overdue check-outs" (dashboard, loans included) vs "Overdue loans" (loaner overview); the loan default hint explains the 7-day pool fallback | ✅ |
+
+### Wave 3 — part 2: user guides (drafts) ✅ (unreleased)
+
+| Area | Stories |
+| ---- | ------- |
+| Eight task-based guides for school and office administrators in `docs/guides/` (import, Google Admin, labels, loaner day, repairs, location scoping, people and logins, K-12 mapping) with 59 screenshots regenerated by `docs/guides/tools/shoot.mjs`; updated for add / remove access (ED-27) and the ED-29 fixes (next available device, refusal at scan, Google Admin departments and Retired, the dry-run summary line, the overdue labels) ✅ | DOC-01 done (drafts) |
+
 ### Next: wave 3 part 2 (rest)
 
-In this order: SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.
+Only two items remain: IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin export, F-09 👤), then the
+founder acceptance walk-through M2-UX-01 👤.
 
 ## 4. Waiting on the founder 👤
 
@@ -131,7 +161,6 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 
 ## 5. Known gaps carried forward
 
-- The Users screen (Settings → Users) can edit a user's existing role assignments (role and location scope) but cannot yet add or remove one.
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
 - Loan and import notifications are wired. The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
 - Finished imports lose their rows, samples and file after 30 days (ED-25): download the error report first. The before-images for a v1.1 rollback go with them.

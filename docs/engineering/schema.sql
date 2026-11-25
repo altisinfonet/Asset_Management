@@ -679,6 +679,39 @@ CREATE INDEX attachment_incomplete_idx ON app.attachment (tenant_id, created_at)
 CREATE INDEX attachment_pending_scan_idx ON app.attachment (tenant_id, uploaded_at)
   WHERE scan_status = 'pending' AND uploaded_at IS NOT NULL AND archived_at IS NULL;
 
+-- [M2 0170, ED-28] the polymorphic owner must be a record of the SAME tenant (no foreign key can say so):
+-- app.attachment_owner_guard() probes (tenant_id, id) of the table named by entity_type and raises
+-- foreign_key_violation (23503) otherwise. Not SECURITY DEFINER: under RLS it sees what the writer sees.
+CREATE FUNCTION app.attachment_owner_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+DECLARE
+  found boolean;
+BEGIN
+  found := case new.entity_type
+    when 'asset'              then exists (select 1 from app.asset              where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'asset_model'        then exists (select 1 from app.asset_model        where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'accessory'          then exists (select 1 from app.accessory          where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'consumable'         then exists (select 1 from app.consumable         where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'location'           then exists (select 1 from app.location           where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'person'             then exists (select 1 from app.person             where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'maintenance_record' then exists (select 1 from app.maintenance_record where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'assignment'         then exists (select 1 from app.assignment         where tenant_id = new.tenant_id and id = new.entity_id)
+    when 'import_job'         then exists (select 1 from app.import_job         where tenant_id = new.tenant_id and id = new.entity_id)
+    -- an unknown type is left to the entity_type CHECK constraint, which is checked after this trigger
+    else true
+  end;
+  if not found then
+    raise exception 'attachment owner %/% is not a record of tenant %', new.entity_type, new.entity_id, new.tenant_id
+      using errcode = 'foreign_key_violation', constraint = 'attachment_owner_same_tenant';
+  end if;
+  return new;
+END
+$$;
+
+CREATE TRIGGER attachment_owner_guard
+  BEFORE INSERT OR UPDATE OF tenant_id, entity_type, entity_id ON app.attachment
+  FOR EACH ROW EXECUTE FUNCTION app.attachment_owner_guard();
+
 -- [M2 0050] primary pictures: asset_model and asset reference an attachment of the same tenant
 ALTER TABLE app.asset_model ADD COLUMN image_attachment_id uuid,
   ADD CONSTRAINT asset_model_image_attachment_fk FOREIGN KEY (tenant_id, image_attachment_id) REFERENCES app.attachment (tenant_id, id);
@@ -1488,46 +1521,109 @@ CREATE INDEX audit_log_tenant_time_idx   ON app.audit_log (tenant_id, at DESC, i
 CREATE INDEX audit_log_entity_idx        ON app.audit_log (tenant_id, entity_type, entity_id, at DESC);
 CREATE INDEX audit_log_actor_idx         ON app.audit_log (tenant_id, actor_user_id, at DESC) WHERE actor_user_id IS NOT NULL;
 
--- Partition factory for app.audit_log and app.asset_history. Run by app_owner (migrations /
--- maintenance job), never by app_user. Every partition, and each table's default partition, gets
--- FORCE RLS + the tenant policy as defence in depth and NO grants. Idempotent; returns the number
--- of partitions created.
+-- Partition factory for app.audit_log and app.asset_history (every partitioned table of schema app).
+-- Run by app_owner (migrations / maintenance job), never by app_user. Every partition, and each
+-- table's default partition, gets FORCE RLS + the tenant policy as defence in depth and NO grants.
+-- Idempotent; returns the number of partitions created.
+-- [M2 0180, ED-28 "Partition DDL yields", ED-29] it first checks whether anything is missing (an
+-- idempotent call takes no lock), then takes EVERY lock it needs up front with NOWAIT: the tables the
+-- partitioned parents reference (SHARE ROW EXCLUSIVE, the order custody writers use), then the parents
+-- and their default partitions (ACCESS EXCLUSIVE). It never waits while holding a lock, so it cannot
+-- deadlock with a write; a taken lock fails it at once with 55P03 and ensurePartitions
+-- (apps/api/src/db/maintenance.ts, lock_timeout 200 ms) retries with a growing pause.
 CREATE FUNCTION app.ensure_partitions(p_from date, p_months integer) RETURNS integer
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-DECLARE
+declare
   v_parent  text;
   v_start   date;
   v_name    text;
   v_created integer := 0;
-  v_guard   constant text := '(SELECT NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid)';
+  v_guard   text := app.tenant_guard();  -- '(SELECT NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid)'
+  v_missing boolean := false;
+  v_refs    text;
+  v_parents text;
 BEGIN
-  FOREACH v_parent IN ARRAY ARRAY['audit_log', 'asset_history'] LOOP
-    FOR i IN 0 .. p_months - 1 LOOP
+  if p_months < 0 or p_months > 120 then
+    raise exception 'p_months must be between 0 and 120';
+  end if;
+
+  -- 1. anything to do? (an idempotent call takes no lock at all)
+  for v_parent in
+    select c.relname::text from pg_class c
+     where c.relnamespace = 'app'::regnamespace and c.relkind = 'p'
+  loop
+    if to_regclass('app.' || quote_ident(v_parent || '_default')) is null then
+      v_missing := true;
+    end if;
+    for i in 0 .. p_months - 1 loop
+      v_start := (date_trunc('month', p_from) + make_interval(months => i))::date;
+      if to_regclass('app.' || quote_ident(v_parent || '_' || to_char(v_start, 'YYYY_MM'))) is null then
+        v_missing := true;
+      end if;
+    end loop;
+  end loop;
+  if not v_missing then
+    return 0;
+  end if;
+
+  -- 2. every lock up front, never waiting: referenced tables first (the order writers use), then the
+  --    parents and their existing default partitions
+  select string_agg(format('%I.%I', n.nspname, r.relname), ', ' order by n.nspname, r.relname)
+    into v_refs
+    from (select distinct con.confrelid
+            from pg_constraint con
+            join pg_class p on p.oid = con.conrelid
+           where con.contype = 'f' and p.relkind = 'p' and p.relnamespace = 'app'::regnamespace
+             and con.confrelid <> con.conrelid) f
+    join pg_class r on r.oid = f.confrelid
+    join pg_namespace n on n.oid = r.relnamespace;
+  if v_refs is not null then
+    execute format('lock table %s in share row exclusive mode nowait', v_refs);
+  end if;
+  select string_agg(format('app.%I', c.relname), ', ' order by c.relname)
+    into v_parents
+    from pg_class c
+   where c.relnamespace = 'app'::regnamespace
+     and (c.relkind = 'p'
+          or (c.relispartition and c.relname like '%\_default'
+              and exists (select 1 from pg_inherits i join pg_class p on p.oid = i.inhparent
+                           where i.inhrelid = c.oid and p.relkind = 'p'
+                             and c.relname = p.relname || '_default')));
+  if v_parents is not null then
+    execute format('lock table %s in access exclusive mode nowait', v_parents);
+  end if;
+
+  -- 3. the partitions (as in 0006)
+  for v_parent in
+    select c.relname::text from pg_class c
+     where c.relnamespace = 'app'::regnamespace and c.relkind = 'p' order by c.relname
+  loop
+    for i in 0 .. p_months - 1 loop
       v_start := (date_trunc('month', p_from) + make_interval(months => i))::date;
       v_name  := v_parent || '_' || to_char(v_start, 'YYYY_MM');
-      IF to_regclass('app.' || v_name) IS NULL THEN
-        EXECUTE format('CREATE TABLE app.%I PARTITION OF app.%I FOR VALUES FROM (%L) TO (%L)',
+      if to_regclass('app.' || quote_ident(v_name)) is null then
+        execute format('create table app.%I partition of app.%I for values from (%L) to (%L)',
                        v_name, v_parent,
                        to_char(v_start, 'YYYY-MM-DD') || ' 00:00:00+00',
                        to_char((v_start + interval '1 month')::date, 'YYYY-MM-DD') || ' 00:00:00+00');
-        EXECUTE format('ALTER TABLE app.%I ENABLE ROW LEVEL SECURITY', v_name);
-        EXECUTE format('ALTER TABLE app.%I FORCE ROW LEVEL SECURITY', v_name);
-        EXECUTE format('CREATE POLICY tenant_isolation ON app.%I USING (tenant_id = %s) WITH CHECK (tenant_id = %s)',
+        execute format('alter table app.%I enable row level security', v_name);
+        execute format('alter table app.%I force row level security', v_name);
+        execute format('create policy tenant_isolation on app.%I using (tenant_id = %s) with check (tenant_id = %s)',
                        v_name, v_guard, v_guard);
         v_created := v_created + 1;
-      END IF;
-    END LOOP;
+      end if;
+    end loop;
     v_name := v_parent || '_default';
-    IF to_regclass('app.' || v_name) IS NULL THEN
-      EXECUTE format('CREATE TABLE app.%I PARTITION OF app.%I DEFAULT', v_name, v_parent);
-      EXECUTE format('ALTER TABLE app.%I ENABLE ROW LEVEL SECURITY', v_name);
-      EXECUTE format('ALTER TABLE app.%I FORCE ROW LEVEL SECURITY', v_name);
-      EXECUTE format('CREATE POLICY tenant_isolation ON app.%I USING (tenant_id = %s) WITH CHECK (tenant_id = %s)',
+    if to_regclass('app.' || quote_ident(v_name)) is null then
+      execute format('create table app.%I partition of app.%I default', v_name, v_parent);
+      execute format('alter table app.%I enable row level security', v_name);
+      execute format('alter table app.%I force row level security', v_name);
+      execute format('create policy tenant_isolation on app.%I using (tenant_id = %s) with check (tenant_id = %s)',
                      v_name, v_guard, v_guard);
       v_created := v_created + 1;
-    END IF;
-  END LOOP;
-  RETURN v_created;
+    end if;
+  end loop;
+  return v_created;
 END
 $$;
 REVOKE ALL ON FUNCTION app.ensure_partitions(date, integer) FROM PUBLIC;

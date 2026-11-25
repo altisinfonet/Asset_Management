@@ -694,6 +694,15 @@ Status: partial (M2 wave 1) - people list and detail with assets held and a serv
 - [ ] People list/detail with "assets currently held" and a history tab; create/edit; link-to-login action for Admins.
 - [ ] Person picker component (type-ahead, used by check-out dialogs) with keyboard selection.
 
+#### M2-USR-04 - Add and remove role assignments
+Size: S - Owner: Claude - Deps: M2-LOC-03, M1-AUTH-07
+Status: done (M2 wave 3 part 2 follow-up, ED-27) - `POST /v1/users/{id}/role-assignments` and `DELETE /v1/users/{id}/role-assignments/{assignment_id}` with `If-Match`; the access dialog of Settings → Users adds an assignment (role plus whole organisation or a location) and removes one after a confirmation; the ED-26 grant rules hold, sessions of the target are revoked, both are audited; 409 for the user's only assignment, the last active administrator, your own last administrator access and a duplicate; API e2e (`test/scoping/role-assignments.e2e.test.ts`), route and scoped replay, mock e2e with axe in light and dark, one real-stack e2e.
+- [ ] An administrator adds a role to a user for the whole organisation or limited to a location, and removes one assignment at a time; nobody grants wider than they hold (403).
+- [ ] The user's only assignment, the last active administrator and your own last administrator access cannot be removed (409, nothing changes).
+- [ ] Each add and remove revokes the target's sessions and is audited.
+- [ ] Pending logins are listed on the Users tab with a "Pending" badge and can be given access, linked to a person, resent and revoked (a pending login can be linked, ED-27).
+- [ ] The login picker shows the email and role names under each name and searches the email.
+
 ### E2.2 Lifecycle: check-out, check-in, transfer, history
 
 #### M2-LIFE-01 - Assignment model
@@ -980,9 +989,10 @@ Status: done (2026-11-19, ADR 0009, tag Exports; integrated) - export of assets,
 
 #### M2-SEC-01 - Isolation harness extension
 Size: M - Owner: Claude - Deps: M1-TEN-05, all new M2 tables
-- [ ] Every new M2 table and route is auto-discovered by the schema lint and route-replay harness; a story cannot merge with an unregistered route.
-- [ ] Extra cases: composite FK blocks cross-tenant references (inserting an assignment that points at another tenant's asset fails), storage keys are tenant-prefixed and fuzzed IDs in file URLs fail, import rows and notifications are invisible across tenants, and the job payload lint covers the new job types.
-- [ ] Runs direct and through PgBouncer with the negative control; both green.
+Status: done (2026-11-25, ED-28, migration 0170) - auto-discovery: the schema lint reads the catalogue (rule 8 now also requires `tenant_id` paired with `tenant_id`, with a failing fixture), the route replay and the scoped replay fail on an unregistered route (checked with a temporary dummy route, not committed), and the route replay now probes from the catalogue every tenant table (B sees none of A's rows, A all of its own: the 43 tenant tables of schema app; the fixtures also give A a row in the 12 tenant-keyed identity tables, so their keys are probed) and every foreign key between tenant tables (84 keys; a row re-pointed at a record that exists only in another tenant is refused with 23503, plus a control that reports an unenforced key) (`test/isolation/catalogue-probes.ts`). Named cross-tenant inserts for an assignment, a loan, a loan alert, a repair, an import row, an import, pool memberships, a pool owner and attachments (`loaners-isolation.e2e.test.ts`, also the loaner tables' RLS). Found and fixed: the polymorphic attachment owner was checked by the API only; a trigger now refuses an owner of another tenant (23503, also for the owner role and a superuser). Storage: every object-key column must carry the tenant-prefix CHECK (found by name in the catalogue), all keys of both tenants are under their prefix, and tampered label PDF, export file and import upload URLs (another tenant's key, forged or truncated signature, junk) fail on the local and S3 drivers; fuzzed ids in the batch, export, attachment, import, rows and `errors.csv` routes are a 4xx (`storage-keys.e2e.test.ts`). Import rows, loans and notifications invisible across tenants (catalogue probe, loaner file, wave-2 file). Job payload lint: the e2e in-memory queue applies the pg-boss adapter's lint (`assertEnqueueable`), and `job-payloads.e2e.test.ts` runs the real producer of every catalogued queue (16: scheduler fan-out incl. import, export, label, attachment sweeps and loan alerts; attachment scan and thumbnail; label render; export run; import analyze and step; mail) and fails for a queue nobody produces. Everything runs direct and through PgBouncer with the `app_one` negative control. Also fixed: the root cause of the intermittent check-in 500 (partition DDL deadlocking with custody writes; ED-28).
+- [x] Every new M2 table and route is auto-discovered by the schema lint and route-replay harness; a story cannot merge with an unregistered route.
+- [x] Extra cases: composite FK blocks cross-tenant references (inserting an assignment that points at another tenant's asset fails), storage keys are tenant-prefixed and fuzzed IDs in file URLs fail, import rows and notifications are invisible across tenants, and the job payload lint covers the new job types.
+- [x] Runs direct and through PgBouncer with the negative control; both green.
 
 #### M2-SEC-02 - Upload and file-serving security
 Size: M - Owner: Claude - Deps: M2-FILE-03
@@ -993,11 +1003,12 @@ Status: done (M2 wave 1) - type sniffing against the declared type, SVG / HTML r
 
 #### M2-OPS-01 - Performance harness extension
 Size: S - Owner: Claude - Deps: M1-CI-05, M2-IMP-05, M2-TAG-02
-Status: partial - the import part is done (`apps/api/test/perf/import-perf.e2e.test.ts`, IMPORT_PERF_ROWS, writes `test-results/import-perf.json`): commit throughput gate 10,000 rows/min and a projected dry run of 100k rows < 10 min, a list p95 check while an import commits, and the XLSX reader's time and heap; measured numbers in M2-IMP-04 and M2-IMP-05. The other budgets of the story are open.
-- [ ] Nightly job adds: check-out p95 < 300 ms, scan resolve p95 < 150 ms, 500-label PDF < 30 s, import commit throughput >= 10,000 rows/min, dry run of 100k rows < 10 min.
+Status: done (2026-11-25) - in-process suites under `apps/api/test/perf`, enforced with `PERF=1` by the nightly `perf.yml` (a 10x sanity ceiling in the ordinary e2e run), results in `test-results/*.json` plus a job summary (`scripts/ci/perf-summary.mjs`). Already there and confirmed: check-out (custody) and scan resolve (lookup budget) in `registry-perf`, import commit throughput and the 100k-row dry run in `import-perf`, list / search / tag lookup on 2 x 50k. Added: the 500-label PDF (`labels-perf`, 5 renders, p95) and a location-scoped user (one site of about 18% and one room under 1% of the 50k tenant) for list, search, tag lookup and scan resolve (ED-26 predicate). Measured p95 on 2026-11-25 (PERF=1, compose Postgres 18, shared developer machine): check-out 26 ms, scan resolve 11 ms, tag lookup 10 ms, list 13 ms (worst list shape 216 ms), search 42-61 ms, scoped site list 44 / search 35 / lookup 17 / scan 17 ms, scoped room 21 / 25 / 20 / 21 ms, 500-label PDF 1.94 s, import commit 17,477 rows/min, dry run of 100k rows 46 s; table in `docs/engineering/ci.md` section 4. The scoped predicate is well inside budget; nothing to redesign.
+- [x] Nightly job adds: check-out p95 < 300 ms, scan resolve p95 < 150 ms, 500-label PDF < 30 s, import commit throughput >= 10,000 rows/min, dry run of 100k rows < 10 min.
 
 #### M2-DOC-01 - User guides (drafts)
 Size: S - Owner: Claude - Deps: M2-IMP-08, M2-TAG-03, M2-LOAN-02
+Status: done as drafts (2026-11-25): eight guides in `docs/guides/` (the five asked for plus location scoping, people and logins, and schools / K-12 mapping), an index, and 55 screenshots made from a fresh seeded stack by `docs/guides/tools/shoot.mjs` (how to run it: `docs/guides/tools/README.md`). The location-scoping guide shows the dialog "Change role and access" and is refreshed when the Users screen gets add / remove role assignment. Review by the founder is part of M2-UX-01.
 - [ ] Task-based guides: import your spreadsheet, import from Google Admin, print and apply labels, run a loaner day, log a repair; each with screenshots generated from the seeded stack.
 
 #### M2-AUTH-01 - Expose the MFA policy to the client

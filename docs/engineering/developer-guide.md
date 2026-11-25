@@ -100,6 +100,8 @@ use another project name and other host ports: `docker compose -p other up -d` w
 | `OPS_PORT`, `OPS_HOST`, `OPS_ENABLED`  | all roles              | internal ops server; 9464 / 0.0.0.0 / on                                                                  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`          | all roles              | tracing is off until set                                                                                  |
 | `WEB_BASE_URL`, `TENANT_HOST_SUFFIX`   | api                    | invitation and reset links; optional per-tenant hostnames                                                 |
+| `SESSION_COOKIE_SECURE`                | api                    | Default `true`: cookie `__Host-at_session` with `Secure`. `false`: `at_session` without `Secure` (plain HTTP from a LAN address). **Dev only**: refused at start-up when `NODE_ENV=production` (ED-30) |
+| `DEV_ALLOWED_ORIGINS`                  | web dev server         | Comma list of hosts/IPs allowed to load the Next dev server from another device (`allowedDevOrigins`); not used by the static build |
 | `SEED_DEMO_DATA`                       | migrate                | create Acme and Globex after migrating (refused in production)                                            |
 
 Secrets never go in compose files or the repo: `*_FILE` variants read a mounted file (Docker secret).
@@ -188,6 +190,26 @@ Invitation and password-reset mails appear there while you develop; the e2e mail
 the same API. Clear it with `curl -X DELETE http://localhost:8025/api/v1/messages`. Mail is sent by the
 **worker** (a job queued in the same transaction as the business change), so if nothing arrives check
 `docker compose logs worker` first.
+
+### Open the app from another device on your network
+
+Local development over plain HTTP, from `http://<LAN-IP>:3001` as well as `http://localhost:3001` (ED-30). The session
+cookie is `__Host-at_session; Secure`, and a browser stores a `Secure` cookie over HTTP only on `localhost`, so on a LAN
+address the sign-in succeeds but the cookie is dropped. `SESSION_COOKIE_SECURE=false` makes the API issue `at_session`
+without `Secure` (a `__Host-` cookie requires `Secure`, so the name changes with it; only the active mode's name is read).
+
+1. In `.env`: `SESSION_COOKIE_SECURE=false` and `WEB_BASE_URL=http://<LAN-IP>:3001` (mail links). Optional:
+   `S3_PUBLIC_ENDPOINT=http://<LAN-IP>:9000` for attachments, `DEV_ALLOWED_ORIGINS=<LAN-IP>` for the Next dev server
+   (`pnpm --filter @assettracker/web dev` or the compose `web` profile; `next.config.ts` `allowedDevOrigins`, dev phase only).
+2. `docker compose up -d` (the api, worker and scheduler are recreated; no rebuild).
+3. Serve the static build (`node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000`,
+   it binds every interface) or start the dev server, and open `http://<LAN-IP>:3001`.
+4. Windows firewall, inbound TCP 3001 on the Private profile (PowerShell as administrator):
+   `New-NetFirewallRule -DisplayName "Asset Tracker web (dev)" -Direction Inbound -Protocol TCP -LocalPort 3001 -Action Allow -Profile Private`
+
+The API refuses to start with `SESSION_COOKIE_SECURE=false` and `NODE_ENV=production`, and logs a warning at start-up
+when it is off. The alternative that needs no switch is HTTPS (a TLS reverse proxy with a local certificate, such as
+Caddy or `mkcert`), which is also the only option beyond a trusted network.
 
 ## 6. Resetting the database
 

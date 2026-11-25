@@ -192,6 +192,10 @@ describe('loaner pools', () => {
     const expected = await screen.findByLabelText(
       'Return date offered at check-out (days from today)',
     );
+    // the hint says both what an empty value does at check-out and what pools then lend for (ED-24)
+    expect(expected).toHaveAccessibleDescription(
+      'Leave empty to offer no date at check-out. Loaner pools without their own length then lend for 7 days.',
+    );
     await waitFor(() =>
       expect(screen.getByLabelText('Remind the borrower (days before the due date)')).toHaveValue(
         2,

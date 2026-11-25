@@ -160,3 +160,81 @@ describe('mock scoped writes (location administrator)', () => {
     expect(inside.value.parent_id).toBe(MAIN_BUILDING);
   });
 });
+
+/**
+ * One role assignment at a time (ED-27), as apps/api answers: the user with a new ETag, 422 pointers
+ * at the body of ONE assignment (`/location_id`), 409 for a duplicate, the only assignment, the last
+ * active administrator and your own last administrator access.
+ */
+describe('mock add and remove of one role assignment (ED-27)', () => {
+  const VERA = '0190a6b2-0000-7000-8000-000000000003';
+  const ALICE = '0190a6b2-0000-7000-8000-000000000001';
+  const MARCO = '0190a6b2-0000-7000-8000-000000000002';
+  const UNKNOWN = '0190a6b2-0000-7000-8000-00000000ffff';
+  beforeEach(() => seedSession(MOCK_ACCOUNTS.owner));
+
+  it('adds a limited assignment and removes it again; the user comes back each time', async () => {
+    const added = await usersApi.addRoleAssignment(VERA, {
+      role_id: roleIdFor('technician'),
+      scope_type: 'location',
+      location_id: ROOM_204,
+    });
+    expect(added.role_assignments).toHaveLength(2);
+    expect(added.role_assignments[1]).toEqual({
+      id: expect.any(String),
+      role_id: roleIdFor('technician'),
+      scope_type: 'location',
+      company_id: null,
+      location_id: ROOM_204,
+    });
+    const removed = await usersApi.removeRoleAssignment(VERA, added.role_assignments[1]!.id!);
+    expect(removed.role_assignments).toHaveLength(1);
+    expect(removed.role_assignments[0]!.role_id).toBe(roleIdFor('viewer'));
+  });
+
+  it('refuses a bad assignment at the body, a duplicate, and an unknown assignment', async () => {
+    const noLocation = await fails(
+      usersApi.addRoleAssignment(VERA, {
+        role_id: roleIdFor('technician'),
+        scope_type: 'location',
+      }),
+    );
+    expect(noLocation.status).toBe(422);
+    expect(errorsOf(noLocation)).toEqual([
+      expect.objectContaining({ pointer: '/location_id', code: 'invalid' }),
+    ]);
+    const unknownRole = await fails(usersApi.addRoleAssignment(VERA, { role_id: UNKNOWN }));
+    expect(errorsOf(unknownRole)).toEqual([
+      expect.objectContaining({ pointer: '/role_id', code: 'not-found' }),
+    ]);
+    const twice = await fails(
+      usersApi.addRoleAssignment(VERA, { role_id: roleIdFor('viewer'), scope_type: 'tenant' }),
+    );
+    expect(twice.status).toBe(409);
+    const unknown = await fails(usersApi.removeRoleAssignment(VERA, UNKNOWN));
+    expect(unknown.status).toBe(404);
+  });
+
+  it('keeps the only assignment, the last administrator and your own administrator access (409)', async () => {
+    const vera = await usersApi.get(VERA);
+    const only = await fails(
+      usersApi.removeRoleAssignment(VERA, vera.value.role_assignments[0]!.id!),
+    );
+    expect(only.status).toBe(409);
+
+    // you (Alice) with a second assignment: your own admin access stays, though Marco is an admin too
+    const alice = await usersApi.addRoleAssignment(ALICE, { role_id: roleIdFor('viewer') });
+    const admin = alice.role_assignments.find((a) => a.role_id === roleIdFor('tenant_admin'))!;
+    const own = await fails(usersApi.removeRoleAssignment(ALICE, admin.id!));
+    expect(own.status).toBe(409);
+    expect(JSON.stringify(own.body)).toMatch(/your own last administrator access/);
+
+    // Marco can be demoted while Alice is an administrator; then Alice is the last one
+    const marco = await usersApi.addRoleAssignment(MARCO, { role_id: roleIdFor('viewer') });
+    const marcoAdmin = marco.role_assignments.find((a) => a.role_id === roleIdFor('tenant_admin'))!;
+    const demoted = await usersApi.removeRoleAssignment(MARCO, marcoAdmin.id!);
+    expect(demoted.role_assignments).toHaveLength(1);
+    const last = await fails(usersApi.removeRoleAssignment(ALICE, admin.id!));
+    expect(last.status).toBe(409);
+  });
+});

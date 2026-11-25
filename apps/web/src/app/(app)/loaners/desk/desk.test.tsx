@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loanersApi } from '@/lib/loaners/api';
-import { assetsApi, peopleApi } from '@/lib/registry/api';
+import { assetsApi, peopleApi, statusApi } from '@/lib/registry/api';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { resetRouter, router } from '@/test/navigation';
@@ -283,5 +283,64 @@ describe('loaner desk', () => {
     renderApp(<DeskScreen />, { workflows: true });
     await user.click(await screen.findByRole('button', { name: 'Return' }));
     expect(router.replace).toHaveBeenCalledWith('/loaners/desk?mode=return');
+  });
+
+  it('refuses a device that cannot be lent as soon as it is scanned, naming its status', async () => {
+    const staff = await pool('Staff');
+    const member = (await members(staff.id, true))[0]!;
+    const broken = (await statusApi.list()).data.find((s) => s.state_type === 'undeployable')!;
+    await assetsApi.update(member.asset!.id, { status_id: broken.id });
+    const user = userEvent.setup();
+    renderApp(<DeskScreen />, { workflows: true });
+    await user.type(await screen.findByLabelText('Device'), `${tagOf(member)}{Enter}`);
+    const alert = await screen.findByRole('alert');
+    await waitFor(() =>
+      expect(alert).toHaveTextContent(
+        `${tagOf(member)} is ${broken.name} and cannot be lent. Choose another device.`,
+      ),
+    );
+    // it never joins the list, and is not taken for a borrower's card either
+    expect(screen.queryByRole('list', { name: 'Devices to lend' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Matches' })).not.toBeInTheDocument();
+  });
+
+  it('lends the next available device the pool picks and shows which one', async () => {
+    const staff = await pool('Staff');
+    const free = (await members(staff.id, true)).map(tagOf);
+    const user = userEvent.setup();
+    const { container } = renderApp(<DeskScreen />, { workflows: true });
+    const next = await screen.findByRole('button', { name: 'Lend next available device' });
+    // it needs a borrower first
+    expect(next).toBeDisabled();
+    await user.type(await screen.findByLabelText('Borrower'), 'Alice Owner{Enter}');
+    await waitFor(() => expect(next).toBeEnabled());
+    await user.click(next);
+    const picked = await screen.findByTestId('desk-picked');
+    const tag = picked.textContent!;
+    expect(free).toContain(tag);
+    expect(screen.getByTestId('desk-feedback')).toHaveTextContent(
+      `${tag} is the next available device: lent to Alice Owner, due `,
+    );
+    expect(screen.getByTestId('desk-feedback')).toHaveAttribute('role', 'status');
+    await expectNoA11yViolations(container);
+    const lent = (await members(staff.id)).find((m) => tagOf(m) === tag)!;
+    expect(lent.asset?.current_assignment?.target_name).toBe('Alice Owner');
+    // the next one is a different device
+    await user.click(next);
+    await waitFor(() => expect(screen.getByTestId('desk-picked').textContent).not.toBe(tag));
+  });
+
+  it('says so when the pool has no device left to give', async () => {
+    const staff = await pool('Staff');
+    const broken = (await statusApi.list()).data.find((s) => s.state_type === 'undeployable')!;
+    for (const member of await members(staff.id, true)) {
+      await assetsApi.update(member.asset!.id, { status_id: broken.id });
+    }
+    const user = userEvent.setup();
+    renderApp(<DeskScreen />, { workflows: true });
+    await user.type(await screen.findByLabelText('Borrower'), 'Alice Owner{Enter}');
+    await user.click(await screen.findByRole('button', { name: 'Lend next available device' }));
+    const alert = await screen.findByRole('alert');
+    await waitFor(() => expect(alert).toHaveTextContent('No device of this pool is free.'));
   });
 });

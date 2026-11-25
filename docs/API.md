@@ -344,7 +344,7 @@ Grouped by contract tag. Tags marked "contract only" are specified but have no r
 
 <!-- api-catalogue:start -->
 
-Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **203 operations on 136 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
+Generated from `docs/engineering/openapi.yaml` (contract version `1.0.0-m2`): **205 operations on 138 paths in 26 tags**. Paths are shown as served, with the `/v1` prefix.
 
 "Requires" lists headers that are mandatory for that operation beyond the credential: `If-Match` (stale or missing gives `412` / `428`) and `Idempotency-Key` (missing gives `400 idempotency-key-required`).
 
@@ -392,23 +392,25 @@ Global search across registry entities, filtered by the caller's permissions.
 
 Users, roles, companies and API keys.
 
-| Method | Path                                   | Permission      | Requires | Purpose                            |
-| ------ | -------------------------------------- | --------------- | -------- | ---------------------------------- |
-| GET    | `/v1/api-keys`                         | `apikey:manage` | -        | List API keys                      |
-| POST   | `/v1/api-keys`                         | `apikey:manage` | -        | Create an API key                  |
-| DELETE | `/v1/api-keys/{id}`                    | `apikey:manage` | -        | Revoke an API key                  |
-| GET    | `/v1/companies`                        | `company:read`  | -        | List companies                     |
-| GET    | `/v1/roles`                            | `role:read`     | -        | List roles                         |
-| GET    | `/v1/users`                            | `user:read`     | -        | List users                         |
-| POST   | `/v1/users`                            | `user:manage`   | -        | Create or invite a user            |
-| GET    | `/v1/users/{id}`                       | `user:read`     | -        | Get a user                         |
-| PATCH  | `/v1/users/{id}`                       | `user:manage`   | If-Match | Update a user and role assignments |
-| DELETE | `/v1/users/{id}`                       | `user:manage`   | If-Match | Disable and archive a user         |
-| DELETE | `/v1/users/{id}/invitation`            | `user:manage`   | -        | Revoke a user's pending invitation |
-| POST   | `/v1/users/{id}/invitation/resend`     | `user:manage`   | -        | Resend a user's invitation         |
-| DELETE | `/v1/users/{id}/mfa`                   | `user:manage`   | -        | Reset a user's MFA                 |
-| GET    | `/v1/users/{id}/sessions`              | `user:manage`   | -        | List a user's active sessions      |
-| DELETE | `/v1/users/{id}/sessions/{session_id}` | `user:manage`   | -        | Revoke one session of a user       |
+| Method | Path                                              | Permission      | Requires | Purpose                            |
+| ------ | ------------------------------------------------- | --------------- | -------- | ---------------------------------- |
+| GET    | `/v1/api-keys`                                    | `apikey:manage` | -        | List API keys                      |
+| POST   | `/v1/api-keys`                                    | `apikey:manage` | -        | Create an API key                  |
+| DELETE | `/v1/api-keys/{id}`                               | `apikey:manage` | -        | Revoke an API key                  |
+| GET    | `/v1/companies`                                   | `company:read`  | -        | List companies                     |
+| GET    | `/v1/roles`                                       | `role:read`     | -        | List roles                         |
+| GET    | `/v1/users`                                       | `user:read`     | -        | List users                         |
+| POST   | `/v1/users`                                       | `user:manage`   | -        | Create or invite a user            |
+| GET    | `/v1/users/{id}`                                  | `user:read`     | -        | Get a user                         |
+| PATCH  | `/v1/users/{id}`                                  | `user:manage`   | If-Match | Update a user and role assignments |
+| DELETE | `/v1/users/{id}`                                  | `user:manage`   | If-Match | Disable and archive a user         |
+| DELETE | `/v1/users/{id}/invitation`                       | `user:manage`   | -        | Revoke a user's pending invitation |
+| POST   | `/v1/users/{id}/invitation/resend`                | `user:manage`   | -        | Resend a user's invitation         |
+| DELETE | `/v1/users/{id}/mfa`                              | `user:manage`   | -        | Reset a user's MFA                 |
+| POST   | `/v1/users/{id}/role-assignments`                 | `user:manage`   | If-Match | Add a role assignment to a user    |
+| DELETE | `/v1/users/{id}/role-assignments/{assignment_id}` | `user:manage`   | If-Match | Remove a role assignment of a user |
+| GET    | `/v1/users/{id}/sessions`                         | `user:manage`   | -        | List a user's active sessions      |
+| DELETE | `/v1/users/{id}/sessions/{session_id}`            | `user:manage`   | -        | Revoke one session of a user       |
 
 ### Assets
 

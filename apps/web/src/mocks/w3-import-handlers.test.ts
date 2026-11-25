@@ -8,7 +8,7 @@ import {
   type ImportJob,
   type ImportUpdate,
 } from '@/lib/imports/api';
-import { assetsApi } from '@/lib/registry/api';
+import { assetsApi, statusApi } from '@/lib/registry/api';
 import { seedSession } from '@/test/render';
 import { MOCK_ACCOUNTS } from './fixtures';
 import { setMockScanDelay } from './m2-handlers';
@@ -370,6 +370,7 @@ describe('mock imports: creating and analysing', () => {
     const text = [
       'Serial Number,Annotated Asset ID,Status,Model,Annotated User,Org Unit Path,Last Sync',
       '5CD1,CHR-1,ACTIVE,HP Chromebook 14 G6,,/Students/Grade 5,2026-11-20',
+      '5CD2,CHR-2,DISABLED,HP Chromebook 14 G6,,/,2026-11-20',
     ].join('\n');
     const job = await analysed(text, { preset: 'google_admin_chromeos' });
     expect(Object.fromEntries(job.mapping.columns.map((c) => [c.index, c.target]))).toEqual({
@@ -378,13 +379,21 @@ describe('mock imports: creating and analysing', () => {
       2: 'status',
       3: 'model',
       4: 'assigned_to',
-      5: 'location',
+      5: 'department',
       6: 'cf:last_sync',
     });
     expect(job.mapping.constants).toEqual({ category: 'Chromebook' });
     expect(job.source).toBe('google_admin_csv');
     // "Active" is a deployable status: the default label is chosen for it
     expect(job.value_map!.status?.active).toMatchObject({ id: expect.any(String) });
+    // ED-29: a disabled device is Retired (the archived label), not in repair
+    const retired = (await statusApi.list()).data.find((l) => l.state_type === 'archived')!;
+    expect(job.value_map!.status?.disabled).toEqual({ id: retired.id });
+    // ED-29: the org unit is the department, created under its path; the root unit names none
+    expect(job.value_map!.department).toEqual({
+      '/students/grade 5': { create: true, name: 'Students / Grade 5' },
+      '/': { skip: true },
+    });
   });
 });
 
@@ -750,8 +759,11 @@ describe('mock imports: the commit', () => {
   });
 
   it('cancels a running commit after the current batch; the rows already written stay', async () => {
-    setMockImportTiming({ batchMs: 300, batchRows: 1 });
+    // review at the fast pace of the other tests; only the commit is slow enough to cancel (setting the
+    // slow pace first also slowed the dry run to one row per 300 ms: seconds of waiting that a loaded
+    // machine stretched past the 15 s test timeout)
     const job = await reviewed();
+    setMockImportTiming({ batchMs: 300, batchRows: 1 });
     await importsApi.commit(job.id, job.dry_run_digest!, 'key-cancel-0001');
     await new Promise((resolve) => setTimeout(resolve, 350));
     await importsApi.cancel(job.id);
@@ -797,6 +809,9 @@ describe('mock imports: other kinds of data', () => {
     expect(places.mapping.columns.map((c) => c.target)).toEqual(['path', 'kind']);
     await importsApi.startDryRun(places.id);
     const done = await settle(places.id, 'dry_run_done');
+    // ED-29: a location below a parent the import creates keeps its last checks for the commit,
+    // counted once in the summary (as the API does)
+    expect((done.summary as { validated_at_commit?: number }).validated_at_commit).toBe(1);
     await importsApi.commit(places.id, done.dry_run_digest!, 'key-places-0001');
     await settle(places.id, 'completed');
     const departments = await analysed('Name,Code\nRobotics Club,RC-1', {

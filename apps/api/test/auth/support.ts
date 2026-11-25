@@ -15,6 +15,8 @@ import type { TenancyService } from '../../src/tenancy/index.js';
 export { dbEnabled, env, testPorts, withClient };
 
 export const COOKIE = '__Host-at_session';
+/** Cookie name when the app runs with SESSION_COOKIE_SECURE=false (ED-30). */
+export const COOKIE_INSECURE = 'at_session';
 
 export interface Resp {
   status: number;
@@ -70,6 +72,8 @@ export async function startApp(
 /** A cookie-jar HTTP client over `app.inject` that behaves like the browser: cookie in, CSRF header on mutations. */
 export class Client {
   cookie: string | undefined;
+  /** Name of the session cookie the server uses; learned from the first Set-Cookie (secure mode by default). */
+  cookieName: string = COOKIE;
   csrf: string | undefined;
   constructor(
     readonly app: NestFastifyApplication,
@@ -79,6 +83,7 @@ export class Client {
   clone(): Client {
     const c = new Client(this.app, this.ip);
     c.cookie = this.cookie;
+    c.cookieName = this.cookieName;
     c.csrf = this.csrf;
     return c;
   }
@@ -102,7 +107,7 @@ export class Client {
         : typeof opts.cookie === 'string'
           ? opts.cookie
           : this.cookie;
-    if (cookie) headers.cookie = cookie.includes('=') ? cookie : `${COOKIE}=${cookie}`;
+    if (cookie) headers.cookie = cookie.includes('=') ? cookie : `${this.cookieName}=${cookie}`;
     if (method !== 'GET' && opts.csrf !== false) {
       const token = typeof opts.csrf === 'string' ? opts.csrf : this.csrf;
       if (token) headers['x-csrf-token'] = token;
@@ -119,9 +124,10 @@ export class Client {
     for (const line of lines) {
       const [pair] = line.split(';');
       const [name, ...rest] = pair!.split('=');
-      if (name === COOKIE) {
+      if (name === COOKIE || name === COOKIE_INSECURE) {
+        this.cookieName = name;
         const value = rest.join('=');
-        this.cookie = /Max-Age=0/i.test(line) || value === '' ? undefined : `${COOKIE}=${value}`;
+        this.cookie = /Max-Age=0/i.test(line) || value === '' ? undefined : `${name}=${value}`;
       }
     }
     let body: unknown;
@@ -145,7 +151,7 @@ export class Client {
 
   /** Raw cookie token value (what the browser holds). */
   get token(): string | undefined {
-    return this.cookie?.slice(COOKIE.length + 1);
+    return this.cookie?.slice(this.cookieName.length + 1);
   }
 
   async login(email: string, password: string, extra: Record<string, unknown> = {}): Promise<Resp> {

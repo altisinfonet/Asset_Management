@@ -70,6 +70,9 @@ test('an administrator limits a new technician to one site; the technician sees 
   await dialog.getByLabel(/^Email/).fill(INVITEE);
   await choose(admin, /^Role/, 'Technician');
   await choose(admin, /^Access/, 'Limited to a location');
+  // the select hands focus back to its trigger as it closes: typing into the location before that
+  // loses the focus again, and the list closes with it
+  await expect(dialog.getByRole('combobox', { name: /^Access/ })).toBeFocused();
   const location = dialog.getByRole('combobox', { name: /^Location/ });
   await location.fill(SITE_IN);
   await admin

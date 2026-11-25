@@ -18,7 +18,7 @@ x-api-env: &api-env
   # BROWSER reaches MinIO (presigned URLs are signed for it); the containers use minio:9000.
   STORAGE_DRIVER: s3
   S3_ENDPOINT: http://minio:9000
-  S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:${MINIO_PORT:-9000}}
   S3_BUCKET: assettracker-files
   S3_ACCESS_KEY_ID: minioadmin
   S3_SECRET_ACCESS_KEY: minioadmin-dev
@@ -32,6 +32,12 @@ x-api-env: &api-env
   MAIL_FROM: 'Asset Tracker <no-reply@assettracker.local>'
   # Envelope-encryption master key (SecretBox): a Docker secret FILE, never an env value.
   MASTER_KEY_FILE: /run/secrets/master_key
+  # Base of the invitation and password-reset links in mails. Set it in .env to http://<LAN-IP>:3001 to use the
+  # app from another device (docs/getting-started.md, "Open the app from another device on your network").
+  WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3001}
+  # Session cookie: true = __Host-at_session with Secure (default). false = at_session without Secure so sign-in
+  # works over plain HTTP from a LAN address. DEV ONLY: the api refuses false when NODE_ENV=production (ED-30).
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
   # Internal ops server (/metrics, and /healthz /readyz on worker and scheduler). Not published.
   OPS_PORT: '9464'
 
@@ -234,6 +240,8 @@ services:
       target: dev
     environment:
       API_PROXY_URL: http://api:3000
+      # Comma-separated hosts/IPs allowed to load the dev server's assets and HMR (e.g. 192.168.1.101); see next.config.ts
+      DEV_ALLOWED_ORIGINS: ${DEV_ALLOWED_ORIGINS:-}
     ports:
       - '${WEB_PORT:-3001}:3001'
     volumes:

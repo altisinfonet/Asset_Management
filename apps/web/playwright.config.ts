@@ -55,6 +55,13 @@ export default target === 'real'
   : defineConfig({
       ...common,
       testDir: './e2e',
+      // Playwright's default (half the logical cores) oversubscribes a developer machine: on 28 logical
+      // cores the 14 Chromes rendering Next pages and running axe kept the CPU above 95 % for 95 s with
+      // a run queue of up to 618 threads, and a starved renderer froze for ~6 s (no frame, no fetch
+      // answered by the mock service worker), so a 5 s `expect` timed out (AUDIT B.28; the scan-burst
+      // and auth axe timeouts of B.27 are the same starvation). A quarter of the cores keeps the queue
+      // short (max 90, CPU 55 % on average) for about 30 % more wall time. CI keeps the default.
+      workers: process.env.CI ? undefined : '25%',
       webServer:
         target === 'dev'
           ? {

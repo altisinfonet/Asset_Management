@@ -18,7 +18,8 @@ export const loanersMessages = {
       inPool: 'In pools',
       available: 'Available',
       onLoan: 'On loan',
-      overdue: 'Overdue',
+      // loans from pools only; the main dashboard's "Overdue check-outs" also counts regular check-outs
+      overdue: 'Overdue loans',
       dueToday: 'Due today',
       dueSoon: 'Due soon',
     },
@@ -130,6 +131,11 @@ export const loanersMessages = {
     lendCount_one: 'Lend {count} device',
     lendCount_other: 'Lend {count} devices',
     lendHint: 'Press Enter to lend',
+    next: {
+      action: 'Lend next available device',
+      hint: 'No device in hand? The pool picks one: the device idle the longest (never lent first, then the lowest tag). It is lent to the borrower at once and shown above.',
+      lent: '{tag} is the next available device: lent to {name}, due {date}. Hand over {tag}.',
+    },
     summary_one: 'Lend {count} device to {name}, due {date}.',
     summary_other: 'Lend {count} devices to {name}, due {date}.',
     ready: {
@@ -154,6 +160,8 @@ export const loanersMessages = {
       notInPool: '{code} is not in this loaner pool. Add it to the pool first.',
       alreadyOut: '{code} is already out.',
       notDeployable: '{code} cannot be lent right now.',
+      statusNotLendable: '{code} is {status} and cannot be lent. Choose another device.',
+      personLimit: '{name} already holds the most devices this pool allows.',
       limit: '{code}: {name} already holds the most devices this pool allows.',
       notCheckedOut: '{code} is not on loan.',
       itemGeneric: '{code}: that did not work.',
@@ -265,9 +273,10 @@ export const loanersMessages = {
     defaults: {
       heading: 'Loan defaults',
       description:
-        'The return date a regular check-out starts with, and when borrowers are reminded. A pool lends for its own default length.',
+        'The return date a regular check-out starts with, and when borrowers are reminded. A pool with its own loan length lends for that; a pool without one lends for the number of days below.',
       expectedDays: 'Return date offered at check-out (days from today)',
-      expectedHint: 'Leave empty to offer no date.',
+      expectedHint:
+        'Leave empty to offer no date at check-out. Loaner pools without their own length then lend for 7 days.',
       reminder: 'Remind the borrower (days before the due date)',
       reminderHint: '0 sends no reminder.',
       save: 'Save defaults',

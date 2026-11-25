@@ -32,6 +32,11 @@ export interface Preset {
   constants?: Record<string, string>;
   /** Source status text (normalised) -> the state type of the label it should map to. */
   statusHints?: Record<string, string>;
+  /**
+   * The department column holds organisational-unit paths (`/Students/Grade 5`): the value map gets one
+   * entry per path (ED-29), an existing department or one to create with the path's name.
+   */
+  departmentPaths?: boolean;
   /** Reference data the preset needs before it can run (created when the job is created). */
   setup?: {
     category: string;
@@ -248,7 +253,7 @@ export const PRESETS: readonly Preset[] = [
     key: 'google_admin_chromeos',
     label: 'Google Admin: ChromeOS devices',
     description:
-      'The device list exported from the Google Admin console (Devices > Chrome > Devices > export). Devices become assets of the Chromebook category with their OS version, MAC addresses and last sync as custom fields; the organisational unit becomes the location; the annotated user is the person the device is checked out to. Re-importing the same file updates the devices by serial number.',
+      'The device list exported from the Google Admin console (Devices > Chrome > Devices > export). Devices become assets of the Chromebook category with their OS version, MAC addresses and last sync as custom fields; the organisational unit becomes the department; the annotated user is the person the device is checked out to; disabled and deprovisioned devices are Retired. Re-importing the same file updates the devices by serial number.',
     entity_type: 'asset',
     source: 'google_admin_csv',
     columns: [
@@ -263,7 +268,7 @@ export const PRESETS: readonly Preset[] = [
       col('assigned_to', 'User', 'Annotated user', 'Recent users'),
       col('cf:annotated_location', 'Location', 'Annotated location'),
       col('notes', 'Notes', 'Annotated notes'),
-      col('location', 'Org unit path', 'Organizational unit path', 'OU path'),
+      col('department', 'Org unit path', 'Organizational unit path', 'OU path'),
       col('cf:mac_address', 'MAC address'),
       col('cf:ethernet_mac_address', 'Ethernet MAC address'),
       col('cf:ip_address', 'Last known IP address', 'Last known network'),
@@ -326,24 +331,27 @@ export const PRESETS: readonly Preset[] = [
         model: 'create',
         manufacturer: 'create',
         location: 'create',
+        department: 'create',
         status: 'must_exist',
         person: 'must_exist',
       },
     },
     constants: { category: GOOGLE_CHROMEBOOK_CATEGORY },
+    // ED-29: a disabled or deprovisioned Chromebook is out of service, not in repair: it is Retired
     statusHints: {
       active: 'deployable',
       provisioned: 'deployable',
       'in pipeline': 'deployable',
-      disabled: 'undeployable',
+      disabled: 'archived',
       deprovisioned: 'archived',
       retired: 'archived',
     },
+    departmentPaths: true,
     setup: { category: GOOGLE_CHROMEBOOK_CATEGORY, customFields: GOOGLE_CUSTOM_FIELDS },
     notes: [
       'Creating the import creates the Chromebook category and its custom fields if they do not exist yet.',
-      'Status: Active and Provisioned map to your default deployable label, Disabled to an undeployable one, Deprovisioned to an archived one. Check the value mapping.',
-      'To use the organisational unit as the department instead of the location, change the target of that column.',
+      'Status: Active and Provisioned map to your default deployable label; Disabled and Deprovisioned to Retired (your label of the archived type). Check the value mapping.',
+      'The organisational unit becomes the department: "/Students/Grade 5" is the department "Students / Grade 5", or an existing department of that name or called "Grade 5". Unknown units are created as departments (this needs department:manage); map or skip them in the value mapping. No location is created from the unit; map a location column yourself if you want one.',
     ],
   },
 ];
@@ -394,12 +402,25 @@ export async function applyPreset(
     ...(preset.constants ? { constants: { ...preset.constants } } : {}),
   };
   const valueMap: ValueMap = {};
+  const departmentColumn = columns.find((c) => c.target === 'department');
+  if (preset.departmentPaths && departmentColumn && distinct) {
+    const departments = await tx.department.findMany({
+      where: { archived_at: null },
+      select: { id: true, name: true },
+    });
+    const entries: NonNullable<ValueMap['department']> = {};
+    for (const value of await distinct(departmentColumn.index)) {
+      const entry = departmentForPath(value, departments);
+      if (entry) entries[normKey(value)] = entry;
+    }
+    if (Object.keys(entries).length > 0) valueMap.department = entries;
+  }
   const statusColumn = columns.find((c) => c.target === 'status');
   if (preset.statusHints && statusColumn && distinct) {
     const labels = await tx.status_label.findMany({
       where: { archived_at: null },
       orderBy: [{ position: 'asc' }, { name: 'asc' }],
-      select: { id: true, state_type: true, is_default: true },
+      select: { id: true, name: true, state_type: true, is_default: true },
     });
     const entries: Record<string, { id: string }> = {};
     for (const value of await distinct(statusColumn.index)) {
@@ -408,12 +429,38 @@ export async function applyPreset(
       const label =
         (wanted === 'deployable'
           ? labels.find((l) => l.is_default && l.state_type === 'deployable')
-          : undefined) ?? labels.find((l) => l.state_type === wanted);
+          : wanted === 'archived'
+            ? labels.find((l) => l.state_type === 'archived' && normKey(l.name) === 'retired')
+            : undefined) ?? labels.find((l) => l.state_type === wanted);
       if (label) entries[normKey(value)] = { id: label.id };
     }
     if (Object.keys(entries).length > 0) valueMap.status = entries;
   }
   return { mapping, options: preset.options, valueMap };
+}
+
+/**
+ * The department an organisational-unit path stands for (ED-29): its segments joined by " / "
+ * (`/Students/Grade 5` -> "Students / Grade 5"). An existing department of exactly that name, else the
+ * one existing department named like the last segment ("Grade 5"), is used; otherwise the entry asks the
+ * import to create it under that name (the reference policy and `department:manage` still apply). The
+ * root unit `/` names no department: the cell is skipped.
+ */
+export function departmentForPath(
+  path: string,
+  departments: ReadonlyArray<{ id: string; name: string }>,
+): { id: string } | { create: true; name: string } | { skip: true } | null {
+  const parts = path
+    .split('/')
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (parts.length === 0) return path.trim() === '/' ? { skip: true } : null;
+  const name = parts.join(' / ').slice(0, 200);
+  const exact = departments.find((d) => normKey(d.name) === normKey(name));
+  if (exact) return { id: exact.id };
+  const last = departments.filter((d) => normKey(d.name) === normKey(parts[parts.length - 1]!));
+  if (last.length === 1) return { id: last[0]!.id };
+  return { create: true, name };
 }
 
 /** The template headers of a preset, and the data dictionary rows (all entity types share `FIELD_SPECS`). */

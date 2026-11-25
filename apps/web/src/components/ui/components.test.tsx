@@ -321,6 +321,34 @@ const COLUMNS: DataTableColumn<Row>[] = [
 ];
 
 describe('DataTable', () => {
+  it('hides a lower-value column below 1440 px and cuts a long cell with its text as tooltip', () => {
+    const { container } = render(
+      <DataTable
+        label="Assets"
+        columns={[
+          ...COLUMNS,
+          { id: 'kind', header: 'Kind', cell: () => 'Laptop', hideBelow: 'wide' },
+          {
+            id: 'where',
+            header: 'Location',
+            cell: () => 'HQ > Building 2 > Room 14',
+            maxWidth: '14rem',
+          },
+        ]}
+        rows={ROWS}
+        getRowId={(r) => r.id}
+      />,
+    );
+    const headers = container.querySelectorAll('thead th');
+    expect(headers[2]!.className).toContain('hidden');
+    expect(headers[2]!.className).toContain('min-[90rem]:table-cell');
+    expect(container.querySelector('tbody tr td:nth-child(3)')!.className).toContain('hidden');
+    const cut = container.querySelector('tbody tr td:nth-child(4) span') as HTMLElement;
+    expect(cut.className).toContain('truncate');
+    expect(cut.style.maxWidth).toBe('14rem');
+    expect(cut).toHaveAttribute('title', 'HQ > Building 2 > Room 14');
+  });
+
   it('renders sticky header, 36px comfortable and 28px compact rows', () => {
     const { rerender, container } = render(
       <DataTable label="Assets" columns={COLUMNS} rows={ROWS} getRowId={(r) => r.id} />,

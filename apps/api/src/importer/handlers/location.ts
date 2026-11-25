@@ -185,6 +185,8 @@ export class LocationHandler extends ServiceHandler {
   }
 
   /** A parent the import created for an earlier row (its audit entry names this job). */
+  protected override readonly rehearsed = false;
+
   protected override async createdByThisImport(env: HandlerEnv, id: string): Promise<boolean> {
     const rows = await env.tx.$queryRaw<Array<{ one: number }>>`
       select 1 as one from app.audit_log

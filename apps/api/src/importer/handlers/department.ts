@@ -45,6 +45,14 @@ export class DepartmentHandler extends ServiceHandler {
       if (res.kind === 'found') {
         prep.create.manager_person_id = res.id;
         prep.update.manager_person_id = res.id;
+        const made = resolver.createdName(res.id);
+        if (made !== undefined) {
+          prep.warnings.push({
+            field: 'manager',
+            code: 'will-create',
+            message: `Will create person "${made}"`,
+          });
+        }
       } else if (res.kind === 'create') {
         prep.pending = true;
         prep.warnings.push({

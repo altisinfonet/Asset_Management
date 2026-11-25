@@ -115,6 +115,16 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
         expected: /foreign key zz_fk_parent_id_fkey on app\.zz_fk must be composite/,
       },
       {
+        // M2-SEC-01 (0170): both column lists contain tenant_id, but tenant_id is paired with the parent's
+        // id, so the key does not keep the reference inside the tenant. The earlier form of rule 8 let it pass.
+        rule: '8. composite foreign key that pairs tenant_id with an id column',
+        ddl: `select app.create_tenant_table('zz_fkm_parent', 'v text');
+              select app.create_tenant_table('zz_fkm', 'parent_id uuid');
+              alter table app.zz_fkm add constraint zz_fkm_misaligned
+                foreign key (tenant_id, parent_id) references app.zz_fkm_parent (id, tenant_id);`,
+        expected: /foreign key zz_fkm_misaligned on app\.zz_fkm must be composite/,
+      },
+      {
         rule: '9. unclassified table in schema app',
         ddl: 'create table app.zz_unclassified (id int);',
         expected: /table app\.zz_unclassified is unclassified/,
@@ -289,11 +299,23 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
     // Both partitioned tables get partitions in the far-future year (audit_log and asset_history); drop
     // both before and after, otherwise a leftover of an earlier run that drew the same random year
     // makes the "created 6" count come out smaller.
+    // Dropping an asset_history partition drops its cloned foreign keys, which locks app.asset and
+    // app.assignment like creating one does (see ensurePartitions): with a short lock_timeout the drop
+    // gives up and retries instead of the deadlock detector cancelling a custody transaction of a test
+    // file running in parallel.
     const dropFutureYear = () =>
       withClient(env.migratorUrl!, async (c) => {
+        await c.query("set lock_timeout = '200ms'");
         for (const table of ['audit_log', 'asset_history'])
           for (const m of ['01', '02', '03'])
-            await c.query(`drop table if exists app.${table}_${year}_${m}`);
+            for (let attempt = 1; ; attempt++) {
+              const code = await sqlState(
+                c.query(`drop table if exists app.${table}_${year}_${m}`),
+              );
+              if (code === undefined) break;
+              if ((code !== '55P03' && code !== '40P01') || attempt >= 20) throw new Error(code);
+              await new Promise((r) => setTimeout(r, 100 * attempt));
+            }
       });
     beforeAll(dropFutureYear);
     afterAll(dropFutureYear);
@@ -327,6 +349,32 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
         }
         expect(await schemaLint(c)).toEqual([]);
       });
+    });
+
+    it('never deadlocks with a custody write: it waits for the writer instead of holding locks the writer needs (B.27)', async () => {
+      await dropFutureYear();
+      // A custody action: it locks app.asset (its UPDATE), then inserts into asset_history.
+      const writer = await connect(env.migratorUrl!);
+      const rotator = await connect(env.migratorUrl!);
+      try {
+        await writer.query('begin');
+        // the writer must never be kept waiting by the rotation (before 0180 it waited for the
+        // deadlock check, ~1 s, and was the victim whenever its check ran first: a 500 to the user)
+        await writer.query("set local lock_timeout = '400ms'");
+        await writer.query('lock table app.asset in row exclusive mode');
+        // the rotation starts while the writer holds app.asset; before 0180 it took asset_history
+        // first and then waited for app.asset, so the writer's next step closed the cycle (40P01)
+        const rotation = ensurePartitions(rotator, new Date(`${year}-01-15T00:00:00Z`), 3);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await writer.query('lock table app.asset_history in row exclusive mode');
+        await writer.query('lock table app.audit_log in row exclusive mode');
+        await writer.query('commit');
+        // the rotation retried (55P03) and finished once the writer was done
+        expect(await rotation).toBe(6);
+      } finally {
+        await writer.end();
+        await rotator.end();
+      }
     });
   });
 });

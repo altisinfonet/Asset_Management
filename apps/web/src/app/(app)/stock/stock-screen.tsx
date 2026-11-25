@@ -181,6 +181,8 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
     const category: DataTableColumn<Accessory | Consumable> = {
       id: 'category',
       header: t('stock.columns.category'),
+      // gives way at a laptop width (1280 px); the category filter stays
+      hideBelow: 'wide',
       cell: (row) => lookupCategory(categories.data, row.category_id),
     };
     const level: DataTableColumn<Accessory | Consumable> = {
@@ -199,6 +201,7 @@ function StockList({ kind, onCreate }: { kind: StockKind; onCreate: () => void }
     const location: DataTableColumn<Accessory | Consumable> = {
       id: 'location',
       header: t('stock.columns.location'),
+      maxWidth: '14rem',
       cell: (row) => lookups.locationLabel(row.location_id),
     };
     const actions: DataTableColumn<Accessory | Consumable> = {

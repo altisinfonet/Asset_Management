@@ -275,6 +275,7 @@ export function Dashboard() {
               count={overdue.data?.rows.length ?? 0}
               href={routes.assetsFiltered({ overdue: true })}
               empty={t('dashboard.overduePanel.empty')}
+              hint={t('dashboard.overduePanel.hint')}
               columns={[
                 t('dashboard.columns.asset'),
                 t('dashboard.columns.holder'),
@@ -412,11 +413,13 @@ function CardHeading({
   id,
   title,
   description,
+  descriptionTestId,
   children,
 }: {
   id: string;
   title: ReactNode;
   description?: string;
+  descriptionTestId?: string;
   children?: ReactNode;
 }) {
   return (
@@ -425,7 +428,11 @@ function CardHeading({
         <h3 id={id} className="text-md font-semibold text-text">
           {title}
         </h3>
-        {description ? <p className="text-sm text-muted">{description}</p> : null}
+        {description ? (
+          <p className="text-sm text-muted" data-testid={descriptionTestId}>
+            {description}
+          </p>
+        ) : null}
       </div>
       {children}
     </div>
@@ -779,6 +786,7 @@ function Panel({
   count,
   href,
   empty,
+  hint,
   columns,
   extraLink,
   className,
@@ -786,6 +794,8 @@ function Panel({
 }: {
   id: string;
   title: string;
+  /** What the card counts, in one line under its title. */
+  hint?: string;
   query: Pick<UseQueryResult, 'isPending' | 'isError' | 'refetch'>;
   total: number | undefined;
   count: number;
@@ -810,6 +820,8 @@ function Panel({
     >
       <CardHeading
         id={headingId}
+        description={hint}
+        descriptionTestId={`panel-${id}-hint`}
         title={
           <>
             {title}

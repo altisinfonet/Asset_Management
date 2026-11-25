@@ -272,3 +272,24 @@ export async function importAt(
   await expect.poll(async () => importState(page, id), { timeout: 40_000 }).toBe('completed');
   return { id };
 }
+
+/** Puts an asset into the first status of the `undeployable` type (In repair, Out for fix, ...). */
+export async function makeUndeployable(page: Page, assetId: string): Promise<string> {
+  return page.evaluate(async (id) => {
+    const labels = (await (await fetch('/v1/status-labels?limit=200')).json()) as {
+      data: Array<{ id: string; name: string; state_type: string }>;
+    };
+    const label = labels.data.find((s) => s.state_type === 'undeployable')!;
+    const read = await fetch(`/v1/assets/${id}`);
+    await fetch(`/v1/assets/${id}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': 'csrf-e2e',
+        'if-match': read.headers.get('etag') ?? '',
+      },
+      body: JSON.stringify({ status_id: label.id }),
+    });
+    return label.name;
+  }, assetId);
+}

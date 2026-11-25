@@ -81,7 +81,9 @@ jobs:
 
       - run: pnpm --filter "@assettracker/api..." run build
 
-      - name: Registry, custody, search and import budgets (vitest, PERF=1)
+      # M2-OPS-01: also the 500-label PDF (labels-perf), the location-scoped list / search / lookups of a
+      # scoped user (ED-26) and scan resolve (registry-perf); each suite writes apps/api/test-results/*.json.
+      - name: Registry, custody, scan, scoped access, labels and import budgets (vitest, PERF=1)
         env:
           PERF: '1'
           IMPORT_PERF_ROWS: '100000'
@@ -92,12 +94,19 @@ jobs:
           JOBS_SCHEMA: pgboss_e2e
         run: pnpm --filter @assettracker/api test:e2e test/perf
 
+      - name: Summarise the in-process budgets
+        if: always()
+        run: node scripts/ci/perf-summary.mjs apps/api/test-results
+
       # The trend is the series of these artifacts (one JSON per night, 90 days) plus the job summary table.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: perf-results-${{ github.run_id }}
-          path: perf-results.json
+          path: |
+            perf-results.json
+            apps/api/test-results/*.json
+            apps/api/test-results/*.txt
           if-no-files-found: ignore
           retention-days: 90
 

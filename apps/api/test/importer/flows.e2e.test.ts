@@ -540,7 +540,7 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
       User: 'assigned_to',
       Location: 'cf:annotated_location',
       Notes: 'notes',
-      'Org unit path': 'location',
+      'Org unit path': 'department',
       'MAC address': 'cf:mac_address',
       'Device ID': 'external_id',
     });
@@ -552,6 +552,21 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
       'disabled',
       'provisioned',
     ]);
+    // ED-29: disabled and deprovisioned devices are Retired, not In repair
+    const labels = (await admin().get('/v1/status-labels?limit=100')).body.data as Json[];
+    const retired = labels.find((l) => l.name === 'Retired')!;
+    expect(retired.state_type).toBe('archived');
+    expect(job.value_map.status.disabled).toEqual({ id: retired.id });
+    expect(job.value_map.status.deprovisioned).toEqual({ id: retired.id });
+    // ED-29: each org unit becomes a department (created under its path), no location is involved
+    expect(job.value_map.department).toEqual({
+      '/students/grade 5': { create: true, name: 'Students / Grade 5' },
+      '/students/grade 6': { create: true, name: 'Students / Grade 6' },
+      '/students/grade 7': { create: true, name: 'Students / Grade 7' },
+      '/staff': { create: true, name: 'Staff' },
+      '/staff/library': { create: true, name: 'Staff / Library' },
+      '/spare pool': { create: true, name: 'Spare pool' },
+    });
 
     const before = await registryCounts(t.tenantId);
     const dry = await dryRun(ih, admin(), t.tenantId, job.id);
@@ -560,9 +575,11 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
       JSON.stringify((await allRows(admin(), job.id, '&outcome=error')).slice(0, 3)),
     ).toBe(0);
     expect(dry.counts.dry_run.create).toBe(48);
-    expect(dry.summary.will_create.map((w: Json) => w.field)).toEqual(
-      expect.arrayContaining(['model', 'location']),
-    );
+    const announced = dry.summary.will_create.map((w: Json) => w.field);
+    expect(announced).toEqual(expect.arrayContaining(['model', 'department']));
+    expect(announced).not.toContain('location');
+    // the rehearsal checks every row against what it creates: nothing is left for the commit
+    expect(dry.summary.validated_at_commit).toBe(0);
     expect(await registryCounts(t.tenantId)).toEqual(before);
     const fin = await commit(ih, admin(), t.tenantId, job.id, dry.dry_run_digest);
     expect(fin.counts.commit.created).toBe(48);
@@ -571,10 +588,12 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
     const after = await registryCounts(t.tenantId);
     expect(after.assets).toBe(before.assets + 48);
     expect(after.models).toBe(before.models + 4);
+    expect(after.departments).toBe(before.departments + 6);
+    expect(after.locations).toBe(before.locations);
     expect(after.assignments).toBeGreaterThan(before.assignments); // annotated users hold their devices
     const first = (await allRows(admin(), job.id))[0]!;
     const asset = (
-      await admin().get(`/v1/assets/${first.created_id}?expand=category,location,model`)
+      await admin().get(`/v1/assets/${first.created_id}?expand=category,department,model`)
     ).body;
     expect(asset).toMatchObject({
       serial: '5CD0000000',
@@ -588,7 +607,12 @@ describe.skipIf(!dbEnabled)(`import flows (${mode})`, { timeout: 120_000 }, () =
       }),
     });
     expect(asset.expanded.category.name).toBe('Chromebook');
-    expect(asset.expanded.location).toMatchObject({ name: 'Grade 5' });
+    expect(asset.expanded.department).toMatchObject({ name: 'Students / Grade 5' });
+    expect(asset.location_id).toBeNull();
+    // a disabled device (row 5) is Retired
+    const disabled = (await allRows(admin(), job.id))[4]!;
+    const retiredAsset = (await admin().get(`/v1/assets/${disabled.created_id}`)).body;
+    expect(retiredAsset.status).toMatchObject({ name: 'Retired', state_type: 'archived' });
     expect(asset.expanded.model.name).toBe('HP Chromebook 14 G6');
     expect(asset.current_assignment).toMatchObject({ target_type: 'person' });
 

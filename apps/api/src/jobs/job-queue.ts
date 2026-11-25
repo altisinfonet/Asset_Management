@@ -2,7 +2,7 @@ import type { PgBoss, SendOptions } from 'pg-boss';
 import { assertIdsOnlyPayload } from '../ids/ids-only.js';
 import type { JobQueue } from '../ports/index.js';
 import { currentTenantContext, type Tx } from '../tenancy/index.js';
-import { PRIORITY, queueDefinition } from './catalogue.js';
+import { PRIORITY, type QueueDefinition, queueDefinition } from './catalogue.js';
 import { dbFromTx } from './tx-db.js';
 
 /** What the adapter adds beyond the port's options (used by the scheduler). */
@@ -37,6 +37,38 @@ export class TenantPayloadError extends Error {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * The job payload lint, shared by the pg-boss adapter and the in-memory queue of the e2e suite (so every
+ * job a test makes the application queue is checked by the same rules): the queue is in the catalogue,
+ * the payload is ids only, and a tenant-scoped queue carries a `tenantId` that, when the job is queued
+ * inside a tenant transaction (`inTx`), is the tenant of that transaction. Returns the queue definition.
+ */
+export function assertEnqueueable(
+  name: string,
+  payload: { tenantId?: string } & Record<string, unknown>,
+  inTx = false,
+): QueueDefinition {
+  const def = queueDefinition(name);
+  if (!def) throw new UnknownQueueError(name);
+  assertIdsOnlyPayload(payload, `job ${name}`);
+
+  if (def.tenantScoped) {
+    const tenantId = payload.tenantId;
+    if (typeof tenantId !== 'string' || !UUID.test(tenantId)) {
+      throw new TenantPayloadError(
+        `job ${name} is tenant scoped: payload.tenantId (uuid) is required`,
+      );
+    }
+    const ambient = inTx ? currentTenantContext()?.tenantId : undefined;
+    if (inTx && ambient && ambient.toLowerCase() !== tenantId.toLowerCase()) {
+      throw new TenantPayloadError(
+        `job ${name} for tenant ${tenantId} cannot be enqueued inside the transaction of tenant ${ambient}`,
+      );
+    }
+  }
+  return def;
+}
+
+/**
  * `JobQueue` port implementation over pg-boss (M1-PLAT-06). pg-boss never leaks past this adapter.
  *
  * With `opts.tx` the job row is inserted through the caller's tenant transaction
@@ -57,24 +89,7 @@ export class PgBossJobQueue implements JobQueue {
     payload: { tenantId?: string } & Record<string, unknown>,
     opts: EnqueueOptions = {},
   ): Promise<string | null> {
-    const def = queueDefinition(name);
-    if (!def) throw new UnknownQueueError(name);
-    assertIdsOnlyPayload(payload, `job ${name}`);
-
-    if (def.tenantScoped) {
-      const tenantId = payload.tenantId;
-      if (typeof tenantId !== 'string' || !UUID.test(tenantId)) {
-        throw new TenantPayloadError(
-          `job ${name} is tenant scoped: payload.tenantId (uuid) is required`,
-        );
-      }
-      const ambient = opts.tx ? currentTenantContext()?.tenantId : undefined;
-      if (opts.tx && ambient && ambient.toLowerCase() !== tenantId.toLowerCase()) {
-        throw new TenantPayloadError(
-          `job ${name} for tenant ${tenantId} cannot be enqueued inside the transaction of tenant ${ambient}`,
-        );
-      }
-    }
+    const def = assertEnqueueable(name, payload, Boolean(opts.tx));
 
     const options: SendOptions = { priority: PRIORITY[def.priorityClass] };
     if (opts.tx) options.db = dbFromTx(opts.tx);

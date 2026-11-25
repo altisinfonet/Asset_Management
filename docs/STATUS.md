@@ -131,7 +131,6 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 
 ## 5. Known gaps carried forward
 
-- The Users screen (Settings → Users) can edit a user's existing role assignments (role and location scope) but cannot yet add or remove one.
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
 - Loan and import notifications are wired. The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
 - Finished imports lose their rows, samples and file after 30 days (ED-25): download the error report first. The before-images for a v1.1 rollback go with them.

@@ -41,6 +41,19 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
+### Added
+
+- **Add and remove access on Settings > Users** (M2-USR-04, ED-27): in the access dialog ("Change role and access") an
+  administrator adds a role assignment (role plus whole organisation or limited to a location) and removes one at a time
+  after a confirmation. New API operations `POST /v1/users/{id}/role-assignments` and
+  `DELETE /v1/users/{id}/role-assignments/{assignment_id}` (`If-Match`, answer with the updated user and its new ETag).
+  The ED-26 rules hold (nobody grants wider than they hold; a location-scoped assignment never gives the org-only
+  permissions); each change signs the user out of every device (not you, when you edit yourself) and is audited as
+  `user.role_assigned` / `user.role_removed`. Refused with `409` (nothing changes): removing a user's only assignment
+  (disable or archive the user instead), removing the last active administrator's administrator assignment, removing your
+  own last administrator access, the same role and scope twice, and more than 20 assignments. `PATCH /v1/users/{id}` still
+  replaces the whole set. No migration.
+
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 
 M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Merge commit message "Merge M2-LOC-03: location scoping of role assignments"; the release commit is tagged `v0.2.6`.

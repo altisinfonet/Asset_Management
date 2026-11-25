@@ -275,8 +275,10 @@ async function probeKey(
     // to a clone of any referenced-table row of the same tenant
     const any = (
       await c.query<Record<string, string>>(
-        `select ctid::text as ctid, tenant_id::text as tenant_id from ${rel(fk.child)}
-          where tenant_id = any ($1::uuid[]) limit 1`,
+        `select c.ctid::text as ctid, c.tenant_id::text as tenant_id from ${rel(fk.child)} c
+          where c.tenant_id = any ($1::uuid[])
+            and exists (select 1 from ${rel(fk.parent)} p where p.tenant_id = c.tenant_id)
+          limit 1`,
         [tenants],
       )
     ).rows[0];

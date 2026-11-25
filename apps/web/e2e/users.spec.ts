@@ -89,6 +89,57 @@ test.describe('users and invitations', () => {
     await expect(page.getByRole('row', { name: /sasha\.waiting@example\.org/ })).toBeVisible();
   });
 
+  test('a pending login is on the Users tab too: access, link to a person, resend, revoke', async ({
+    page,
+  }) => {
+    await page.goto('/settings/users');
+    const row = page.getByRole('row', { name: /Jordan Invited/ });
+    await expect(row.getByText('Pending')).toBeVisible();
+    await expect(page.getByRole('row', { name: /Alice Owner/ }).getByText('Pending')).toHaveCount(
+      0,
+    );
+
+    // access: add a role to the pending login
+    await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+    await page.getByRole('menuitem', { name: 'Change role and access' }).click();
+    const access = page.getByRole('dialog', { name: 'Role and access of Jordan Invited' });
+    await access.getByRole('button', { name: 'Add access' }).click();
+    const add = page.getByRole('dialog', { name: 'Add access for Jordan Invited' });
+    await choose(page, /^Role/, 'Viewer');
+    await add.getByRole('button', { name: 'Add access' }).click();
+    await expect(access.getByRole('button', { name: 'Remove access: Viewer' })).toBeVisible();
+    await access.getByRole('button', { name: 'Close' }).first().click();
+    await expect(access).toBeHidden();
+
+    // link to a person
+    await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+    await page.getByRole('menuitem', { name: 'Link to a person' }).click();
+    const link = page.getByRole('dialog', { name: 'Link Jordan Invited to a person' });
+    await link.getByRole('combobox', { name: /Person/ }).fill('Jamie');
+    await page
+      .getByRole('option', { name: /Jamie Okafor/ })
+      .first()
+      .click();
+    await link.getByRole('button', { name: 'Link login' }).click();
+    await expect(row.getByRole('link', { name: 'Jamie Okafor' })).toBeVisible();
+
+    // resend, then revoke (the row leaves both tabs); the actions that need a sign-in are not offered
+    await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+    await expect(page.getByRole('menuitem', { name: 'Deactivate' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: 'Signed-in devices' })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: 'Resend invitation' }).click();
+    await expect(
+      page.getByText('Invitation resent to jordan.invited@example.org.').first(),
+    ).toBeVisible();
+    await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+    await page.getByRole('menuitem', { name: 'Revoke invitation' }).click();
+    await page
+      .getByRole('dialog', { name: /Revoke the invitation for jordan/ })
+      .getByRole('button', { name: 'Revoke' })
+      .click();
+    await expect(page.getByRole('row', { name: /Jordan Invited/ })).toHaveCount(0);
+  });
+
   test('changes a role, deactivates and reactivates a user', async ({ page }) => {
     await page.goto('/settings/users');
     await choose(page, 'Role of Vera Viewer', 'Auditor');

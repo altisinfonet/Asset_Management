@@ -38,7 +38,7 @@ export async function createUserWith(
   tenant: TenantFixture,
   assignments: Array<{ role_id: string; scope_type?: string; location_id?: string }>,
   label: string,
-): Promise<{ id: string; email: string; client: Client }> {
+): Promise<{ id: string; email: string; password: string; client: Client }> {
   const email = `${label}-${uniq()}@${tenant.slug}.example`;
   const before = testPorts.mail.sent.length;
   const created = await tenant.admin.post('/v1/users', {
@@ -54,12 +54,13 @@ export async function createUserWith(
     .find((m) => m.to === email && m.template === 'auth.invitation');
   if (!mail) throw new Error('no invitation mail captured');
   const client = new Client(app);
+  const password = newPassword();
   const res = await client.post('/v1/auth/invitations/accept', {
     token: mailToken(mail),
-    password: newPassword(),
+    password,
     display_name: `Scoped ${label}`,
   });
   if (res.status !== 200) throw new Error(`accept failed: ${res.status} ${res.raw}`);
   client.csrf = res.body.csrf_token;
-  return { id: created.body.id, email, client };
+  return { id: created.body.id, email, password, client };
 }

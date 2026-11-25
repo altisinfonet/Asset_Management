@@ -209,6 +209,8 @@ export class UsersService {
     trx: Tx,
     auth: AuthContext,
     assignments: RoleAssignmentBody[],
+    /** Where the problem pointers of assignment `i` start (the request body is a list, or one assignment). */
+    base: (i: number) => string = (i) => `/role_assignments/${i}`,
   ): Promise<Map<string, { id: string; name: string; permissions: string[] }>> {
     const errors: FieldError[] = [];
     const roleIds = [...new Set(assignments.map((a) => a.role_id))];
@@ -238,7 +240,7 @@ export class UsersService {
       const role = byId.get(a.role_id);
       if (!role) {
         errors.push({
-          pointer: `/role_assignments/${i}/role_id`,
+          pointer: `${base(i)}/role_id`,
           message: 'Unknown role.',
           code: 'not-found',
         });
@@ -246,7 +248,7 @@ export class UsersService {
       }
       if (a.scope_type === 'company' && (!a.company_id || !companies.has(a.company_id))) {
         errors.push({
-          pointer: `/role_assignments/${i}/company_id`,
+          pointer: `${base(i)}/company_id`,
           message: 'A company-scoped assignment needs an existing company_id.',
           code: 'invalid',
         });
@@ -256,14 +258,14 @@ export class UsersService {
         const loc = a.location_id ? locations.get(a.location_id) : undefined;
         if (!a.location_id || !loc || loc.archived_at) {
           errors.push({
-            pointer: `/role_assignments/${i}/location_id`,
+            pointer: `${base(i)}/location_id`,
             message: 'A location-scoped assignment needs an existing, active location_id.',
             code: a.location_id ? 'not-found' : 'invalid',
           });
         }
         if (a.company_id) {
           errors.push({
-            pointer: `/role_assignments/${i}/company_id`,
+            pointer: `${base(i)}/company_id`,
             message: 'A location-scoped assignment has no company_id.',
             code: 'invalid',
           });
@@ -271,14 +273,14 @@ export class UsersService {
       }
       if (a.scope_type === 'company' && a.location_id) {
         errors.push({
-          pointer: `/role_assignments/${i}/location_id`,
+          pointer: `${base(i)}/location_id`,
           message: 'A company-scoped assignment has no location_id.',
           code: 'invalid',
         });
       }
       if (a.scope_type === 'tenant' && (a.company_id || a.location_id)) {
         errors.push({
-          pointer: `/role_assignments/${i}/scope_type`,
+          pointer: `${base(i)}/scope_type`,
           message: 'A tenant-scoped assignment has no company_id or location_id.',
           code: 'invalid',
         });
@@ -683,6 +685,178 @@ export class UsersService {
         meta: { sessions_revoked: revoked },
       });
     });
+  }
+
+  // ------------------------------------------------------------ one role assignment (ED-27)
+
+  /** The most role assignments one user can hold (the same limit as `PATCH /v1/users/{id}`). */
+  private static readonly MAX_ASSIGNMENTS = 20;
+
+  /** Does the set give its holder `user:manage` for the whole organisation (company counts as org-wide, ED-26)? */
+  private grantsOrgUserManage(grants: readonly GrantedRole[]): boolean {
+    return grants.some((g) => g.scopeType !== 'location' && permits(g.permissions, 'user:manage'));
+  }
+
+  /**
+   * Adds ONE role assignment to a user (ED-27). Same rules as the role set of `PATCH`: nobody grants a
+   * role with permissions they lack, nor wider than they hold them (ED-26), and a location-scoped grant
+   * never carries the org-only permissions. Revokes the target's sessions; audited.
+   */
+  async addRoleAssignment(
+    auth: AuthContext,
+    id: string,
+    ifMatch: IfMatch,
+    body: RoleAssignmentBody,
+  ) {
+    try {
+      const out = await this.tx(auth, async (trx) => {
+        const user = await trx.user_account.findUnique({ where: { id } });
+        if (!user || user.archived_at) throw problem.notFound('User not found.');
+        assertIfMatch(ifMatch, user.version);
+        const before = await loadGrants(trx, id);
+        this.assertManageable(auth, before);
+        if (before.length >= UsersService.MAX_ASSIGNMENTS) {
+          throw problem.conflict(
+            `A user can hold at most ${UsersService.MAX_ASSIGNMENTS} role assignments.`,
+          );
+        }
+        const roles = await this.resolveRoles(trx, auth, [body], () => '');
+        const role = roles.get(body.role_id)!;
+        const companyId = body.scope_type === 'company' ? (body.company_id ?? null) : null;
+        const locationId = body.scope_type === 'location' ? (body.location_id ?? null) : null;
+        if (
+          before.some(
+            (g) =>
+              g.roleId === body.role_id &&
+              g.scopeType === body.scope_type &&
+              g.scopeCompanyId === companyId &&
+              g.scopeLocationId === locationId,
+          )
+        ) {
+          throw problem.conflict('This user already holds this role with the same scope.');
+        }
+        const assignmentId = uuidv7();
+        await trx.role_assignment.create({
+          data: {
+            id: assignmentId,
+            tenant_id: auth.tenantId,
+            user_id: id,
+            role_id: body.role_id,
+            scope_type: body.scope_type,
+            scope_company_id: companyId,
+            scope_location_id: locationId,
+            created_by: auth.userId,
+          },
+        });
+        const updated = await trx.user_account.update({
+          where: { id },
+          data: { updated_by: auth.userId },
+        });
+        const after = await loadGrants(trx, id);
+        const revoked = await this.sessions.revokeAll(
+          trx,
+          auth.tenantId,
+          id,
+          id === auth.userId ? (auth.sessionId ?? undefined) : undefined,
+        );
+        await this.audit.write(trx, {
+          action: 'user.role_assigned',
+          entityType: 'user',
+          entityId: id,
+          before: { role_ids: before.map((g) => g.roleId) },
+          after: { role_ids: after.map((g) => g.roleId) },
+          meta: {
+            assignment_id: assignmentId,
+            role_id: role.id,
+            role_name: role.name,
+            scope_type: body.scope_type,
+            scope_company_id: companyId,
+            scope_location_id: locationId,
+            sessions_revoked: revoked,
+          },
+        });
+        const personId = (await this.personIdsFor(trx, [id])).get(id) ?? null;
+        return { user: updated, grants: after, personId };
+      });
+      return { user: userDto(out.user, out.grants, out.personId), version: out.user.version };
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw problem.conflict('This user already holds this role with the same scope.');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Removes ONE role assignment of a user (ED-27). Refused (409) when it is the user's only assignment
+   * (a login without a role is meaningless: disable or archive the user instead), when it is the last
+   * active administrator's, or when it is your own last administrator access. Revokes the target's
+   * sessions; audited.
+   */
+  async removeRoleAssignment(
+    auth: AuthContext,
+    id: string,
+    assignmentId: string,
+    ifMatch: IfMatch,
+  ) {
+    const out = await this.tx(auth, async (trx) => {
+      const user = await trx.user_account.findUnique({ where: { id } });
+      if (!user || user.archived_at) throw problem.notFound('User not found.');
+      assertIfMatch(ifMatch, user.version);
+      const before = await loadGrants(trx, id);
+      this.assertManageable(auth, before);
+      const removed = before.find((g) => g.assignmentId === assignmentId);
+      if (!removed) throw problem.notFound('Role assignment not found.');
+      const remaining = before.filter((g) => g.assignmentId !== assignmentId);
+      if (remaining.length === 0) {
+        throw problem.conflict(
+          'A user needs at least one role assignment. Add another first, or disable or archive the user.',
+        );
+      }
+      if (this.isAdmin(before) && !this.isAdmin(remaining) && user.status === 'active') {
+        await this.assertAnotherAdmin(trx, id);
+      }
+      if (
+        id === auth.userId &&
+        this.grantsOrgUserManage(before) &&
+        !this.grantsOrgUserManage(remaining)
+      ) {
+        throw problem.conflict(
+          'You cannot remove your own last administrator access. Ask another administrator.',
+        );
+      }
+      await trx.role_assignment.delete({ where: { id: assignmentId } });
+      const updated = await trx.user_account.update({
+        where: { id },
+        data: { updated_by: auth.userId },
+      });
+      const after = await loadGrants(trx, id);
+      const revoked = await this.sessions.revokeAll(
+        trx,
+        auth.tenantId,
+        id,
+        id === auth.userId ? (auth.sessionId ?? undefined) : undefined,
+      );
+      await this.audit.write(trx, {
+        action: 'user.role_removed',
+        entityType: 'user',
+        entityId: id,
+        before: { role_ids: before.map((g) => g.roleId) },
+        after: { role_ids: after.map((g) => g.roleId) },
+        meta: {
+          assignment_id: assignmentId,
+          role_id: removed.roleId,
+          role_key: removed.roleKey,
+          scope_type: removed.scopeType,
+          scope_company_id: removed.scopeCompanyId,
+          scope_location_id: removed.scopeLocationId,
+          sessions_revoked: revoked,
+        },
+      });
+      const personId = (await this.personIdsFor(trx, [id])).get(id) ?? null;
+      return { user: updated, grants: after, personId };
+    });
+    return { user: userDto(out.user, out.grants, out.personId), version: out.user.version };
   }
 
   // ----------------------------------------------------------------------------------- invitations

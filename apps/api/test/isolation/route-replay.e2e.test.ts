@@ -851,6 +851,18 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       'post /v1/users/:id/invitation/resend': [
         notFound('POST', `/v1/users/${c.invitedUserId}/invitation/resend`),
       ],
+      'post /v1/users/:id/role-assignments': [
+        {
+          ...notFound('POST', `/v1/users/${c.userId}/role-assignments`, { role_id: c.roleId }),
+          headers: { 'if-match': '*' },
+        },
+      ],
+      'delete /v1/users/:id/role-assignments/:assignment_id': [
+        notFound(
+          'DELETE',
+          `/v1/users/${c.userId}/role-assignments/0194a000-0000-7000-8000-000000000001`,
+        ),
+      ],
       'delete /v1/users/:id/mfa': [notFound('DELETE', `/v1/users/${c.userId}/mfa`)],
       'get /v1/users/:id/sessions': [notFound('GET', `/v1/users/${c.userId}/sessions`)],
       'delete /v1/users/:id/sessions/:session_id': [

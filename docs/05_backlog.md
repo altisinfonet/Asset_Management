@@ -694,6 +694,15 @@ Status: partial (M2 wave 1) - people list and detail with assets held and a serv
 - [ ] People list/detail with "assets currently held" and a history tab; create/edit; link-to-login action for Admins.
 - [ ] Person picker component (type-ahead, used by check-out dialogs) with keyboard selection.
 
+#### M2-USR-04 - Add and remove role assignments
+Size: S - Owner: Claude - Deps: M2-LOC-03, M1-AUTH-07
+Status: done (M2 wave 3 part 2 follow-up, ED-27) - `POST /v1/users/{id}/role-assignments` and `DELETE /v1/users/{id}/role-assignments/{assignment_id}` with `If-Match`; the access dialog of Settings → Users adds an assignment (role plus whole organisation or a location) and removes one after a confirmation; the ED-26 grant rules hold, sessions of the target are revoked, both are audited; 409 for the user's only assignment, the last active administrator, your own last administrator access and a duplicate; API e2e (`test/scoping/role-assignments.e2e.test.ts`), route and scoped replay, mock e2e with axe in light and dark, one real-stack e2e.
+- [ ] An administrator adds a role to a user for the whole organisation or limited to a location, and removes one assignment at a time; nobody grants wider than they hold (403).
+- [ ] The user's only assignment, the last active administrator and your own last administrator access cannot be removed (409, nothing changes).
+- [ ] Each add and remove revokes the target's sessions and is audited.
+- [ ] Pending logins are listed on the Users tab with a "Pending" badge and can be given access, linked to a person, resent and revoked (a pending login can be linked, ED-27).
+- [ ] The login picker shows the email and role names under each name and searches the email.
+
 ### E2.2 Lifecycle: check-out, check-in, transfer, history
 
 #### M2-LIFE-01 - Assignment model

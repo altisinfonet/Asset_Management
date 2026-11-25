@@ -39,6 +39,7 @@ import { useRoles } from '@/lib/registry/queries';
 import type { Person, RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
+import { AccessDialog } from './access-dialog';
 import {
   accessValues,
   assignmentsFrom,
@@ -82,7 +83,8 @@ export function UsersScreen() {
   const { label: assignmentLabel } = useAssignmentLabel(roles.data ?? []);
   // every assignment, with where a scoped one applies ("Technician at Room 101")
   const roleName = (user: RegistryUser) => user.role_assignments.map(assignmentLabel).join(', ');
-  const active = (users.data ?? []).filter((u) => u.status !== 'invited');
+  // pending logins are listed on the Users tab too (badge "Pending"), so they can be linked and given access
+  const active = users.data ?? [];
   const pending = (users.data ?? []).filter((u) => u.status === 'invited');
 
   return (
@@ -177,7 +179,9 @@ function UsersTable({
   const [renaming, setRenaming] = useState<RegistryUser | null>(null);
   const [linking, setLinking] = useState<RegistryUser | null>(null);
   const [unlinking, setUnlinking] = useState<RegistryUser | null>(null);
-  const [access, setAccess] = useState<RegistryUser | null>(null);
+  // the dialog follows the live row, so an added or removed assignment shows at once
+  const [accessId, setAccessId] = useState<string | null>(null);
+  const { resend, askRevoke, revokeDialog } = useInvitationActions();
   const { label: assignmentLabel, where } = useAssignmentLabel(roles);
 
   const fail = (err: unknown) => {
@@ -285,6 +289,8 @@ function UsersTable({
         cell: (u) =>
           u.status === 'disabled' ? (
             <Badge tone="neutral">{t('users.status.disabled')}</Badge>
+          ) : u.status === 'invited' ? (
+            <Badge tone="info">{t('users.status.pending')}</Badge>
           ) : (
             <Badge tone="success">{t('users.status.active')}</Badge>
           ),
@@ -318,7 +324,7 @@ function UsersTable({
                 <DropdownMenuItem onSelect={() => setRenaming(u)}>
                   {t('users.actions.rename')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setAccess(u)}>
+                <DropdownMenuItem onSelect={() => setAccessId(u.id)}>
                   {t('locationScope.edit')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setLinking(u)}>
@@ -329,15 +335,26 @@ function UsersTable({
                     {t('loginLink.unlinkPerson')}
                   </DropdownMenuItem>
                 ) : null}
-                <DropdownMenuItem onSelect={() => setSessionsOf(u)}>
-                  {t('users.actions.sessions')}
-                </DropdownMenuItem>
+                {u.status === 'invited' ? (
+                  <>
+                    <DropdownMenuItem onSelect={() => void resend(u)}>
+                      {t('users.actions.resendInvitation')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => askRevoke(u)}>
+                      {t('users.actions.revokeInvitation')}
+                    </DropdownMenuItem>
+                  </>
+                ) : (
+                  <DropdownMenuItem onSelect={() => setSessionsOf(u)}>
+                    {t('users.actions.sessions')}
+                  </DropdownMenuItem>
+                )}
                 {u.mfa_enabled && u.id !== me?.user.id ? (
                   <DropdownMenuItem onSelect={() => setMfaReset(u)}>
                     {t('users.actions.resetMfa')}
                   </DropdownMenuItem>
                 ) : null}
-                {u.id === me?.user.id ? null : u.status === 'disabled' ? (
+                {u.id === me?.user.id || u.status === 'invited' ? null : u.status === 'disabled' ? (
                   <DropdownMenuItem onSelect={() => void setStatus(u, 'active')}>
                     {t('users.actions.reactivate')}
                   </DropdownMenuItem>
@@ -445,53 +462,14 @@ function UsersTable({
         }}
       />
       <SessionsDialog user={sessionsOf} onClose={() => setSessionsOf(null)} />
+      {revokeDialog}
       <AccessDialog
-        key={access?.id ?? 'access'}
-        user={access}
+        key={accessId ?? 'access'}
+        user={users.find((u) => u.id === accessId) ?? null}
         roles={roles}
-        onClose={() => setAccess(null)}
+        onClose={() => setAccessId(null)}
       />
     </>
-  );
-}
-
-/** Role and access of a login: each assignment applies to the whole organisation or one location. */
-function AccessDialog({
-  user,
-  roles,
-  onClose,
-}: {
-  user: RegistryUser | null;
-  roles: Role[];
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const { toast } = useToast();
-  const refresh = useRefreshUsers();
-  const original = user?.role_assignments ?? [];
-  const count = Math.max(original.length, 1);
-  const fields = useAccessFields(roles, count, original);
-  return (
-    <FormDialog
-      open={user !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title={t('locationScope.editTitle', { name: user?.display_name ?? '' })}
-      description={t('locationScope.editDescription')}
-      fields={fields}
-      initial={accessValues(original)}
-      submitLabel={t('common.save')}
-      onSubmit={async (values) => {
-        if (!user) return;
-        await usersApi.update(user.id, {
-          role_assignments: assignmentsFrom(values, count, original),
-        });
-        await refresh();
-        toast({
-          variant: 'success',
-          title: t('locationScope.saved', { name: user.display_name }),
-        });
-      }}
-    />
   );
 }
 
@@ -558,18 +536,12 @@ function SessionsDialog({ user, onClose }: { user: RegistryUser | null; onClose:
   );
 }
 
-function InvitationsTable({
-  users,
-  roleName,
-  loading,
-  manage,
-}: {
-  users: RegistryUser[];
-  roleName: (user: RegistryUser) => string;
-  loading: boolean;
-  manage: boolean;
-}) {
-  const { t, formatDate } = useI18n();
+/**
+ * Resend and revoke an invitation (ED-27): the same two actions on the Pending invitations tab and
+ * on a pending login of the Users tab. `revokeDialog` must be rendered by the caller.
+ */
+function useInvitationActions() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const refresh = useRefreshUsers();
   const [revoking, setRevoking] = useState<RegistryUser | null>(null);
@@ -583,6 +555,42 @@ function InvitationsTable({
       toast({ variant: 'danger', title: uiErrorText(t, ui), requestId: ui.requestId });
     }
   };
+
+  const revokeDialog = (
+    <ConfirmDialog
+      open={revoking !== null}
+      onOpenChange={(open) => !open && setRevoking(null)}
+      title={t('users.revokeTitle', { email: revoking?.email ?? '' })}
+      description={t('users.revokeDescription')}
+      confirmLabel={t('users.revoke')}
+      destructive
+      onConfirm={async () => {
+        if (!revoking) return;
+        await usersApi.revokeInvitation(revoking.id);
+        await refresh();
+        toast({
+          variant: 'success',
+          title: t('users.invitationRevoked', { email: revoking.email }),
+        });
+      }}
+    />
+  );
+  return { resend, askRevoke: setRevoking, revokeDialog };
+}
+
+function InvitationsTable({
+  users,
+  roleName,
+  loading,
+  manage,
+}: {
+  users: RegistryUser[];
+  roleName: (user: RegistryUser) => string;
+  loading: boolean;
+  manage: boolean;
+}) {
+  const { t, formatDate } = useI18n();
+  const { resend, askRevoke, revokeDialog } = useInvitationActions();
 
   const columns: DataTableColumn<RegistryUser>[] = [
     { id: 'name', header: t('users.columns.name'), cell: (u) => u.display_name },
@@ -611,7 +619,7 @@ function InvitationsTable({
             <Button
               size="sm"
               aria-label={t('users.revokeLabel', { email: u.email })}
-              onClick={() => setRevoking(u)}
+              onClick={() => askRevoke(u)}
             >
               {t('users.revoke')}
             </Button>
@@ -636,23 +644,7 @@ function InvitationsTable({
           />
         }
       />
-      <ConfirmDialog
-        open={revoking !== null}
-        onOpenChange={(open) => !open && setRevoking(null)}
-        title={t('users.revokeTitle', { email: revoking?.email ?? '' })}
-        description={t('users.revokeDescription')}
-        confirmLabel={t('users.revoke')}
-        destructive
-        onConfirm={async () => {
-          if (!revoking) return;
-          await usersApi.revokeInvitation(revoking.id);
-          await refresh();
-          toast({
-            variant: 'success',
-            title: t('users.invitationRevoked', { email: revoking.email }),
-          });
-        }}
-      />
+      {revokeDialog}
     </>
   );
 }

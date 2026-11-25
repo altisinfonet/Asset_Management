@@ -21,10 +21,23 @@ export const scopeMessages = {
     edit: 'Change role and access',
     editTitle: 'Role and access of {name}',
     editDescription:
-      'A role limited to a location never includes managing users, roles, the catalogue, departments or notification rules.',
-    saved: 'Role and access of {name} saved.',
+      'A role limited to a location never includes managing users, roles, the catalogue, departments or notification rules. Changing access signs the user out of every device.',
+    current: 'Current access of {name}',
+    addAccess: 'Add access',
+    addTitle: 'Add access for {name}',
+    addDescription:
+      'Give another role, for the whole organisation or limited to one location and everything inside it.',
+    added: 'Access added for {name}.',
+    remove: 'Remove',
+    removeLabel: 'Remove access: {access}',
+    removeTitle: 'Remove this access?',
+    removeDescription:
+      '{name} will no longer have {access}. They are signed out of every device and sign in again with the access that remains.',
+    removed: 'Access removed from {name}.',
+    onlyOne:
+      'This is the only access of the user. Add another first, or deactivate the user instead.',
     rolesNote:
-      'Each role can be limited to a location when you give it to someone: on the Users tab, choose "Change role and access" and then "Limited to a location".',
+      'Each role can be limited to a location when you give it to someone: on the Users tab, choose "Change role and access", then "Add access" and "Limited to a location".',
     requiredHint: 'Your access is limited to a location, so choose one inside it.',
     parentRequiredHint:
       'Your access is limited to a location, so a new location goes inside one you can manage.',

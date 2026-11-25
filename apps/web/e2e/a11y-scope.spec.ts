@@ -19,27 +19,70 @@ async function openAccess(p: Page) {
   const priya = p.getByRole('row', { name: /Priya Patel/ });
   await priya.getByRole('button', { name: /Actions for Priya Patel/ }).click();
   await p.getByRole('menuitem', { name: 'Change role and access' }).click();
-  const dialog = p.getByRole('dialog', { name: 'Role and access of Priya Patel' });
-  await dialog.getByRole('combobox', { name: /^Access/ }).click();
+  return p.getByRole('dialog', { name: 'Role and access of Priya Patel' });
+}
+
+/** "Add access" opened on the access dialog, limited to a location. */
+async function openAdd(p: Page) {
+  const dialog = await openAccess(p);
+  await dialog.getByRole('button', { name: 'Add access' }).click();
+  const add = p.getByRole('dialog', { name: 'Add access for Priya Patel' });
+  await add.getByRole('combobox', { name: /^Access/ }).click();
   await p.getByRole('option', { name: 'Limited to a location' }).click();
-  return dialog;
+  await expect(add.getByRole('combobox', { name: /^Access/ })).toBeFocused();
+  return add;
 }
 
 const SCENARIOS: Scenario[] = [
   {
-    name: 'users: role and access dialog limited to a location',
+    name: 'users: access dialog with one access (Remove disabled, with its reason)',
     open: async (p) => {
       const dialog = await openAccess(p);
-      await dialog.getByRole('combobox', { name: /^Location/ }).click();
+      await expect(
+        dialog.getByRole('button', { name: 'Remove access: Technician' }),
+      ).toBeDisabled();
+      await expect(dialog.getByText(/This is the only access of the user/)).toBeVisible();
+    },
+  },
+  {
+    name: 'users: add access limited to a location',
+    open: async (p) => {
+      const add = await openAdd(p);
+      await add.getByRole('combobox', { name: /^Location/ }).click();
       await expect(p.getByRole('listbox')).toBeVisible();
     },
   },
   {
-    name: 'users: role and access dialog with the location missing',
+    name: 'users: add access with the location missing',
     open: async (p) => {
-      const dialog = await openAccess(p);
-      await dialog.getByRole('button', { name: 'Save' }).click();
-      await expect(dialog.getByText('This field is required.')).toBeVisible();
+      const add = await openAdd(p);
+      await add.getByRole('button', { name: 'Add access' }).click();
+      await expect(add.getByText('This field is required.').first()).toBeVisible();
+    },
+  },
+  {
+    name: 'users: remove access confirmation',
+    open: async (p) => {
+      const add = await openAdd(p);
+      await add.getByRole('combobox', { name: /^Role/ }).click();
+      await p.getByRole('option', { name: 'Viewer' }).click();
+      await add.getByRole('combobox', { name: /^Location/ }).fill('Room 204');
+      await p.getByRole('option', { name: /Room 204/ }).click();
+      await add.getByRole('button', { name: 'Add access' }).click();
+      await expect(add).toBeHidden();
+      const dialog = p.getByRole('dialog', { name: 'Role and access of Priya Patel' });
+      await dialog.getByRole('button', { name: 'Remove access: Viewer at Room 204' }).click();
+      await expect(p.getByRole('dialog', { name: 'Remove this access?' })).toBeVisible();
+    },
+  },
+  {
+    name: 'users: a pending login on the Users tab with its actions',
+    open: async (p) => {
+      await p.goto('/settings/users');
+      const row = p.getByRole('row', { name: /Jordan Invited/ });
+      await expect(row.getByText('Pending')).toBeVisible();
+      await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+      await expect(p.getByRole('menuitem', { name: 'Resend invitation' })).toBeVisible();
     },
   },
   {

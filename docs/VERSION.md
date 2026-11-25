@@ -41,7 +41,7 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-### Added (M2-SEC-01, M2-OPS-01)
+### Added
 
 - **Isolation harness extension** (M2-SEC-01, ED-28): the route replay now also probes, from the database catalogue,
   every tenant table (the other tenant sees none of the rows, the owner sees all) and every foreign key between tenant
@@ -53,6 +53,21 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 - **Performance harness extension** (M2-OPS-01): nightly budgets for the 500-label PDF (< 30 s at p95) and for a
   location-scoped user's asset list, search, tag lookup and scan resolve on the 50,000-asset tenant (ED-26 predicate);
   `perf.yml` publishes `apps/api/test-results/*.json` with a job summary (`scripts/ci/perf-summary.mjs`).
+- **Add and remove access on Settings > Users** (M2-USR-04, ED-27): in the access dialog ("Change role and access") an
+  administrator adds a role assignment (role plus whole organisation or limited to a location) and removes one at a time
+  after a confirmation. New API operations `POST /v1/users/{id}/role-assignments` and
+  `DELETE /v1/users/{id}/role-assignments/{assignment_id}` (`If-Match`, answer with the updated user and its new ETag).
+  The ED-26 rules hold (nobody grants wider than they hold; a location-scoped assignment never gives the org-only
+  permissions); each change signs the user out of every device (not you, when you edit yourself) and is audited as
+  `user.role_assigned` / `user.role_removed`. Refused with `409` (nothing changes): removing a user's only assignment
+  (disable or archive the user instead), removing the last active administrator's administrator assignment, removing your
+  own last administrator access, the same role and scope twice, and more than 20 assignments. `PATCH /v1/users/{id}` still
+  replaces the whole set. No migration.
+- **Pending logins on the Users tab** (ED-27): a login whose invitation is not accepted yet is listed with a "Pending"
+  badge and has access, link to a person, resend and revoke there (not devices, two-step reset or deactivate). A pending
+  login can be linked to a person.
+- **Login picker shows who is who**: "Link to a login" lists the email and the roles under each name (and "pending
+  invitation"), so two accounts with the same name can be told apart; search matches the email too.
 
 ### Changed
 

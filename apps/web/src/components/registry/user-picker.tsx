@@ -6,6 +6,7 @@ import { Combobox } from '@/components/ui/combobox';
 import { useT } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import { usersApi } from '@/lib/registry/api';
+import { useRoles } from '@/lib/registry/queries';
 import { useDebounced } from '@/lib/use-debounced';
 
 /** What a picker needs to remember about the chosen login account. */
@@ -27,8 +28,9 @@ export interface UserPickerProps {
 }
 
 /**
- * Login-account picker (M2-USR-03): type-ahead against `GET /v1/users?q=` (debounced, first 15),
- * the e-mail on the second line, "invited" marked for accounts that have not signed in yet.
+ * Login-account picker (M2-USR-03): type-ahead against `GET /v1/users?q=` (debounced, first 15; the
+ * search matches the name and the e-mail). The second line is what tells two accounts of the same name
+ * apart: the e-mail, the role names, and "pending invitation" for accounts that have not signed in yet.
  */
 export function UserPicker({ value, onChange, ...rest }: UserPickerProps) {
   const t = useT();
@@ -45,15 +47,27 @@ export function UserPicker({ value, onChange, ...rest }: UserPickerProps) {
     placeholderData: keepPreviousData,
   });
 
+  const roles = useRoles();
+  const roleName = useMemo(
+    () => new Map((roles.data ?? []).map((r) => [r.id, r.name])),
+    [roles.data],
+  );
+
   const byId = useMemo(() => new Map((users.data?.data ?? []).map((u) => [u.id, u])), [users.data]);
   const options = useMemo(
     () =>
-      (users.data?.data ?? []).map((u) => ({
-        value: u.id,
-        label: u.display_name,
-        description: u.status === 'invited' ? `${u.email} (${t('loginLink.invited')})` : u.email,
-      })),
-    [users.data, t],
+      (users.data?.data ?? []).map((u) => {
+        const names = [
+          ...new Set(u.role_assignments.map((a) => roleName.get(a.role_id)).filter(Boolean)),
+        ].join(', ');
+        const pending = u.status === 'invited' ? `(${t('loginLink.invited')})` : '';
+        return {
+          value: u.id,
+          label: u.display_name,
+          description: [u.email, names, pending].filter(Boolean).join(' - '),
+        };
+      }),
+    [users.data, roleName, t],
   );
 
   return (

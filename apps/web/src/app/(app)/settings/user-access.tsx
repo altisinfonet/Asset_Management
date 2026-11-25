@@ -56,12 +56,14 @@ export function useAccessFields(
   roles: readonly Role[],
   count: number,
   original: readonly Assignment[] = [],
+  /** Where the problem pointers of assignment `i` start; `() => ''` when the body is one assignment (ED-27). */
+  base: (i: number) => string = (i) => `/role_assignments/${i}`,
 ): FormFieldSpec[] {
   const t = useT();
   const numbered = (label: string, i: number) =>
     count > 1 ? t('locationScope.numbered', { label, n: i + 1 }) : label;
   return Array.from({ length: Math.max(count, 1) }, (_, i): FormFieldSpec[] => {
-    const at = (field: string) => `/role_assignments/${i}/${field}`;
+    const at = (field: string) => `${base(i)}/${field}`;
     const options = [
       { value: 'tenant', label: t('locationScope.wholeOrganisation') },
       { value: 'location', label: t('locationScope.limited') },

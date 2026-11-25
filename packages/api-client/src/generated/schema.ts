@@ -3147,6 +3147,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/{id}/role-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a role assignment to a user
+         * @description Adds ONE role assignment (a role for the whole organisation, or limited to a location subtree with `scope_type=location` and `location_id`, ED-26) to the user and returns the updated user with its new `ETag`. The rules of `PATCH /v1/users/{id}` apply: nobody grants a role with permissions they lack or wider than they hold them (`403`), a location-scoped assignment never grants the org-only permissions, an unknown or archived role or location is `422` (`/role_id`, `/location_id`). `409 conflict` when the user already holds the same role with the same scope or already has 20 assignments. The target's sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_assigned`).
+         *
+         *     Requires permission `user:manage`.
+         */
+        post: operations["addUserRoleAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/users/{id}/role-assignments/{assignment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a role assignment of a user
+         * @description Removes ONE role assignment and returns the updated user with its new `ETag`. `404` for an assignment that is not this user's. `409 conflict` (the user is unchanged) when it is the user's only assignment (add another first, or disable or archive the user), when it is the assignment that makes the last active administrator an administrator, or when it would remove your own last administrator access (`user:manage` for the whole organisation). The target's sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_removed`).
+         *
+         *     Requires permission `user:manage`.
+         */
+        delete: operations["removeUserRoleAssignment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/users/{id}/sessions": {
         parameters: {
             query?: never;
@@ -16624,6 +16668,100 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    addUserRoleAssignment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleAssignment"];
+            };
+        };
+        responses: {
+            /** @description The user with the new assignment. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["Unprocessable"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    removeUserRoleAssignment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required for mutating requests authenticated with the session cookie; ignored for API keys. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfToken"];
+                /** @description Client-generated key making the request safely retryable (8-255 chars). Optional here; recommended for mobile and scripts. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description ETag of the version being modified. `428` if absent, `412` if stale. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Resource id (UUIDv7). */
+                id: components["parameters"]["Id"];
+                /** @description Id of a role assignment of this user (`User.role_assignments[].id`). */
+                assignment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user without the assignment. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    ETag: components["headers"]["ETag"];
+                    "Idempotent-Replayed": components["headers"]["IdempotentReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["TooManyRequests"];
         };
     };

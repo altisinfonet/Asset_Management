@@ -133,24 +133,54 @@ describe('UsersScreen role assignment scope (M2-LOC-03)', () => {
     ]);
   });
 
-  it('changes a user to a location scope, and shows a 422 location problem on the Location field', async () => {
+  async function openAccess(user: ReturnType<typeof userEvent.setup>, name: string) {
+    const row = await screen.findByRole('row', { name: new RegExp(name) });
+    await user.click(within(row).getByRole('button', { name: new RegExp(`Actions for ${name}`) }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Change role and access' }));
+    return screen.findByRole('dialog', { name: `Role and access of ${name}` });
+  }
+
+  async function addAccess(
+    user: ReturnType<typeof userEvent.setup>,
+    name: string,
+    role: string,
+  ): Promise<void> {
+    const dialog = screen.getByRole('dialog', { name: `Role and access of ${name}` });
+    await user.click(within(dialog).getByRole('button', { name: 'Add access' }));
+    const add = await screen.findByRole('dialog', { name: `Add access for ${name}` });
+    await chooseOption(user, add, /^Role/, role);
+    await user.click(within(add).getByRole('button', { name: 'Add access' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: `Add access for ${name}` })).toBeNull(),
+    );
+  }
+
+  it('adds access limited to a location, and shows a 422 location problem on the Location field', async () => {
     const user = userEvent.setup();
     const { container } = renderApp(<UsersScreen />);
-    const priya = await screen.findByRole('row', { name: /Priya Patel/ });
-    await user.click(within(priya).getByRole('button', { name: /Actions for Priya Patel/ }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Change role and access' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Role and access of Priya Patel' });
-    expect(within(dialog).getByRole('combobox', { name: /^Access/ })).toHaveTextContent(
+    const dialog = await openAccess(user, 'Priya Patel');
+    // the one access of Priya cannot be removed: there is a reason, not a hidden button
+    const current = within(dialog).getByRole('list', { name: 'Current access of Priya Patel' });
+    expect(within(current).getAllByRole('listitem')).toHaveLength(1);
+    expect(
+      within(dialog).getByRole('button', { name: 'Remove access: Technician' }),
+    ).toBeDisabled();
+    expect(within(dialog).getByText(/This is the only access of the user/)).toBeVisible();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Add access' }));
+    const add = await screen.findByRole('dialog', { name: 'Add access for Priya Patel' });
+    await chooseOption(user, add, /^Role/, 'Viewer');
+    expect(within(add).getByRole('combobox', { name: /^Access/ })).toHaveTextContent(
       'Whole organisation',
     );
-    await chooseOption(user, dialog, /^Access/, 'Limited to a location');
-    const location = within(dialog).getByRole('combobox', { name: /^Location/ });
+    await chooseOption(user, add, /^Access/, 'Limited to a location');
+    const location = within(add).getByRole('combobox', { name: /^Location/ });
     await user.type(location, 'Gym');
     await user.click(await screen.findByRole('option', { name: /Gym/ }));
 
-    // the location was archived meanwhile: the API's problem lands on the field
+    // the location was archived meanwhile: the API's problem lands on the field (a one-assignment body)
     server.use(
-      http.patch('/v1/users/:id', () =>
+      http.post('/v1/users/:id/role-assignments', () =>
         HttpResponse.json(
           {
             type: 'https://assettracker.test/problems/validation',
@@ -160,7 +190,7 @@ describe('UsersScreen role assignment scope (M2-LOC-03)', () => {
             request_id: 'req-1',
             errors: [
               {
-                pointer: '/role_assignments/0/location_id',
+                pointer: '/location_id',
                 message: 'A location-scoped assignment needs an existing, active location_id.',
                 code: 'not-found',
               },
@@ -170,23 +200,110 @@ describe('UsersScreen role assignment scope (M2-LOC-03)', () => {
         ),
       ),
     );
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await user.click(within(add).getByRole('button', { name: 'Add access' }));
     expect(
-      await within(dialog).findByText(
+      await within(add).findByText(
         'A location-scoped assignment needs an existing, active location_id.',
       ),
     ).toBeVisible();
     expect(location).toHaveAttribute('aria-invalid', 'true');
     await expectNoA11yViolations(container.ownerDocument.body);
 
-    // without the override the mock API stores the scope and the table shows it
+    // without the override the mock API stores it: the dialog lists both, the table shows the scope
     server.resetHandlers();
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(within(add).getByRole('button', { name: 'Add access' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Add access for Priya Patel' })).toBeNull(),
+    );
+    expect(await within(dialog).findByText('Viewer at Gym')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Remove access: Technician' })).toBeEnabled();
+  });
+
+  it('adds a whole-organisation access: the body is one assignment, the role is required', async () => {
+    const sent: unknown[] = [];
+    server.use(
+      http.post('/v1/users/:id/role-assignments', async ({ request }) => {
+        sent.push(await request.clone().json());
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp(<UsersScreen />);
+    const dialog = await openAccess(user, 'Vera Viewer');
+    await user.click(within(dialog).getByRole('button', { name: 'Add access' }));
+    const add = await screen.findByRole('dialog', { name: 'Add access for Vera Viewer' });
+    await user.click(within(add).getByRole('button', { name: 'Add access' }));
+    expect(await within(add).findByText('This field is required.')).toBeVisible();
+    expect(sent).toHaveLength(0);
+    await chooseOption(user, add, /^Role/, 'Technician');
+    await user.click(within(add).getByRole('button', { name: 'Add access' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({ role_id: roleIdFor('technician'), scope_type: 'tenant' });
+  });
+
+  it('removes one access after a confirmation that says what happens', async () => {
+    const user = userEvent.setup();
+    renderApp(<UsersScreen />);
+    const dialog = await openAccess(user, 'Vera Viewer');
+    await addAccess(user, 'Vera Viewer', 'Technician');
+    await within(dialog).findByRole('button', { name: 'Remove access: Technician' });
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove access: Technician' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this access?' });
+    expect(confirm).toHaveTextContent(
+      'Vera Viewer will no longer have Technician. They are signed out of every device',
+    );
+    // cancelling removes nothing
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Remove this access?' })).toBeNull(),
+    );
+    expect(within(dialog).getByRole('button', { name: 'Remove access: Technician' })).toBeEnabled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove access: Technician' }));
+    const again = await screen.findByRole('dialog', { name: 'Remove this access?' });
+    await user.click(within(again).getByRole('button', { name: 'Remove' }));
     await waitFor(() =>
       expect(
-        within(screen.getByRole('row', { name: /Priya Patel/ })).getByTestId('role-scope'),
-      ).toHaveTextContent('at Gym'),
+        within(dialog).queryByRole('button', { name: 'Remove access: Technician' }),
+      ).toBeNull(),
     );
+    // the only access left cannot be removed
+    expect(within(dialog).getByRole('button', { name: 'Remove access: Viewer' })).toBeDisabled();
+  });
+
+  it('a refusal of the API is shown in the confirmation, and nothing is removed', async () => {
+    const user = userEvent.setup();
+    renderApp(<UsersScreen />);
+    const dialog = await openAccess(user, 'Marco Secure');
+    await addAccess(user, 'Marco Secure', 'Viewer');
+    server.use(
+      http.delete('/v1/users/:id/role-assignments/:assignmentId', () =>
+        HttpResponse.json(
+          {
+            type: 'https://assettracker.test/problems/conflict',
+            title: 'Conflict',
+            status: 409,
+            code: 'conflict',
+            detail:
+              'The last active administrator cannot be removed, demoted, disabled or archived.',
+            request_id: 'req-2',
+          },
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        ),
+      ),
+    );
+    await user.click(
+      await within(dialog).findByRole('button', { name: 'Remove access: Administrator' }),
+    );
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this access?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Remove' }));
+    expect(await within(confirm).findByText(/last active administrator/i)).toBeVisible();
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Remove this access?' })).toBeNull(),
+    );
+    expect(
+      within(dialog).getByRole('button', { name: 'Remove access: Administrator' }),
+    ).toBeEnabled();
   });
 });

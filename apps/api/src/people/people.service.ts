@@ -25,7 +25,17 @@ import {
   type TxScope,
   stalePrecondition,
 } from '../registry/index.js';
-import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  isLocationScoped,
+  isUniqueViolation,
+  locationInScope,
+  locationScopeSql,
+  locationScopeWhere,
+  personInScope,
+  type Tx,
+} from '../tenancy/index.js';
 import type { PersonCreate, PersonLinkUser, PersonListQuery, PersonUpdate } from './schemas.js';
 
 type PersonRow = NonNullable<Awaited<ReturnType<Tx['person']['findUnique']>>>;
@@ -98,8 +108,11 @@ export class PeopleService extends RegistryBase {
           : query.archived === 'include'
             ? {}
             : { archived_at: null };
+      // M2-LOC-03 (ED-26): a scoped principal lists the people whose home location is in scope
+      const inScope = await locationScopeWhere(trx, 'location_id');
       const filter = {
         AND: [
+          inScope,
           archived,
           // `search_text` is the stored lower-case concatenation of name, email and employee number
           query.q ? { search_text: { contains: query.q.toLowerCase() } } : {},
@@ -160,7 +173,7 @@ export class PeopleService extends RegistryBase {
     id: string,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const row = await trx.person.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row) throw problem.notFound('Person not found.');
       return { data: await this.view(trx, row), version: row.version };
     });
@@ -196,6 +209,12 @@ export class PeopleService extends RegistryBase {
     const rows = await trx.$queryRaw<Array<{ person_id: string; n: bigint }>>`
       select person_id, count(*) as n from app.assignment
        where person_id = any(${ids}::uuid[]) and asset_id is not null and checked_in_at is null
+         and ${
+           isLocationScoped()
+             ? Prisma.sql`asset_id in (select a.id from app.asset a
+                where ${locationScopeSql(Prisma.sql`a.location_id`)})`
+             : Prisma.sql`true`
+         }
        group by person_id`;
     return new Map(rows.map((r) => [r.person_id, Number(r.n)]));
   }
@@ -210,7 +229,7 @@ export class PeopleService extends RegistryBase {
     try {
       return await this.tx(auth, async (trx) => {
         const errors: FieldError[] = [];
-        await this.checkRefs(trx, body, errors);
+        await this.checkRefs(trx, body, errors, true);
         const company = body.company_id
           ? await trx.company.findUnique({ where: { id: body.company_id } })
           : await trx.company.findFirst({ where: { is_default: true } });
@@ -263,7 +282,7 @@ export class PeopleService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
-        const row = await trx.person.findUnique({ where: { id } });
+        const row = await this.scoped(trx, id);
         if (!row || row.archived_at) throw problem.notFound('Person not found.');
         assertIfMatch(ifMatch, row.version);
 
@@ -359,7 +378,7 @@ export class PeopleService extends RegistryBase {
 
   async archive(auth: AuthContext, id: string, ifMatch: IfMatch): Promise<void> {
     await this.tx(auth, async (trx) => {
-      const row = await trx.person.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row || row.archived_at) throw problem.notFound('Person not found.');
       assertIfMatch(ifMatch, row.version);
       const open = await trx.assignment.count({ where: { person_id: id, checked_in_at: null } });
@@ -403,7 +422,7 @@ export class PeopleService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
-        const person = await trx.person.findUnique({ where: { id } });
+        const person = await this.scoped(trx, id);
         if (!person || person.archived_at) throw problem.notFound('Person not found.');
         assertIfMatch(ifMatch, person.version);
         const user = await trx.user_account.findUnique({ where: { id: body.user_id } });
@@ -502,7 +521,7 @@ export class PeopleService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
-        const person = await trx.person.findUnique({ where: { id } });
+        const person = await this.scoped(trx, id);
         if (!person || person.archived_at) throw problem.notFound('Person not found.');
         assertIfMatch(ifMatch, person.version);
         if (!person.user_id) {
@@ -563,16 +582,31 @@ export class PeopleService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------ helpers
 
+  /** The person `id` when their home location is inside the caller's scope (ED-26), else null. */
+  private async scoped(trx: Tx, id: string): Promise<PersonRow | null> {
+    return (await personInScope(trx, id)) ? trx.person.findUnique({ where: { id } }) : null;
+  }
+
   private async checkRefs(
     trx: Tx,
     body: Pick<PersonCreate, 'location_id' | 'department_id'>,
     errors: FieldError[],
+    creating = false,
   ): Promise<void> {
     if (body.location_id) {
-      const location = await trx.location.findUnique({ where: { id: body.location_id } });
+      const location = (await locationInScope(trx, body.location_id))
+        ? await trx.location.findUnique({ where: { id: body.location_id } })
+        : null;
       if (!location || location.archived_at) {
         errors.push(invalidRef('/location_id', 'No such location.'));
       }
+    } else if (isLocationScoped() && (creating || body.location_id === null)) {
+      // M2-LOC-03 (ED-26): a person without a home location in scope would be invisible to the caller
+      errors.push({
+        pointer: '/location_id',
+        message: 'A home location inside your scope is required.',
+        code: 'required',
+      });
     }
     if (body.department_id) {
       const department = await trx.department.findUnique({ where: { id: body.department_id } });

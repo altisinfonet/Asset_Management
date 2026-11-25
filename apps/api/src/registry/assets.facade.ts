@@ -22,7 +22,14 @@ import {
   type AuditWriter,
   type OutboxPublisher,
 } from '../ports/index.js';
-import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  assetInScope,
+  isLocationScoped,
+  isUniqueViolation,
+  type Tx,
+} from '../tenancy/index.js';
 import { findAssetByCode, scanCandidates } from './asset-codes.js';
 import { AssetRefs } from './asset-refs.js';
 import { type AssetAction, assertAssetAction, refuseAssetAction } from './asset-actions.js';
@@ -870,6 +877,7 @@ export class AssetsFacade extends RegistryBase {
     meta?: Record<string, unknown>,
   ): Promise<AssetWithVersion> {
     assertAssetAction('move', this.stateOf(current));
+    assertScopedLocationKept(body.location_id);
     if (body.location_id) {
       const location = await AssetRefs.for(trx).location(body.location_id);
       if (!location || location.archived_at) {
@@ -1111,6 +1119,7 @@ export class AssetsFacade extends RegistryBase {
       assertIfMatch(ifMatch, current.version);
       assertAssetAction('mark_found', this.stateOf(current));
       const status = await this.statusOfType(trx, 'deployable', body.status_id, true);
+      if (body.location_id !== undefined) assertScopedLocationKept(body.location_id);
       if (body.location_id) {
         const location = await AssetRefs.for(trx).location(body.location_id);
         if (!location || location.archived_at) {
@@ -1239,7 +1248,7 @@ export class AssetsFacade extends RegistryBase {
   ): Promise<{ data: HistoryEventDto[]; page: Page<HistoryEventDto>['page'] }> {
     return this.tx(auth, async (trx) => {
       const exists = await trx.asset.findUnique({ where: { id }, select: { id: true } });
-      if (!exists) throw problem.notFound('Asset not found.');
+      if (!exists || !(await assetInScope(trx, id))) throw problem.notFound('Asset not found.');
       return listHistory(
         trx,
         {
@@ -1464,7 +1473,7 @@ export class AssetsFacade extends RegistryBase {
               });
               break;
             }
-            cursor = (await refs.asset(cursor))?.parent_asset_id ?? null;
+            cursor = (await refs.assetParent(cursor))?.parent_asset_id ?? null;
           }
         }
       }
@@ -1474,6 +1483,14 @@ export class AssetsFacade extends RegistryBase {
       if (!location || location.archived_at) {
         errors.push(invalidRef(at('/location_id'), 'No such location.'));
       }
+    } else if (isLocationScoped() && (current ? v.location_id === null : true)) {
+      // M2-LOC-03 (ED-26): a scoped principal cannot create or leave an asset without a location,
+      // which would put it outside their own scope
+      errors.push({
+        pointer: at('/location_id'),
+        message: 'A location inside your scope is required.',
+        code: 'required',
+      });
     }
     if (v.department_id) {
       const department = await refs.department(v.department_id);
@@ -1490,5 +1507,22 @@ export class AssetsFacade extends RegistryBase {
         code: 'invalid',
       });
     }
+  }
+}
+
+/**
+ * M2-LOC-03 (ED-26): a scoped principal cannot take an asset to "no location" (it would leave their
+ * scope and become invisible to them). Moving it to a location outside the scope is refused by the
+ * location lookup itself (an out-of-scope location does not exist for them).
+ */
+function assertScopedLocationKept(locationId: string | null | undefined): void {
+  if (isLocationScoped() && !locationId) {
+    throw problem.validation([
+      {
+        pointer: '/location_id',
+        message: 'A location inside your scope is required.',
+        code: 'required',
+      },
+    ]);
   }
 }

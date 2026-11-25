@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
 import { permits } from '../auth/index.js';
-import { TenancyService, type Tx } from '../tenancy/index.js';
-import { escapeLike } from './asset-queries.js';
+import { locationScopeSql, Prisma, TenancyService, type Tx } from '../tenancy/index.js';
+import { assetScopeSql, escapeLike } from './asset-queries.js';
 import type { SearchType } from './schemas.js';
 
 export interface SearchResult {
@@ -76,6 +76,7 @@ export class SearchService {
       select a.id, a.asset_tag, a.name, a.serial
         from app.asset a
        where a.archived_at is null and (a.asset_tag_key = lower(${q}) or a.serial_key = lower(${q}))
+         and ${assetScopeSql()}
        order by a.asset_tag_key
        limit ${limit}`;
     let rows = exact;
@@ -86,6 +87,7 @@ export class SearchService {
           from app.asset a
          where a.archived_at is null
            and strpos(a.search_text, lower(${q})) > 0
+           and ${assetScopeSql()}
            and a.id <> all (${seen}::uuid[])
          order by case when starts_with(a.search_text, lower(${q}))
                          or strpos(a.search_text, chr(31) || lower(${q})) > 0 then 0 else 1 end,
@@ -141,6 +143,7 @@ export class SearchService {
         from app.person p
         left join app.department d on d.tenant_id = p.tenant_id and d.id = p.department_id
        where p.archived_at is null and strpos(p.search_text, lower(${q})) > 0
+         and ${locationScopeSql(Prisma.sql`p.location_id`)}
        order by case when p.email_key = lower(${q}) or lower(p.employee_ref) = lower(${q}) then 0
                      when starts_with(p.search_text, lower(${q})) then 1 else 2 end,
                 lower(p.display_name)
@@ -161,6 +164,7 @@ export class SearchService {
       select l.id, l.name, l.code, l.kind
         from app.location l
        where l.archived_at is null and (l.name ilike ${contains} or l.code ilike ${contains})
+         and ${locationScopeSql(Prisma.sql`l.id`)}
        order by case when lower(l.name) = lower(${q}) or lower(l.code) = lower(${q}) then 0
                      when l.name ilike ${prefix} then 1 else 2 end,
                 lower(l.name)

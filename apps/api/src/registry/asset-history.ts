@@ -3,7 +3,7 @@ import { currentBulkSink } from '../context/bulk-writes.js';
 import { currentRequestId } from '../context/request-context.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import { type Page, nextTsIdCursor, readTsIdCursor, tsText } from '../platform/index.js';
-import { Prisma, type Tx } from '../tenancy/index.js';
+import { isLocationScoped, locationScopeSql, Prisma, type Tx } from '../tenancy/index.js';
 
 /**
  * The user-facing chain of custody (M2-LIFE-06, ED-09): `app.asset_history`, append-only and
@@ -146,6 +146,10 @@ export async function listHistory(
                               where t.from_assignment_id in
                                     (select s.id from app.assignment s where s.person_id = ${filter.personId}::uuid)))`,
     );
+  }
+  if (filter.personId && isLocationScoped()) {
+    // M2-LOC-03 (ED-26): a person's timeline shows only the assets inside the caller's scope
+    where.push(locationScopeSql(Prisma.sql`a.location_id`));
   }
   if (filter.eventTypes?.length)
     where.push(Prisma.sql`h.event_type = any(${filter.eventTypes}::text[])`);

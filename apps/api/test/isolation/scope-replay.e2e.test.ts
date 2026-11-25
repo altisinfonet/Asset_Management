@@ -16,6 +16,10 @@ import {
 } from '../registry/support.js';
 import { createScopedUser } from '../scoping/support.js';
 
+/** A JSON body as the test client returns it (untyped on purpose). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>;
+
 /**
  * M2-LOC-03 SCOPED ROUTE REPLAY (ED-26). The companion of `route-replay.e2e.test.ts`: the same
  * organisation holds two sites, "In" and "Out". Every HTTP route of the application is replayed by a
@@ -779,7 +783,7 @@ describe.skipIf(!dbEnabled)(
       const a = t.admin;
       const m = unique('scr').replace(/-/g, '');
       const must = async (
-        res: Promise<{ status: number; body: Record<string, any>; raw: string }>,
+        res: Promise<{ status: number; body: Json; raw: string }>,
         status = 201,
       ) => {
         const r = await res;
@@ -1088,8 +1092,8 @@ describe.skipIf(!dbEnabled)(
     async function snapshot(): Promise<Record<string, string>> {
       const a = t.admin;
       const etag = async (url: string) => String((await a.get(url)).headers.etag ?? 'none');
-      const json = async (url: string, pick: (r: Record<string, any>) => unknown) =>
-        JSON.stringify(((await a.get(url)).body.data as Array<Record<string, any>>).map(pick));
+      const json = async (url: string, pick: (r: Json) => unknown) =>
+        JSON.stringify(((await a.get(url)).body.data as Array<Json>).map(pick));
       return {
         assetOut: await etag(`/v1/assets/${fx.assetOut}`),
         assetNone: await etag(`/v1/assets/${fx.assetNone}`),

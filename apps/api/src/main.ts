@@ -29,6 +29,11 @@ async function main(): Promise<void> {
     role: config.APP_ROLE,
   });
   if (tracing) logger.info('OpenTelemetry tracing enabled');
+  if (config.APP_ROLE === 'api' && !config.SESSION_COOKIE_SECURE) {
+    logger.warn(
+      'SESSION_COOKIE_SECURE=false: the session cookie is "at_session" WITHOUT the Secure flag so sign-in works over plain HTTP from a LAN address. Local development only; production refuses this and needs HTTPS.',
+    );
+  }
   process.once('beforeExit', () => void shutdownTracing());
 
   switch (config.APP_ROLE) {

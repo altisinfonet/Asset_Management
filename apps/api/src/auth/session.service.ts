@@ -8,6 +8,13 @@ import { asBytes, TenancyService, type Tx } from '../tenancy/index.js';
 
 /** `__Host-` prefix: the browser only accepts it with `Secure`, `Path=/` and no `Domain` (no subdomain sharing). */
 export const SESSION_COOKIE = '__Host-at_session';
+/** Cookie name when `SESSION_COOKIE_SECURE=false` (local development over plain HTTP; a `__Host-` cookie requires `Secure`). */
+export const SESSION_COOKIE_INSECURE = 'at_session';
+
+/** Name of the session cookie for the configured mode. */
+export function sessionCookieName(secure: boolean): string {
+  return secure ? SESSION_COOKIE : SESSION_COOKIE_INSECURE;
+}
 
 export interface CreatedSession {
   id: string;
@@ -39,6 +46,8 @@ const TOUCH_INTERVAL_MS = 60_000;
 export class SessionService {
   private readonly idleMs: number;
   private readonly absoluteMs: number;
+  private readonly secure: boolean;
+  private readonly cookieName: string;
 
   constructor(
     private readonly tenancy: TenancyService,
@@ -46,6 +55,8 @@ export class SessionService {
   ) {
     this.idleMs = config.SESSION_IDLE_MINUTES * 60_000;
     this.absoluteMs = config.SESSION_ABSOLUTE_HOURS * 3_600_000;
+    this.secure = config.SESSION_COOKIE_SECURE;
+    this.cookieName = sessionCookieName(this.secure);
   }
 
   /** CSRF token of a session: one-way derived from the cookie token, so it needs no storage and dies with the session. */
@@ -63,11 +74,11 @@ export class SessionService {
   /** `Set-Cookie` value for a new session. */
   cookieFor(token: string, absoluteExpiresAt: Date): string {
     const maxAge = Math.max(0, Math.floor((absoluteExpiresAt.getTime() - Date.now()) / 1000));
-    return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+    return `${this.cookieName}=${token}; Path=/; HttpOnly;${this.secure ? ' Secure;' : ''} SameSite=Lax; Max-Age=${maxAge}`;
   }
 
   clearCookie(): string {
-    return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+    return `${this.cookieName}=; Path=/; HttpOnly;${this.secure ? ' Secure;' : ''} SameSite=Lax; Max-Age=0`;
   }
 
   /** Session token from a `Cookie` request header. */
@@ -76,7 +87,7 @@ export class SessionService {
     for (const part of header.split(';')) {
       const eq = part.indexOf('=');
       if (eq < 0) continue;
-      if (part.slice(0, eq).trim() === SESSION_COOKIE) {
+      if (part.slice(0, eq).trim() === this.cookieName) {
         const value = part.slice(eq + 1).trim();
         return value.length >= 16 && value.length <= 256 ? value : undefined;
       }

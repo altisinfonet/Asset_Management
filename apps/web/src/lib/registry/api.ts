@@ -678,6 +678,31 @@ export const usersApi = {
     });
     return data as RegistryUser;
   },
+  /** Add ONE role assignment (whole organisation, or limited to a location; ED-27). */
+  async addRoleAssignment(
+    id: string,
+    body: RegistryUser['role_assignments'][number],
+    etag?: string,
+  ): Promise<RegistryUser> {
+    const ifMatch = await freshEtag(etag, () => usersApi.get(id));
+    const { data } = await http().POST('/v1/users/{id}/role-assignments', {
+      params: { path: { id }, header: { 'If-Match': ifMatch } },
+      body,
+    });
+    return data as RegistryUser;
+  },
+  /** Remove ONE role assignment of the user (ED-27). */
+  async removeRoleAssignment(
+    id: string,
+    assignmentId: string,
+    etag?: string,
+  ): Promise<RegistryUser> {
+    const ifMatch = await freshEtag(etag, () => usersApi.get(id));
+    const { data } = await http().DELETE('/v1/users/{id}/role-assignments/{assignment_id}', {
+      params: { path: { id, assignment_id: assignmentId }, header: { 'If-Match': ifMatch } },
+    });
+    return data as RegistryUser;
+  },
   async resendInvitation(id: string): Promise<void> {
     await http().POST('/v1/users/{id}/invitation/resend', { params: { path: { id } } });
   },

@@ -1686,14 +1686,18 @@ type AssignmentInput = {
 };
 
 /** The checks of `resolveRoles` in apps/api/src/auth/users.service.ts, with its pointers and codes. */
-function validateRoleAssignments(value: unknown): FieldError[] {
+function validateRoleAssignments(
+  value: unknown,
+  /** Where the pointers of assignment `i` start: a list in the body, or (ED-27) the body itself. */
+  base: (i: number) => string = (i) => `/role_assignments/${i}`,
+): FieldError[] {
   if (!Array.isArray(value) || value.length === 0) {
     return [{ pointer: '/role_assignments', message: 'choose a role', code: 'required' }];
   }
   const errors: FieldError[] = [];
   value.forEach((raw, i) => {
     const a = (raw ?? {}) as AssignmentInput;
-    const at = (field: string) => `/role_assignments/${i}/${field}`;
+    const at = (field: string) => `${base(i)}/${field}`;
     if (!MOCK_ROLES.some((r) => r.id === a.role_id)) {
       errors.push({ pointer: at('role_id'), message: 'Unknown role.', code: 'not-found' });
       return;
@@ -1777,6 +1781,9 @@ function oneUser(user: MockUserRecord, status = 200, extra: Record<string, strin
     headers: { ETag: etagOf(user._v), ...extra },
   });
 }
+
+/** A 409 as the API answers it: the reason is the `detail` (problem.conflict in the API). */
+const conflict = (detail: string) => problem(409, 'conflict', 'Conflict', { detail });
 
 const revokedUserSessions = new Set<string>();
 
@@ -1923,6 +1930,87 @@ const userHandlers: HttpHandler[] = [
       if (body.display_name !== undefined) target.display_name = text(body.display_name)!;
       if (body.role_assignments !== undefined) target.role_assignments = draft.role_assignments;
       if (body.status !== undefined) target.status = body.status as 'active' | 'disabled';
+      target.updated_at = nowIso();
+      target._v += 1;
+      return target;
+    });
+    return oneUser(user);
+  }),
+
+  // ED-27: one role assignment at a time (apps/api/src/auth/users.service.ts addRoleAssignment)
+  http.post('/v1/users/:id/role-assignments', async ({ request, params }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'user:manage' });
+    if (!guard.ok) return guard.response;
+    const existing = registry().users.find((u) => u.id === params.id);
+    if (!existing || existing.archived_at) return problem(404, 'not-found', 'Not found');
+    const stale = checkIfMatch(request, existing._v);
+    if (stale) return stale;
+    const body = await readBody(request);
+    if (!body) return problem(400, 'bad-request', 'Malformed JSON body');
+    if (existing.role_assignments.length >= 20) {
+      return conflict('A user can hold at most 20 role assignments.');
+    }
+    const errors = validateRoleAssignments([body], () => '');
+    if (errors.length > 0) return validation(errors);
+    const [added] = storedAssignments([body]);
+    const same = (a: S['RoleAssignment']) =>
+      a.role_id === added!.role_id &&
+      a.scope_type === added!.scope_type &&
+      a.company_id === added!.company_id &&
+      a.location_id === added!.location_id;
+    if (existing.role_assignments.some(same)) {
+      return conflict('This user already holds this role with the same scope.');
+    }
+    const user = mutateRegistry((data) => {
+      const target = data.users.find((u) => u.id === existing.id)!;
+      target.role_assignments = [...target.role_assignments, added!];
+      target.updated_at = nowIso();
+      target._v += 1;
+      return target;
+    });
+    return oneUser(user, 201);
+  }),
+
+  http.delete('/v1/users/:id/role-assignments/:assignmentId', ({ request, params }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'user:manage' });
+    if (!guard.ok) return guard.response;
+    const existing = registry().users.find((u) => u.id === params.id);
+    if (!existing || existing.archived_at) return problem(404, 'not-found', 'Not found');
+    const stale = checkIfMatch(request, existing._v);
+    if (stale) return stale;
+    const removed = existing.role_assignments.find((a) => a.id === params.assignmentId);
+    if (!removed) return problem(404, 'not-found', 'Role assignment not found.');
+    const draft: MockUserRecord = {
+      ...existing,
+      role_assignments: existing.role_assignments.filter((a) => a.id !== removed.id),
+    };
+    if (draft.role_assignments.length === 0) {
+      return conflict(
+        'A user needs at least one role assignment. Add another first, or disable or archive the user.',
+      );
+    }
+    if (
+      isActiveAdmin(existing) &&
+      !isActiveAdmin(draft) &&
+      registry().users.filter(isActiveAdmin).length <= 1
+    ) {
+      return conflict(
+        'The last active administrator cannot be removed, demoted, disabled or archived.',
+      );
+    }
+    // your own last administrator access: even when other administrators exist
+    if (
+      guard.user.email.toLowerCase() === existing.email.toLowerCase() &&
+      isActiveAdmin(existing) &&
+      !isActiveAdmin(draft)
+    ) {
+      return conflict(
+        'You cannot remove your own last administrator access. Ask another administrator.',
+      );
+    }
+    const user = mutateRegistry((data) => {
+      const target = data.users.find((u) => u.id === existing.id)!;
+      target.role_assignments = draft.role_assignments;
       target.updated_at = nowIso();
       target._v += 1;
       return target;

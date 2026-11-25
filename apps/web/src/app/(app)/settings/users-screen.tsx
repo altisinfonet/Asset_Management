@@ -39,6 +39,7 @@ import { useRoles } from '@/lib/registry/queries';
 import type { Person, RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
+import { AccessDialog } from './access-dialog';
 import {
   accessValues,
   assignmentsFrom,
@@ -177,7 +178,8 @@ function UsersTable({
   const [renaming, setRenaming] = useState<RegistryUser | null>(null);
   const [linking, setLinking] = useState<RegistryUser | null>(null);
   const [unlinking, setUnlinking] = useState<RegistryUser | null>(null);
-  const [access, setAccess] = useState<RegistryUser | null>(null);
+  // the dialog follows the live row, so an added or removed assignment shows at once
+  const [accessId, setAccessId] = useState<string | null>(null);
   const { label: assignmentLabel, where } = useAssignmentLabel(roles);
 
   const fail = (err: unknown) => {
@@ -318,7 +320,7 @@ function UsersTable({
                 <DropdownMenuItem onSelect={() => setRenaming(u)}>
                   {t('users.actions.rename')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setAccess(u)}>
+                <DropdownMenuItem onSelect={() => setAccessId(u.id)}>
                   {t('locationScope.edit')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setLinking(u)}>
@@ -446,52 +448,12 @@ function UsersTable({
       />
       <SessionsDialog user={sessionsOf} onClose={() => setSessionsOf(null)} />
       <AccessDialog
-        key={access?.id ?? 'access'}
-        user={access}
+        key={accessId ?? 'access'}
+        user={users.find((u) => u.id === accessId) ?? null}
         roles={roles}
-        onClose={() => setAccess(null)}
+        onClose={() => setAccessId(null)}
       />
     </>
-  );
-}
-
-/** Role and access of a login: each assignment applies to the whole organisation or one location. */
-function AccessDialog({
-  user,
-  roles,
-  onClose,
-}: {
-  user: RegistryUser | null;
-  roles: Role[];
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const { toast } = useToast();
-  const refresh = useRefreshUsers();
-  const original = user?.role_assignments ?? [];
-  const count = Math.max(original.length, 1);
-  const fields = useAccessFields(roles, count, original);
-  return (
-    <FormDialog
-      open={user !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title={t('locationScope.editTitle', { name: user?.display_name ?? '' })}
-      description={t('locationScope.editDescription')}
-      fields={fields}
-      initial={accessValues(original)}
-      submitLabel={t('common.save')}
-      onSubmit={async (values) => {
-        if (!user) return;
-        await usersApi.update(user.id, {
-          role_assignments: assignmentsFrom(values, count, original),
-        });
-        await refresh();
-        toast({
-          variant: 'success',
-          title: t('locationScope.saved', { name: user.display_name }),
-        });
-      }}
-    />
   );
 }
 

@@ -13,40 +13,89 @@ const tree = (page: Page) => page.getByRole('tree', { name: 'Locations' });
 const total = async (page: Page) =>
   Number((/of (\d+)$/.exec((await range(page).textContent()) ?? '') ?? [])[1]);
 
-test.describe('an administrator scopes a role assignment', () => {
-  test('limits Priya to Room 204 from "Change role and access"; the table shows it after a reload', async ({
+test.describe('an administrator adds and removes role assignments', () => {
+  test('adds Viewer limited to Room 204 to Priya from "Add access"; removes it again after a confirmation', async ({
     page,
   }) => {
     await page.goto('/settings/users');
     const priya = page.getByRole('row', { name: /Priya Patel/ });
     await expect(priya).toBeVisible();
-    await expect(priya.getByTestId('role-scope')).toHaveCount(0);
 
     await priya.getByRole('button', { name: /Actions for Priya Patel/ }).click();
     await page.getByRole('menuitem', { name: 'Change role and access' }).click();
     const dialog = page.getByRole('dialog', { name: 'Role and access of Priya Patel' });
-    await dialog.getByRole('combobox', { name: /^Access/ }).click();
+    // the one access cannot be removed
+    await expect(dialog.getByRole('button', { name: 'Remove access: Technician' })).toBeDisabled();
+
+    await dialog.getByRole('button', { name: 'Add access' }).click();
+    const add = page.getByRole('dialog', { name: 'Add access for Priya Patel' });
+    await add.getByRole('combobox', { name: /^Role/ }).click();
+    await page.getByRole('option', { name: 'Viewer' }).click();
+    await add.getByRole('combobox', { name: /^Access/ }).click();
     await page.getByRole('option', { name: 'Limited to a location' }).click();
 
     // the location is required before anything is sent
-    await dialog.getByRole('button', { name: 'Save' }).click();
-    await expect(dialog.getByText('This field is required.')).toBeVisible();
+    await add.getByRole('button', { name: 'Add access' }).click();
+    await expect(add.getByText('This field is required.')).toBeVisible();
 
-    const location = dialog.getByRole('combobox', { name: /^Location/ });
-    await location.fill('Room 204');
+    await add.getByRole('combobox', { name: /^Location/ }).fill('Room 204');
     await page.getByRole('option', { name: /Room 204/ }).click();
-    await dialog.getByRole('button', { name: 'Save' }).click();
-    await expect(dialog).toBeHidden();
-    await expect(page.getByText('Role and access of Priya Patel saved.').first()).toBeVisible();
-    await expect(priya.getByTestId('role-scope')).toHaveText('at Room 204');
+    await add.getByRole('button', { name: 'Add access' }).click();
+    await expect(add).toBeHidden();
+    await expect(page.getByText('Access added for Priya Patel.').first()).toBeVisible();
+    await expect(dialog.getByText('Viewer at Room 204')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Remove access: Technician' })).toBeEnabled();
 
-    await page.reload();
+    // the confirmation says what happens; cancelling keeps it
+    await dialog.getByRole('button', { name: 'Remove access: Viewer at Room 204' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Remove this access?' });
+    await expect(confirm).toContainText('Priya Patel will no longer have Viewer at Room 204');
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(dialog.getByText('Viewer at Room 204')).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Remove access: Viewer at Room 204' }).click();
+    await confirm.getByRole('button', { name: 'Remove' }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText('Access removed from Priya Patel.').first()).toBeVisible();
+    await expect(dialog.getByText('Viewer at Room 204')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Remove access: Technician' })).toBeDisabled();
+  });
+
+  test('a user limited to a location shows where in the table; the Roles tab says where scoping lives', async ({
+    page,
+  }) => {
+    await page.goto('/settings/users');
     await expect(
-      page.getByRole('row', { name: /Priya Patel/ }).getByTestId('role-scope'),
-    ).toHaveText('at Room 204');
-    // the Roles tab says where scoping lives
+      page.getByRole('row', { name: /Theo Scoped/ }).getByTestId('role-scope'),
+    ).toHaveText('at Room 101');
     await page.getByRole('tab', { name: 'Roles' }).click();
     await expect(page.getByText(/Each role can be limited to a location/)).toBeVisible();
+  });
+
+  test('a refusal is shown in the dialog that asked: you cannot remove your own last administrator access', async ({
+    page,
+  }) => {
+    await page.goto('/settings/users');
+    const alice = page.getByRole('row', { name: /Alice Owner/ });
+    await alice.getByRole('button', { name: /Actions for Alice Owner/ }).click();
+    await page.getByRole('menuitem', { name: 'Change role and access' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Role and access of Alice Owner' });
+    await dialog.getByRole('button', { name: 'Add access' }).click();
+    const add = page.getByRole('dialog', { name: 'Add access for Alice Owner' });
+    await add.getByRole('combobox', { name: /^Role/ }).click();
+    await page.getByRole('option', { name: 'Viewer' }).click();
+    await add.getByRole('button', { name: 'Add access' }).click();
+    await expect(add).toBeHidden();
+
+    await dialog.getByRole('button', { name: 'Remove access: Administrator' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Remove this access?' });
+    await confirm.getByRole('button', { name: 'Remove' }).click();
+    await expect(confirm).toContainText('You cannot remove your own last administrator access');
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(
+      dialog.getByRole('button', { name: 'Remove access: Administrator' }),
+    ).toBeVisible();
   });
 
   test('an org-wide user sees no "Scoped to"', async ({ page }) => {

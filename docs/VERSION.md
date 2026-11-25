@@ -4,7 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.6** (milestone M2, wave 3 part 2). Tag `v0.2.6`; see the entry below for the commit.
+**Current version: 0.2.7** (milestone M2, wave 3 part 2 completed). Tag `v0.2.7`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -39,9 +39,24 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ---
 
-## Unreleased
+## 0.2.7 - 2026-11-25 - M2 wave 3 part 2 completed: access changes, guides, console-style dashboard
+
+Wave 3 part 2 completed (M2-USR-04, M2-SEC-01, M2-OPS-01, M2-DOC-01, ED-27 to ED-30) on top of two pull requests merged on
+GitHub after 0.2.6: **#15** (console-style dashboard and teal palette for the System, Light and Dark themes) and **#16**
+(CI: dependency audit and mock web e2e run again). Release branch `release-0.2.7` = GitHub `main` (`37ae471`) plus a
+no-fast-forward merge of the wave 3 part 2 and LAN branches, follow-ups and these docs; the release commit is tagged
+`v0.2.7`.
 
 ### Added
+
+- **Console-style dashboard** (GitHub PR #15): five count tiles (All assets, Ready, Assigned, Not deployable, Overdue
+  check-outs) with a coloured top edge and their share of all assets, an "Assets by status" chart and a "Utilisation"
+  meter, and under **Needs attention** the overdue check-outs as a table (asset, holder, due, status) next to Low stock
+  and Open repairs. The overdue card keeps the 0.2.7 wording: a line under its title says what it counts (every
+  checked-out asset past its return date, loans included) and its second link is "Overdue loans only".
+- **Theme switch in the sidebar footer** (GitHub PR #15): System, Light and Dark, also in the command palette ("Switch
+  theme"). The palette is teal in all three themes; the design tokens (`docs/design/tokens.json`, `packages/ui-tokens`)
+  and `docs/design/design_system.md` describe it, and the contrast tests cover the new pairs.
 
 - **Isolation harness extension** (M2-SEC-01, ED-28): the route replay now also probes, from the database catalogue,
   every tenant table (the other tenant sees none of the rows, the owner sees all) and every foreign key between tenant
@@ -80,6 +95,11 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ### Changed
 
+- **Palette:** the primary colour moves from blue to teal across the three themes (GitHub PR #15); the guide screenshots
+  were re-shot with it (59 pictures).
+- **ADMIN_DATABASE_URL** is described the same way in the README, the developer guide, `.env.example` and the contributing
+  guide: a full e2e run (CI, the merge check) sets it; without it the isolation catalogue probes and one schema-lint
+  fixture skip.
 - Schema lint rule 8 requires `tenant_id` to be paired with `tenant_id` in a composite foreign key (migration 0170).
 - **Google Admin import:** the org unit path becomes the **department** ("/Students/Grade 5" -> "Students / Grade 5", an
   existing department of that name or of the last part is used, else it is created; every unit is an entry of the value
@@ -106,6 +126,12 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ### Fixed
 
+- **CI** (GitHub PR #16): `scripts/ci/audit.mjs` passed `pnpm audit --json` as one command string without a shell, so on
+  Linux the dependency audit failed with "did not return JSON"; with the audit running again, `effect` (dev only, via
+  `@prisma/config`) is overridden to 3.22.4 for GHSA-7589-6fvf-x4pw and the expired `picomatch` allow-list entry is
+  removed; the optional mock web e2e job builds the web app's workspace packages first.
+- **Isolation e2e without the superuser URL:** the tenant visibility probe of the route replay failed with a SCRAM error
+  when `ADMIN_DATABASE_URL` was unset; it now skips like the foreign key probe.
 - **Attachment owner checked by the database** (ED-28, migration 0170): an attachment row could name a record of another
   tenant as its owner when written outside the API (the API already refused it). A trigger now refuses it with 23503.
 - **Intermittent 500 on a check-in during partition rotation** (the "deadlock flake" of AUDIT B.13 / B.22; ED-28,
@@ -115,6 +141,17 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
   first and with `NOWAIT` (migration 0180), so it never waits while holding a lock; `ensurePartitions` runs it in its own
   transaction with a 200 ms `lock_timeout` and retries `lock_not_available` (55P03, from either layer) and
   `deadlock_detected` (40P01) with a growing pause.
+
+### Known
+
+Recorded in AUDIT.md section C, not fixed in this release: `ensurePartitions` can use up its 10 NOWAIT attempts under
+sustained writes (rerun `migrate` or the monthly job); `assertAnotherAdmin` counts administrators without a row lock, so
+two concurrent removals of two different administrators could leave none (older than this release); two e2e flakes (the
+TOTP time-step test and the 5 s scan wait in `custody-files.spec.ts`).
+
+### Verification
+
+See [AUDIT.md](AUDIT.md) B.24 to B.29 (the work) and B.30 (release).
 
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 

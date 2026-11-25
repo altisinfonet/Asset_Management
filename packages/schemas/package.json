@@ -1,6 +1,6 @@
 {
   "name": "@assettracker/schemas",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "description": "Shared zod schemas (api, web, mobile)",
   "type": "module",

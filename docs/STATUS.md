@@ -1,10 +1,10 @@
 # Project status
 
-_Last updated: 2026-11-25 (v0.2.6, wave 3 part 2). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-25 (v0.2.7, wave 3 part 2 completed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
-[VERSION.md](VERSION.md) (version history, current 0.2.6) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+[VERSION.md](VERSION.md) (version history, current 0.2.7) · [AUDIT.md](AUDIT.md) (quality and security audit record).
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides and the ED-29 fixes merged (unreleased); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -96,20 +96,20 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | ---- | ------- |
 | Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | M2-LOC-03 done |
 
-### Wave 3 — part 2: test harnesses ✅ (unreleased)
+### Wave 3 — part 2: test harnesses ✅ (v0.2.7, 2026-11-25)
 
 | Area | Stories |
 | ---- | ------- |
 | Isolation harness extension: every tenant table and every foreign key probed across tenants from the database catalogue, named cross-tenant inserts (assignment, loan, repair, import row, pool membership, attachment), tenant-prefixed object keys and tampered file URLs refused (local and S3), every job type through the payload lint; direct and through PgBouncer. Found and fixed: attachment owners are now checked by the database (migration 0170, ED-28), and the root cause of the intermittent check-in 500 (partition DDL deadlock) ✅ | M2-SEC-01 done |
 | Performance harness extension: nightly budgets for check-out, scan resolve, the 500-label PDF, a location-scoped user's list / search / lookups (ED-26) and import throughput and dry run, published as `test-results/*.json` ✅ | M2-OPS-01 done |
 
-### Wave 3 — part 2: add and remove access ✅ (unreleased)
+### Wave 3 — part 2: add and remove access ✅ (v0.2.7, 2026-11-25)
 
 | Area | Stories |
 | ---- | ------- |
 | Settings → Users: "Add access" (a role for the whole organisation or limited to a location) and "Remove" per assignment, with the guards (only access, last administrator, own last administrator access) and a sign-out of the user on every change (ED-27); pending logins listed on the Users tab with a "Pending" badge and linkable; the login picker shows the email and roles under each name ✅ | M2-USR-04 done |
 
-### Fixes found while writing the user guides (ED-29) ✅ (unreleased)
+### Fixes found while writing the user guides (ED-29) ✅ (v0.2.7, 2026-11-25)
 
 | Fix | Status |
 | --- | ------ |
@@ -119,11 +119,21 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | People and Stock fit a 1280 px window; Assets scrolls inside its table with the tag pinned | ✅ |
 | "Overdue check-outs" (dashboard, loans included) vs "Overdue loans" (loaner overview); the loan default hint explains the 7-day pool fallback | ✅ |
 
-### Wave 3 — part 2: user guides (drafts) ✅ (unreleased)
+### Wave 3 — part 2: user guides (drafts) ✅ (v0.2.7, 2026-11-25)
 
 | Area | Stories |
 | ---- | ------- |
 | Eight task-based guides for school and office administrators in `docs/guides/` (import, Google Admin, labels, loaner day, repairs, location scoping, people and logins, K-12 mapping) with 59 screenshots regenerated by `docs/guides/tools/shoot.mjs`; updated for add / remove access (ED-27) and the ED-29 fixes (next available device, refusal at scan, Google Admin departments and Retired, the dry-run summary line, the overdue labels) ✅ | DOC-01 done (drafts) |
+
+### Console-style dashboard, teal palette, CI fix ✅ (GitHub PRs #15 and #16, released in v0.2.7)
+
+| Change | Status |
+| ------ | ------ |
+| Dashboard: five tiles (All assets, Ready, Assigned, Not deployable, Overdue check-outs), "Assets by status" chart and "Utilisation" meter, the overdue check-outs as a table under "Needs attention" (with the line saying what it counts) | ✅ |
+| Teal palette in the System, Light and Dark themes; theme switch in the sidebar footer; tokens and design system updated | ✅ |
+| CI: the dependency audit and the mock web e2e job run again (`effect` override, `picomatch` allow-list entry removed) | ✅ |
+| LAN access in development: `SESSION_COOKIE_SECURE=false` (dev only, refused in production), compose passes the LAN settings (ED-30) | ✅ |
+| Guide screenshots re-shot with the teal design (59) | ✅ |
 
 ### Next: wave 3 part 2 (rest)
 
@@ -137,7 +147,7 @@ founder acceptance walk-through M2-UX-01 👤.
 - [ ] ADRs still marked PROPOSED: 0003 (module boundaries & API conventions), 0004 (platform services),
       0005 (asset registry), 0006 (files & scanning), 0007 (labels), 0008 (accessories & consumables),
       0009 (repairs, notifications, views, export), 0011 (loaner pools). ADR 0001 and 0002 are accepted.
-- [ ] Product name and primary colour (placeholders "Asset Tracker", blue) — before M3 store testing (F-30).
+- [ ] Product name and primary colour (placeholders "Asset Tracker", teal since v0.2.7) — before M3 store testing (F-30).
 
 **Hardware / data for M2 acceptance**
 

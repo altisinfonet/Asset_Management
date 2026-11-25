@@ -10,6 +10,10 @@ import { signInAsOwner } from './support';
  * exist (people are never created by an asset import), so the suite makes them first through the API.
  * The serials of the fixture are fixed, so on a second run against the same database the import
  * UPDATES the assets it created the first time: the test accepts both.
+ *
+ * ED-29: the 48 devices are 24 ACTIVE, 8 PROVISIONED, 8 DISABLED and 8 DEPROVISIONED in six org units.
+ * The org unit becomes the department ("Students / Grade 5" ...), no location is created, and the 16
+ * disabled or deprovisioned devices are Retired, none "In repair".
  */
 const SAMPLE = join(
   __dirname,
@@ -92,6 +96,9 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
       )
     ).json.page.total;
   const before = await total();
+  const count = async (path: string) =>
+    (await api<{ page: { total: number } }>(page, 'GET', path)).json.page.total;
+  const locationsBefore = await count('/v1/locations?limit=1&include_total=true');
 
   await page.goto('/imports/new?entity=asset');
   await page.getByRole('radio', { name: /^Google Admin ChromeOS/ }).click();
@@ -110,6 +117,10 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
     columns.getByRole('combobox', { name: 'Field for column Serial number' }),
   ).toContainText('Serial number');
   await expect(page.getByText(/Category = Chromebook/)).toBeVisible();
+  // ED-29: the org unit is the department, not the location
+  await expect(
+    columns.getByRole('combobox', { name: 'Field for column Org unit path' }),
+  ).toContainText('Department');
   await page.getByRole('button', { name: 'Continue' }).click();
 
   // dry run: the numbers appear, nothing is written yet
@@ -118,6 +129,18 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   await expect(created.or(updated).first()).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText('Preview. Nothing has been saved yet.')).toBeVisible();
   expect(await total()).toBe(before);
+  // every row is checked before the import, none is left to the commit; 48 new (or, on a rerun, 48 unchanged)
+  await expect(page.getByTestId('import-tile-error')).toContainText('0');
+  await expect(page.getByTestId('import-checks-note')).not.toContainText('when you import.');
+  const fresh = before === 0;
+  await expect(page.getByTestId(fresh ? 'import-tile-create' : 'import-tile-skip')).toContainText(
+    '48',
+  );
+  if (fresh) {
+    await expect(page.getByRole('list', { name: 'Records the import would create' })).toContainText(
+      'Will create department "Students / Grade 5"',
+    );
+  }
 
   // a second run against the same database finds everything in place and has nothing to write
   const button = page.getByRole('button', { name: /^Import \d+ rows?$/ });
@@ -131,7 +154,32 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   }
 
   // the Chromebooks are in the registry (created now, or updated when an earlier run made them)
-  expect(await total()).toBeGreaterThanOrEqual(40);
+  expect(await total()).toBe(48);
+  // ED-29: disabled and deprovisioned devices are Retired, none is "In repair"
+  expect(await count('/v1/assets?limit=1&include_total=true&q=5CD00000&state_type=archived')).toBe(
+    16,
+  );
+  expect(
+    await count('/v1/assets?limit=1&include_total=true&q=5CD00000&state_type=undeployable'),
+  ).toBe(0);
+  // ED-29: the six org units are departments; no location was created
+  const departments = await api<{ data: Array<{ name: string }> }>(
+    page,
+    'GET',
+    '/v1/departments?limit=100',
+  );
+  expect(departments.json.data.map((d) => d.name)).toEqual(
+    expect.arrayContaining([
+      'Students / Grade 5',
+      'Students / Grade 6',
+      'Students / Grade 7',
+      'Staff',
+      // '/Staff/Library' is the demo's existing Library department (named like the unit's last part)
+      'Library',
+      'Spare pool',
+    ]),
+  );
+  expect(await count('/v1/locations?limit=1&include_total=true')).toBe(locationsBefore);
   const one = await api<{ data: Array<{ asset_tag: string }> }>(
     page,
     'GET',

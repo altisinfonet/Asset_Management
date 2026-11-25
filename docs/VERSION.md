@@ -90,6 +90,12 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
   paths end in an ellipsis with the full path as tooltip); Assets keeps the columns its user chose and scrolls inside
   its table with the tag pinned. `DataTable` columns gained `hideBelow: 'wide'` and `maxWidth`.
 
+- **User guides follow the merged changes** (M2-DOC-01, AUDIT B.28): add and remove access, pending logins and the login
+  picker (guides 6, 7), the next available device, the refusal at scan and the overdue labels (guides 4, 5), Google
+  Admin departments and Retired devices and the dry-run summary line (guides 1, 2); 59 screenshots re-shot.
+- **Mock browser suite uses a quarter of the cores outside CI** (`workers: '25%'`): the default oversubscribed the CPU and
+  starved a renderer for ~6 s, the root cause of the intermittent 5 s `expect` timeouts (AUDIT B.28).
+
 ### Fixed
 
 - **Attachment owner checked by the database** (ED-28, migration 0170): an attachment row could name a record of another

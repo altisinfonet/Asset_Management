@@ -125,6 +125,10 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.19 | 2026-11-24 | Import backend (CSV / XLSX, dry run, Google Admin preset)          | importer e2e suites green on the branch; two defects found in B.20          |
 | B.20 | 2026-11-24 | Wave 3 part 1 integration (four branches, follow-ups a-f)          | 699/699 API e2e direct and pooled, 21/21 clean builds, real-stack 64/64 |
 | B.24 | 2026-11-25 | Add and remove role assignments (M2-USR-04, unreleased)            | 745/745 API e2e direct and pooled twice, mock browser 745, real-stack 68; one deadlock flake root-caused |
+| B.25 | 2026-11-25 | Isolation and performance harness extension (M2-SEC-01, M2-OPS-01) | Catalogue-driven probes; attachment owner guard (0170); partition DDL yields |
+| B.26 | 2026-11-25 | User guides (M2-DOC-01, drafts)                                     | Eight guides, screenshots by script; eight findings, fixed by B.24 and B.27 |
+| B.27 | 2026-11-25 | Guide-writing fixes (ED-29)                                         | Seven fixes; root cause of the B.13 / B.22 deadlock flake (0180)          |
+| B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -532,6 +536,49 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Method:** unit, mock e2e (with axe in light and dark for the new desk states) and API e2e for each fix; the dry-run rehearsal is tested to leave every registry, audit and outbox count unchanged, to find a failure the old dry run left to the commit (a required custom field of a row whose model and location are new), and to agree with the commit row for row; the import throughput suite was run with its gates (3,000 rows: dry run 7.2 s, projected 4 min per 100,000 rows against a 10-minute budget; commit 15,009 rows/min against 10,000). Verification on a separate compose project (`atfix`, ports 17000-17099), torn down with `down -v`; the founder's stack was not touched.
 - **Result:** from a clean state `turbo run lint typecheck test build --force` 21/21 (API unit 650, web 800); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff, redocly lint valid, `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` no drift, `schema:lint` 0 violations and role audit OK; API e2e with the full environment on a fresh stack, 735/735 in 59 files with 0 skipped: once direct and twice through PgBouncer (after the fix of finding 2; the first direct run, before it, had the one deadlock failure); mock web e2e 749 passed with the two timing cases of finding 6 (scan burst passed on its retry; the auth axe file 54/54 twice alone); real-stack browser suite 65/65 on a fresh stack (port 4174 free before the run).
 - **Findings:** (1) the contract still described the next available device as "lowest asset tag first" (ED-24 changed the rule); corrected in `gen.mjs`. (2) **Root cause of the deadlock flake of B.13 / B.22:** the first direct API e2e run had one failure, a 500 on a check-in in `custody-undo.e2e.test.ts`. The Postgres log showed a deadlock between the check-in (holding `app.asset`, inserting into `asset_history`) and `app.ensure_partitions`, called by the partition-rotation test in `schema-lint.e2e.test.ts` (holding `asset_history` while creating a partition, waiting for `SHARE ROW EXCLUSIVE` on `app.asset` for the cloned foreign key). `ensurePartitions` retries its own deadlocks, but when Postgres picked the check-in as the victim the user got a 500; the monthly rotation and the migrate step can meet live traffic the same way. Fixed by migration 0180: the function takes every lock first, with NOWAIT, and never waits while holding one, so it cannot be part of a cycle (55P03, retried by the caller). A regression test (`schema-lint.e2e.test.ts`, "never deadlocks with a custody write") holds a writer's locks in the order of a check-in with a 400 ms lock timeout; it fails on the 0006 definition (the writer times out behind the rotation) and passes on 0180. (3) **Web unit flake** (`scan.test.tsx`, "reports a code nobody has"; seen once while the turbo run shared the machine with a Docker build): the wedge detector reads `event.timeStamp` and treats a gap over 80 ms as typing, and every `fireEvent` in the test flushes a React render of the shell, which took longer than that on the saturated machine, so the burst read as typing. Reproduced by giving the keys 100 ms gaps (5 of 14 tests fail the same way); the test now gives the burst its own clock (5 ms per key). (4) **Issue 3 seen on the real stack:** the real-stack Google Admin import now reports 4 errors in its dry run: the demo's Chromebook cart already holds the tags CHR-00001, -04, -07 and -10 of the sample file. Before this change those four rows showed "Create" (their new models made the dry run skip the facade, and so the tag check) and failed at commit; the old spec only asserted "at least 40 assets", which hid it. The spec now pins 44 created, 4 errors, 16 Retired, none in repair, the org-unit departments and no new location. (5) The mock e2e found a real bug in the new review sentence (the count was passed as a formatted string, so the plural form was not chosen and the key showed) and a mock gap (it did not count a location below a new parent given as a path); both fixed. (6) Two mock e2e failures outside this change, both timing on a shared machine: the scan spec's real keyboard burst (documented in the spec, passes on its retry) and one axe case of the auth pages whose page was still "Starting the mock API" after the 5 s `expect` timeout (the service worker's cold start); the file passes 54/54 twice alone. Left as is, recorded here.
+
+### B.28 Wave 3 part 2 integration - 2026-11-25 (version 0.2.6 plus four merges, unreleased)
+
+- **Scope:** the branches of B.25 (M2-SEC-01, M2-OPS-01), B.24 (M2-USR-04), B.27 (ED-29 fixes) and B.26 (M2-DOC-01)
+  merged in that order with no-fast-forward merges; the guide follow-ups; no version bump and no tag (a separate release
+  step does that after independent verification).
+- **Conflicts:** only the maintained docs (`AUDIT.md`, `VERSION.md`, `STATUS.md`, `decisions.md`), resolved by keeping both
+  sides (B.24 to B.27 and ED-27 to ED-29 in numeric order, one Unreleased section). `gen.mjs`, the route-replay tables and
+  the code merged cleanly; `openapi.yaml`, the api-client and `API.md` were regenerated with the tools and showed no diff.
+- **Partition locks, fixed twice and combined:** B.25 made `ensurePartitions` run the function in its own transaction with
+  a 200 ms `lock_timeout` and retry; B.27 (migration 0180) made `app.ensure_partitions` take every lock up front with
+  NOWAIT. Together: the function never waits while holding a lock, the timeout bounds any wait it still meets, and both
+  raise 55P03, which `ensurePartitions` retries (as well as 40P01) with a growing, jittered pause (250 ms x attempt plus
+  up to 100 ms, 10 attempts). New unit tests (`maintenance.test.ts`, 4) pin the retry of a NOWAIT 55P03, the give-up after
+  the last attempt and no retry of other errors; both e2e regression tests (the drop fixture's timeout-and-retry of B.25,
+  the writer-versus-rotation test of B.27) pass. The design is described once, in ED-28 "Partition DDL yields", and
+  ED-29 refers to it. `schema.sql` now shows the 0180 `ensure_partitions` and the 0170 `attachment_owner_guard()` function
+  (it showed the 0006 version and only the trigger); `data_model.md` lists the trigger function. The open item of the
+  B.13 / B.22 / B.24 deadlock is closed (section C): no `deadlock detected` in the Postgres log of the three API runs.
+- **Guides:** guide 1 explains the dry-run summary line; guide 2 the org unit as department (`department:manage`, reuse
+  by name or last part, Leave it empty), DISABLED / DEPROVISIONED as Retired and the single summary line; guide 4 the
+  refusal at scan, the 7-day fallback of the loan-default hint, "Lend next available device", "Overdue loans" and
+  "Overdue check-outs" with "Overdue loans only"; guide 5 the refusal at scan and Retired Google devices; guide 6 "Add
+  access" and "Remove" with the guards and the sign-out (the "to be refreshed" note removed); guide 7 pending logins on
+  the Users tab and the picker with email and roles. `shoot.mjs` drives the new screens (the access dialog, the next
+  available device, the pending login, the picker list) and resets sideways-scrolled tables; 59 screenshots (four new:
+  `04-desk-next`, `06-remove-dialog`, `07-users-pending`, `07-link-picker`), re-shot from a fresh stack and each affected
+  one looked at; 114 links and every image resolve; the guides pass Prettier.
+- **Verification** (compose project `atint7`, ports 180xx, torn down with `down -v`; the founder's stack untouched):
+  `pnpm install --frozen-lockfile` clean; clean-state `turbo run lint typecheck test build --force` 21/21 twice (0 cached;
+  API unit 654, web 811, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces
+  `openapi.yaml` (205 operations, 138 paths), `gen-api-md --check`, api-client `generate:check` and Redocly clean;
+  `db:pull` drift clean and `schema:lint` 0 violations on a fresh stack; API e2e 768/768 in 64 files, 0 skipped, once
+  direct and twice through PgBouncer; real-stack browser suite 68/68 on a fresh stack; mock browser suite (`PW_CHANNEL=chrome`) at the old
+  default 758/759 then 759/759, and with the new default 759/759 twice (3.6 min each).
+- **Finding (root cause of the mock e2e timeouts):** the first mock run had one failure, `a11y-w2` "consumable page with
+  the ledger (light)": the ledger table was not visible within 5 s. The trace shows the page frozen for 5.9 s after the
+  click (no screencast frame; two prefetches held by the mock service worker for 5.8 s and passed to the server only
+  afterwards). A CPU sample of the next run at the default 14 workers (28 logical cores): above 95 % for 95 s, run queue
+  up to 618. The renderer was starved; the scan-burst and auth axe timeouts of B.27 are the same cause. With a quarter of
+  the cores (7 workers): average 55 %, queue above 28 for 6 s only, 759/759, 3.7 min instead of 2.8. The mock
+  configuration now uses `workers: '25%'` outside CI (`apps/web/playwright.config.ts`).
+- **Open:** none from this integration.
 
 ---
 

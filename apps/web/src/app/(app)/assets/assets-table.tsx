@@ -251,6 +251,7 @@ export function AssetsTable() {
         id: 'location',
         sortable: true,
         header: t('assets.columns.location'),
+        maxWidth: '14rem',
         cell: (row) => lookups.locationLabel(row.location_id),
       },
       department: {

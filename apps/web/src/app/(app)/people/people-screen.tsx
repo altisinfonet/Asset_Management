@@ -135,10 +135,17 @@ export function PeopleScreen() {
           </Link>
         ),
       },
-      { id: 'email', header: t('people.columns.email'), cell: (row) => row.email ?? '' },
+      {
+        id: 'email',
+        header: t('people.columns.email'),
+        maxWidth: '16rem',
+        cell: (row) => row.email ?? '',
+      },
       {
         id: 'kind',
         header: t('people.columns.kind'),
+        // at a laptop width (1280 px) the kind gives way so the login and status stay in view
+        hideBelow: 'wide',
         cell: (row) => t(`people.kinds.${row.kind ?? 'employee'}`),
       },
       {
@@ -156,6 +163,7 @@ export function PeopleScreen() {
       {
         id: 'location',
         header: t('people.columns.location'),
+        maxWidth: '14rem',
         cell: (row) => lookups.locationLabel(row.location_id),
       },
       {

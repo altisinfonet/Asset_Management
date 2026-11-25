@@ -16,7 +16,12 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { RegistryBase, duplicate, stalePrecondition } from '../registry/index.js';
-import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  isUniqueViolation,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import {
   MAX_VIEWS_PER_USER,
   type ViewCreate,
@@ -351,8 +356,13 @@ export class ViewsService extends RegistryBase {
     await check('category', (ids) =>
       trx.category.findMany({ where: { id: { in: ids } }, select: sel }),
     );
-    await check('location', (ids) =>
-      trx.location.findMany({ where: { id: { in: ids } }, select: sel }),
+    // M2-LOC-03 (ED-26): a location or person outside the caller's scope is reported exactly like
+    // an unknown id (no existence oracle)
+    await check('location', async (ids) =>
+      trx.location.findMany({
+        where: { AND: [{ id: { in: ids } }, await locationScopeWhere(trx, 'id')] },
+        select: sel,
+      }),
     );
     await check('asset_model', (ids) =>
       trx.asset_model.findMany({ where: { id: { in: ids } }, select: sel }),
@@ -363,8 +373,11 @@ export class ViewsService extends RegistryBase {
     await check('manufacturer', (ids) =>
       trx.manufacturer.findMany({ where: { id: { in: ids } }, select: sel }),
     );
-    await check('person', (ids) =>
-      trx.person.findMany({ where: { id: { in: ids } }, select: sel }),
+    await check('person', async (ids) =>
+      trx.person.findMany({
+        where: { id: { in: ids }, ...(await locationScopeWhere(trx, 'location_id')) },
+        select: sel,
+      }),
     );
 
     const out = new Map<string, ViewWarning[]>();

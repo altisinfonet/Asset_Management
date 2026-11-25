@@ -27,6 +27,7 @@ import {
   currentLocationScope,
   intersectLocationScopes,
   isLocationScoped,
+  locationScopeWhere,
   type Tx,
 } from '../tenancy/index.js';
 import { jobAuth } from './handlers/shared.js';
@@ -608,7 +609,14 @@ export class ImportsService extends RegistryBase {
     );
     await check(
       'location',
-      () => trx.location.findFirst({ where: { id: d.location!, archived_at: null } }),
+      // M2-LOC-03 (ED-26): outside the caller's scope is the same as unknown
+      async () =>
+        trx.location.findFirst({
+          // AND, not a spread: the scope filter is on `id` too and must not replace the id match
+          where: {
+            AND: [{ id: d.location!, archived_at: null }, await locationScopeWhere(trx, 'id')],
+          },
+        }),
       'location',
     );
     await check(

@@ -230,14 +230,18 @@ export class RefResolver {
         found = (await this.modelList()).find((m) => m.id === id);
         break;
       case 'location':
+        // M2-LOC-03 (ED-26): an id outside the caller's scope resolves like an unknown one
         found = await this.tx.location.findFirst({
-          where: { id, archived_at: null },
+          where: { AND: [{ id, archived_at: null }, await locationScopeWhere(this.tx, 'id')] },
           select: { id: true, name: true },
         });
         break;
       case 'person':
         found = await this.tx.person
-          .findFirst({ where: { id, archived_at: null }, select: { id: true, display_name: true } })
+          .findFirst({
+            where: { id, archived_at: null, ...(await locationScopeWhere(this.tx, 'location_id')) },
+            select: { id: true, display_name: true },
+          })
           .then((p) => (p ? { id: p.id, name: p.display_name } : null));
         break;
       default:

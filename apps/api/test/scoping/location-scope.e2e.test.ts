@@ -886,4 +886,124 @@ describe.skipIf(!dbEnabled)(`location scoping of role assignments (${mode})`, ()
     expect(after.location_id).toBe(roomIn);
     expect(after.current_assignment).toBeNull();
   });
+
+  // -------------------------------------------- the accepted holder boundary (ED-26, founder 2026-11-25)
+
+  it('an in-scope asset shows its holder outside the scope by id and name; the person record stays 404', async () => {
+    const held = (
+      await newAsset(admin(), categoryId, { name: `${marker} lent across`, location_id: roomIn })
+    ).id;
+    const out = await admin().post(
+      `/v1/assets/${held}/checkout`,
+      { person_id: f.personOut },
+      key(),
+    );
+    expect(out.status, out.raw).toBe(201);
+    const seen = await S().get(`/v1/assets/${held}`);
+    expect(seen.status).toBe(200);
+    expect(seen.body.current_assignment).toMatchObject({
+      target_type: 'person',
+      target_id: f.personOut,
+      target_name: `${marker} kid out`,
+    });
+    // the person record itself does not exist for them
+    expect((await S().get(`/v1/people/${f.personOut}`)).status).toBe(404);
+    expect((await S().get(`/v1/people/${f.personOut}/assignments`)).status).toBe(404);
+    // filtering the in-scope assets by that holder id is consistent with what the asset shows
+    expect(ids(await S().get(`/v1/assets?assigned_person_id=${f.personOut}`))).toEqual([held]);
+    // ...and never lists the holder's assets outside the scope
+    expect(
+      ids(await admin().get(`/v1/assets?assigned_person_id=${f.personOut}`)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // ------------------------------------------------ no existence oracles (independent review 2026-11-25)
+
+  it('a saved view filter on a location or person outside the scope warns exactly like an unknown id', async () => {
+    const warn = async (filters: Record<string, string>) => {
+      const res = await S().post('/v1/saved-views', { name: unique('w'), filters });
+      expect(res.status, res.raw).toBe(201);
+      return (res.body.warnings as Json[]).map((w) => ({ field: w.field, reason: w.reason }));
+    };
+    const unknown = randomUUID();
+    expect(await warn({ location_id: siteOut })).toEqual(await warn({ location_id: unknown }));
+    expect(await warn({ location_id: siteOut })).toEqual([
+      { field: 'location_id', reason: 'not-found' },
+    ]);
+    expect(await warn({ assigned_person_id: f.personOut! })).toEqual(
+      await warn({ assigned_person_id: unknown }),
+    );
+    expect(await warn({ location_id: siteIn })).toEqual([]);
+  });
+
+  it('an import default location outside the scope is refused exactly like an unknown one', async () => {
+    const job = await manager.client.post('/v1/imports', { entity_type: 'asset' });
+    expect(job.status, job.raw).toBe(201);
+    const patchDefaults = async (location: string) => {
+      const cur = await manager.client.get(`/v1/imports/${job.body.id}`);
+      const res = await manager.client.patch(
+        `/v1/imports/${job.body.id}`,
+        { options: { defaults: { location } } },
+        ifMatch(cur.headers.etag),
+      );
+      return { status: res.status, errors: res.body.errors as Json[] | undefined };
+    };
+    const outside = await patchDefaults(siteOut);
+    const unknown = await patchDefaults(randomUUID());
+    expect(outside.status).toBe(422);
+    expect(outside).toEqual(unknown);
+    expect(outside.errors).toEqual([
+      expect.objectContaining({ pointer: '/options/defaults/location', code: 'not-found' }),
+    ]);
+    expect((await patchDefaults(roomIn)).status).toBe(200);
+  });
+
+  it('the value mapping of an import resolves an id outside the scope like an unknown id, never by name', async () => {
+    const category = (await admin().get(`/v1/categories/${categoryId}`)).body.name as string;
+    const csv = ['Serial,Category,Location', `${marker}-vm-1,${category},Elsewhere`].join('\n');
+    const run = async (mapped: string) => {
+      const job = await analyzed(ih, manager.client, t.tenantId, 'asset', {
+        filename: 'vm.csv',
+        body: csv,
+      });
+      const patched = await patchImport(manager.client, job.id, {
+        mapping: mappingOf(job, { Serial: 'serial', Category: 'category', Location: 'location' }),
+        options: { references: { location: 'must_exist', category: 'must_exist' } },
+        value_map: { location: { elsewhere: { id: mapped } } },
+      });
+      expect(patched.status, patched.raw).toBe(200);
+      const dry = await dryRun(ih, manager.client, t.tenantId, job.id);
+      const rows = await allRows(manager.client, job.id);
+      return { dry, row: rows[0]! };
+    };
+    const outside = await run(siteOut);
+    const unknown = await run(randomUUID());
+    expect(outside.row.outcome).toBe('error');
+    expect(unknown.row.outcome).toBe('error');
+    expect(outside.row.errors.map((e: Json) => [e.field, e.code])).toEqual(
+      unknown.row.errors.map((e: Json) => [e.field, e.code]),
+    );
+    const preview = JSON.stringify([outside.dry, outside.row]);
+    // the id is the caller's own input (echoed in the job's value map); the place's name never shows
+    expect(preview).not.toContain(`${marker} Out`);
+  });
+
+  it('scan resolve offers only the actions whose permission reaches the asset', async () => {
+    const viewerHere = await createUserWith(
+      ih.h.app,
+      t,
+      [
+        { role_id: t.roles.viewer!, scope_type: 'location', location_id: siteIn },
+        { role_id: t.roles.technician!, scope_type: 'location', location_id: siteOut },
+      ],
+      'scanner',
+    );
+    const inTag = (await admin().get(`/v1/assets/${f.assetIn}`)).body.asset_tag as string;
+    const res = await viewerHere.client.get(`/v1/scan/resolve?code=${encodeURIComponent(inTag)}`);
+    expect(res.status, res.raw).toBe(200);
+    // they may read the asset at "In" but their check-out / update rights are at "Out" only
+    expect(res.body.allowed_actions).toEqual([]);
+    const techRes = await S().get(`/v1/scan/resolve?code=${encodeURIComponent(inTag)}`);
+    expect(techRes.body.allowed_actions.length).toBeGreaterThan(0);
+  });
 });

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
-import { permits } from '../auth/index.js';
+import { locationScopeFor, permits } from '../auth/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
   ApiProblem,
@@ -352,8 +352,23 @@ export class AssetsFacade extends RegistryBase {
         stateType: row.status_state_type,
         hasAssignment: row.assignment !== null && row.assignment !== undefined,
       };
+      // M2-LOC-03 (ED-26): an action is offered only when its permission's scope contains the asset
+      const ancestors = row.location_id
+        ? ((
+            await trx.location.findUnique({
+              where: { id: row.location_id },
+              select: { ancestor_ids: true },
+            })
+          )?.ancestor_ids ?? [])
+        : [];
+      const inScopeFor = (permission: string) => {
+        const roots = locationScopeFor(auth.grants, permission);
+        return roots === null || roots.some((r) => ancestors.includes(r));
+      };
       const may = (action: AssetAction, permission: string) =>
-        permits(auth.permissions, permission) && refuseAssetAction(action, state) === null;
+        permits(auth.permissions, permission) &&
+        inScopeFor(permission) &&
+        refuseAssetAction(action, state) === null;
       if (may('checkout', 'asset:checkout')) allowed.push('checkout');
       if (may('checkin', 'asset:checkin')) allowed.push('checkin');
       if (may('transfer', 'asset:transfer')) allowed.push('transfer');

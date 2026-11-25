@@ -33,7 +33,7 @@ runs are never cancelled. Caching: the pnpm store (key = lockfile hash), the Tur
 | `Dependency audit`                                     | `pnpm audit --prod` is clean (no exceptions for what ships); `scripts/ci/audit.mjs` finds no unlisted high or critical advisory and no expired exception                                |
 | `Secret scan (gitleaks)`                               | No secret in the PR's commits (or the whole history on `main`) and none in the working tree                                                                                             |
 | `CodeQL (javascript-typescript)` / `CodeQL (actions)`  | CodeQL `security-extended` queries find nothing new on the code and on the workflow files                                                                                               |
-| `Performance budgets` (nightly, not a PR check)        | `/v1/health` p95 within budget; asset list, search and tag lookup within budget once the registry exists (section 4)                                                                    |
+| `Performance budgets` (nightly, not a PR check)        | `/v1/health` p95 within budget; asset list, search and tag lookup over HTTP; in process (PERF=1): list, search, lookup, scan, check-out, scoped access, the 500-label PDF, import throughput and dry run (section 4) |
 
 ## 2. Required status checks (branch protection on `main`)
 
@@ -121,7 +121,8 @@ dependency-free (Node 22+, global `fetch`): `PERF_CONNECTIONS` (default 10) conc
 | `GET /v1/assets?q=` (search)      | < 200 ms                   | backlog 9.3                    | enforced; p95 89 ms measured locally                                    |
 | `GET /v1/assets?tag=` (tag lookup)| < 150 ms                   | backlog 9.3                    | enforced; p95 56 ms measured locally                                    |
 
-Later budgets from the backlog (check-out < 300 ms, import throughput and dry run) are added by M2-OPS-01.
+The later budgets of the backlog (check-out, scan resolve, the 500-label PDF, import throughput and dry run,
+and a location-scoped user's access) are measured in process by M2-OPS-01, see the next section.
 The backlog measures on **two tenants of 50,000 assets each**: `scripts/ci/perf-seed.sh` inserts them (one
 `INSERT .. SELECT generate_series` per demo tenant, idempotent, then `VACUUM ANALYZE`) and the workflow
 sets `PERF_REQUIRE_REGISTRY=1` by default, so a registry endpoint that cannot be measured fails the night
@@ -139,15 +140,36 @@ docker compose -f docker-compose.yml -f docker/compose.ci.yml -p atperf down -v
 
 ### In-process performance suites (apps/api/test/perf): `PERF`
 
-The registry, custody, global search and import suites (`registry-perf.e2e.test.ts`, `import-perf.e2e.test.ts`)
-measure through `app.inject` and run in the ordinary API e2e job too, where six test files share one database
+The registry, custody, global search, scoped access, label and import suites (`registry-perf.e2e.test.ts`,
+`labels-perf.e2e.test.ts`, `import-perf.e2e.test.ts`) measure through `app.inject` (labels: the `label.render`
+handler as the worker runs it) and run in the ordinary API e2e job too, where six test files share one database
 and a loaded machine can push a p95 to several times its budget while the same test passes alone. They
 therefore **record** their numbers (the table printed at the end of the run, `test-results/registry-perf.json`,
-`import-perf.json`) and assert only a generous sanity ceiling (10 times the budget) unless the environment
-variable `PERF` is set. The nightly `perf.yml` runs `pnpm --filter @assettracker/api test:e2e test/perf` against
-its stack with `PERF=1` (and `IMPORT_PERF_ROWS=100000`), which enforces the real budgets (list < 500 ms, search
-< 200 ms, lookup < 150 ms, custody < 300 ms, import throughput gates). To enforce them locally: `PERF=1 pnpm
---filter @assettracker/api test:e2e test/perf` on a quiet machine.
+`labels-perf.json`, `import-perf.json`) and assert only a generous sanity ceiling (10 times the budget) unless the
+environment variable `PERF` is set. The nightly `perf.yml` runs `pnpm --filter @assettracker/api test:e2e test/perf`
+against its stack with `PERF=1` (and `IMPORT_PERF_ROWS=100000`), which enforces the real budgets, then
+`scripts/ci/perf-summary.mjs` writes the job summary and the JSON files are uploaded with `perf-results.json` (90
+days). To enforce them locally: `PERF=1 pnpm --filter @assettracker/api test:e2e test/perf` on a quiet machine.
+
+Budgets (all p95, on 2 x 50,000-asset tenants where it applies) and the numbers of the M2-OPS-01 run on
+2026-11-25 (`PERF=1`, direct to Postgres 18 of a compose stack, a developer machine shared with two other
+stacks that were idle during the run; one run, so a few ms of noise either way):
+
+| Budget                                                              | Limit                | Measured p95                                   |
+| ------------------------------------------------------------------- | -------------------- | ---------------------------------------------- |
+| Asset list (default page; worst of 15 list shapes)                  | < 500 ms             | 12.9 ms (worst: sort=location + assigned=true, 216 ms) |
+| Search (global, exact tag / word)                                   | < 200 ms             | 42.2 / 60.0 ms (2 characters: 60.8 ms)          |
+| Tag lookup `?tag=` / scan resolve by label code / by tag            | < 150 ms             | 10.2 / 10.8 / 10.1 ms                           |
+| Check-out (custody; transfer 36 ms, check-in 38 ms)                 | < 300 ms             | 26.1 ms                                         |
+| Scoped user, one site (~18% of the tenant): list / search / lookup / scan | 500 / 200 / 150 ms | list 43.5 ms (worst shape), search 34.5 ms, lookup 16.7 ms, scan 16.5 ms |
+| Scoped user, one room (<1%): list / search / lookup / scan          | 500 / 200 / 150 ms   | list 20.8 ms, search 25.2 ms, lookup 20.1 ms, scan 20.6 ms |
+| 500-label PDF, QR + Code128, 17 pages (5 runs)                      | < 30 s               | 1.94 s (p50 1.77 s)                             |
+| Import commit throughput (100,000 rows, in process)                 | >= 10,000 rows/min   | 17,477 rows/min (343 s)                         |
+| Dry run of 100,000 rows                                             | < 10 min             | 45.9 s (130,728 rows/min)                       |
+| Asset list while an import commits                                  | < 500 ms             | 22 ms (18 ms idle)                              |
+
+The location-scoped predicate of ED-26 costs a few tens of ms on the first list page (43 ms against 13 ms
+unscoped) and nothing measurable on lookups; it is well inside every budget.
 
 ## 5. Compose smoke test (M1-CI-04)
 

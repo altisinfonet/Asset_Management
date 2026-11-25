@@ -96,6 +96,13 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | ---- | ------- |
 | Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | M2-LOC-03 done |
 
+### Wave 3 — part 2: test harnesses
+
+| Area | Stories |
+| ---- | ------- |
+| Isolation harness extension: every tenant table and every foreign key probed across tenants from the database catalogue, named cross-tenant inserts (assignment, loan, repair, import row, pool membership, attachment), tenant-prefixed object keys and tampered file URLs refused (local and S3), every job type through the payload lint; direct and through PgBouncer. Found and fixed: attachment owners are now checked by the database (migration 0170, ED-28), and the root cause of the intermittent check-in 500 (partition DDL deadlock) ✅ | M2-SEC-01 done |
+| Performance harness extension: nightly budgets for check-out, scan resolve, the 500-label PDF, a location-scoped user's list / search / lookups (ED-26) and import throughput and dry run, published as `test-results/*.json` ✅ | M2-OPS-01 done |
+
 ### Next: wave 3 part 2 (rest)
 
 In this order: SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.

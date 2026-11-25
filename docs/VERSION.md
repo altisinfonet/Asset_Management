@@ -41,6 +41,25 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
+### Changed (ED-29: fixes found while writing the user guides)
+
+- **Google Admin import:** the org unit path becomes the **department** ("/Students/Grade 5" -> "Students / Grade 5", an
+  existing department of that name or of the last part is used, else it is created; every unit is an entry of the value
+  mapping), no location is created from it; **Disabled** and **Deprovisioned** devices import as **Retired** instead of
+  "In repair". Creating the departments needs `department:manage`.
+- **Import dry run:** rows that need a category, model, location, department or person created by the import are now
+  checked like every other row (the references are created inside a savepoint that is rolled back), so they no longer
+  say "the rest of the checks run when it is committed" each, and the commit finds no new failures there. What still
+  waits for the commit (a location below a parent the same import creates) is counted once:
+  `summary.validated_at_commit`, shown once on the review step.
+- **Loaner desk:** "Lend next available device" lends the device the pool picks and shows its tag; a device whose
+  status cannot be lent (In repair, Broken, Retired...) is refused when it is scanned, naming the status.
+- **Labels:** the dashboard tile is "Overdue check-outs" (loans included, with a line saying so), the loaner overview
+  "Overdue loans"; the hint of the organisation's loan default explains the 7-day fallback of pools.
+- **Lists at 1280 px:** People and Stock fit a laptop window (Kind and Category give way below 1440 px, long location
+  paths end in an ellipsis with the full path as tooltip); Assets keeps the columns its user chose and scrolls inside
+  its table with the tag pinned. `DataTable` columns gained `hideBelow: 'wide'` and `maxWidth`.
+
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 
 M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Merge commit message "Merge M2-LOC-03: location scoping of role assignments"; the release commit is tagged `v0.2.6`.

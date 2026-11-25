@@ -96,6 +96,16 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | ---- | ------- |
 | Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | M2-LOC-03 done |
 
+### Fixes found while writing the user guides (ED-29) ✅ (unreleased)
+
+| Fix | Status |
+| --- | ------ |
+| Loaner desk: "Lend next available device" (shows the device the pool picked); a device In repair, Broken or Retired is refused when scanned, naming its status | ✅ |
+| Import dry run: rows that need a new category, model, location, department or person are checked like the others (rehearsed and rolled back), so no per-row "checked at commit"; what still waits for the commit is said once | ✅ |
+| Google Admin import: org unit -> department (no locations created), Disabled / Deprovisioned -> Retired | ✅ |
+| People and Stock fit a 1280 px window; Assets scrolls inside its table with the tag pinned | ✅ |
+| "Overdue check-outs" (dashboard, loans included) vs "Overdue loans" (loaner overview); the loan default hint explains the 7-day pool fallback | ✅ |
+
 ### Next: wave 3 part 2 (rest)
 
 In this order: SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.

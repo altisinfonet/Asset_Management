@@ -474,6 +474,13 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (203 operations), `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; API e2e through PgBouncer, default settings, full environment: 731/731 in 58 files, 0 skipped, twice (both runs green, no rerun needed); real-stack browser suite 65 passed on a fresh stack (port 4174 free before the run).
 - **Findings:** none. The deadlock flake of B.13 / B.22 did not recur in the two pooled runs.
 
+### B.27 Guide-writing fixes (ED-29) - 2026-11-25 (unreleased, branch `worktree-agent-a57e722d6ff88727d`)
+
+- **Scope:** seven issues found while writing the user guides: next available device at the loaner desk, not-deployable devices refused when scanned, the per-row "checked at commit" noise and the commit-only failures of the import dry run, the Google Admin mapping (org unit -> department, disabled -> Retired), the People table at 1280 px, the two meanings of "Overdue", and the hint of the loan default.
+- **Method:** unit, mock e2e (with axe in light and dark for the new desk states) and API e2e for each fix; the dry-run rehearsal is tested to leave every registry, audit and outbox count unchanged, to find a failure the old dry run left to the commit (a required custom field of a row whose model and location are new), and to agree with the commit row for row; the import throughput suite was run with its gates (3,000 rows: dry run 7.2 s, projected 4 min per 100,000 rows against a 10-minute budget; commit 15,009 rows/min against 10,000). Verification on a separate compose project (`atfix`, ports 17000-17099), torn down with `down -v`; the founder's stack was not touched.
+- **Result:** see the verification line below.
+- **Findings:** the contract still described the next available device as "lowest asset tag first" (ED-24 changed the rule); corrected in `gen.mjs`.
+
 ---
 
 ## C. Open items

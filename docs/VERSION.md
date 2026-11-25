@@ -60,6 +60,12 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
   paths end in an ellipsis with the full path as tooltip); Assets keeps the columns its user chose and scrolls inside
   its table with the tag pinned. `DataTable` columns gained `hideBelow: 'wide'` and `maxWidth`.
 
+### Fixed
+
+- **Intermittent 500 on a check-in (the "deadlock flake" of AUDIT B.13 / B.22):** creating monthly partitions locked
+  `asset_history` and then `app.asset`, the reverse of a custody write. Migration 0180: `app.ensure_partitions` takes
+  every lock first, without waiting, so it can no longer deadlock with a write (it retries instead).
+
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 
 M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Merge commit message "Merge M2-LOC-03: location scoping of role assignments"; the release commit is tagged `v0.2.6`.

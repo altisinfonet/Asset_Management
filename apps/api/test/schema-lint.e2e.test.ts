@@ -328,5 +328,31 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
         expect(await schemaLint(c)).toEqual([]);
       });
     });
+
+    it('never deadlocks with a custody write: it waits for the writer instead of holding locks the writer needs (B.27)', async () => {
+      await dropFutureYear();
+      // A custody action: it locks app.asset (its UPDATE), then inserts into asset_history.
+      const writer = await connect(env.migratorUrl!);
+      const rotator = await connect(env.migratorUrl!);
+      try {
+        await writer.query('begin');
+        // the writer must never be kept waiting by the rotation (before 0180 it waited for the
+        // deadlock check, ~1 s, and was the victim whenever its check ran first: a 500 to the user)
+        await writer.query("set local lock_timeout = '400ms'");
+        await writer.query('lock table app.asset in row exclusive mode');
+        // the rotation starts while the writer holds app.asset; before 0180 it took asset_history
+        // first and then waited for app.asset, so the writer's next step closed the cycle (40P01)
+        const rotation = ensurePartitions(rotator, new Date(`${year}-01-15T00:00:00Z`), 3);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await writer.query('lock table app.asset_history in row exclusive mode');
+        await writer.query('lock table app.audit_log in row exclusive mode');
+        await writer.query('commit');
+        // the rotation retried (55P03) and finished once the writer was done
+        expect(await rotation).toBe(6);
+      } finally {
+        await writer.end();
+        await rotator.end();
+      }
+    });
   });
 });

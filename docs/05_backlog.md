@@ -1008,6 +1008,7 @@ Status: done (2026-11-25) - in-process suites under `apps/api/test/perf`, enforc
 
 #### M2-DOC-01 - User guides (drafts)
 Size: S - Owner: Claude - Deps: M2-IMP-08, M2-TAG-03, M2-LOAN-02
+Status: done as drafts (2026-11-25): eight guides in `docs/guides/` (the five asked for plus location scoping, people and logins, and schools / K-12 mapping), an index, and 55 screenshots made from a fresh seeded stack by `docs/guides/tools/shoot.mjs` (how to run it: `docs/guides/tools/README.md`). The location-scoping guide shows the dialog "Change role and access" and is refreshed when the Users screen gets add / remove role assignment. Review by the founder is part of M2-UX-01.
 - [ ] Task-based guides: import your spreadsheet, import from Google Admin, print and apply labels, run a loaner day, log a repair; each with screenshots generated from the seeded stack.
 
 #### M2-AUTH-01 - Expose the MFA policy to the client

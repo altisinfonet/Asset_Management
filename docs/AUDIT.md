@@ -493,6 +493,39 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Added (OPS-01):** `labels-perf.e2e.test.ts` (500-label PDF, 5 renders, p95 < 30 s) and a location-scoped user (one site, one room) in `registry-perf` for list, search, tag lookup and scan resolve; `perf.yml` uploads `apps/api/test-results/*.json` and writes a summary (`scripts/ci/perf-summary.mjs`). One `PERF=1` run of the three perf files (651 s): labels and import green; the new scoped test failed on its own fixture (the chosen room held no assets), was fixed and `registry-perf` re-run with `PERF=1`: green. p95: check-out 26 ms, scan resolve 11 ms, tag lookup 10 ms, list 13 ms (worst shape 216 ms), search 42-61 ms, scoped site list 44 / search 35 / lookup 17 / scan 17 ms, scoped room 21 / 25 / 20 / 21 ms, 500-label PDF 1.94 s, import commit 17,477 rows/min, dry run of 100k rows 46 s (table in `ci.md` section 4). The machine also ran two other compose stacks (idle during the measurement).
 - **Verification** (compose project `atsec`, ports 150xx, torn down with `down -v`; founder stack untouched): clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff, `gen-api-md --check` and api-client `generate:check` up to date (no contract change); `db:pull` drift clean; `schema:lint` 0 violations, role audit OK; API e2e 750/750 in 62 files, 0 skipped: direct once, pooled twice. The first direct run after the guard found two test issues (an attachment fixture that relied on an asset id passing as a model owner, now expected 23503; the key probe picking a tenant without a referenced row), fixed. One pooled run had a 30 s timeout of the scoped replay while two other agents ran their suites (run 588 s against about 340 s); the two replays now have a 120 s timeout, and the repeated pooled run was green. The baseline run before any change (direct) had the check-in 500 of finding 3.
 
+### B.26 User guides (M2-DOC-01) - 2026-11-25 (documentation only, unreleased)
+
+- **Scope:** eight task-based guides for school and office administrators in `docs/guides/` (import, Google Admin,
+  labels, loaner day, repairs, location scoping, people and logins, schools / K-12), an index, and a script that remakes
+  the screenshots (`docs/guides/tools/shoot.mjs`, samples in `tools/samples`). No application code changed.
+- **Method:** every button and label in the guides was copied from `apps/web/src/i18n/messages/*.ts` and the behaviour
+  checked against ED-22, ED-24, ED-25 and ED-26. The screenshots were taken from a fresh seeded compose stack (project
+  `atdoc`, alternate ports, the founder's stack untouched) by driving the real screens as `admin@acme.example`,
+  `owner@acme.example` (with the authenticator code) and, for the scoping guide, `technician@acme.example` limited to one
+  site. The whole script ran end to end from a freshly created stack (`down -v`, `up`), 55 pictures, each under 200 KB
+  (about 3.5 MB together), and every picture was looked at. All image and file links in the guides resolve; the guides,
+  the script and the tool notes pass Prettier (checked explicitly, because `docs/` is in `.prettierignore`).
+- **Findings** (noticed while writing; none fixed, the guides describe the screens as they are):
+  1. The loaner desk has no "lend the next available device" action; ED-24's rule (the device idle the longest) exists
+     in the API only. The guide says so.
+  2. The desk accepts the tag of a not-deployable device (for example one that is In repair) into its list and refuses it
+     only when "Lend" is pressed.
+  3. On a first import every dry-run row repeats "A category, model or other reference is created by this import; the
+     rest of the checks run when it is committed.", which is noise to a reader and also means a row marked "Create" can
+     still fail at commit.
+  4. In a Google Admin import, DISABLED devices get the default undeployable status ("In repair") with no repair record,
+     and the Org unit path creates new top-level locations ("Students", "Staff", "Retired") beside the real sites.
+  5. On the People page at 1280 px the table is wider than the window and the Login column is partly hidden.
+  6. The Link-to-a-login picker lists accounts by display name only, so two accounts with the same name look alike until
+     one is chosen and the sentence under it shows the address.
+  7. The dashboard tile "Overdue" (all overdue check-outs, 5 in the demo data) and the loaner overview "Overdue" (loans
+     only, 2) are two different counts with the same word.
+  8. A login whose invitation is still pending is not in the Users tab, so it cannot be linked from that screen until it is
+     accepted (it can from the person page).
+- **Open:** the location-scoping guide shows the dialog "Change role and access" and must be refreshed when the Users
+  screen gets add / remove role assignment; the screenshots must be remade after any change to the screens they show;
+  review of the wording by the founder belongs to M2-UX-01.
+
 ### B.27 Guide-writing fixes (ED-29) - 2026-11-25 (unreleased, branch `worktree-agent-a57e722d6ff88727d`)
 
 - **Scope:** seven issues found while writing the user guides: next available device at the loaner desk, not-deployable devices refused when scanned, the per-row "checked at commit" noise and the commit-only failures of the import dry run, the Google Admin mapping (org unit -> department, disabled -> Retired), the People table at 1280 px, the two meanings of "Overdue", and the hint of the loan default.

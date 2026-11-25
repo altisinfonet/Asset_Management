@@ -13,6 +13,9 @@ example `AUTH-02` is `M1-AUTH-02`). The release each feature arrived in is in [V
 This page is maintained by hand: update the status here whenever a story changes state (see
 [`engineering/contributing.md`](engineering/contributing.md)).
 
+**User guides.** Task-based guides for school and office administrators (import, Google Admin, labels, loaner day, repairs,
+location scoping, people and logins, K-12 mapping) are in [guides/](guides/README.md); see section 20.
+
 ## At a glance
 
 | Area                                          | State                                                                           |
@@ -269,6 +272,22 @@ This page is maintained by hand: update the status here whenever a story changes
 | Monitoring, backups, capacity          | Observability, alerting, status page, timed restore drill, load test                                              |   ⏳   |    M6     | M6-MON-01..04                   |
 | Security and compliance                | Isolation verification on the real stack, external penetration test, WAF and hardening, compliance pack           |   ⏳   |    M6     | M6-SEC-01..04                   |
 | Public docs, pricing, launch           | Public documentation, support process, launch readiness review and founder acceptance                             |   ⏳   |    M6     | M6-GTM-01..02, M6-LAUNCH-01..02 |
+
+## 20. User guides (drafts)
+
+Plain, task-based guides with screenshots generated from the seeded stack (`docs/guides/tools/shoot.mjs`). Index:
+[guides/README.md](guides/README.md).
+
+| Guide | What it covers | Status | Milestone | Stories |
+| ----- | -------------- | :----: | :-------: | ------- |
+| [Import your spreadsheet](guides/01-import-your-spreadsheet.md) | Templates, matching columns and values, the dry run, fixing errors, the error report, the 30-day retention of finished imports | ✅ draft | M2 | DOC-01 |
+| [Import from Google Admin](guides/02-import-from-google-admin.md) | Exporting ChromeOS devices from Google Admin, the preset, status mapping, re-importing | ✅ draft | M2 | DOC-01 |
+| [Print and apply labels](guides/03-print-and-apply-labels.md) | Templates, start position, test print, sticking and scanning | ✅ draft | M2 | DOC-01 |
+| [Run a loaner day](guides/04-run-a-loaner-day.md) | Pool set-up (loan length, due date order, e-mail to borrowers without a login), the desk, the dashboard, overdue and due-soon alerts | ✅ draft | M2 | DOC-01 |
+| [Log a repair](guides/05-log-a-repair.md) | Logging and closing a repair, and how it interacts with a not-deployable status | ✅ draft | M2 | DOC-01 |
+| [Limit a user to a site](guides/06-limit-a-user-to-a-site.md) | Location scoping: what a scoped user sees, site administrators, records without a location, the holder name, undo (to be refreshed when add/remove role assignment ships) | 🟡 draft | M2 | DOC-01 |
+| [People and logins](guides/07-people-and-logins.md) | People versus users, linking and unlinking with an example | ✅ draft | M2 | DOC-01 |
+| [Schools (K-12) mapping](guides/08-schools-k12-mapping.md) | Student ID, homeroom, device and cart number mapped onto the tracker | ✅ draft | M2 | DOC-01 |
 
 ## Not scheduled
 

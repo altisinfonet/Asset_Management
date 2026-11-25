@@ -1,0 +1,11 @@
+Tag,Device,Serial no.,Type,Make,Model,Room,Condition,Bought,Price
+TAB-101,Science tablet 01,SN-77A101,Phones and tablets,Apple,iPad 10th gen,Lab 1,Good,2025-09-02,389.00
+TAB-102,Science tablet 02,SN-77A102,Phones and tablets,Apple,iPad 10th gen,Lab 1,Good,2025-09-02,389.00
+TAB-103,Science tablet 03,SN-77A103,Phones and tablets,Apple,iPad 10th gen,Lab 1,Good,2025-09-02,389.00
+TAB-104,Science tablet 04,SN-77A104,Phones and tablets,Apple,iPad 10th gen,Lab 2,Good,2025-09-02,389.00
+TAB-105,Science tablet 05,SN-77A105,Phones and tablets,Apple,iPad 10th gen,Lab 2,Needs repair,2025-09-02,389.00
+TAB-106,Science tablet 06,SN-77A106,Phones and tablets,Apple,iPad 10th gen,Lab 2,Good,2025-09-02,about 389
+TAB-107,Science tablet 07,SN-77A107,Phones and tablets,Apple,iPad 10th gen,Room 205,Good,2025-09-02,389.00
+TAB-108,Science tablet 08,SN-77A108,,Apple,iPad 10th gen,Room 205,Good,2025-09-02,389.00
+TAB-103,Science tablet 03 (again),SN-77A103,Phones and tablets,Apple,iPad 10th gen,Room 205,Good,2025-09-02,389.00
+TAB-110,Science tablet 10,SN-77A110,Phones and tablets,Apple,iPad 10th gen,Room 205,Good,2025-09-02,389.00

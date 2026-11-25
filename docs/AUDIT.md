@@ -130,6 +130,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.27 | 2026-11-25 | Guide-writing fixes (ED-29)                                         | Seven fixes; root cause of the B.13 / B.22 deadlock flake (0180)          |
 | B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
 | B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
+| B.30 | 2026-11-25 | Release 0.2.7: GitHub main (PRs #15, #16) plus wave 3 part 2 and ED-30 | One conflict (dashboard) resolved, GitHub files preserved; API e2e 771/771 direct and pooled, real-stack 68/68, mock 759/759 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -606,6 +607,40 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   sibling-subdomain write; acceptable for a trusted development network with demo data, hence the production refusal and
   the warning. Not tested: a real second machine and browser (the cookie behaviour follows from the browser rule above).
 - **Open:** none.
+
+### B.30 Release 0.2.7 verification - 2026-11-25 (version 0.2.7)
+
+- **Method:** GitHub `main` (`37ae471` = 0.2.6 plus PR #15, console-style dashboard and teal palette, and PR #16, CI
+  fix) was taken as the base, unchanged; branch `release-0.2.7` from it, then one no-fast-forward merge of `lan-dev-access`
+  (the wave 3 part 2 candidate `1e37280`, verified as releasable, plus ED-30 and B.29). Follow-ups, the re-shot guide
+  screenshots and the release docs are separate commits on top; nothing already published was rewritten.
+- **Merge:** one conflict, `apps/web/src/components/dashboard/dashboard.tsx`. GitHub's dashboard was kept as it is and
+  the change of `bc59dc1` re-applied: `Panel` takes an optional `hint`, the overdue panel passes
+  `dashboard.overduePanel.hint`, drawn through `CardHeading`'s existing muted description line (`text-sm text-muted`,
+  as under the chart titles) with `data-testid="panel-overdue-hint"`. `en.ts`, `dashboard.test.tsx` and
+  `dashboard.spec.ts` merged on their own and were read: our labels ("Overdue check-outs", the hint, "Overdue loans
+  only") sit next to GitHub's new keys; the mock e2e spec now also checks the hint in the browser.
+- **GitHub work preserved:** of the 25 files changed in `d52775c..37ae471`, the 21 the branch did not touch are
+  byte-identical to `37ae471` (an empty diff for each: tokens, shell, theme switch, design system, ui-tokens, CI
+  workflow, audit script and allow-list, workspace override, lockfile). The four shared files differ from `37ae471`
+  only by the intended lines (27 added, 5 removed: the hint, the tile label, the loaner link label and their tests). In
+  the other direction only those 25 files differ from `lan-dev-access`.
+- **Follow-ups from the independent verification:** the route replay's tenant visibility probe skips without
+  `ADMIN_DATABASE_URL` (it failed with a SCRAM error), and README, developer guide and `.env.example` now agree with
+  `contributing.md` that a full run sets it; three known items recorded in section C (not fixed). The `picomatch` row
+  of section C was replaced by the `effect` override of PR #16.
+- **Screenshots:** all 59 re-shot with `shoot.mjs` from a fresh stack in the teal design; the dashboard shots and a
+  sample of the others were looked at (the info boxes the guides call blue are still blue). Guide 4 describes the five
+  tiles, the charts and the overdue table; the guide index names the System / Light / Dark switch. 114 links resolve;
+  the guides pass Prettier.
+- **Result** (compose project `atrel9`, ports 21xxx, fresh volumes, torn down with `down -v` and its images removed; the
+  founder's stack untouched): `pnpm install --frozen-lockfile` clean; clean-state `turbo run lint typecheck test build
+  --force` 21/21 (0 cached; API unit 660, web 815, api-client 14, ui-tokens 15, schemas 3); `format:check` clean;
+  `gen.mjs` reproduces `openapi.yaml` (205 operations, 138 paths), `gen-api-md --check`, api-client `generate:check` and
+  Redocly clean; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; real-stack browser suite 68/68 on
+  the fresh stack; API e2e with the full environment including `ADMIN_DATABASE_URL`: 771/771 in 65 files, 0 skipped,
+  direct and through PgBouncer with the `app_one` negative control; mock browser suite (`PW_CHANNEL=chrome`) 759/759 (3.8 min). Every suite passed on its first run; no rerun was needed.
+- **Open:** the three known items added to section C.
 
 ---
 

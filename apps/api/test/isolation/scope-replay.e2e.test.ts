@@ -64,6 +64,10 @@ describe.skipIf(!dbEnabled)(
       personOut: string;
       personOutEmail: string;
       personNone: string;
+      /** the accepted boundary (ED-26): an in-scope asset lent to a person outside the scope */
+      holderOut: string;
+      holderOutName: string;
+      lentIn: string;
       accOut: string;
       accOutLabel: string;
       accAssignmentOut: string;
@@ -415,7 +419,9 @@ describe.skipIf(!dbEnabled)(
         ],
 
         // ---- people
-        ...scopedCrud('people', [c.personOut, c.personNone], { notes: 'scoped was here' }),
+        ...scopedCrud('people', [c.personOut, c.personNone, c.holderOut], {
+          notes: 'scoped was here',
+        }),
         'get /v1/people': [
           list('/v1/people?limit=200&archived=include'),
           list(`/v1/people?q=${c.personOutEmail}`),
@@ -434,6 +440,7 @@ describe.skipIf(!dbEnabled)(
           orgOnly('DELETE', `/v1/people/${c.personOut}/link-user`),
         ],
         'get /v1/people/:id/assignments': [
+          notFound('GET', `/v1/people/${c.holderOut}/assignments?state=all`),
           notFound('GET', `/v1/people/${c.personOut}/assignments?state=all`),
           // a person inside the scope lists none of the items outside it
           list(`/v1/people/${c.personIn}/assignments?state=all`),
@@ -860,6 +867,20 @@ describe.skipIf(!dbEnabled)(
           },
         ),
       );
+      // ED-26 boundary: an asset at "In" lent to a person of "Out". The scoped user sees the holder's
+      // id and name on the asset (accepted, founder 2026-11-25) but never the person record.
+      const holderOutName = `holder ${m}`;
+      const holderOut = await must(
+        a.post('/v1/people', { display_name: holderOutName, location_id: siteOut.id }),
+      );
+      const lentIn = await asset({ name: `lent in ${m}`, location_id: siteIn.id });
+      await must(
+        a.post(
+          `/v1/assets/${lentIn.id}/checkout`,
+          { person_id: holderOut.id },
+          { headers: { 'idempotency-key': `scr-co-lent-${m}` } },
+        ),
+      );
       const accOut = await must(
         a.post('/v1/accessories', {
           category_id: accCategory.id,
@@ -1008,6 +1029,9 @@ describe.skipIf(!dbEnabled)(
         personOut: personOut.id,
         personOutEmail,
         personNone: personNone.id,
+        holderOut: holderOut.id,
+        holderOutName,
+        lentIn: lentIn.id,
         accOut: accOut.id,
         accOutLabel: accOut.label_code,
         accAssignmentOut: accAssignmentOut.id,
@@ -1102,6 +1126,8 @@ describe.skipIf(!dbEnabled)(
         siteOut: await etag(`/v1/locations/${fx.siteOut}`),
         personOut: await etag(`/v1/people/${fx.personOut}`),
         personNone: await etag(`/v1/people/${fx.personNone}`),
+        holderOut: await etag(`/v1/people/${fx.holderOut}`),
+        lentIn: await etag(`/v1/assets/${fx.lentIn}`),
         accOut: await etag(`/v1/accessories/${fx.accOut}`),
         conOut: await etag(`/v1/consumables/${fx.conOut}`),
         poolOut: await etag(`/v1/loaner-pools/${fx.poolOut}`),
@@ -1205,6 +1231,23 @@ describe.skipIf(!dbEnabled)(
       }
       expect(results.length).toBeGreaterThanOrEqual(200);
       expect(await snapshot()).toEqual(before);
+    });
+
+    it('the accepted holder boundary (ED-26): the in-scope asset names its holder, the person stays 404', async () => {
+      const asset = await scoped.get(`/v1/assets/${fx.lentIn}`);
+      expect(asset.status).toBe(200);
+      expect(asset.body.current_assignment).toMatchObject({
+        target_type: 'person',
+        target_id: fx.holderOut,
+        target_name: fx.holderOutName,
+      });
+      expect((await scoped.get(`/v1/people/${fx.holderOut}`)).status).toBe(404);
+      expect((await scoped.get(`/v1/people/${fx.holderOut}/history`)).status).toBe(404);
+      const people = (await scoped.get('/v1/people?limit=200')).body.data as Array<{ id: string }>;
+      expect(people.map((x) => x.id)).not.toContain(fx.holderOut);
+      const byHolder = (await scoped.get(`/v1/assets?assigned_person_id=${fx.holderOut}`)).body
+        .data as Array<{ id: string }>;
+      expect(byHolder.map((x) => x.id)).toEqual([fx.lentIn]);
     });
 
     it('the positive control: the same principal sees and works on the records of its own site', async () => {

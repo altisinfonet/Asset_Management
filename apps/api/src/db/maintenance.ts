@@ -39,19 +39,24 @@ export async function withOwnerClient<T>(
  * simply running it again is safe (idempotent): it is retried a few times with a growing pause for
  * `deadlock_detected` (40P01) and `lock_not_available` (55P03) before the error is surfaced.
  *
- * The DDL must be the side that gives up, not the application's transaction. A partition of
- * asset_history clones its foreign keys, so creating one takes SHARE ROW EXCLUSIVE locks on app.asset
- * and app.assignment one after the other, while a custody transaction holds a row lock on one of them
- * and wants the other: a lock cycle. Without a lock timeout the deadlock detector cancels whichever
- * process checks first, often the check-in (a 500 to the user; seen in the e2e suite, whose partition
- * test runs next to the custody tests). So the call runs in its own transaction with a `lock_timeout`
- * far below `deadlock_timeout` (1 s by default): the DDL stops waiting first (55P03) and is retried,
- * and the application's transaction proceeds. Every caller passes a dedicated autocommit connection.
+ * The DDL must be the side that gives up, not the application's transaction (ED-28, "Partition DDL
+ * yields"). A partition of asset_history clones its foreign keys, so creating one locks the parent and
+ * then app.asset / app.assignment, while a custody transaction locks them the other way round: a lock
+ * cycle, in which the deadlock detector cancels whichever process checks first, often the check-in (a
+ * 500 to the user). Two layers keep the DDL on the yielding side:
+ *  - `app.ensure_partitions` (migration 0180) takes every lock it needs up front with NOWAIT, so it
+ *    never waits while holding a lock; a lock that is taken fails it at once with 55P03, having done
+ *    nothing;
+ *  - here, the call runs in its own transaction with a `lock_timeout` far below `deadlock_timeout`
+ *    (1 s by default), which bounds any wait the function still meets (55P03 as well).
+ * Either 55P03, and a 40P01, rolls back and is retried with a growing, jittered pause, so a busy writer
+ * delays the rotation and never the reverse. Every caller passes a dedicated autocommit connection.
  */
 export async function ensurePartitions(
   client: Queryable,
   from: Date = new Date(),
   months = 12,
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<number> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -65,14 +70,28 @@ export async function ensurePartitions(
       return Number(rows[0]?.created ?? 0);
     } catch (err) {
       await client.query('rollback').catch(() => undefined);
-      const code = (err as { code?: string }).code;
-      if ((code !== '40P01' && code !== '55P03') || attempt >= PARTITION_ATTEMPTS) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      if (!isPartitionLockConflict(err) || attempt >= PARTITION_ATTEMPTS) throw err;
+      await pause(partitionRetryPause(attempt));
     }
   }
 }
 
-const PARTITION_ATTEMPTS = 10;
+/**
+ * The errors after which partition DDL is retried: 55P03 `lock_not_available` (a NOWAIT lock of
+ * `app.ensure_partitions` that is taken, or the `lock_timeout` of `ensurePartitions`) and 40P01
+ * `deadlock_detected` (a DDL caller outside the function, or a database without migration 0180).
+ */
+export function isPartitionLockConflict(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === '55P03' || code === '40P01';
+}
+
+/** Pause before the next attempt: 250 ms per attempt so far plus up to 100 ms of jitter. */
+export function partitionRetryPause(attempt: number, random: () => number = Math.random): number {
+  return 250 * attempt + Math.floor(random() * 100);
+}
+
+export const PARTITION_ATTEMPTS = 10;
 const PARTITION_LOCK_TIMEOUT_MS = 200;
 
 /** Violations reported by `app.schema_lint()` (empty = clean). */

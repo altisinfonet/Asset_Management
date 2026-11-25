@@ -9,6 +9,7 @@ import {
   importAt,
   loadApp,
   looseDevice,
+  makeUndeployable,
   poolWithDevices,
   staffPool,
   studentPool,
@@ -118,6 +119,35 @@ const SCENARIOS: Scenario[] = [
       await expect(p.getByRole('list', { name: 'Devices to lend' })).toContainText(
         'is not in this loaner pool',
       );
+    },
+  },
+  {
+    name: 'loaners: desk next available lent',
+    open: async (p) => {
+      await p.goto('/loaners/desk');
+      await p.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
+      await p.getByLabel('Borrower', { exact: true }).press('Enter');
+      await p.getByRole('button', { name: 'Lend next available device' }).click();
+      await expect(p.getByTestId('desk-picked')).toBeVisible();
+    },
+  },
+  {
+    name: 'loaners: desk refuses a device in repair',
+    open: async (p) => {
+      await loadApp(p);
+      const staff = await staffPool(p);
+      const members = await api<{ data: Array<{ asset: { id: string; asset_tag: string } }> }>(
+        p,
+        'GET',
+        `/v1/loaner-pools/${staff.id}/members?available=true`,
+      );
+      const asset = members.json.data[0]!.asset;
+      await makeUndeployable(p, asset.id);
+      await p.goto('/loaners/desk');
+      const device = p.getByLabel('Device', { exact: true });
+      await device.fill(asset.asset_tag);
+      await device.press('Enter');
+      await expect(p.getByTestId('desk-feedback')).toContainText('cannot be lent');
     },
   },
   {

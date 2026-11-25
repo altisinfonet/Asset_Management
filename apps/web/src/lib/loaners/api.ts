@@ -12,6 +12,8 @@ export type LoanerPool = S['LoanerPool'];
 export type LoanerPoolCreate = S['LoanerPoolCreate'];
 export type LoanerPoolUpdate = S['LoanerPoolUpdate'];
 export type LoanerPoolMember = S['LoanerPoolMember'];
+export type LoanerCheckoutRequest = S['LoanerCheckoutRequest'];
+export type CustodyResult = S['CustodyResult'];
 export type QuickLoanRequest = S['QuickLoanRequest'];
 export type QuickLoanResult = S['QuickLoanResult'];
 export type LoanReturnRequest = S['LoanReturnRequest'];
@@ -108,6 +110,22 @@ export const loanersApi = {
       body,
     });
     return data as QuickLoanResult;
+  },
+  /**
+   * One loan (`POST /v1/loaner-pools/{id}/checkout`). Without `asset_id` the server lends the next
+   * available device of the pool (ED-24: idle the longest, never lent first, ties by the lowest tag) and
+   * answers with it, so the desk can say which device to hand over.
+   */
+  async checkoutNext(
+    poolId: string,
+    body: LoanerCheckoutRequest,
+    idempotencyKey: string,
+  ): Promise<CustodyResult> {
+    const { data } = await http().POST('/v1/loaner-pools/{id}/checkout', {
+      params: { path: { id: poolId }, header: { 'Idempotency-Key': idempotencyKey } },
+      body,
+    });
+    return data as CustodyResult;
   },
   /** Quick return by scanning (one or many devices, any borrowers), answered per device. */
   async returnLoans(body: LoanReturnRequest, idempotencyKey: string): Promise<LoanReturnResult> {

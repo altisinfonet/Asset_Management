@@ -72,15 +72,34 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 ### Changed
 
 - Schema lint rule 8 requires `tenant_id` to be paired with `tenant_id` in a composite foreign key (migration 0170).
+- **Google Admin import:** the org unit path becomes the **department** ("/Students/Grade 5" -> "Students / Grade 5", an
+  existing department of that name or of the last part is used, else it is created; every unit is an entry of the value
+  mapping), no location is created from it; **Disabled** and **Deprovisioned** devices import as **Retired** instead of
+  "In repair". Creating the departments needs `department:manage`.
+- **Import dry run:** rows that need a category, model, location, department or person created by the import are now
+  checked like every other row (the references are created inside a savepoint that is rolled back), so they no longer
+  say "the rest of the checks run when it is committed" each, and the commit finds no new failures there. What still
+  waits for the commit (a location below a parent the same import creates) is counted once:
+  `summary.validated_at_commit`, shown once on the review step.
+- **Loaner desk:** "Lend next available device" lends the device the pool picks and shows its tag; a device whose
+  status cannot be lent (In repair, Broken, Retired...) is refused when it is scanned, naming the status.
+- **Labels:** the dashboard tile is "Overdue check-outs" (loans included, with a line saying so), the loaner overview
+  "Overdue loans"; the hint of the organisation's loan default explains the 7-day fallback of pools.
+- **Lists at 1280 px:** People and Stock fit a laptop window (Kind and Category give way below 1440 px, long location
+  paths end in an ellipsis with the full path as tooltip); Assets keeps the columns its user chose and scrolls inside
+  its table with the tag pinned. `DataTable` columns gained `hideBelow: 'wide'` and `maxWidth`.
 
 ### Fixed
 
 - **Attachment owner checked by the database** (ED-28, migration 0170): an attachment row could name a record of another
   tenant as its owner when written outside the API (the API already refused it). A trigger now refuses it with 23503.
-- **Check-in 500 during partition rotation**: creating or dropping an `asset_history` partition could deadlock with a
-  custody transaction, and the deadlock detector sometimes cancelled the custody request. Partition DDL now waits at most
-  200 ms for a lock and retries, so it is always the side that yields (root cause of the intermittent e2e failure of
-  B.13 / B.22).
+- **Intermittent 500 on a check-in during partition rotation** (the "deadlock flake" of AUDIT B.13 / B.22; ED-28,
+  ED-29): creating or dropping an `asset_history` partition locked `asset_history` and then `app.asset` /
+  `app.assignment`, the reverse of a custody write, and the deadlock detector sometimes cancelled the custody request.
+  Partition DDL is now always the side that yields, in two layers: `app.ensure_partitions` takes every lock it needs
+  first and with `NOWAIT` (migration 0180), so it never waits while holding a lock; `ensurePartitions` runs it in its own
+  transaction with a 200 ms `lock_timeout` and retries `lock_not_available` (55P03, from either layer) and
+  `deadlock_detected` (40P01) with a growing pause.
 
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 

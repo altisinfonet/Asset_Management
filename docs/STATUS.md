@@ -103,6 +103,16 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Isolation harness extension: every tenant table and every foreign key probed across tenants from the database catalogue, named cross-tenant inserts (assignment, loan, repair, import row, pool membership, attachment), tenant-prefixed object keys and tampered file URLs refused (local and S3), every job type through the payload lint; direct and through PgBouncer. Found and fixed: attachment owners are now checked by the database (migration 0170, ED-28), and the root cause of the intermittent check-in 500 (partition DDL deadlock) ✅ | M2-SEC-01 done |
 | Performance harness extension: nightly budgets for check-out, scan resolve, the 500-label PDF, a location-scoped user's list / search / lookups (ED-26) and import throughput and dry run, published as `test-results/*.json` ✅ | M2-OPS-01 done |
 
+### Fixes found while writing the user guides (ED-29) ✅ (unreleased)
+
+| Fix | Status |
+| --- | ------ |
+| Loaner desk: "Lend next available device" (shows the device the pool picked); a device In repair, Broken or Retired is refused when scanned, naming its status | ✅ |
+| Import dry run: rows that need a new category, model, location, department or person are checked like the others (rehearsed and rolled back), so no per-row "checked at commit"; what still waits for the commit is said once | ✅ |
+| Google Admin import: org unit -> department (no locations created), Disabled / Deprovisioned -> Retired | ✅ |
+| People and Stock fit a 1280 px window; Assets scrolls inside its table with the tag pinned | ✅ |
+| "Overdue check-outs" (dashboard, loans included) vs "Overdue loans" (loaner overview); the loan default hint explains the 7-day pool fallback | ✅ |
+
 ### Next: wave 3 part 2 (rest)
 
 In this order: SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.

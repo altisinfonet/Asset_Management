@@ -10,6 +10,7 @@ import {
   latestDueDate,
   matchesShow,
   memberState,
+  notLendableStatus,
   pickBorrower,
   requestFailure,
   todayUtc,
@@ -181,5 +182,30 @@ describe('what a scan did', () => {
     expect(pickBorrower(people, 'Alice@example.org')).toBe(people[0]);
     expect(pickBorrower(people, '  ')).toBeNull();
     expect(pickBorrower([], 'x')).toBeNull();
+  });
+});
+
+describe('lendable at the desk', () => {
+  it('lets a deployable device through and names the status that stops the others', () => {
+    expect(notLendableStatus({ status: { name: 'Ready', state_type: 'deployable' } })).toBeNull();
+    expect(notLendableStatus({ status: { name: 'In repair', state_type: 'undeployable' } })).toBe(
+      'In repair',
+    );
+    expect(notLendableStatus({ status: { name: 'Retired', state_type: 'archived' } })).toBe(
+      'Retired',
+    );
+    expect(notLendableStatus({ status: { name: ' ', state_type: 'pending' } })).toBe('pending');
+    // a device that is out is answered at Lend ("already out", with the return offered)
+    expect(notLendableStatus({ status: { name: 'Deployed', state_type: 'deployed' } })).toBeNull();
+    // an asset without a loaded status is left to the server
+    expect(notLendableStatus({ status: null })).toBeNull();
+  });
+
+  it('names the failures a single next-available loan answers for the whole request', () => {
+    expect(requestFailure(error({ code: 'loan-limit-reached', status: 409 }))).toBe('limit');
+    expect(requestFailure(error({ code: 'asset-not-deployable', status: 409 }))).toBe(
+      'not_deployable',
+    );
+    expect(requestFailure(error({ code: 'no-loaner-available', status: 409 }))).toBe('no_device');
   });
 });

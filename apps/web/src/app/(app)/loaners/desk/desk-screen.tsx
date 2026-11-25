@@ -7,6 +7,7 @@ import {
   CircleAlert,
   CircleCheck,
   ScanLine,
+  Sparkles,
   UserRound,
   X,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ import {
   itemFailure,
   lateDays,
   latestDueDate,
+  notLendableStatus,
   pickBorrower,
   requestFailure,
 } from '@/lib/loaners/helpers';
@@ -57,7 +59,12 @@ interface Feedback {
   message: string;
   /** A device that is out can be returned from the message (lend mode). */
   returnCode?: string;
+  /** The device the server picked for "Next available": shown large, it is the one to hand over. */
+  picked?: string;
 }
+
+/** What a scan in lend mode did: added to the list, refused (with its reason shown), or matched no device. */
+type AddOutcome = 'added' | 'refused' | 'missing';
 
 interface LogEntry {
   id: number;
@@ -124,6 +131,7 @@ export function DeskScreen() {
   const returnInput = useRef<HTMLInputElement>(null);
   const counter = useRef(0);
   const keys = useRef(createKeyKeeper());
+  const nextKeys = useRef(createKeyKeeper());
   const soundRef = useRef(sound);
   useEffect(() => {
     soundRef.current = sound;
@@ -180,13 +188,43 @@ export function DeskScreen() {
     [t],
   );
 
+  /** The words for what stopped a whole request (the pool, the borrower, or no device to give). */
+  const requestText = useCallback(
+    (err: unknown, name: string) => {
+      const ui = getApi().toUiError(err);
+      switch (requestFailure(ui)) {
+        case 'pool_inactive':
+          return t('loanerDesk.errors.poolInactive');
+        case 'not_eligible':
+          return t('loanerDesk.errors.notEligible', { name });
+        case 'borrower_inactive':
+          return t('loanerDesk.errors.borrowerInactive', { name });
+        case 'borrower_not_found':
+          return t('loanerDesk.errors.borrowerNotFound');
+        case 'borrower_ambiguous':
+          return t('loanerDesk.errors.borrowerAmbiguous');
+        case 'no_device':
+          return t('loanerDesk.errors.noDevice');
+        case 'limit':
+          return t('loanerDesk.errors.personLimit', { name });
+        default:
+          return uiErrorText(t, ui);
+      }
+    },
+    [t],
+  );
+
   // ---- lend ---------------------------------------------------------------------------------------
 
-  /** Adds a device to the list: it has to exist; whether it is in the pool is the server's to say. */
+  /**
+   * Adds a device to the list: it has to exist and have a status that can be lent (a device In repair or
+   * Broken is refused here, by its status, not only at Lend); whether it is in the pool is the server's
+   * to say.
+   */
   const addDevice = useCallback(
-    async (raw: string, options: { quiet?: boolean } = {}): Promise<boolean> => {
+    async (raw: string, options: { quiet?: boolean } = {}): Promise<AddOutcome> => {
       const code = raw.trim();
-      if (!code) return false;
+      if (!code) return 'missing';
       setBusy(true);
       try {
         const outcome = await resolveScan(code);
@@ -200,18 +238,26 @@ export function DeskScreen() {
                   : t('loanerDesk.errors.notFound', { code }),
             });
           }
-          return false;
+          return 'missing';
         }
         const tag = outcome.asset.asset_tag;
+        const status = notLendableStatus(outcome.asset);
+        if (status) {
+          announce({
+            kind: 'error',
+            message: t('loanerDesk.errors.statusNotLendable', { code: tag, status }),
+          });
+          return 'refused';
+        }
         setQueue((current) =>
           current.some((entry) => entry.code === tag) ? current : [...current, { code: tag, tag }],
         );
         setFeedback(null);
         keys.current.renew();
-        return true;
+        return 'added';
       } catch (err) {
         announce({ kind: 'error', message: uiErrorText(t, getApi().toUiError(err)) });
-        return false;
+        return 'refused';
       } finally {
         setBusy(false);
       }
@@ -346,27 +392,52 @@ export function DeskScreen() {
       await refresh();
       deviceInput.current?.focus();
     } catch (err) {
-      const ui = getApi().toUiError(err);
-      const name = borrower.display_name;
-      const message = (() => {
-        switch (requestFailure(ui)) {
-          case 'pool_inactive':
-            return t('loanerDesk.errors.poolInactive');
-          case 'not_eligible':
-            return t('loanerDesk.errors.notEligible', { name });
-          case 'borrower_inactive':
-            return t('loanerDesk.errors.borrowerInactive', { name });
-          case 'borrower_not_found':
-            return t('loanerDesk.errors.borrowerNotFound');
-          case 'borrower_ambiguous':
-            return t('loanerDesk.errors.borrowerAmbiguous');
-          case 'no_device':
-            return t('loanerDesk.errors.noDevice');
-          default:
-            return uiErrorText(t, ui);
-        }
-      })();
-      announce({ kind: 'error', message });
+      announce({ kind: 'error', message: requestText(err, borrower.display_name) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * "Next available": the server picks the device (ED-24: idle the longest, never lent first, ties by
+   * the lowest asset tag) and lends it at once to the chosen borrower with the due date shown; the
+   * answer names the device, which the panel shows large so it is the one handed over. Devices already
+   * in the list stay there.
+   */
+  const lendNext = async () => {
+    if (busy) return;
+    if (!pool) {
+      announce({ kind: 'error', message: t('loanerDesk.errors.noPool') });
+      return;
+    }
+    if (!borrower) {
+      announce({ kind: 'error', message: t('loanerDesk.errors.noPerson') });
+      borrowerInput.current?.focus();
+      return;
+    }
+    const problem = validDue();
+    setDueError(problem ?? '');
+    if (problem) return;
+    const body = { person_id: borrower.id, expected_return: dueValue };
+    setBusy(true);
+    try {
+      const result = await loanersApi.checkoutNext(pool.id, body, nextKeys.current.keyFor(body));
+      nextKeys.current.renew();
+      const tag = result.asset.asset_tag;
+      const date = formatDate(`${result.assignment.expected_return ?? dueValue}T00:00:00Z`, {
+        timeZone: 'UTC',
+      });
+      announce({
+        kind: 'ok',
+        message: t('loanerDesk.next.lent', { tag, name: borrower.display_name, date }),
+        picked: tag,
+      });
+      if (!dueTouched) setDue(defaultDueDate(pool));
+      await refresh();
+      deviceInput.current?.focus();
+    } catch (err) {
+      nextKeys.current.renew();
+      announce({ kind: 'error', message: requestText(err, borrower.display_name) });
     } finally {
       setBusy(false);
     }
@@ -419,7 +490,7 @@ export function DeskScreen() {
         return;
       }
       // a code is a device first; what no device matches may be the borrower's card
-      if (await addDevice(code, { quiet: true })) return;
+      if ((await addDevice(code, { quiet: true })) !== 'missing') return;
       if (!(await lookupBorrower(code))) {
         announce({ kind: 'error', message: t('loanerDesk.errors.notFound', { code }) });
       }
@@ -786,6 +857,23 @@ export function DeskScreen() {
               </Button>
               <p className="text-sm text-muted">{t('loanerDesk.lendHint')}</p>
             </div>
+
+            <div className="flex flex-col gap-1 border-t border-border pt-4">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy || !borrower || !pool}
+                className="min-h-12 text-base"
+                aria-describedby="desk-next-hint"
+                onClick={() => void lendNext()}
+              >
+                <Sparkles aria-hidden className="size-4" />
+                {t('loanerDesk.next.action')}
+              </Button>
+              <p id="desk-next-hint" className="text-sm text-muted">
+                {t('loanerDesk.next.hint')}
+              </p>
+            </div>
           </form>
         ) : (
           <form
@@ -923,6 +1011,14 @@ function FeedbackPanel({
       )}
     >
       <Icon aria-hidden className="size-7 shrink-0" />
+      {feedback?.picked ? (
+        <span
+          data-testid="desk-picked"
+          className="rounded-md border border-success bg-surface px-3 py-1 font-tag text-2xl font-semibold text-text"
+        >
+          {feedback.picked}
+        </span>
+      ) : null}
       <span className="min-w-0 flex-1 font-medium">{feedback?.message ?? idle}</span>
       {feedback?.returnCode ? (
         <Button type="button" onClick={() => onReturn(feedback.returnCode!)}>

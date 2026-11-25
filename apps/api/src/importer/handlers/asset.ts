@@ -21,6 +21,7 @@ import {
   assetPointer,
   inNamedSavepoint,
   issuesOf,
+  rehearse,
   zodIssues,
 } from './shared.js';
 
@@ -118,9 +119,17 @@ export class AssetHandler implements EntityHandler {
 
   // ------------------------------------------------------------------------------------ step cache
 
-  private async cache(env: HandlerEnv, mode: 'dry' | 'commit'): Promise<AssetStepCache> {
+  /**
+   * `rehearsal` is the dry run's (ED-29): a resolver that really creates the missing references inside
+   * the rehearsal savepoint (rolled back after the batch), never memoised, because its ids die with it.
+   */
+  private async cache(
+    env: HandlerEnv,
+    mode: 'dry' | 'commit' | 'rehearsal',
+  ): Promise<AssetStepCache> {
     const key = `asset:${mode}`;
-    const hit = env.memo.get(key) as AssetStepCache | undefined;
+    const hit =
+      mode === 'rehearsal' ? undefined : (env.memo.get(key) as AssetStepCache | undefined);
     if (hit) return hit;
     const defRows = await env.tx.custom_field_def.findMany({
       where: { archived_at: null },
@@ -137,7 +146,7 @@ export class AssetHandler implements EntityHandler {
         env.options,
         env.valueMap,
         env.refs,
-        mode,
+        mode === 'dry' ? 'dry' : 'commit',
         undefined,
         { import_job_id: env.job.id },
       ),
@@ -145,7 +154,7 @@ export class AssetHandler implements EntityHandler {
       statuses: new Map(statusRows.map((s) => [s.id, s])),
       defaultStatusId: statusRows.find((s) => s.is_default)?.id ?? null,
     };
-    env.memo.set(key, cache);
+    if (mode !== 'rehearsal') env.memo.set(key, cache);
     return cache;
   }
 
@@ -171,8 +180,18 @@ export class AssetHandler implements EntityHandler {
     const { resolver } = cache;
     const take = (res: Resolution, kind = ''): string | null | undefined => {
       switch (res.kind) {
-        case 'found':
+        case 'found': {
+          // made by the dry run's rehearsal: still announced, and checked with its real id
+          const made = resolver.createdName(res.id);
+          if (made !== undefined) {
+            out.warnings.push({
+              field: kind || null,
+              code: 'will-create',
+              message: `Will create ${kind} "${made}"`,
+            });
+          }
           return res.id;
+        }
         case 'none':
           return null;
         case 'create':
@@ -496,15 +515,34 @@ export class AssetHandler implements EntityHandler {
 
   // --------------------------------------------------------------------------------------------- plan
 
+  /**
+   * The dry run of a batch (ED-29). The batch is rehearsed: the references it would create are created
+   * for real inside a savepoint that is rolled back afterwards, so a row that needs a new category,
+   * model, location or department is checked by the facade like any other row (required fields, tag and
+   * serial rules, the location scope, the permission to create the reference) instead of being left to
+   * the commit. Each row runs in its own savepoint, so one that breaks the transaction costs only itself.
+   */
   async plan(env: HandlerEnv, rows: WorkRow[]): Promise<Verdict[]> {
-    const cache = await this.cache(env, 'dry');
     const found = await this.existing(
       env,
       rows.map((r) => r.mapped),
     );
-    const out: Verdict[] = [];
-    for (const row of rows) out.push(await this.planRow(env, cache, found, row));
-    return out;
+    return rehearse(env.tx, async () => {
+      const cache = await this.cache(env, 'rehearsal');
+      const out: Verdict[] = [];
+      for (const row of rows) {
+        try {
+          out.push(
+            await inNamedSavepoint(env.tx, 'import_row', () =>
+              this.planRow(env, cache, found, row),
+            ),
+          );
+        } catch (err) {
+          out.push({ plan: 'error', errors: issuesOf(err, assetPointer), warnings: [] });
+        }
+      }
+      return out;
+    });
   }
 
   private async planRow(
@@ -580,11 +618,11 @@ export class AssetHandler implements EntityHandler {
     );
     if (!parsed.success) return fail(zodIssues(parsed.error.issues, assetPointer));
     if (prep.pending) {
+      // only without the rehearsal (a reference announced, not created): checked when committed
       warnings.push({
         field: null,
         code: 'validated-at-commit',
-        message:
-          'A category, model or other reference is created by this import; the rest of the checks run when it is committed.',
+        message: 'Checked when the import runs (a record it needs is created on the way).',
       });
     } else {
       try {

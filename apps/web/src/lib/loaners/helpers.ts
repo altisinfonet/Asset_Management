@@ -151,12 +151,19 @@ export type RequestFailure =
   | 'borrower_inactive'
   | 'borrower_ambiguous'
   | 'no_device'
+  | 'limit'
+  | 'not_deployable'
+  | 'already_out'
   | 'other';
 
 /** Which named failure stopped a whole request (the borrower or the pool, before any device was tried). */
 export function requestFailure(error: UiError): RequestFailure {
   if (error.code === 'loaner-pool-inactive') return 'pool_inactive';
   if (error.code === 'no-loaner-available') return 'no_device';
+  // a single loan (`/checkout`) answers the device's and the borrower's limits for the whole request
+  if (error.code === 'loan-limit-reached') return 'limit';
+  if (error.code === 'asset-not-deployable') return 'not_deployable';
+  if (error.code === 'asset-already-checked-out') return 'already_out';
   const field = error.fieldErrors.find(
     (f) => f.pointer === '/borrower' || f.pointer === '/person_id',
   );
@@ -165,6 +172,21 @@ export function requestFailure(error: UiError): RequestFailure {
   if (field) return 'borrower_not_found';
   if (error.code === 'conflict' && error.status === 409) return 'borrower_ambiguous';
   return 'other';
+}
+
+/**
+ * The status that keeps a scanned device from being lent, or null when it can go: only a status of the
+ * `deployable` type can be lent (In repair, Broken, Lost or Retired cannot), the rule the API applies at
+ * lending. The desk refuses such a device when it is scanned, not only when Lend is pressed. A device
+ * that is out (`deployed`) is left to the lend answer, which says "already out" and offers the return.
+ */
+export function notLendableStatus(asset: {
+  status?: { name?: string | null; state_type?: string | null } | null;
+}): string | null {
+  const status = asset.status;
+  if (!status?.state_type || status.state_type === 'deployable' || status.state_type === 'deployed')
+    return null;
+  return status.name?.trim() || status.state_type;
 }
 
 /** A person's search result narrowed to an exact match of a scanned or typed code, if there is exactly one. */

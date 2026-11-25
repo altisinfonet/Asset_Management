@@ -763,6 +763,11 @@ describe('import: the dry run', () => {
     const { container } = renderApp(<JobScreen />);
     expect(await screen.findByText('Preview. Nothing has been saved yet.')).toBeVisible();
     expect(screen.getByTestId('import-step-caption')).toHaveTextContent('Step 5 of 6: Dry run');
+    // what the dry run checked is said once for the import (ED-29); nothing waits for the commit here
+    expect(screen.getByTestId('import-checks-note')).toHaveTextContent(
+      'Every row was checked as it will be imported',
+    );
+    expect(screen.getByTestId('import-checks-note')).not.toHaveTextContent('location sits below');
     await screen.findByTestId('import-tile-create');
     expect(screen.getByTestId('import-tile-create')).toHaveTextContent('4');
     expect(screen.getByTestId('import-tile-update')).toHaveTextContent('0');

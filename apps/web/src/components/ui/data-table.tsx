@@ -27,6 +27,36 @@ export interface DataTableColumn<T> {
   /** Render the cell in the mono face (asset tags, serial numbers). */
   mono?: boolean;
   srOnlyHeader?: boolean;
+  /**
+   * Hide the column on windows narrower than 1440 px (`'wide'`): for columns of lower value, so a
+   * laptop window (1280 px) shows the rest of the table whole.
+   */
+  hideBelow?: 'wide';
+  /**
+   * The most room a cell takes (CSS width, `'14rem'`); longer text ends in an ellipsis and the whole
+   * text is the cell's tooltip. For long values such as location paths.
+   */
+  maxWidth?: string;
+}
+
+/** The class that hides a column below its breakpoint (literal, so the CSS build sees it). */
+const HIDE_BELOW = { wide: 'hidden min-[90rem]:table-cell' } as const;
+
+/** A cell's content, cut to the column's `maxWidth` with the full text as its tooltip. */
+function cellContent<T>(column: DataTableColumn<T>, row: T): ReactNode {
+  const content = column.cell(row);
+  if (!column.maxWidth) return content;
+  return (
+    <span
+      className="block truncate"
+      style={{ maxWidth: column.maxWidth }}
+      title={
+        typeof content === 'string' || typeof content === 'number' ? String(content) : undefined
+      }
+    >
+      {content}
+    </span>
+  );
 }
 
 export interface DataTableProps<T> {
@@ -211,6 +241,7 @@ export function DataTable<T>({
                     'sticky top-0 z-(--z-sticky) border-b border-border bg-sunken px-3 text-xs font-semibold whitespace-nowrap text-muted shadow-sm',
                     column.align === 'end' ? 'text-right' : 'text-left',
                     column.sticky && ci === 0 ? cn(stickyOffset, 'z-[11]') : null,
+                    column.hideBelow ? HIDE_BELOW[column.hideBelow] : null,
                   )}
                 >
                   {column.srOnlyHeader ? <span className="sr-only">{column.header}</span> : null}
@@ -256,7 +287,13 @@ export function DataTable<T>({
                     </td>
                   ) : null}
                   {columns.map((column) => (
-                    <td key={column.id} className="border-b border-border px-3">
+                    <td
+                      key={column.id}
+                      className={cn(
+                        'border-b border-border px-3',
+                        column.hideBelow ? HIDE_BELOW[column.hideBelow] : null,
+                      )}
+                    >
                       <Skeleton className="h-3.5 w-3/4" />
                     </td>
                   ))}
@@ -304,6 +341,7 @@ export function DataTable<T>({
                           'border-b border-border px-3 whitespace-nowrap',
                           column.align === 'end' ? 'text-right tabular-nums' : 'text-left',
                           column.mono ? 'font-tag' : null,
+                          column.hideBelow ? HIDE_BELOW[column.hideBelow] : null,
                           column.sticky && ci === 0
                             ? cn(
                                 'sticky z-(--z-sticky)',
@@ -315,7 +353,7 @@ export function DataTable<T>({
                             : null,
                         )}
                       >
-                        {column.cell(row)}
+                        {cellContent(column, row)}
                       </td>
                     ))}
                   </tr>

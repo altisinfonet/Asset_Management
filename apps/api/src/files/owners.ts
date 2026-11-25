@@ -1,4 +1,4 @@
-import type { Tx } from '../tenancy/index.js';
+import { Prisma, isLocationScoped, locationScopeSql, type Tx } from '../tenancy/index.js';
 import type { OwnerType } from './schemas.js';
 
 /**
@@ -72,5 +72,60 @@ export async function lookupOwner(trx: Tx, type: OwnerType, id: string): Promise
       rows = await trx.$queryRaw`select 1 from app.import_job where id = ${id}::uuid`;
       break;
   }
-  return rows.length > 0 ? 'found' : 'missing';
+  if (rows.length === 0) return 'missing';
+  return (await ownerInScope(trx, type, id)) ? 'found' : 'missing';
+}
+
+/**
+ * M2-LOC-03 (ED-26): is the owner record inside the caller's location scope? (Always true when the
+ * transaction is not scoped.) Assets, stock, people and locations by their location, repairs and
+ * custody rows by their asset or accessory, imports by who started them; models are catalogue.
+ */
+export async function ownerInScope(trx: Tx, type: string, id: string): Promise<boolean> {
+  if (!isLocationScoped()) return true;
+  const inScope = (column: Prisma.Sql) => locationScopeSql(column);
+  let rows: unknown[];
+  switch (type) {
+    case 'asset_model':
+      return true;
+    case 'asset':
+      rows = await trx.$queryRaw`select 1 from app.asset a
+        where a.id = ${id}::uuid and ${inScope(Prisma.sql`a.location_id`)}`;
+      break;
+    case 'accessory':
+      rows = await trx.$queryRaw`select 1 from app.accessory x
+        where x.id = ${id}::uuid and ${inScope(Prisma.sql`x.location_id`)}`;
+      break;
+    case 'consumable':
+      rows = await trx.$queryRaw`select 1 from app.consumable x
+        where x.id = ${id}::uuid and ${inScope(Prisma.sql`x.location_id`)}`;
+      break;
+    case 'location':
+      rows = await trx.$queryRaw`select 1 from app.location x
+        where x.id = ${id}::uuid and ${inScope(Prisma.sql`x.id`)}`;
+      break;
+    case 'person':
+      rows = await trx.$queryRaw`select 1 from app.person x
+        where x.id = ${id}::uuid and ${inScope(Prisma.sql`x.location_id`)}`;
+      break;
+    case 'maintenance_record':
+      rows = await trx.$queryRaw`select 1 from app.maintenance_record r
+        join app.asset a on a.tenant_id = r.tenant_id and a.id = r.asset_id
+        where r.id = ${id}::uuid and ${inScope(Prisma.sql`a.location_id`)}`;
+      break;
+    case 'assignment':
+      rows = await trx.$queryRaw`select 1 from app.assignment s
+        left join app.asset a on a.tenant_id = s.tenant_id and a.id = s.asset_id
+        left join app.accessory x on x.tenant_id = s.tenant_id and x.id = s.accessory_id
+        where s.id = ${id}::uuid
+          and (${inScope(Prisma.sql`a.location_id`)} or ${inScope(Prisma.sql`x.location_id`)})`;
+      break;
+    case 'import_job':
+      rows = await trx.$queryRaw`select 1 from app.import_job j
+        where j.id = ${id}::uuid and j.requested_by::text = current_setting('app.actor_id', true)`;
+      break;
+    default:
+      return false;
+  }
+  return rows.length > 0;
 }

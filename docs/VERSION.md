@@ -41,6 +41,45 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
+M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Branch `worktree-agent-a06c49586ab451805`, not merged.
+
+### Added
+
+- **Location scoping for roles** (M2-LOC-03, ED-26): on Settings > Users a role can be given for the whole organisation or
+  "Limited to a location" (the location and everything below it), when inviting and with "Change role and access". A
+  scoped principal sees and changes only records inside its subtree(s): assets, accessories and consumables by their
+  location, people by their home location, loaner pools by their home location, and the repairs, loans, custody records,
+  history and attachments that belong to them. Outside the scope a record behaves like one that does not exist (404,
+  absent from lists, search, scan resolve and counts, `422 not-found` when named as a target). Records without a location
+  are outside every scope, and a scoped user's writes must keep records inside it (`422 required`). Exports, imports and
+  label batches of a scoped user are their own, and exports and imports carry the scope to the worker. Notification
+  recipients are filtered by scope. The scope is computed per permission, and an org-wide grant of the same permission
+  lifts it. A scoped assignment never grants the org-only permissions (users, roles, API keys, audit log, catalogue,
+  departments, notification rules).
+- `GET /v1/auth/me` returns `location_scope` (null for org-wide users); the web top bar shows "Scoped to: ...".
+- Migration 0150: `export_job` / `import_job` `location_scoped` + `location_scope`.
+- Tests: the scoped surfaces end to end (`apps/api/test/scoping`), a **scoped route replay** that replays every route as a
+  location administrator against another site's records (`apps/api/test/isolation/scope-replay.e2e.test.ts`), web unit,
+  mock and axe tests for the scope UI, and a real-stack spec (an administrator scopes a technician to one site).
+
+### Changed
+
+- The forms for assets, people, stock, pools and locations require a location for a scoped user. Settings navigation
+  lists only the sections the role can open (Notification rules no longer shows for the Asset manager, who got a 403
+  page there).
+- Granting a role checks the scope as well as the permissions: nobody grants a permission wider than they hold it.
+
+### Fixed
+
+- Test-only: the schema-lint fixture for foreign keys referenced the live `app.asset` table, so it held a SHARE ROW
+  EXCLUSIVE lock there until its rollback. Check-ins of parallel test files deadlocked against it and answered 500 (seen
+  in a pooled run). The fixture now references a table of its own transaction. This is very likely the "intermittent
+  failure" of B.13. `E2E_LOG_LEVEL=error` shows the server side of a 500 in an e2e run.
+
+### Verification
+
+See [AUDIT.md](AUDIT.md) B.22.
+
 ## 0.2.5 - 2026-11-24 - M2 wave 3 part 1: imports, loaners, deferred items
 
 M2 wave 3, part 1: the import backend and wizard (M2-IMP-01..08), loaner pools, desk and dashboard (M2-LOAN-01..04, M2-LIFE-09) and three deferred stories (M2-REG-03, M2-USR-03, M2-UX-02).

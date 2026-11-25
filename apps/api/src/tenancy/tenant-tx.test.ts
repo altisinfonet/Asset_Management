@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { isUniqueViolation, prismaCodeOf, sqlStateOf } from './errors.js';
 import { TenantRepository } from './tenant-repository.js';
+import { runWithRequestContext } from '../context/request-context.js';
+import { currentLocationScope, isLocationScoped } from './location-scope.js';
 import {
   NoTenantTransactionError,
+  runWithLocationScope,
   type Tx,
   type TxSource,
   withPreTenantTx,
@@ -19,12 +22,29 @@ interface LogEntry {
   options?: { maxWait?: number; timeout?: number };
 }
 
+// A district with two schools; a room in the first school (ancestor_ids run root..self).
+const DISTRICT = '0197b2c0-7a4e-7c3a-9f1d-5a1b2c3d4e80';
+const SCHOOL_A = '0197b2c0-7a4e-7c3a-9f1d-5a1b2c3d4e70';
+const SCHOOL_B = '0197b2c0-7a4e-7c3a-9f1d-5a1b2c3d4e71';
+const ROOM_A = '0197b2c0-7a4e-7c3a-9f1d-5a1b2c3d4e72';
+const TREE: Record<string, string[]> = {
+  [DISTRICT]: [DISTRICT],
+  [SCHOOL_A]: [DISTRICT, SCHOOL_A],
+  [SCHOOL_B]: [DISTRICT, SCHOOL_B],
+  [ROOM_A]: [DISTRICT, SCHOOL_A, ROOM_A],
+};
+
 /** A fake PrismaClient transaction source that records the exact statement sequence. */
 function recordingSource(failOn?: RegExp) {
   const log: LogEntry[] = [];
   let open = 0;
   let closed = 0;
   const tx = {
+    /** The location lookup of the scope intersection: ids -> ancestor_ids from {@link TREE}. */
+    async $queryRaw(_strings: TemplateStringsArray, ...values: unknown[]) {
+      const ids = (values[0] as string[]) ?? [];
+      return ids.filter((id) => TREE[id]).map((id) => ({ id, ancestor_ids: TREE[id] }));
+    },
     async $executeRaw(strings: TemplateStringsArray, ...values: unknown[]) {
       const text = strings.reduce(
         (acc, part, i) => acc + part + (i < values.length ? `$${i + 1}` : ''),
@@ -197,5 +217,95 @@ describe('sqlStateOf', () => {
     expect(prismaCodeOf({ code: 'P2002', clientVersion: '7' })).toBe('P2002');
     expect(prismaCodeOf({ code: '23505' })).toBeUndefined();
     expect(prismaCodeOf({ code: 'P0001' })).toBeUndefined(); // a plpgsql RAISE, not a Prisma code
+  });
+});
+
+describe('location scope of a tenant transaction (M2-LOC-03, ED-26)', () => {
+  const SCHOOL = SCHOOL_A;
+  const OTHER_SCHOOL = SCHOOL_B;
+
+  it('is not limited by default', async () => {
+    const { source } = recordingSource();
+    await withTenantTx(source, { tenantId: TENANT }, async () => {
+      expect(currentLocationScope()).toBeNull();
+      expect(isLocationScoped()).toBe(false);
+    });
+    expect(currentLocationScope()).toBeNull(); // outside any transaction
+  });
+
+  it("inherits the ambient request's scope (set by the auth guard)", async () => {
+    const { source } = recordingSource();
+    await runWithRequestContext({ requestId: 'r1', locationScope: [SCHOOL] }, () =>
+      withTenantTx(source, { tenantId: TENANT }, async () => {
+        expect(currentLocationScope()).toEqual([SCHOOL]);
+      }),
+    );
+  });
+
+  it('an explicit scope wins over the ambient one, and null means not limited', async () => {
+    const { source } = recordingSource();
+    await runWithRequestContext({ requestId: 'r2', locationScope: [SCHOOL] }, async () => {
+      await withTenantTx(source, { tenantId: TENANT, locationScope: [OTHER_SCHOOL] }, async () => {
+        expect(currentLocationScope()).toEqual([OTHER_SCHOOL]);
+      });
+      await withTenantTx(source, { tenantId: TENANT, locationScope: null }, async () => {
+        expect(currentLocationScope()).toBeNull();
+      });
+    });
+  });
+
+  it('a nested call narrows to the intersection and never widens a scoped one', async () => {
+    const { source } = recordingSource();
+    await withTenantTx(source, { tenantId: TENANT }, async () => {
+      await withTenantTx(source, { tenantId: TENANT, locationScope: [SCHOOL] }, async () => {
+        expect(currentLocationScope()).toEqual([SCHOOL]);
+        await withTenantTx(source, { tenantId: TENANT, locationScope: null }, async () => {
+          expect(currentLocationScope()).toEqual([SCHOOL]);
+        });
+        await withTenantTx(source, { tenantId: TENANT, locationScope: [DISTRICT] }, async () => {
+          expect(currentLocationScope()).toEqual([SCHOOL]);
+        });
+      });
+      await withTenantTx(
+        source,
+        { tenantId: TENANT, locationScope: [SCHOOL, OTHER_SCHOOL] },
+        async () => {
+          await withTenantTx(source, { tenantId: TENANT, locationScope: [ROOM_A] }, async () => {
+            expect(currentLocationScope()).toEqual([ROOM_A]);
+          });
+        },
+      );
+      expect(currentLocationScope()).toBeNull();
+    });
+  });
+
+  it('runWithLocationScope narrows to the intersection, never widens, and needs a transaction', async () => {
+    const { source } = recordingSource();
+    await withTenantTx(source, { tenantId: TENANT }, async () => {
+      await runWithLocationScope([SCHOOL], async () => {
+        expect(currentLocationScope()).toEqual([SCHOOL]);
+        await runWithLocationScope([OTHER_SCHOOL], async () => {
+          expect(currentLocationScope()).toEqual([]); // disjoint: nothing
+        });
+        await runWithLocationScope([ROOM_A], async () => {
+          expect(currentLocationScope()).toEqual([ROOM_A]);
+        });
+        await runWithLocationScope([DISTRICT], async () => {
+          expect(currentLocationScope()).toEqual([SCHOOL]);
+        });
+      });
+      await runWithLocationScope(null, async () => {
+        expect(currentLocationScope()).toBeNull();
+      });
+    });
+    await expect(runWithLocationScope([SCHOOL], () => 1)).rejects.toThrow(NoTenantTransactionError);
+  });
+
+  it('rejects a scope id that is not a uuid before touching the database', async () => {
+    const { source, log } = recordingSource();
+    await expect(
+      withTenantTx(source, { tenantId: TENANT, locationScope: ['nope'] }, async () => 1),
+    ).rejects.toThrow();
+    expect(log).toEqual([]);
   });
 });

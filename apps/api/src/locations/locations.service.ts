@@ -27,7 +27,15 @@ import {
   nonZero,
   stalePrecondition,
 } from '../registry/index.js';
-import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  isLocationScoped,
+  isUniqueViolation,
+  locationInScope,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import {
   MAX_LOCATION_DEPTH,
   type LocationCreate,
@@ -85,8 +93,11 @@ export class LocationsService extends RegistryBase {
           : query.archived === 'include'
             ? {}
             : { archived_at: null };
+      // M2-LOC-03 (ED-26): a scoped principal lists only the locations of its subtrees
+      const inScope = await locationScopeWhere(trx, 'id');
       const filter = {
         AND: [
+          inScope,
           archived,
           query.q
             ? {
@@ -142,7 +153,7 @@ export class LocationsService extends RegistryBase {
     id: string,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const row = await trx.location.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row) throw problem.notFound('Location not found.');
       const counts = await this.counts(trx);
       return { data: locationDto(row, counts(id)), version: row.version };
@@ -191,9 +202,8 @@ export class LocationsService extends RegistryBase {
     try {
       return await this.tx(auth, async (trx) => {
         const errors: FieldError[] = [];
-        const parent = body.parent_id
-          ? await trx.location.findUnique({ where: { id: body.parent_id } })
-          : null;
+        const parent = body.parent_id ? await this.scoped(trx, body.parent_id) : null;
+        if (!body.parent_id && isLocationScoped()) errors.push(scopedParentRequired);
         if (body.parent_id) {
           if (!parent || parent.archived_at)
             errors.push(invalidRef('/parent_id', 'No such location.'));
@@ -252,7 +262,7 @@ export class LocationsService extends RegistryBase {
         const moving = body.parent_id !== undefined;
         // Tree-shape changes of the tenant run one after the other (cycle check + trigger rewrite).
         if (moving) await this.lockTree(trx, auth.tenantId);
-        const row = await trx.location.findUnique({ where: { id } });
+        const row = await this.scoped(trx, id);
         if (!row || row.archived_at) throw problem.notFound('Location not found.');
         assertIfMatch(ifMatch, row.version);
 
@@ -269,10 +279,10 @@ export class LocationsService extends RegistryBase {
         const errors: FieldError[] = [];
         let descendants = 0;
         if (moving && body.parent_id !== row.parent_id) {
-          const parent = body.parent_id
-            ? await trx.location.findUnique({ where: { id: body.parent_id } })
-            : null;
-          if (body.parent_id && (!parent || parent.archived_at)) {
+          const parent = body.parent_id ? await this.scoped(trx, body.parent_id) : null;
+          if (!body.parent_id && isLocationScoped()) {
+            errors.push(scopedParentRequired);
+          } else if (body.parent_id && (!parent || parent.archived_at)) {
             errors.push(invalidRef('/parent_id', 'No such location.'));
           } else if (parent && (parent.id === row.id || parent.ancestor_ids.includes(row.id))) {
             errors.push({
@@ -347,7 +357,7 @@ export class LocationsService extends RegistryBase {
   async archive(auth: AuthContext, id: string, ifMatch: IfMatch): Promise<void> {
     await this.tx(auth, async (trx) => {
       await this.lockTree(trx, auth.tenantId);
-      const row = await trx.location.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row || row.archived_at) throw problem.notFound('Location not found.');
       assertIfMatch(ifMatch, row.version);
 
@@ -393,6 +403,11 @@ export class LocationsService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------ helpers
 
+  /** The location `id` when it is inside the caller's location scope (ED-26), else null. */
+  private async scoped(trx: Tx, id: string): Promise<LocationRow | null> {
+    return (await locationInScope(trx, id)) ? trx.location.findUnique({ where: { id } }) : null;
+  }
+
   private async lockTree(trx: Tx, tenantId: string): Promise<void> {
     await trx.$executeRaw`select pg_advisory_xact_lock(hashtextextended(${`location-tree:${tenantId}`}, 0))`;
   }
@@ -410,3 +425,10 @@ const depthError = (max: number) => ({
   message: `locations can be nested at most ${max + 1} levels deep`,
   code: 'too-deep',
 });
+
+/** M2-LOC-03 (ED-26): a scoped principal works below its scope roots, never at the top level. */
+const scopedParentRequired: FieldError = {
+  pointer: '/parent_id',
+  message: 'A parent location inside your scope is required.',
+  code: 'required',
+};

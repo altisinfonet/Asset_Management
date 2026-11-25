@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import { cn } from '@/lib/cn';
 import { routes, SETTINGS_SECTIONS } from '@/lib/routes';
+import { SECTION_PERMISSION } from './settings-gate';
 
 /** Areas that have their own screens but belong with the organisation's settings. */
 const LINKS = [
@@ -33,7 +34,9 @@ export function SettingsNav() {
     <div className="lg:w-56 lg:shrink-0">
       <PageHeader title={t('settings.title')} />
       <nav aria-label={t('settings.subnav')} className="flex gap-1 overflow-x-auto lg:flex-col">
-        {SETTINGS_SECTIONS.map((section) => {
+        {/* only the sections the role can open (a location-scoped role holds none of the org-only
+            permissions, so Users and roles and Notification rules disappear for it, M2-LOC-03) */}
+        {SETTINGS_SECTIONS.filter((section) => can(SECTION_PERMISSION[section])).map((section) => {
           const active = pathname === `/settings/${section}`;
           return (
             <Link

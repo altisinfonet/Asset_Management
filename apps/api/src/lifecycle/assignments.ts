@@ -1,5 +1,5 @@
 import { type Page, nextTsIdCursor, readTsIdCursor, tsText } from '../platform/index.js';
-import { Prisma, type Tx } from '../tenancy/index.js';
+import { isLocationScoped, locationScopeSql, Prisma, type Tx } from '../tenancy/index.js';
 
 /** One row of `app.assignment` as the raw queries return it. */
 export interface AssignmentRow {
@@ -106,6 +106,13 @@ export async function listAssignments(
     else where.push(Prisma.sql`s.accessory_id = ${scope.accessoryId}::uuid`);
     if (scope.state === 'open') where.push(Prisma.sql`s.checked_in_at is null`);
     if (scope.state === 'closed') where.push(Prisma.sql`s.checked_in_at is not null`);
+  }
+  if ('personId' in scope && isLocationScoped()) {
+    // M2-LOC-03 (ED-26): a person's custody list shows only the items inside the caller's scope
+    where.push(Prisma.sql`(s.asset_id is null or ${locationScopeSql(Prisma.sql`a.location_id`)})`);
+    where.push(
+      Prisma.sql`(s.accessory_id is null or ${locationScopeSql(Prisma.sql`ac.location_id`)})`,
+    );
   }
   const forAccessory = 'accessoryId' in scope;
   if (cur.after) {

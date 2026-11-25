@@ -440,6 +440,11 @@ function LocationFormDialogs({
   onArchived: () => Promise<void>;
 }) {
   const { t } = useI18n();
+  // M2-LOC-03: a location-scoped user works below its scope roots, never at the top level
+  const { locationScope } = useAuth();
+  const scoped = !!locationScope;
+  const onlyRoot =
+    locationScope?.locations.length === 1 ? (locationScope.locations[0]?.id ?? '') : '';
   const kindOptions = LOCATION_KINDS.map((kind) => ({
     value: kind,
     label: t(`locations.kinds.${kind}`),
@@ -562,7 +567,7 @@ function LocationFormDialogs({
           kind: 'room',
           code: '',
           notes: '',
-          parent: create?.parentId ?? '',
+          parent: create?.parentId || onlyRoot,
           line1: '',
           line2: '',
           city: '',
@@ -577,15 +582,17 @@ function LocationFormDialogs({
             name: 'parent',
             label: t('locations.form.parent'),
             kind: 'custom',
-            hint: t('locations.form.parentHint'),
+            required: scoped,
+            hint: scoped ? t('locationScope.parentRequiredHint') : t('locations.form.parentHint'),
+            pointers: ['/parent_id'],
             render: ({ control, value, set, invalid }) => (
               <LocationPicker
                 {...control}
                 invalid={invalid}
-                clearable
+                clearable={!scoped}
                 value={String(value)}
                 onChange={set}
-                placeholder={t('locations.form.topLevel')}
+                placeholder={scoped ? undefined : t('locations.form.topLevel')}
               />
             ),
           },
@@ -659,16 +666,18 @@ function LocationFormDialogs({
             name: 'parent',
             label: t('locations.moveForm.newParent'),
             kind: 'custom',
-            hint: t('locations.moveForm.hint'),
+            required: scoped,
+            hint: scoped ? t('locationScope.parentRequiredHint') : t('locations.moveForm.hint'),
+            pointers: ['/parent_id'],
             render: ({ control, value, set, invalid }) => (
               <LocationPicker
                 {...control}
                 invalid={invalid}
-                clearable
+                clearable={!scoped}
                 excludeSubtreeOf={move?.location.id}
                 value={String(value)}
                 onChange={set}
-                placeholder={t('locations.form.topLevel')}
+                placeholder={scoped ? undefined : t('locations.form.topLevel')}
               />
             ),
           },

@@ -1,4 +1,4 @@
-import type { Tx } from '../tenancy/index.js';
+import { assetInScope, locationInScope, type Tx } from '../tenancy/index.js';
 import type { FieldDef } from './custom-fields.js';
 import { normaliseOptions } from './dto.js';
 import type { FieldType } from './schemas.js';
@@ -58,15 +58,33 @@ export class AssetRefs {
       this.trx.company.findFirst({ where: { is_default: true } }),
     );
   }
+  /**
+   * A location a record may point at. M2-LOC-03 (ED-26): outside the location scope of the
+   * transaction it is `null`, exactly like a location that does not exist, so every write that
+   * validates a target location through here refuses an out-of-scope one with the same error.
+   */
   location(id: string) {
-    return this.memo(`location:${id}`, () => this.trx.location.findUnique({ where: { id } }));
+    return this.memo(`location:${id}`, async () =>
+      (await locationInScope(this.trx, id))
+        ? this.trx.location.findUnique({ where: { id } })
+        : null,
+    );
   }
   department(id: string) {
     return this.memo(`department:${id}`, () => this.trx.department.findUnique({ where: { id } }));
   }
-  asset(id: string) {
-    return this.memo(`asset:${id}`, () =>
+  /** The parent link of any asset of the tenant, whatever the scope (cycle checks walk it). */
+  assetParent(id: string) {
+    return this.memo(`asset-parent:${id}`, () =>
       this.trx.asset.findUnique({ where: { id }, select: { id: true, parent_asset_id: true } }),
+    );
+  }
+  /** An asset a record may point at (parent asset); out of scope = `null` (M2-LOC-03). */
+  asset(id: string) {
+    return this.memo(`asset:${id}`, async () =>
+      (await assetInScope(this.trx, id))
+        ? this.trx.asset.findUnique({ where: { id }, select: { id: true, parent_asset_id: true } })
+        : null,
     );
   }
 

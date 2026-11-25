@@ -517,29 +517,31 @@ model department {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model export_job {
-  id           String       @id @db.Uuid
-  tenant_id    String       @db.Uuid
-  created_at   DateTime     @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime     @default(now()) @db.Timestamptz(6)
-  created_by   String?      @db.Uuid
-  updated_by   String?      @db.Uuid
-  archived_at  DateTime?    @db.Timestamptz(6)
-  version      Int          @default(1)
-  requested_by String       @db.Uuid
-  resource     String
-  format       String       @default("csv")
-  filters      Json         @default("{}")
-  status       String       @default("queued")
-  row_count    Int?
-  size_bytes   BigInt?
-  filename     String?
-  storage_key  String?
-  error        String?
-  started_at   DateTime?    @db.Timestamptz(6)
-  completed_at DateTime?    @db.Timestamptz(6)
-  expires_at   DateTime?    @db.Timestamptz(6)
-  tenant       tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  user_account user_account @relation(fields: [tenant_id, requested_by], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
+  id              String       @id @db.Uuid
+  tenant_id       String       @db.Uuid
+  created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime     @default(now()) @db.Timestamptz(6)
+  created_by      String?      @db.Uuid
+  updated_by      String?      @db.Uuid
+  archived_at     DateTime?    @db.Timestamptz(6)
+  version         Int          @default(1)
+  requested_by    String       @db.Uuid
+  resource        String
+  format          String       @default("csv")
+  filters         Json         @default("{}")
+  status          String       @default("queued")
+  row_count       Int?
+  size_bytes      BigInt?
+  filename        String?
+  storage_key     String?
+  error           String?
+  started_at      DateTime?    @db.Timestamptz(6)
+  completed_at    DateTime?    @db.Timestamptz(6)
+  expires_at      DateTime?    @db.Timestamptz(6)
+  location_scoped Boolean      @default(false)
+  location_scope  String[]     @default([]) @db.Uuid
+  tenant          tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user_account    user_account @relation(fields: [tenant_id, requested_by], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenant_id, id])
   @@index([tenant_id, expires_at], map: "export_job_expiry_idx", where: raw("(status = 'succeeded'::text)"))
@@ -615,6 +617,8 @@ model import_job {
   cancel_requested   Boolean      @default(false)
   error              String?
   data_purged_at     DateTime?    @db.Timestamptz(6)
+  location_scoped    Boolean      @default(false)
+  location_scope     String[]     @default([]) @db.Uuid
   attachment         attachment?  @relation(fields: [tenant_id, file_attachment_id], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)
   tenant             tenant       @relation(fields: [tenant_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user_account       user_account @relation(fields: [tenant_id, requested_by], references: [tenant_id, id], onDelete: NoAction, onUpdate: NoAction)

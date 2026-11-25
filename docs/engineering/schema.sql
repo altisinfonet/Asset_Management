@@ -371,6 +371,7 @@ CREATE INDEX person_name_idx ON app.person (tenant_id, lower(display_name), id);
 CREATE INDEX person_name_trgm ON app.person USING gin (tenant_id, display_name public.gin_trgm_ops);
 CREATE INDEX person_company_idx ON app.person (tenant_id, company_id);
 CREATE INDEX person_department_idx ON app.person (tenant_id, department_id) WHERE department_id IS NOT NULL;
+CREATE INDEX person_location_idx ON app.person (tenant_id, location_id) WHERE location_id IS NOT NULL;  -- migration 0040; the location scope filter (ED-26)
 
 -- Managed departments (ED-17, migration 0100). Defined after person: its manager is a person, and
 -- person.department_id references it (the foreign key is added below). A department is archived, never
@@ -1222,6 +1223,8 @@ CREATE TABLE app.export_job (                         -- a CSV export; the worke
   started_at    timestamptz,
   completed_at  timestamptz,
   expires_at    timestamptz,
+  location_scoped boolean NOT NULL DEFAULT false,      -- M2-LOC-03 (ED-26, migration 0150): the requester was location-scoped...
+  location_scope  uuid[] NOT NULL DEFAULT '{}',        -- ...to these subtree roots; the worker applies exactly this scope
   FOREIGN KEY (tenant_id, requested_by) REFERENCES app.user_account (tenant_id, id),
   CONSTRAINT export_job_file_state CHECK ((status = 'succeeded') = (storage_key IS NOT NULL) OR status = 'expired'),
   created_at  timestamptz NOT NULL DEFAULT now(),
@@ -1359,6 +1362,8 @@ CREATE TABLE app.import_job (                          -- one CSV / XLSX import:
   cancel_requested     boolean NOT NULL DEFAULT false,
   error                text CHECK (error IS NULL OR length(error) <= 1000),
   data_purged_at       timestamptz,                  -- rows, profile, samples, value map and file removed by the retention job (ED-25, migration 0141)
+  location_scoped      boolean NOT NULL DEFAULT false, -- M2-LOC-03 (ED-26, migration 0150): the dry run / commit was requested by a location-scoped user...
+  location_scope       uuid[] NOT NULL DEFAULT '{}',   -- ...limited to these subtree roots; the worker applies exactly this scope
   created_at           timestamptz NOT NULL DEFAULT now(),
   updated_at           timestamptz NOT NULL DEFAULT now(),
   created_by           uuid,

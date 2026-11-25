@@ -22,6 +22,8 @@ import {
 } from './fixtures';
 import { problem, requireSession } from './http';
 import { roleIdFor } from './registry-fixtures';
+import { registry } from './registry-state';
+import { locationScopeView, withScope } from './scope';
 import { departmentHandlers } from './dept-handlers';
 import { linkHandlers } from './link-handlers';
 import { m2Handlers } from './m2-handlers';
@@ -49,20 +51,37 @@ import {
 
 const MIN_PASSWORD = 12;
 
+/** The role assignments of the account in the registry (what the Users screen edits), else the seed role. */
+function assignmentsOf(user: MockUser): User['role_assignments'] {
+  const record = registry().users.find((u) => u.id === user.id);
+  return record?.role_assignments.length
+    ? record.role_assignments
+    : [
+        {
+          role_id: roleIdFor(user.role),
+          scope_type: 'tenant',
+          company_id: null,
+          location_id: null,
+        },
+      ];
+}
+
 function toUser(user: MockUser): User {
   return {
     id: user.id,
     email: user.email,
     display_name: user.display_name,
     status: 'active',
-    role_assignments: [{ role_id: roleIdFor(user.role), scope_type: 'tenant' }],
+    role_assignments: assignmentsOf(user),
     mfa_enabled: user.mfa,
   };
 }
 
-function buildMe(user: MockUser): Me {
+function buildMe(account: MockUser): Me {
   const state = loadState();
   const session = state.session;
+  // M2-LOC-03: effective permissions (a scoped grant drops the org-only ones) and the scope
+  const user = withScope(account);
   return {
     user: toUser(user),
     tenant: {
@@ -72,6 +91,9 @@ function buildMe(user: MockUser): Me {
       branding: { logo_url: null, accent_color: null },
     },
     permissions: user.permissions,
+    role_assignments: assignmentsOf(user),
+    // null for an org-wide principal, else the subtrees it is limited to ("Scoped to: ...")
+    location_scope: locationScopeView(user.locationScope),
     auth: { method: 'session', mfa_verified: session?.mfaVerified ?? false },
     // Like the real API: a limited session still gets a 200 here (so the client learns its CSRF
     // token and that it must enrol); every other endpoint answers 403 mfa-enrolment-required.

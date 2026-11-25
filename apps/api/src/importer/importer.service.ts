@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { type AuthContext, permits } from '../auth/index.js';
+import { type AuthContext, locationScopeFor, permits } from '../auth/index.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { AppConfig } from '../config/env.js';
 import { uuidv7 } from '../ids/uuidv7.js';
@@ -22,7 +22,14 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { CategoriesService, CustomFieldsService, RegistryBase } from '../registry/index.js';
-import { TenancyService, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  currentLocationScope,
+  intersectLocationScopes,
+  isLocationScoped,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import { jobAuth } from './handlers/shared.js';
 import { IMPORT_ANALYZE_JOB, IMPORT_STEP_JOB } from './engine.js';
 import { ImportEngine } from './engine.js';
@@ -230,12 +237,42 @@ export class ImportsService extends RegistryBase {
 
   // ------------------------------------------------------------------------------------- helpers
 
-  private async lock(trx: Tx, id: string): Promise<JobRecord> {
+  private async lock(trx: Tx, id: string, auth: AuthContext): Promise<JobRecord> {
     const rows = await trx.$queryRaw<
-      Array<{ id: string }>
-    >`select id from app.import_job where id = ${id}::uuid for update`;
-    if (rows.length === 0) throw problem.notFound('Import not found.');
+      Array<{ id: string; requested_by: string }>
+    >`select id, requested_by from app.import_job where id = ${id}::uuid for update`;
+    if (rows.length === 0 || !this.mayOpen(auth, rows[0]!.requested_by)) {
+      throw problem.notFound('Import not found.');
+    }
     return (await trx.import_job.findUnique({ where: { id } }))!;
+  }
+
+  /**
+   * M2-LOC-03 (ED-26): an import holds file content of whatever locations it touches, so a
+   * location-scoped principal sees and works on only the imports it started itself.
+   */
+  private mine(auth: AuthContext): { requested_by?: string } {
+    return isLocationScoped() ? { requested_by: auth.userId } : {};
+  }
+
+  private mayOpen(auth: AuthContext, requestedBy: string): boolean {
+    return !isLocationScoped() || requestedBy === auth.userId;
+  }
+
+  /**
+   * The location scope a dry run / commit carries to the worker (ED-26): the import:run scope of the
+   * request narrowed to the scopes of the write permissions the import uses (custom role bundles
+   * can scope them differently).
+   */
+  private async scopeColumns(trx: Tx, auth: AuthContext, job: JobRecord) {
+    let scope: readonly string[] | null = currentLocationScope();
+    const entity = job.entity_type as EntityType;
+    const needs = [WRITE_PERMISSION[entity]];
+    if (entity === 'asset' && this.options(job).on_match === 'update') needs.push('asset:update');
+    for (const permission of needs) {
+      scope = await intersectLocationScopes(trx, scope, locationScopeFor(auth.grants, permission));
+    }
+    return { location_scoped: scope !== null, location_scope: scope ? [...scope] : [] };
   }
 
   private wrongState(
@@ -428,6 +465,7 @@ export class ImportsService extends RegistryBase {
   async list(auth: AuthContext, query: ImportListQuery): Promise<Page<Record<string, unknown>>> {
     return this.tx(auth, async (trx) => {
       const filter = {
+        ...this.mine(auth),
         ...(query.state?.length ? { state: { in: query.state } } : {}),
         ...(query.entity_type ? { entity_type: query.entity_type } : {}),
       };
@@ -455,7 +493,7 @@ export class ImportsService extends RegistryBase {
     id: string,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const row = await trx.import_job.findUnique({ where: { id } });
+      const row = await trx.import_job.findFirst({ where: { id, ...this.mine(auth) } });
       if (!row) throw problem.notFound('Import not found.');
       return {
         data: importDto(row, true, permits(auth.permissions, 'import:run')),
@@ -473,7 +511,7 @@ export class ImportsService extends RegistryBase {
     body: ImportUpdate,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       assertIfMatch(ifMatch, job.version);
       const editable: ImportState[] = ['draft', 'uploaded', 'analyzed', 'mapped', 'dry_run_done'];
       if (!editable.includes(job.state as ImportState))
@@ -571,7 +609,14 @@ export class ImportsService extends RegistryBase {
     );
     await check(
       'location',
-      () => trx.location.findFirst({ where: { id: d.location!, archived_at: null } }),
+      // M2-LOC-03 (ED-26): outside the caller's scope is the same as unknown
+      async () =>
+        trx.location.findFirst({
+          // AND, not a spread: the scope filter is on `id` too and must not replace the id match
+          where: {
+            AND: [{ id: d.location!, archived_at: null }, await locationScopeWhere(trx, 'id')],
+          },
+        }),
       'location',
     );
     await check(
@@ -594,7 +639,7 @@ export class ImportsService extends RegistryBase {
     body: ImportAnalyze,
   ): Promise<Record<string, unknown>> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       const allowed: ImportState[] = [
         'draft',
         'uploaded',
@@ -688,7 +733,7 @@ export class ImportsService extends RegistryBase {
 
   async dryRun(auth: AuthContext, id: string): Promise<Record<string, unknown>> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       const allowed: ImportState[] = ['analyzed', 'mapped', 'dry_run_done'];
       if (!allowed.includes(job.state as ImportState))
         throw this.wrongState(job, 'a dry run', allowed);
@@ -713,6 +758,7 @@ export class ImportsService extends RegistryBase {
         where: { id },
         data: {
           state: 'dry_running',
+          ...(await this.scopeColumns(trx, auth, job)),
           cursor_row: 0,
           rows_processed: 0,
           plan_create: 0,
@@ -755,7 +801,7 @@ export class ImportsService extends RegistryBase {
     body: ImportCommit,
   ): Promise<Record<string, unknown>> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       if (job.state !== 'dry_run_done') throw this.wrongState(job, 'a commit', ['dry_run_done']);
       if (!job.dry_run_digest || job.dry_run_digest !== body.dry_run_digest) {
         throw new ApiProblem({
@@ -771,6 +817,7 @@ export class ImportsService extends RegistryBase {
         where: { id },
         data: {
           state: 'committing',
+          ...(await this.scopeColumns(trx, auth, job)),
           cursor_row: 0,
           rows_processed: 0,
           done_create: 0,
@@ -812,7 +859,7 @@ export class ImportsService extends RegistryBase {
 
   async cancel(auth: AuthContext, id: string): Promise<Record<string, unknown>> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       if (job.state === 'completed' || job.state === 'cancelled')
         throw this.wrongState(job, 'cancelling', [
           'draft',
@@ -853,7 +900,7 @@ export class ImportsService extends RegistryBase {
     options: Record<string, unknown>,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const job = await this.lock(trx, id);
+      const job = await this.lock(trx, id, auth);
       const allowed: ImportState[] = ['analyzed', 'mapped', 'dry_run_done'];
       if (!allowed.includes(job.state as ImportState))
         throw this.wrongState(job, 'applying a template', allowed);
@@ -910,7 +957,7 @@ export class ImportsService extends RegistryBase {
     page: { next_cursor: string | null; has_more: boolean };
   }> {
     return this.tx(auth, async (trx) => {
-      const job = await trx.import_job.findUnique({ where: { id } });
+      const job = await trx.import_job.findFirst({ where: { id, ...this.mine(auth) } });
       if (!job) throw problem.notFound('Import not found.');
       const phase =
         q.phase ?? (job.state === 'committing' || job.state === 'completed' ? 'commit' : 'dry_run');
@@ -977,8 +1024,8 @@ export class ImportsService extends RegistryBase {
     phase: string;
   } | null> {
     return this.tx(auth, async (trx) => {
-      const job = await trx.import_job.findUnique({
-        where: { id },
+      const job = await trx.import_job.findFirst({
+        where: { id, ...this.mine(auth) },
         select: { headers: true, state: true },
       });
       if (!job) return null;
@@ -1016,7 +1063,12 @@ export class ImportsService extends RegistryBase {
 
   async assertExists(auth: AuthContext, id: string): Promise<void> {
     await this.tx(auth, async (trx) => {
-      if (!(await trx.import_job.findUnique({ where: { id }, select: { id: true } })))
+      if (
+        !(await trx.import_job.findFirst({
+          where: { id, ...this.mine(auth) },
+          select: { id: true },
+        }))
+      )
         throw problem.notFound('Import not found.');
     });
   }
@@ -1029,7 +1081,7 @@ export class ImportsService extends RegistryBase {
     q: ImportValuesQuery,
   ): Promise<Record<string, unknown>> {
     return this.tx(auth, async (trx) => {
-      const job = await trx.import_job.findUnique({ where: { id } });
+      const job = await trx.import_job.findFirst({ where: { id, ...this.mine(auth) } });
       if (!job) throw problem.notFound('Import not found.');
       const entity = job.entity_type as EntityType;
       const kind = q.field as RefKind;

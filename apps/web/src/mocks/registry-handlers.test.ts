@@ -268,13 +268,17 @@ describe('mock registry (owner)', () => {
     const invited = await usersApi.invite({
       email: 'new@example.org',
       display_name: 'New',
-      role_id: tech.id,
+      role_assignments: [{ role_id: tech.id, scope_type: 'tenant' }],
     });
     expect(invited.status).toBe('invited');
     expect(
       (
         await fails(
-          usersApi.invite({ email: 'NEW@example.org', display_name: 'x', role_id: tech.id }),
+          usersApi.invite({
+            email: 'NEW@example.org',
+            display_name: 'x',
+            role_assignments: [{ role_id: tech.id }],
+          }),
         )
       ).status,
     ).toBe(409);
@@ -285,9 +289,10 @@ describe('mock registry (owner)', () => {
 
     const admins = (
       await usersApi.list({ role_id: roles.find((r) => r.key === 'tenant_admin')!.id })
-    ).data;
+    ).data.filter((u) => u.role_assignments.some((r) => r.scope_type === 'tenant'));
     expect(admins).toHaveLength(2);
-    // disable one of the two admins: fine; the last one: refused
+    // disable one of the two org-wide admins: fine; the last one: refused (a location
+    // administrator does not keep the organisation manageable)
     const [a, b] = admins;
     await usersApi.update(a!.id, { status: 'disabled' });
     const last = await fails(usersApi.update(b!.id, { status: 'disabled' }));
@@ -322,8 +327,15 @@ describe('mock registry (permissions are enforced server-side)', () => {
     expect((await usersApi.list()).data.length).toBeGreaterThan(0);
     const roles = (await getApi().http.GET('/v1/roles')).data!.data;
     expect(
-      (await fails(usersApi.invite({ email: 'a@b.co', display_name: 'A', role_id: roles[0]!.id })))
-        .status,
+      (
+        await fails(
+          usersApi.invite({
+            email: 'a@b.co',
+            display_name: 'A',
+            role_assignments: [{ role_id: roles[0]!.id }],
+          }),
+        )
+      ).status,
     ).toBe(403);
   });
 

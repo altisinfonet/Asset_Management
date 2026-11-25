@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { AuthContext } from '../auth/index.js';
 import type { JobContextBase } from '../jobs/index.js';
 import type { AuditWriter, JobQueue, OutboxPublisher, StorageAdapter } from '../ports/index.js';
-import type { Tx } from '../tenancy/index.js';
+import { runWithLocationScope, type Tx } from '../tenancy/index.js';
 import { flushAuditRows } from '../audit/index.js';
 import { withBulkSink } from '../context/bulk-writes.js';
 import { flushOutboxRows } from '../outbox/index.js';
@@ -361,6 +361,13 @@ export class ImportEngine {
     }
     if (!(await this.requesterActive(tx, job.requested_by)))
       return this.fail(tx, job, 'The user who started the import is no longer active.', ctx);
+    // M2-LOC-03 (ED-26): the batch runs with the location scope the dry run / commit was asked with
+    return runWithLocationScope(job.location_scoped ? job.location_scope : null, () =>
+      this.runStep(tx, tenantId, job, ctx),
+    );
+  }
+
+  private async runStep(tx: Tx, tenantId: string, job: JobRow, ctx: JobContextBase): Promise<void> {
     const env = await this.env(tx, job);
     const issues = await this.mappingIssues(tx, job);
     if (issues.length > 0)

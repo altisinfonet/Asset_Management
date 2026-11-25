@@ -167,6 +167,26 @@ export const SEED_USERS: Record<string, MockUser> = {
     mfaRequired: true,
     tenantName: ACME,
   },
+  // M2-LOC-03: the registry gives this account one location-scoped assignment (Room 101); the
+  // effective permissions and the scope come from there (see `withScope` in scope.ts)
+  [MOCK_ACCOUNTS.scopedTechnician]: {
+    id: '0190a6b2-0000-7000-8000-000000000011',
+    email: MOCK_ACCOUNTS.scopedTechnician,
+    display_name: 'Theo Scoped',
+    role: 'technician',
+    permissions: VIEWER_PERMISSIONS,
+    mfa: false,
+    tenantName: ACME,
+  },
+  [MOCK_ACCOUNTS.scopedAdmin]: {
+    id: '0190a6b2-0000-7000-8000-000000000012',
+    email: MOCK_ACCOUNTS.scopedAdmin,
+    display_name: 'Lara Local',
+    role: 'tenant_admin',
+    permissions: VIEWER_PERMISSIONS,
+    mfa: false,
+    tenantName: ACME,
+  },
 };
 
 function fresh(): MockState {

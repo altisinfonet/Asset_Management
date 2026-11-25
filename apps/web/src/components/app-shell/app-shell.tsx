@@ -48,6 +48,7 @@ import { Kbd } from '@/components/ui/kbd';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { useScan } from '@/components/scan/scan-provider';
 import { NAV_ITEMS, normalizePathname, type NavItem } from './nav-config';
+import { ScopeIndicator } from './scope-indicator';
 import { ShortcutsDialog } from './shortcuts-dialog';
 import { WorkflowProviders } from './workflow-providers';
 import { Brand, SidebarCollapseButton, SidebarNav } from './sidebar';
@@ -453,6 +454,8 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
           />
           <Breadcrumbs pathname={pathname} />
           <div className="flex-1" />
+          {/* M2-LOC-03: why a location-scoped user sees only part of the organisation */}
+          <ScopeIndicator className="max-w-[40vw] md:max-w-xs xl:max-w-md" />
 
           <form onSubmit={onScanSubmit} role="search" className="hidden w-64 sm:block">
             <label className="relative flex items-center">

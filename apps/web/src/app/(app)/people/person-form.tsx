@@ -26,7 +26,8 @@ export interface PersonFormDialogProps {
  */
 export function PersonFormDialog({ open, onOpenChange, person, onSaved }: PersonFormDialogProps) {
   const t = useT();
-  const { can } = useAuth();
+  const { can, locationScope } = useAuth();
+  const scoped = !!locationScope;
   const editing = person?.value;
 
   const fields: FormFieldSpec[] = [
@@ -88,15 +89,17 @@ export function PersonFormDialog({ open, onOpenChange, person, onSaved }: Person
       name: 'location_id',
       label: t('people.form.location'),
       kind: 'custom',
-      hint: t('people.form.locationHint'),
+      // M2-LOC-03: a location-scoped user gives every person a home location inside the scope
+      required: scoped,
+      hint: scoped ? t('locationScope.requiredHint') : t('people.form.locationHint'),
       render: ({ control, value, set, invalid }) => (
         <LocationPicker
           {...control}
           invalid={invalid}
-          clearable
+          clearable={!scoped}
           value={String(value)}
           onChange={set}
-          placeholder={t('people.form.noLocation')}
+          placeholder={scoped ? undefined : t('people.form.noLocation')}
         />
       ),
     },

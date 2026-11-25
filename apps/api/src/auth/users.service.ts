@@ -25,7 +25,14 @@ import type { AuthContext } from './auth-context.js';
 import { AuthMailer } from './auth-mailer.service.js';
 import { type SessionInfoDto, type UserDto, userDto } from './auth.dto.js';
 import type { RoleAssignmentBody, UserCreateBody, UserUpdateBody } from './auth.schemas.js';
-import { type GrantedRole, PolicyService, type PolicySubject } from './policy.service.js';
+import { PERMISSIONS } from './permissions.js';
+import {
+  type GrantedRole,
+  PolicyService,
+  type PolicySubject,
+  locationScopeFor,
+  permits,
+} from './policy.service.js';
 import { MfaService } from './mfa.service.js';
 import { SessionService } from './session.service.js';
 
@@ -215,6 +222,18 @@ export class UsersService {
         })
       ).map((c) => c.id),
     );
+    const locationIds = assignments.flatMap((a) =>
+      a.scope_type === 'location' && a.location_id ? [a.location_id] : [],
+    );
+    const locations = new Map(
+      (locationIds.length > 0
+        ? await trx.location.findMany({
+            where: { id: { in: locationIds } },
+            select: { id: true, archived_at: true, ancestor_ids: true },
+          })
+        : []
+      ).map((l) => [l.id, l]),
+    );
     assignments.forEach((a, i) => {
       const role = byId.get(a.role_id);
       if (!role) {
@@ -233,10 +252,28 @@ export class UsersService {
         });
       }
       if (a.scope_type === 'location') {
+        // M2-LOC-03 (ED-26): the grant covers the location and its whole subtree
+        const loc = a.location_id ? locations.get(a.location_id) : undefined;
+        if (!a.location_id || !loc || loc.archived_at) {
+          errors.push({
+            pointer: `/role_assignments/${i}/location_id`,
+            message: 'A location-scoped assignment needs an existing, active location_id.',
+            code: a.location_id ? 'not-found' : 'invalid',
+          });
+        }
+        if (a.company_id) {
+          errors.push({
+            pointer: `/role_assignments/${i}/company_id`,
+            message: 'A location-scoped assignment has no company_id.',
+            code: 'invalid',
+          });
+        }
+      }
+      if (a.scope_type === 'company' && a.location_id) {
         errors.push({
-          pointer: `/role_assignments/${i}/scope_type`,
-          message: 'Location-scoped roles become available with locations (M2).',
-          code: 'not-supported',
+          pointer: `/role_assignments/${i}/location_id`,
+          message: 'A company-scoped assignment has no location_id.',
+          code: 'invalid',
         });
       }
       if (a.scope_type === 'tenant' && (a.company_id || a.location_id)) {
@@ -251,6 +288,23 @@ export class UsersService {
     for (const role of roles) {
       if (!this.policy.canGrantRole(this.subject(auth), role.permissions)) {
         throw problem.forbidden('You cannot grant a role with more privileges than your own.');
+      }
+    }
+    // M2-LOC-03 (ED-26): nobody grants a permission wider than they hold it. Granting org-wide
+    // needs each permission of the role org-wide; granting at a location needs each permission
+    // org-wide or in a subtree that contains that location.
+    for (const a of assignments) {
+      const role = byId.get(a.role_id)!;
+      const target =
+        a.scope_type === 'location' ? (locations.get(a.location_id!)?.ancestor_ids ?? []) : null;
+      for (const permission of PERMISSIONS.filter((p) => permits(role.permissions, p))) {
+        const held = locationScopeFor(auth.grants, permission);
+        if (held === null) continue;
+        if (target === null || !held.some((root) => target.includes(root))) {
+          throw problem.forbidden(
+            'You cannot grant a role wider than you hold it: some of its permissions are limited to a location for you.',
+          );
+        }
       }
     }
     return byId;
@@ -300,7 +354,7 @@ export class UsersService {
             role_id: a.role_id,
             scope_type: a.scope_type,
             scope_company_id: a.scope_type === 'company' ? (a.company_id ?? null) : null,
-            scope_location_id: null,
+            scope_location_id: a.scope_type === 'location' ? (a.location_id ?? null) : null,
             created_by: auth.userId,
           })),
         });
@@ -502,12 +556,24 @@ export class UsersService {
 
         if (body.role_assignments !== undefined) {
           const roles = await this.resolveRoles(trx, auth, body.role_assignments);
-          const key = (a: { role_id: string; scope_type: string; company_id?: string | null }) =>
-            `${a.role_id}|${a.scope_type}|${a.scope_type === 'company' ? (a.company_id ?? '') : ''}`;
+          const key = (a: {
+            role_id: string;
+            scope_type: string;
+            company_id?: string | null;
+            location_id?: string | null;
+          }) =>
+            `${a.role_id}|${a.scope_type}|${a.scope_type === 'company' ? (a.company_id ?? '') : ''}|${
+              a.scope_type === 'location' ? (a.location_id ?? '') : ''
+            }`;
           const wanted = new Map(body.role_assignments.map((a) => [key(a), a]));
           const current = new Map(
             before.map((g) => [
-              key({ role_id: g.roleId, scope_type: g.scopeType, company_id: g.scopeCompanyId }),
+              key({
+                role_id: g.roleId,
+                scope_type: g.scopeType,
+                company_id: g.scopeCompanyId,
+                location_id: g.scopeLocationId,
+              }),
               g,
             ]),
           );
@@ -535,7 +601,7 @@ export class UsersService {
                   role_id: a.role_id,
                   scope_type: a.scope_type,
                   scope_company_id: a.scope_type === 'company' ? (a.company_id ?? null) : null,
-                  scope_location_id: null,
+                  scope_location_id: a.scope_type === 'location' ? (a.location_id ?? null) : null,
                   created_by: auth.userId,
                 })),
               });

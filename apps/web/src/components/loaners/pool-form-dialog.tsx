@@ -41,7 +41,8 @@ export function PoolFormDialog({
   const { toast } = useToast();
   const client = useQueryClient();
   const current = pool?.value;
-  const { can } = useAuth();
+  const { can, locationScope } = useAuth();
+  const scoped = !!locationScope;
   // the owner is one of the organisation's users; only someone who may read users can choose one
   const users = useQuery({
     queryKey: ['loaner-owner-users'],
@@ -70,15 +71,17 @@ export function PoolFormDialog({
         name: 'home_location_id',
         label: t('loanerPools.form.home'),
         kind: 'custom',
-        hint: t('loanerPools.form.homeHint'),
+        // M2-LOC-03: a location-scoped user gives every pool a home inside the scope
+        required: scoped,
+        hint: scoped ? t('locationScope.requiredHint') : t('loanerPools.form.homeHint'),
         render: ({ control, value, set, invalid }) => (
           <LocationPicker
             {...control}
             invalid={invalid}
-            clearable
+            clearable={!scoped}
             value={String(value)}
             onChange={set}
-            placeholder={t('common.none')}
+            placeholder={scoped ? undefined : t('common.none')}
           />
         ),
       },
@@ -176,7 +179,7 @@ export function PoolFormDialog({
       },
       { name: 'is_active', label: t('loanerPools.form.active'), kind: 'checkbox' },
     ],
-    [t, users.data],
+    [t, users.data, scoped],
   );
 
   const initial = useMemo<FormValues>(

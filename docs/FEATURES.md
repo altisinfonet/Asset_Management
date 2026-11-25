@@ -63,7 +63,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | User management                      | Invite, change role, disable, archive, resend or revoke an invitation, reset someone's MFA, end their sessions; cannot demote the last administrator or grant more than you hold |   ✅   |    M1     | AUTH-07, WEB-09 |
 | Users, roles and invitations screens | Settings > Users in the web app                                                                                                                                                  |   ✅   |    M1     | WEB-09          |
 | Role-aware navigation                | Menu entries and pages the signed-in user cannot open are hidden; the API enforces every request regardless                                                                      |   ✅   |    M1     | WEB-04          |
-| Location scoping for roles           | Limit a role assignment to a location subtree (for example one school)                                                                                                           |   ⏳   | M2 wave 3 | M2-LOC-03       |
+| Location scoping for roles           | Limit a role assignment to a location subtree (for example one school) on Settings > Users; outside it records look like they do not exist (404), lists, search, counts, exports and imports stay inside it; "Scoped to" in the top bar (ED-26) |   ✅   | M2 wave 3 | M2-LOC-03       |
 | Custom roles                         | Build your own permission bundles                                                                                                                                                |   ⏳   |    v2     | parked          |
 
 ## 3. Asset registry

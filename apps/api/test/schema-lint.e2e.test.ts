@@ -104,10 +104,15 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
       },
       {
         rule: '8. non-composite foreign key between tenant tables',
-        ddl: `create table app.zz_fk (id uuid primary key, tenant_id uuid not null references app.tenant (id), asset_id uuid references app.asset (id));
+        // The referenced tenant table is a fixture of the same (rolled back) transaction, never a live
+        // table: a foreign key to app.asset would hold a SHARE ROW EXCLUSIVE lock on app.asset until the
+        // rollback, and asset writes of the e2e files running in parallel then deadlock against it
+        // (seen as a 500 on a check-in in a pooled run).
+        ddl: `select app.create_tenant_table('zz_fk_parent', 'v text');
+              create table app.zz_fk (id uuid primary key, tenant_id uuid not null references app.tenant (id), parent_id uuid references app.zz_fk_parent (id));
               create index on app.zz_fk (tenant_id);
               select app.apply_tenant_conventions('app.zz_fk');`,
-        expected: /foreign key zz_fk_asset_id_fkey on app\.zz_fk must be composite/,
+        expected: /foreign key zz_fk_parent_id_fkey on app\.zz_fk must be composite/,
       },
       {
         rule: '9. unclassified table in schema app',

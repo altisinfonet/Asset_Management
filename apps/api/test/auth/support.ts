@@ -42,7 +42,8 @@ export async function startApp(
   const config = loadConfig({
     NODE_ENV: 'test',
     DATABASE_URL: env.databaseUrl!,
-    LOG_LEVEL: 'silent',
+    // E2E_LOG_LEVEL=error shows the server side of an unexpected 500 while diagnosing a run
+    LOG_LEVEL: process.env.E2E_LOG_LEVEL ?? 'silent',
     GIT_SHA: 'e2e',
     // Cheap argon2 so the suite is fast; the production defaults are covered by a unit test.
     ARGON2_MEMORY_KIB: '64',

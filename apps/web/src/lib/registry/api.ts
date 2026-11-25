@@ -646,16 +646,17 @@ export const usersApi = {
     const { data } = await http().GET('/v1/users/{id}', { params: { path: { id } } });
     return versioned(data as RegistryUser, `/v1/users/${id}`);
   },
+  /** Invite with one or more role assignments, each org-wide or limited to a location (M2-LOC-03). */
   async invite(body: {
     email: string;
     display_name: string;
-    role_id: string;
+    role_assignments: RegistryUser['role_assignments'];
   }): Promise<RegistryUser> {
     const { data } = await http().POST('/v1/users', {
       body: {
         email: body.email,
         display_name: body.display_name,
-        role_assignments: [{ role_id: body.role_id, scope_type: 'tenant' }],
+        role_assignments: body.role_assignments,
         send_invite: true,
       },
     });

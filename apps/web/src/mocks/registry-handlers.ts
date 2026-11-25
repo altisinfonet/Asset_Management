@@ -4,6 +4,7 @@ import { checkIfMatch, etagOf, problem, problemBody, requireSession } from './ht
 import {
   MOCK_ROLES,
   newResourceId,
+  roleAssignmentView,
   roleIdFor,
   type MockAsset,
   type MockUserRecord,
@@ -12,6 +13,7 @@ import {
 } from './registry-fixtures';
 import { locationPathText, subtreeIds } from '@/lib/registry/locations';
 import { mutateRegistry, registry } from './registry-state';
+import { inScope, scopedLocationErrors } from './scope';
 
 /**
  * Mock handlers for the registry endpoints of docs/engineering/openapi.yaml: categories, custom
@@ -1337,6 +1339,7 @@ const assetHandlers: HttpHandler[] = [
     const guard = requireSession(request, { permission: 'asset:read' });
     if (!guard.ok) return guard.response;
     const expand = csv(new URL(request.url).searchParams, 'expand');
+    const scope = guard.user.locationScope;
     return paginate(
       request,
       registry().assets,
@@ -1345,7 +1348,8 @@ const assetHandlers: HttpHandler[] = [
         emptyLast: ['location', 'assignee', 'due'],
         defaultSort: '-created_at',
         haystack: (a) => [a.asset_tag, a.serial, a.name, a.order_number],
-        filter: assetFilter,
+        // M2-LOC-03: a scoped principal lists only the assets inside its subtrees
+        filter: (a, p) => inScope(scope, a.location_id) && assetFilter(a, p),
       },
       (a) => expandAsset(a, expand),
     );
@@ -1355,7 +1359,9 @@ const assetHandlers: HttpHandler[] = [
     const guard = requireSession(request, { permission: 'asset:read' });
     if (!guard.ok) return guard.response;
     const asset = registry().assets.find((a) => a.id === params.id);
-    if (!asset) return problem(404, 'not-found', 'Not found');
+    if (!asset || !inScope(guard.user.locationScope, asset.location_id)) {
+      return problem(404, 'not-found', 'Not found');
+    }
     return oneAsset(asset, csv(new URL(request.url).searchParams, 'expand'));
   }),
 
@@ -1366,6 +1372,14 @@ const assetHandlers: HttpHandler[] = [
     if (!body) return problem(400, 'bad-request', 'Malformed JSON body');
     const outcome = validateAssetBody(body, registry());
     if (Array.isArray(outcome) && outcome.length > 0) return validation(outcome);
+    // M2-LOC-03: a scoped principal creates inside its scope, never without a location
+    const outside = scopedLocationErrors(
+      guard.user.locationScope,
+      body.location_id,
+      '/location_id',
+      true,
+    );
+    if (outside.length > 0) return validation(outside);
     if (!Array.isArray(outcome)) {
       return problem(409, 'conflict', outcome.conflict, {
         errors: [{ pointer: outcome.pointer, message: outcome.conflict, code: 'unique' }],
@@ -1431,7 +1445,9 @@ const assetHandlers: HttpHandler[] = [
     const guard = requireSession(request, { mutation: true, permission: 'asset:update' });
     if (!guard.ok) return guard.response;
     const existing = registry().assets.find((a) => a.id === params.id);
-    if (!existing) return problem(404, 'not-found', 'Not found');
+    if (!existing || !inScope(guard.user.locationScope, existing.location_id)) {
+      return problem(404, 'not-found', 'Not found');
+    }
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
     if (existing.archived_at) {
@@ -1443,6 +1459,13 @@ const assetHandlers: HttpHandler[] = [
     if (!body) return problem(400, 'bad-request', 'Malformed JSON body');
     const outcome = validateAssetBody(body, registry(), existing);
     if (Array.isArray(outcome) && outcome.length > 0) return validation(outcome);
+    const outside = scopedLocationErrors(
+      guard.user.locationScope,
+      body.location_id,
+      '/location_id',
+      false,
+    );
+    if (outside.length > 0) return validation(outside);
     if (!Array.isArray(outcome)) {
       return problem(409, 'conflict', outcome.conflict, {
         errors: [{ pointer: outcome.pointer, message: outcome.conflict, code: 'unique' }],
@@ -1456,7 +1479,9 @@ const assetHandlers: HttpHandler[] = [
     const guard = requireSession(request, { mutation: true, permission: 'asset:delete' });
     if (!guard.ok) return guard.response;
     const existing = registry().assets.find((a) => a.id === params.id);
-    if (!existing) return problem(404, 'not-found', 'Not found');
+    if (!existing || !inScope(guard.user.locationScope, existing.location_id)) {
+      return problem(404, 'not-found', 'Not found');
+    }
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
     if (existing.archived_at) return problem(409, 'conflict', 'The asset is already archived');
@@ -1645,19 +1670,95 @@ const searchHandler = http.get('/v1/search', ({ request }) => {
 // ---- users, roles, invitations --------------------------------------------------------------------------
 
 const adminRoleId = roleIdFor('tenant_admin');
+/** An org-wide administrator (a location-scoped one does not keep the organisation manageable). */
 const isActiveAdmin = (u: MockUserRecord) =>
   !u.archived_at &&
   u.status === 'active' &&
-  u.role_assignments.some((r) => r.role_id === adminRoleId);
+  u.role_assignments.some(
+    (r) => r.role_id === adminRoleId && (r.scope_type ?? 'tenant') === 'tenant',
+  );
 
+type AssignmentInput = {
+  role_id?: unknown;
+  scope_type?: unknown;
+  company_id?: unknown;
+  location_id?: unknown;
+};
+
+/** The checks of `resolveRoles` in apps/api/src/auth/users.service.ts, with its pointers and codes. */
 function validateRoleAssignments(value: unknown): FieldError[] {
   if (!Array.isArray(value) || value.length === 0) {
     return [{ pointer: '/role_assignments', message: 'choose a role', code: 'required' }];
   }
-  return value.flatMap((entry, i) =>
-    MOCK_ROLES.some((r) => r.id === (entry as { role_id?: string }).role_id)
-      ? []
-      : [{ pointer: `/role_assignments/${i}/role_id`, message: 'unknown role', code: 'invalid' }],
+  const errors: FieldError[] = [];
+  value.forEach((raw, i) => {
+    const a = (raw ?? {}) as AssignmentInput;
+    const at = (field: string) => `/role_assignments/${i}/${field}`;
+    if (!MOCK_ROLES.some((r) => r.id === a.role_id)) {
+      errors.push({ pointer: at('role_id'), message: 'Unknown role.', code: 'not-found' });
+      return;
+    }
+    const scope = a.scope_type ?? 'tenant';
+    if (!['tenant', 'company', 'location'].includes(String(scope))) {
+      errors.push({ pointer: at('scope_type'), message: 'Invalid option.', code: 'invalid' });
+      return;
+    }
+    if (scope === 'company' && !a.company_id) {
+      errors.push({
+        pointer: at('company_id'),
+        message: 'A company-scoped assignment needs an existing company_id.',
+        code: 'invalid',
+      });
+    }
+    if (scope === 'location') {
+      // M2-LOC-03 (ED-26): the grant covers the location and its whole subtree
+      const location = registry().locations.find((l) => l.id === a.location_id);
+      if (!a.location_id || !location || location.archived_at) {
+        errors.push({
+          pointer: at('location_id'),
+          message: 'A location-scoped assignment needs an existing, active location_id.',
+          code: a.location_id ? 'not-found' : 'invalid',
+        });
+      }
+      if (a.company_id) {
+        errors.push({
+          pointer: at('company_id'),
+          message: 'A location-scoped assignment has no company_id.',
+          code: 'invalid',
+        });
+      }
+    }
+    if (scope === 'company' && a.location_id) {
+      errors.push({
+        pointer: at('location_id'),
+        message: 'A company-scoped assignment has no location_id.',
+        code: 'invalid',
+      });
+    }
+    if (scope === 'tenant' && (a.company_id || a.location_id)) {
+      errors.push({
+        pointer: at('scope_type'),
+        message: 'A tenant-scoped assignment has no company_id or location_id.',
+        code: 'invalid',
+      });
+    }
+  });
+  return errors;
+}
+
+/** The assignments as stored and returned: an id each, `company_id` / `location_id` always present. */
+function storedAssignments(
+  value: unknown,
+  current: readonly S['RoleAssignment'][] = [],
+): S['RoleAssignment'][] {
+  // like the API, an unchanged assignment (same role and scope) keeps its id
+  const key = (a: S['RoleAssignment']) =>
+    [a.role_id, a.scope_type ?? 'tenant', a.company_id ?? '', a.location_id ?? ''].join('|');
+  return (value as Array<S['RoleAssignment']>).map((a) =>
+    roleAssignmentView(
+      a,
+      current.find((c) => key(c) === key(a))?.id ?? newResourceId('roleAssignment'),
+    ),
   );
 }
 
@@ -1745,7 +1846,7 @@ const userHandlers: HttpHandler[] = [
         email: email!,
         display_name: text(body.display_name)!,
         status: 'invited',
-        role_assignments: body.role_assignments as S['RoleAssignment'][],
+        role_assignments: storedAssignments(body.role_assignments),
         mfa_enabled: false,
         last_login_at: null,
         invitation_expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
@@ -1806,7 +1907,7 @@ const userHandlers: HttpHandler[] = [
     const draft: MockUserRecord = {
       ...existing,
       ...(body.role_assignments
-        ? { role_assignments: body.role_assignments as S['RoleAssignment'][] }
+        ? { role_assignments: storedAssignments(body.role_assignments, existing.role_assignments) }
         : {}),
       ...(body.status ? { status: body.status as 'active' | 'disabled' } : {}),
     };
@@ -1820,8 +1921,7 @@ const userHandlers: HttpHandler[] = [
     const user = mutateRegistry((data) => {
       const target = data.users.find((u) => u.id === existing.id)!;
       if (body.display_name !== undefined) target.display_name = text(body.display_name)!;
-      if (body.role_assignments !== undefined)
-        target.role_assignments = body.role_assignments as S['RoleAssignment'][];
+      if (body.role_assignments !== undefined) target.role_assignments = draft.role_assignments;
       if (body.status !== undefined) target.status = body.status as 'active' | 'disabled';
       target.updated_at = nowIso();
       target._v += 1;

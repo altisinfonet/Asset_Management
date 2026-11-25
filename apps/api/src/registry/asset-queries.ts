@@ -1,5 +1,5 @@
 import { ApiProblem, type SortTerm, parseSort } from '../platform/index.js';
-import { Prisma, type Tx } from '../tenancy/index.js';
+import { isLocationScoped, locationScopeSql, Prisma, type Tx } from '../tenancy/index.js';
 import { isoDate } from './dto.js';
 import type { AssetListQuery } from './schemas.js';
 
@@ -260,7 +260,7 @@ export const ASSET_FIELDS = Object.keys(
 export async function loadAssetRows(trx: Tx, where: Prisma.Sql, limit = 1000): Promise<AssetRow[]> {
   const rows = await trx.$queryRaw<
     BareAssetRow[]
-  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} limit ${limit}`;
+  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where ${where} and ${assetScopeSql()} limit ${limit}`;
   return withStatus(trx, rows);
 }
 
@@ -268,7 +268,8 @@ export async function loadAssetRows(trx: Tx, where: Prisma.Sql, limit = 1000): P
 export async function lockAsset(trx: Tx, id: string): Promise<AssetRow | null> {
   const rows = await trx.$queryRaw<
     BareAssetRow[]
-  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where a.id = ${id}::uuid for update of a`;
+  >`select ${ASSET_COLUMNS} ${ASSET_FROM} where a.id = ${id}::uuid and ${assetScopeSql()}
+      for update of a`;
   return rows[0] ? (await withStatus(trx, rows))[0]! : null;
 }
 
@@ -491,9 +492,18 @@ export interface CustomFieldFilter {
   value: unknown;
 }
 
-/** The WHERE conditions of `GET /v1/assets` (without the cursor). */
+/**
+ * M2-LOC-03 (ED-26): "the asset `a` is inside the location scope of the current transaction"
+ * (`true` when not scoped). Every asset read and write path goes through it: the load and lock
+ * helpers, the list / count / selection conditions, scan resolve and search. An asset with no
+ * location is outside every scope.
+ */
+export const assetScopeSql = (): Prisma.Sql => locationScopeSql(Prisma.sql`a.location_id`);
+
+/** The WHERE conditions of `GET /v1/assets` (without the cursor), location scope included. */
 export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Prisma.Sql[] {
   const c: Prisma.Sql[] = [];
+  if (isLocationScoped()) c.push(assetScopeSql());
   if (q.archived === 'exclude') c.push(Prisma.sql`a.archived_at is null`);
   else if (q.archived === 'only') c.push(Prisma.sql`a.archived_at is not null`);
 

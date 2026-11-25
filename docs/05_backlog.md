@@ -668,6 +668,7 @@ Status: partial (M2 wave 1) - `asset.location_id` FK, writable on create/update,
 
 #### M2-LOC-03 - Location scoping for roles (Should)
 Size: L - Owner: Claude - Deps: M2-LOC-01, M1-AUTH-01
+Status: done (M2 wave 3 part 2, ED-26) - `scope_type=location` role assignments set on Settings → Users and enforced per permission by an application-layer predicate (`location_id IN` the subtree; RLS stays tenant-only); out of scope is 404 / absent / 422 `not-found` as a target, also for scan resolve and check-out targets; org-only permissions never granted by a scoped assignment; exports and imports carry the requester's scope to the worker (migration 0150); notification recipients filtered; `GET /v1/auth/me` `location_scope` and the "Scoped to" indicator; e2e per surface (`test/scoping`) and a scoped route replay over every route (`test/isolation/scope-replay.e2e.test.ts`).
 - [ ] Role assignments with `scope_type=location` restrict a principal to a location subtree; `TenantRepository` adds the subtree predicate to every asset-related query for scoped principals.
 - [ ] Out-of-scope resources return 404 (not 403), including scan resolve and check-out targets.
 - [ ] Added to the route-replay harness with a scoped-user fixture; RLS stays tenant-only (scoping is an additional app-layer filter).
@@ -735,7 +736,7 @@ Size: M - Owner: Claude - Deps: M2-LIFE-04
 Status: partial (M2 wave 1) - `GET /v1/assets/{id}/history` and `GET /v1/people/{id}/history` (cursor, actor `{id, display_name}`, filters), `HistoryEvent.payload` documented per event type in the contract, rebuilt from the audit rows in a test; repair and attachment events come with their stories; location scoping with M2-LOC-03.
 - [ ] `GET /v1/assets/{id}/history` returns a unified, cursor-paginated timeline derived from assignments, moves, status changes, repairs and attachments, with actor and note; also available per person.
 - [ ] Timeline entries are reproducible from audit/events (a test rebuilds the timeline from audit rows and compares).
-- [ ] Respects location scoping (M2-LOC-03) when enabled.
+- [x] Respects location scoping (M2-LOC-03) when enabled (asset history 404 outside the scope; a person's timeline shows only in-scope assets, ED-26).
 
 #### M2-LIFE-07 - Check-out/in/transfer UI
 Size: L - Owner: Both - Deps: M2-LIFE-04, M2-USR-02, M2-FILE-04

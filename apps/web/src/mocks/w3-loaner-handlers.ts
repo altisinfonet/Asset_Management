@@ -27,6 +27,7 @@ import {
   type Body,
 } from './registry-handlers';
 import { mutateRegistry, registry } from './registry-state';
+import { scopedLocationErrors } from './scope';
 import { checkInt, checkText, checkUuids, isUuid, rejectUnknown } from './w2-common';
 import { mutateW3, newW3Id, w3, w3Id, type MockMember, type MockPool } from './w3-state';
 
@@ -601,6 +602,18 @@ const poolHandlers: HttpHandler[] = [
     const body = await readBody(request);
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors = validatePool(body, true);
+    if (errors.length === 0) {
+      // M2-LOC-03: a scoped principal gives every new pool a home location inside its scope
+      errors.push(
+        ...scopedLocationErrors(
+          guard.user.locationScope,
+          body.home_location_id,
+          '/home_location_id',
+          true,
+          'A home location inside your scope is required.',
+        ),
+      );
+    }
     if (errors.length > 0) return validation(errors);
     const name = String(body.name).trim();
     if (w3().pools.some((p) => !p.archived_at && sameName(p.name, name))) {

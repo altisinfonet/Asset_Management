@@ -26,7 +26,13 @@ import {
   stalePrecondition,
   type TxScope,
 } from '../registry/index.js';
-import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  isUniqueViolation,
+  locationScopeSql,
+  type Tx,
+} from '../tenancy/index.js';
 import type { DepartmentCreate, DepartmentListQuery, DepartmentUpdate } from './schemas.js';
 
 type DepartmentRow = NonNullable<Awaited<ReturnType<Tx['department']['findUnique']>>>;
@@ -125,7 +131,10 @@ export class DepartmentsService extends RegistryBase {
     });
   }
 
-  /** Live people and assets of each department, from two grouped queries over the given ids. */
+  /**
+   * Live people and assets of each department, from two grouped queries over the given ids; for a
+   * location-scoped caller only those inside the scope are counted (M2-LOC-03, ED-26).
+   */
   private async counts(trx: Tx, ids: string[]): Promise<Map<string, DepartmentCounts>> {
     const out = new Map<string, DepartmentCounts>();
     if (ids.length === 0) return out;
@@ -133,10 +142,12 @@ export class DepartmentsService extends RegistryBase {
       trx.$queryRaw<Array<{ department_id: string; n: bigint }>>`
         select department_id, count(*) as n from app.person
          where department_id = any(${ids}::uuid[]) and archived_at is null
+           and ${locationScopeSql(Prisma.sql`location_id`)}
          group by department_id`,
       trx.$queryRaw<Array<{ department_id: string; n: bigint }>>`
         select department_id, count(*) as n from app.asset
          where department_id = any(${ids}::uuid[]) and archived_at is null
+           and ${locationScopeSql(Prisma.sql`location_id`)}
          group by department_id`,
     ]);
     for (const id of ids) out.set(id, { person_count: 0, asset_count: 0 });

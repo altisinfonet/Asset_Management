@@ -6,6 +6,7 @@ import { FormDialog, type FormFieldSpec, type FormValues } from '@/components/re
 import { LocationPicker } from '@/components/registry/location-picker';
 import { useToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
+import { useAuth } from '@/lib/auth/auth-context';
 import { useLookups } from '@/lib/registry/queries';
 import {
   accessoriesApi,
@@ -49,6 +50,7 @@ export function StockFormDialog({
   const categories = useStockCategories(kind);
   const editing = !!item;
   const current = item?.value;
+  const scoped = !!useAuth().locationScope;
 
   const fields = useMemo<FormFieldSpec[]>(() => {
     const list: FormFieldSpec[] = [
@@ -103,14 +105,17 @@ export function StockFormDialog({
         name: 'location_id',
         label: t('stockForm.location'),
         kind: 'custom',
+        // M2-LOC-03: a location-scoped user keeps stock inside the scope (the API refuses none)
+        required: scoped,
+        hint: scoped ? t('locationScope.requiredHint') : undefined,
         render: ({ control, value, set, invalid }) => (
           <LocationPicker
             {...control}
             invalid={invalid}
-            clearable
+            clearable={!scoped}
             value={String(value)}
             onChange={set}
-            placeholder={t('stockForm.none')}
+            placeholder={scoped ? undefined : t('stockForm.none')}
           />
         ),
       },
@@ -135,7 +140,7 @@ export function StockFormDialog({
     }
     list.push({ name: 'notes', label: t('stockForm.notes'), kind: 'textarea' });
     return list;
-  }, [t, kind, editing, categories.data, lookups.manufacturers, lookups.vendors]);
+  }, [t, kind, editing, categories.data, lookups.manufacturers, lookups.vendors, scoped]);
 
   const initial = useMemo<FormValues>(
     () => ({

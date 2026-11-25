@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { currentRequestId } from '../context/request-context.js';
+import { currentRequestContext, currentRequestId } from '../context/request-context.js';
 import type { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -16,6 +16,13 @@ export interface TenantContext {
   actorId?: string;
   /** correlation id: becomes `app.request_id` for the transaction. */
   requestId?: string;
+  /**
+   * M2-LOC-03 (ED-26): root ids of the location subtrees the transaction may see and change; `null`
+   * = not limited. Absent = inherit the ambient request's scope (set by the auth guard), so every
+   * transaction of a scoped request is scoped without each caller passing it. Jobs that act for a
+   * user (an export, an import commit) pass it explicitly.
+   */
+  locationScope?: readonly string[] | null;
 }
 
 /** Interactive transaction limits (Prisma defaults to 2 s wait / 5 s run, too tight for imports). */
@@ -90,12 +97,24 @@ export async function withTenantTx<T>(
   const effectiveRequestId = ctx.requestId ?? currentRequestId();
   const reqId = effectiveRequestId === undefined ? '' : requestId.parse(effectiveRequestId);
 
+  const scope =
+    ctx.locationScope !== undefined
+      ? ctx.locationScope
+      : (currentRequestContext()?.locationScope ?? null);
+  const locationScope = scope === null ? null : scope.map((id) => uuid.parse(id));
+
   const outer = active.getStore();
   if (outer) {
     if (outer.ctx.tenantId !== tenantId) {
       throw new Error(
         `nested withTenantTx for a different tenant (${tenantId}) inside tenant ${outer.ctx.tenantId}`,
       );
+    }
+    // M2-LOC-03 (ED-26): an explicit scope on a nested call (a job acting for a scoped user inside
+    // the job's own transaction) narrows the context for that call to the intersection of both
+    // scopes; it never widens a scoped one.
+    if (ctx.locationScope !== undefined && locationScope !== null) {
+      return runWithLocationScope(locationScope, () => fn(outer.trx));
     }
     return fn(outer.trx);
   }
@@ -106,7 +125,10 @@ export async function withTenantTx<T>(
                                    set_config('app.actor_id', ${actorId}, true),
                                    set_config('app.request_id', ${reqId}, true)`;
       return active.run(
-        { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId } },
+        {
+          trx,
+          ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId, locationScope },
+        },
         () => fn(trx),
       );
     },
@@ -115,6 +137,49 @@ export async function withTenantTx<T>(
       timeout: options.timeoutMs ?? DEFAULT_TX_OPTIONS.timeoutMs,
     },
   );
+}
+
+/**
+ * M2-LOC-03 (ED-26): the intersection of two location scopes (root ids of subtrees; `null` = not
+ * limited): the roots of either side that lie inside a subtree of the other. `[]` = nothing.
+ */
+export async function intersectLocationScopes(
+  trx: Tx,
+  a: readonly string[] | null,
+  b: readonly string[] | null,
+): Promise<readonly string[] | null> {
+  if (a === null) return b;
+  if (b === null) return a;
+  const ids = [...new Set([...a, ...b])].map((id) => uuid.parse(id));
+  if (ids.length === 0) return [];
+  const rows = await trx.$queryRaw<Array<{ id: string; ancestor_ids: string[] }>>`
+    select id, ancestor_ids from app.location where id = any(${ids}::uuid[])`;
+  const ancestors = new Map(rows.map((r) => [r.id, r.ancestor_ids]));
+  const inside = (root: string, others: readonly string[]) =>
+    others.some((o) => ancestors.get(root)?.includes(o) ?? false);
+  const out = new Set<string>();
+  for (const r of a) if (inside(r, b)) out.add(r);
+  for (const r of b) if (inside(r, a)) out.add(r);
+  return [...out].sort();
+}
+
+/**
+ * M2-LOC-03 (ED-26): runs `fn` inside the enclosing tenant transaction, narrowed to `scope` (the
+ * intersection with the current scope): a worker job acting for a scoped user, or a service that
+ * also needs a second permission whose grants are scoped differently. `null` leaves the context
+ * as it is; the result is never wider than the current scope. Throws outside a tenant transaction.
+ */
+export async function runWithLocationScope<T>(
+  scope: readonly string[] | null,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const store = active.getStore();
+  if (!store) throw new NoTenantTransactionError();
+  if (scope === null) return fn();
+  const current = store.ctx.locationScope ?? null;
+  const locationScope = await intersectLocationScopes(store.trx, current, scope);
+  if (locationScope === current) return fn();
+  return active.run({ trx: store.trx, ctx: { ...store.ctx, locationScope } }, fn);
 }
 
 /**

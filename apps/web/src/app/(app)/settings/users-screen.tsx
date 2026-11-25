@@ -39,6 +39,13 @@ import { useRoles } from '@/lib/registry/queries';
 import type { Person, RegistryUser, Role, SessionInfo } from '@/lib/registry/types';
 import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
+import {
+  accessValues,
+  assignmentsFrom,
+  useAccessFields,
+  useAssignmentLabel,
+  type Assignment,
+} from './user-access';
 
 const USERS_KEY = ['users'] as const;
 
@@ -72,8 +79,9 @@ export function UsersScreen() {
     [persons.data],
   );
 
-  const roleName = (user: RegistryUser) =>
-    roles.data?.find((r) => r.id === user.role_assignments[0]?.role_id)?.name ?? '';
+  const { label: assignmentLabel } = useAssignmentLabel(roles.data ?? []);
+  // every assignment, with where a scoped one applies ("Technician at Room 101")
+  const roleName = (user: RegistryUser) => user.role_assignments.map(assignmentLabel).join(', ');
   const active = (users.data ?? []).filter((u) => u.status !== 'invited');
   const pending = (users.data ?? []).filter((u) => u.status === 'invited');
 
@@ -128,6 +136,10 @@ export function UsersScreen() {
             />
           </TabsContent>
           <TabsContent value="roles">
+            {/* M2-LOC-03: scoping is per role assignment, not a property of the role */}
+            <Banner tone="info" className="mb-4">
+              {t('locationScope.rolesNote')}
+            </Banner>
             <RolesTable roles={roles.data ?? []} loading={roles.isLoading} />
           </TabsContent>
         </Tabs>
@@ -165,6 +177,8 @@ function UsersTable({
   const [renaming, setRenaming] = useState<RegistryUser | null>(null);
   const [linking, setLinking] = useState<RegistryUser | null>(null);
   const [unlinking, setUnlinking] = useState<RegistryUser | null>(null);
+  const [access, setAccess] = useState<RegistryUser | null>(null);
+  const { label: assignmentLabel, where } = useAssignmentLabel(roles);
 
   const fail = (err: unknown) => {
     const ui = getApi().toUiError(err);
@@ -173,8 +187,19 @@ function UsersTable({
 
   const changeRole = async (user: RegistryUser, roleId: string) => {
     try {
+      // the first assignment gets the new role and keeps where it applies (M2-LOC-03)
+      const [first, ...rest] = user.role_assignments;
+      const keep = ({ role_id, scope_type, company_id, location_id }: Assignment) => ({
+        role_id,
+        scope_type,
+        ...(company_id ? { company_id } : {}),
+        ...(location_id ? { location_id } : {}),
+      });
       await usersApi.update(user.id, {
-        role_assignments: [{ role_id: roleId, scope_type: 'tenant' }],
+        role_assignments: [
+          first ? { ...keep(first), role_id: roleId } : { role_id: roleId, scope_type: 'tenant' },
+          ...rest.map(keep),
+        ],
       });
       await refresh();
       toast({ variant: 'success', title: t('users.roleChanged', { name: user.display_name }) });
@@ -223,18 +248,36 @@ function UsersTable({
       {
         id: 'role',
         header: t('users.columns.role'),
-        cell: (u) => (
-          <Select
-            aria-label={t('users.roleOf', { name: u.display_name })}
-            value={u.role_assignments[0]?.role_id}
-            disabled={!manage || u.status === 'disabled'}
-            onValueChange={(roleId) => void changeRole(u, roleId)}
-            options={roles.map((r) => ({ value: r.id, label: r.name }))}
-            size="sm"
-            variant="ghost"
-            className="-ml-2 min-w-40"
-          />
-        ),
+        cell: (u) => {
+          const [first, ...rest] = u.role_assignments;
+          const place = first ? where(first) : '';
+          return (
+            <div className="flex flex-col items-start">
+              <span className="flex flex-wrap items-center gap-x-1">
+                <Select
+                  aria-label={t('users.roleOf', { name: u.display_name })}
+                  value={first?.role_id}
+                  disabled={!manage || u.status === 'disabled'}
+                  onValueChange={(roleId) => void changeRole(u, roleId)}
+                  options={roles.map((r) => ({ value: r.id, label: r.name }))}
+                  size="sm"
+                  variant="ghost"
+                  className="-ml-2 min-w-40"
+                />
+                {place ? (
+                  <span className="text-sm text-muted" data-testid="role-scope">
+                    {place}
+                  </span>
+                ) : null}
+              </span>
+              {rest.map((a, i) => (
+                <span key={a.id ?? i} className="text-sm text-muted">
+                  {assignmentLabel(a)}
+                </span>
+              ))}
+            </div>
+          );
+        },
       },
       {
         id: 'status',
@@ -275,6 +318,9 @@ function UsersTable({
                 <DropdownMenuItem onSelect={() => setRenaming(u)}>
                   {t('users.actions.rename')}
                 </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setAccess(u)}>
+                  {t('locationScope.edit')}
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setLinking(u)}>
                   {t('loginLink.linkPerson')}
                 </DropdownMenuItem>
@@ -307,7 +353,7 @@ function UsersTable({
     ],
     // The handlers close over current toast/refresh; the table only needs to re-render with data.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, roles, manage, me?.user.id, formatDateTime, personOfLogin],
+    [t, roles, manage, me?.user.id, formatDateTime, personOfLogin, where, assignmentLabel],
   );
 
   return (
@@ -399,7 +445,53 @@ function UsersTable({
         }}
       />
       <SessionsDialog user={sessionsOf} onClose={() => setSessionsOf(null)} />
+      <AccessDialog
+        key={access?.id ?? 'access'}
+        user={access}
+        roles={roles}
+        onClose={() => setAccess(null)}
+      />
     </>
+  );
+}
+
+/** Role and access of a login: each assignment applies to the whole organisation or one location. */
+function AccessDialog({
+  user,
+  roles,
+  onClose,
+}: {
+  user: RegistryUser | null;
+  roles: Role[];
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const { toast } = useToast();
+  const refresh = useRefreshUsers();
+  const original = user?.role_assignments ?? [];
+  const count = Math.max(original.length, 1);
+  const fields = useAccessFields(roles, count, original);
+  return (
+    <FormDialog
+      open={user !== null}
+      onOpenChange={(open) => !open && onClose()}
+      title={t('locationScope.editTitle', { name: user?.display_name ?? '' })}
+      description={t('locationScope.editDescription')}
+      fields={fields}
+      initial={accessValues(original)}
+      submitLabel={t('common.save')}
+      onSubmit={async (values) => {
+        if (!user) return;
+        await usersApi.update(user.id, {
+          role_assignments: assignmentsFrom(values, count, original),
+        });
+        await refresh();
+        toast({
+          variant: 'success',
+          title: t('locationScope.saved', { name: user.display_name }),
+        });
+      }}
+    />
   );
 }
 
@@ -608,6 +700,8 @@ function InviteDialog({
   const { t } = useI18n();
   const { toast } = useToast();
   const refresh = useRefreshUsers();
+  // one role assignment: the role and where it applies (M2-LOC-03)
+  const access = useAccessFields(roles, 1);
   return (
     <FormDialog
       open={open}
@@ -617,26 +711,19 @@ function InviteDialog({
       fields={[
         { name: 'display_name', label: t('users.form.displayName'), kind: 'text', required: true },
         { name: 'email', label: t('users.form.email'), kind: 'email', required: true },
-        {
-          name: 'role_id',
-          label: t('users.form.role'),
-          kind: 'select',
-          required: true,
-          placeholder: t('common.choose'),
-          options: roles.map((r) => ({ value: r.id, label: r.name })),
-        },
+        ...access,
       ]}
       initial={{
         display_name: '',
         email: '',
-        role_id: roles.find((r) => r.key === 'viewer')?.id ?? '',
+        ...accessValues([], roles.find((r) => r.key === 'viewer')?.id ?? ''),
       }}
       submitLabel={t('users.sendInvite')}
       onSubmit={async (values) => {
         const user = await usersApi.invite({
           email: String(values.email).trim(),
           display_name: String(values.display_name).trim(),
-          role_id: String(values.role_id),
+          role_assignments: assignmentsFrom(values, 1),
         });
         await refresh();
         toast({ variant: 'success', title: t('users.invited', { email: user.email }) });

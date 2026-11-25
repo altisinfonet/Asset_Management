@@ -2,7 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { type OutboxDelivery, OutboxSubscribers } from '../outbox/index.js';
 import { NOTIFIER, type Notifier } from '../ports/index.js';
 import type { Tx } from '../tenancy/index.js';
-import { usersWithRoles } from './recipients.js';
+import { keepInScope, usersWithRoles } from './recipients.js';
 import { NOTIFICATION_SUBSCRIPTIONS, type Subscription } from './subscriptions.js';
 import { typeDef } from './types.js';
 
@@ -41,13 +41,22 @@ export class NotificationSubscribers implements OnModuleInit {
     // An administrator may re-address a type that is meant for "users who hold a permission".
     const roles =
       def.roleConfigurable && rule && rule.recipient_roles.length > 0 ? rule.recipient_roles : null;
-    const recipients = roles ? await usersWithRoles(tx, roles) : await sub.recipients(event, tx);
+    const candidates = roles ? await usersWithRoles(tx, roles) : await sub.recipients(event, tx);
     // Addresses without a login (ED-24); an administrator who re-addressed the type to roles wants only those.
     const emails = !roles && sub.emailRecipients ? await sub.emailRecipients(event, tx) : [];
-    if (recipients.length === 0 && emails.length === 0) return;
+    if (candidates.length === 0 && emails.length === 0) return;
 
     const described = await sub.describe(event, tx);
     if (!described) return;
+    // M2-LOC-03 (ED-26): a location-scoped user is not told about things outside their scope,
+    // except the holder the event is about (their own check-out or loan)
+    const holderLogin = await loginOf(tx, event.payload.personId);
+    const recipients = await keepInScope(
+      tx,
+      candidates,
+      described.entity,
+      new Set(holderLogin ? [holderLogin] : []),
+    );
     if (recipients.length > 0) {
       await this.notifier.notify(tx, {
         type: sub.type,
@@ -66,4 +75,11 @@ export class NotificationSubscribers implements OnModuleInit {
       });
     }
   }
+}
+
+/** The login account of the person a payload names, if any. */
+async function loginOf(tx: Tx, personId: unknown): Promise<string | null> {
+  if (typeof personId !== 'string' || !/^[0-9a-f-]{36}$/i.test(personId)) return null;
+  const person = await tx.person.findUnique({ where: { id: personId }, select: { user_id: true } });
+  return person?.user_id ?? null;
 }

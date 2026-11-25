@@ -1,4 +1,5 @@
 import type { OutboxDelivery } from '../outbox/index.js';
+import { locationScopeFor, type GrantedRole } from '../auth/index.js';
 import type { Tx } from '../tenancy/index.js';
 
 /**
@@ -136,3 +137,63 @@ export const loanBorrowerWithoutLogin =
     const wanted = pool.email_borrowers_without_login ?? person.kind !== 'student';
     return wanted ? [{ email: person.email.trim() }] : [];
   };
+
+/**
+ * M2-LOC-03 (ED-26): drops the recipients whose location scope does not contain the subject of the
+ * notification (an asset, accessory or consumable, by its location). Org-wide users keep everything;
+ * the ids in `exempt` (the subject's own holder, for example) are always kept. Subjects that are not
+ * location-bound (a user's own export, import or label batch) are not filtered.
+ */
+export async function keepInScope(
+  tx: Tx,
+  recipients: readonly string[],
+  entity: { type: string; id: string } | undefined,
+  exempt: ReadonlySet<string>,
+): Promise<string[]> {
+  if (!entity || recipients.length === 0) return [...recipients];
+  let locationId: string | null;
+  if (entity.type === 'asset') {
+    locationId =
+      (await tx.asset.findUnique({ where: { id: entity.id }, select: { location_id: true } }))
+        ?.location_id ?? null;
+  } else if (entity.type === 'accessory') {
+    locationId =
+      (await tx.accessory.findUnique({ where: { id: entity.id }, select: { location_id: true } }))
+        ?.location_id ?? null;
+  } else if (entity.type === 'consumable') {
+    locationId =
+      (await tx.consumable.findUnique({ where: { id: entity.id }, select: { location_id: true } }))
+        ?.location_id ?? null;
+  } else {
+    return [...recipients];
+  }
+  const ancestors = locationId
+    ? ((await tx.location.findUnique({ where: { id: locationId }, select: { ancestor_ids: true } }))
+        ?.ancestor_ids ?? [])
+    : [];
+  const rows = await tx.role_assignment.findMany({
+    where: { user_id: { in: [...recipients] } },
+    include: { role: { select: { key: true, permissions: true } } },
+  });
+  const grants = new Map<string, GrantedRole[]>();
+  for (const r of rows) {
+    const list = grants.get(r.user_id) ?? [];
+    list.push({
+      assignmentId: r.id,
+      roleId: r.role_id,
+      roleKey: r.role.key,
+      permissions: r.role.permissions,
+      scopeType: r.scope_type as GrantedRole['scopeType'],
+      scopeCompanyId: r.scope_company_id,
+      scopeLocationId: r.scope_location_id,
+    });
+    grants.set(r.user_id, list);
+  }
+  return recipients.filter((id) => {
+    const held = grants.get(id);
+    // the holder the event is about, and a user without any role (only ever addressed personally)
+    if (exempt.has(id) || !held) return true;
+    const roots = locationScopeFor(held);
+    return roots === null || roots.some((root) => ancestors.includes(root));
+  });
+}

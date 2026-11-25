@@ -20,7 +20,15 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { RegistryBase, invalidRef, stalePrecondition } from '../registry/index.js';
-import { Prisma, TenancyService, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  locationInScope,
+  locationScopeSql,
+  locationScopeWhere,
+  personInScope,
+  type Tx,
+} from '../tenancy/index.js';
 import { insufficientStock, isStockViolation } from './accessories.service.js';
 import {
   type ConsumableDto,
@@ -86,8 +94,11 @@ export class ConsumablesService extends RegistryBase {
             ? {}
             : { archived_at: null };
       const low = query.low_stock === undefined ? undefined : await lowStockIds(trx, 'consumable');
+      // M2-LOC-03 (ED-26): stock kept inside the caller's location scope only
+      const inScope = await locationScopeWhere(trx, 'location_id');
       const filter = {
         AND: [
+          inScope,
           archived,
           query.q ? { search_text: { contains: query.q.toLowerCase() } } : {},
           query.category_id ? { category_id: query.category_id } : {},
@@ -127,7 +138,9 @@ export class ConsumablesService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
       const row = await trx.consumable.findUnique({ where: { id } });
-      if (!row) throw problem.notFound('Consumable not found.');
+      if (!row || !(await locationInScope(trx, row.location_id))) {
+        throw problem.notFound('Consumable not found.');
+      }
       return { data: consumableDto(row), version: row.version };
     });
   }
@@ -139,8 +152,13 @@ export class ConsumablesService extends RegistryBase {
     query: StockMovementListQuery,
   ): Promise<Page<MovementDto>> {
     return this.tx(auth, async (trx) => {
-      const exists = await trx.consumable.findUnique({ where: { id }, select: { id: true } });
-      if (!exists) throw problem.notFound('Consumable not found.');
+      const exists = await trx.consumable.findUnique({
+        where: { id },
+        select: { id: true, location_id: true },
+      });
+      if (!exists || !(await locationInScope(trx, exists.location_id))) {
+        throw problem.notFound('Consumable not found.');
+      }
       const where = [Prisma.sql`m.consumable_id = ${id}::uuid`];
       if (query.person_id) where.push(Prisma.sql`m.person_id = ${query.person_id}::uuid`);
       return this.movementPage(
@@ -160,10 +178,13 @@ export class ConsumablesService extends RegistryBase {
   ): Promise<Page<MovementDto>> {
     return this.tx(auth, async (trx) => {
       const exists = await trx.person.findUnique({ where: { id: personId }, select: { id: true } });
-      if (!exists) throw problem.notFound('Person not found.');
+      if (!exists || !(await personInScope(trx, personId))) {
+        throw problem.notFound('Person not found.');
+      }
       return this.movementPage(
         trx,
-        [Prisma.sql`m.person_id = ${personId}::uuid`],
+        // M2-LOC-03 (ED-26): only the movements of consumables inside the caller's scope
+        [Prisma.sql`m.person_id = ${personId}::uuid`, locationScopeSql(Prisma.sql`c.location_id`)],
         { personId, reason: query.reason ?? null },
         query,
       );
@@ -214,7 +235,7 @@ export class ConsumablesService extends RegistryBase {
     try {
       return await this.tx(auth, async (trx) => {
         const errors: FieldError[] = [];
-        await checkStockRefs(trx, 'consumable', body, errors);
+        await checkStockRefs(trx, 'consumable', body, errors, true);
         const companyId = await resolveCompany(trx, body.company_id);
         if (!companyId) errors.push(invalidRef('/company_id', 'No company.'));
         if (errors.length > 0) throw problem.validation(errors);
@@ -392,7 +413,10 @@ export class ConsumablesService extends RegistryBase {
           throw problem.conflict('The consumable is archived: it takes no more stock movements.');
         }
         if (body.person_id) {
-          const person = await trx.person.findUnique({ where: { id: body.person_id } });
+          // M2-LOC-03 (ED-26): a person outside the caller's scope does not exist for them
+          const person = (await personInScope(trx, body.person_id))
+            ? await trx.person.findUnique({ where: { id: body.person_id } })
+            : null;
           if (!person || person.archived_at) {
             throw problem.validation([invalidRef('/person_id', 'No such person.')]);
           }
@@ -469,7 +493,8 @@ export class ConsumablesService extends RegistryBase {
   ): Promise<{ id: string; qty_on_hand: number; unit: string; archived_at: Date | null }> {
     const [row] = await trx.$queryRaw<
       Array<{ id: string; qty_on_hand: number; unit: string; archived_at: Date | null }>
-    >`select id, qty_on_hand, unit, archived_at from app.consumable where id = ${id}::uuid for update`;
+    >`select id, qty_on_hand, unit, archived_at from app.consumable where id = ${id}::uuid
+         and ${locationScopeSql(Prisma.sql`location_id`)} for update`;
     if (!row) throw problem.notFound('Consumable not found.');
     return row;
   }

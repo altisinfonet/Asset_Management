@@ -125,8 +125,34 @@ describe('NotificationSubscribers.handle', () => {
     describe: () => Promise.resolve({ vars: { filename: 'a.pdf', signature: 'x' } }),
     ...over,
   });
-  const txWith = (rule: unknown): Tx =>
-    ({ notification_rule: { findFirst: vi.fn().mockResolvedValue(rule) } }) as unknown as Tx;
+  const SITE = '0192a000-0000-7000-8000-0000000000c1';
+  const OTHER_SITE = '0192a000-0000-7000-8000-0000000000c2';
+  /** A fake transaction: the rule, an asset at SITE and the role assignments of the recipients. */
+  const txWith = (
+    rule: unknown,
+    assignments: Array<{
+      user_id: string;
+      scope_type: string;
+      scope_location_id: string | null;
+    }> = [],
+  ): Tx =>
+    ({
+      notification_rule: { findFirst: vi.fn().mockResolvedValue(rule) },
+      person: { findUnique: vi.fn().mockResolvedValue(null) },
+      asset: { findUnique: vi.fn().mockResolvedValue({ location_id: SITE }) },
+      location: { findUnique: vi.fn().mockResolvedValue({ ancestor_ids: [SITE] }) },
+      role_assignment: {
+        findMany: vi.fn().mockResolvedValue(
+          assignments.map((a, i) => ({
+            id: `ra-${i}`,
+            role_id: 'role',
+            scope_company_id: null,
+            role: { key: 'technician', permissions: ['asset:read'] },
+            ...a,
+          })),
+        ),
+      },
+    }) as unknown as Tx;
 
   it('asks the notifier for the recipient the event names, deduplicated by event id', async () => {
     const n = notifier();
@@ -176,5 +202,38 @@ describe('NotificationSubscribers.handle', () => {
       link: '/assets/view?id=1',
       entity: { type: 'asset', id: USER },
     });
+  });
+
+  // M2-LOC-03 (ED-26)
+  it('does not tell a location-scoped user about an asset outside their scope', async () => {
+    const aboutAsset = sub({
+      describe: () => Promise.resolve({ vars: {}, entity: { type: 'asset', id: USER } }),
+    });
+    const outside = notifier();
+    await subscribers(outside).handle(
+      aboutAsset,
+      delivery(),
+      txWith(null, [{ user_id: USER, scope_type: 'location', scope_location_id: OTHER_SITE }]),
+    );
+    expect(outside.requests).toEqual([]);
+
+    const inside = notifier();
+    await subscribers(inside).handle(
+      aboutAsset,
+      delivery(),
+      txWith(null, [{ user_id: USER, scope_type: 'location', scope_location_id: SITE }]),
+    );
+    expect(inside.requests[0]).toMatchObject({ recipients: [USER] });
+
+    const orgWide = notifier();
+    await subscribers(orgWide).handle(
+      aboutAsset,
+      delivery(),
+      txWith(null, [
+        { user_id: USER, scope_type: 'location', scope_location_id: OTHER_SITE },
+        { user_id: USER, scope_type: 'tenant', scope_location_id: null },
+      ]),
+    );
+    expect(orgWide.requests[0]).toMatchObject({ recipients: [USER] });
   });
 });

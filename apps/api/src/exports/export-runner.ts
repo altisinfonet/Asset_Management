@@ -86,7 +86,12 @@ export class ExportRunner {
       return;
     }
     const job = await tx.export_job.findUniqueOrThrow({ where: { id } });
-    const scope: TxScope = { tenantId: ctx.tenantId, principalId: job.requested_by };
+    const scope: TxScope = {
+      tenantId: ctx.tenantId,
+      principalId: job.requested_by,
+      // M2-LOC-03 (ED-26): exactly the location scope the request had
+      locationScope: job.location_scoped ? job.location_scope : null,
+    };
 
     let key: string | null = null;
     try {

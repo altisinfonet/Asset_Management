@@ -2799,6 +2799,50 @@ S_.Me.required.push('mfa_policy');
 }
 // ================================================================ [M2-W3 IMP] END
 
+// ================================================================ [M2-LOC-03] BEGIN
+// Location scoping of role assignments (story M2-LOC-03, ED-26). A role assignment with
+// `scope_type=location` limits the principal to that location subtree for the permissions of the role.
+{
+  doc.info.description = doc.info.description.replace(
+    'Role assignments can be scoped to the tenant, a company or a location subtree; reads and writes outside the scope behave as `404`.',
+    'Role assignments can be scoped to the tenant, a company or a location subtree (ED-26). A **location-scoped** assignment limits the principal, for the permissions of that role, to records inside the subtree: assets, accessories and consumables by their location, people by their home location, loaner pools by their home location, repairs, loans, custody records and attachments through their asset or item, locations themselves. A record outside the scope behaves exactly like one that does not exist: `404` on a path id, an empty list, and `422` (`not-found` at the field) when a request names it as a target (a check-out to a person or a location outside the scope, a move there). A record with no location is outside every scope. Writes by a scoped principal must keep the record inside its scope (`422` code `required` at `/location_id`, `/home_location_id` or `/parent_id`). An org-wide assignment that grants the same permission lifts the limit for that permission. A location-scoped assignment never grants the org-only permissions `user:read`, `user:manage`, `role:read`, `apikey:manage`, `audit:read`, `catalog:manage`, `department:manage` and `notification:manage` (`403`). Exports, imports and label batches of a scoped principal are its own only. `GET /v1/auth/me` returns the scope in `location_scope`.',
+  );
+  S_.RoleAssignment.properties.scope_type.description =
+    '`tenant`: the whole organisation. `location`: the location named by `location_id` and everything below it (ED-26); the org-only permissions of the role (`user:*`, `role:read`, `apikey:manage`, `audit:read`, `catalog:manage`, `department:manage`, `notification:manage`) do not apply. `company`: accepted, enforced like `tenant` until company scoping ships.';
+  S_.RoleAssignment.properties.location_id.description =
+    'Required when scope_type=location: an existing, active location; the grant covers it and its whole subtree. A missing or archived location is `422` (`not-found` at `/role_assignments/<n>/location_id`).';
+  S_.ScopeLocation = obj({
+    id: uuid(),
+    name: str(),
+    path: str({ description: 'The names from the top of the tree down to this location, joined with " / ".' }),
+  }, ['id', 'name', 'path']);
+  S_.Me.properties.location_scope = {
+    oneOf: [
+      obj({
+        locations: arr(S('ScopeLocation'), { description: 'The roots of the subtrees the principal is limited to, by path. Empty when the scoped assignments name no location any more.' }),
+      }, ['locations']),
+      { type: 'null' },
+    ],
+    description: '[M2-LOC-03] `null` when the principal holds at least one org-wide role assignment; otherwise the location subtrees it is limited to (the web shell shows "Scoped to: ..."). A principal with both kinds is limited per permission: see the Permissions section.',
+  };
+  S_.Me.required.push('location_scope');
+
+  const note = (path, method, text) => {
+    const op = doc.paths[path][method];
+    op.description = op.description ? `${op.description} ${text}` : text;
+  };
+  note('/v1/exports', 'post', 'A location-scoped requester (ED-26) gets only the rows inside its scope: the scope at request time is stored with the export and applied by the worker.');
+  note('/v1/exports', 'get', 'Every principal lists its own exports only.');
+  note('/v1/imports', 'get', 'A location-scoped principal (ED-26) lists only the imports it started itself.');
+  note('/v1/imports/{id}/commit', 'post', 'A location-scoped principal (ED-26) imports only inside its scope: rows match existing records inside the scope only, and a location, person or parent outside it is reported like one that does not exist. The scope at commit time travels with the job.');
+  note('/v1/labels/batches', 'post', 'For a location-scoped principal (ED-26) an asset outside its scope is reported like a missing one (`422` at `/asset_ids/<n>`), and a filter selects inside the scope only.');
+  note('/v1/loaners/dashboard', 'get', 'For a location-scoped principal (ED-26) the pools, counts and activity inside its scope.');
+  note('/v1/search', 'get', 'For a location-scoped principal (ED-26) assets, people and locations inside its scope only; models and categories are the tenant-wide catalogue.');
+  note('/v1/scan/resolve', 'get', 'A code of a record outside the scope of a location-scoped principal answers `404`, like an unknown code (ED-26).');
+  note('/v1/users', 'post', 'A role assignment can be limited to a location subtree with `scope_type=location` and `location_id` (ED-26).');
+}
+// ================================================================ [M2-LOC-03] END
+
 // ---------------------------------------------------------------- prune unused components, order, emit
 const text =() => JSON.stringify({ paths: doc.paths, security: doc.security });
 function prune() {

@@ -30,6 +30,11 @@ export interface AuthContext {
     version: number;
   };
   grants: readonly GrantedRole[];
+  /**
+   * M2-LOC-03 (ED-26): root ids of the location subtrees THIS request is limited to (null = not
+   * limited), set by the auth guard for the route's permission. Absent before the guard ran.
+   */
+  locationScope?: readonly string[] | null;
   /** Effective permissions (role union; for keys, the key scopes the creator still holds). */
   permissions: readonly string[];
   mfaVerified: boolean;

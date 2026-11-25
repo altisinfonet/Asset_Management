@@ -406,13 +406,75 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** 21/21 turbo tasks; API e2e direct 699/699; pooled 699/699 on the rerun; real-stack browser suite 64 passed; contract and drift checks clean.
 - **Findings:** (1) one pooled run saw 5 schema-lint violations for temporary far-future partitions (for example `app.asset_history_2044_01`) that `schema-lint.e2e.test.ts` creates while a parallel file's lint ran: test-only flake, fixed by a shared helper that the six isolation files use (the product lint function is unchanged); (2) `docs/engineering/tools/gen.mjs` failed from a plain checkout (`yaml` not installed): `yaml` is now a pinned root devDependency and contributing.md names the commands.
 
+### B.22 Location scoping for roles (M2-LOC-03) - 2026-11-25 (unreleased, branch `worktree-agent-a06c49586ab451805`)
+
+- **Scope:** role assignments limited to a location subtree, enforced per permission by an application-layer predicate
+  (`location_id IN` the subtree; RLS stays tenant-only; ED-26), on every scoped surface: assets, custody, people,
+  locations, stock, repairs, loaner pools, loans and the loaner dashboard, labels, exports, imports, search, scan resolve,
+  attachments, counts, saved views and notification recipients. Org-only permissions are never granted by a scoped
+  assignment. Migration 0150, contract (`Me.location_scope`, scope notes), web (users screen, "Scoped to", forms).
+- **Method:** API e2e per surface with a negative case each (`test/scoping`, 23 tests); a scoped route replay of every route
+  as a location administrator against another site's records and records without a location: it fails on any marker of
+  them in a response, on any write to them (version snapshot), and on any route without a scoped case. Independent code
+  review by a separate agent on the diff. Clean-state build, API e2e direct once and pooled twice on the final code, mock
+  browser suite, real-stack suite on a fresh stack, drift check, schema lint, generator reproducibility.
+- **Result:** clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, client 14,
+  ui-tokens 15, schemas 3); `format:check` clean; gen.mjs reproduces openapi.yaml with no diff, `gen-api-md --check` and
+  client `generate:check` up to date, Redocly valid; API e2e on the final code: 725/725 in 58 files direct, pooled and
+  pooled again, 0 skipped; mock browser suite 736 passed, 0 skipped; real-stack suite 65 passed on a fresh stack (the new
+  spec: an administrator scopes a technician to one site, who then sees only that site's assets); drift clean, schema
+  lint 0 violations.
+- **Findings fixed during the work (review):** (1) the scope came from the route's permission only, so a bundle holding
+  `export:run`, `import:run` or `search:read` org-wide but the data permission at a location could export, import or find
+  records outside the scope. Scopes are now intersected with the records' own permission (exports, imports, search types,
+  stock in scan resolve, the check-in half of a forced repair, undo). (2) A user with an org-wide `user:manage` and a
+  location-scoped role could grant that role org-wide, including to themselves; grants now need each permission held as
+  widely as granted. (3) A loan return sent the device to the pool's home even when that place lay outside the caller's
+  scope; it now stays where it is. Regression tests for all three (custom role bundles inserted by SQL, since custom
+  roles are v2). A reported issue about undo restoring an out-of-scope holder was already covered (the holder is
+  resolved through the scoped target check).
+- **Flake root-caused:** the first pooled run had two check-ins answer 500. The Postgres log showed `deadlock detected` on
+  `UPDATE app.asset` against a process holding a table lock: the schema-lint e2e fixture for foreign keys created a table
+  referencing the live `app.asset` inside its transaction (SHARE ROW EXCLUSIVE lock until rollback). The fixture now
+  references a table of its own transaction. A mock browser run done while Docker rebuilt three images in parallel had
+  one axe scenario time out waiting for a list (CPU contention caused by the verifier); the same spec passed 332/332 with
+  four repeats, and the full suite 736/736 without the contention.
+- **By design (ED-26):** catalogue records stay tenant-wide; uniqueness conflicts (tag, serial, email) remain tenant-wide
+  signals; an in-scope asset's own history and current holder may name places or people outside the scope; company
+  scope is still not enforced.
+- **Independent verification and security review (2026-11-25):** every check passed again (API e2e 725/725 direct and
+  pooled twice, real-stack 65, contract and drift checks). The founder confirmed the three ED-26 questions as built (a
+  scoped Administrator is a site administrator; records without a location stay hidden; the holder's name shows on
+  in-scope assets). Review findings and what was done:
+  (1) **Accepted and documented:** an in-scope asset names an out-of-scope holder (id and name in `current_assignment`,
+  history, custody list, CSV export), and filtering by that holder id returns those in-scope assets; the person record stays
+  `404`. ED-26 states it, an e2e test asserts the boundary, and the scoped replay now has an in-scope asset lent to a
+  person outside the scope (the holder is reachable on the asset and `404` as a person).
+  (2) **Fixed:** the saved-view reference check was an existence oracle (an out-of-scope location or person gave no
+  warning, an unknown id `not-found`); both now warn `not-found`.
+  (3) **Fixed:** the import default location accepted an out-of-scope id (200) where an unknown id was `422`, and the value
+  mapping by id resolved out-of-scope locations and people (their names in the dry-run preview); both now behave exactly
+  like an unknown id. While fixing it, a second bug of the same family was found and fixed: a Prisma `where` of the form
+  `{ id: x, ...locationScopeWhere(trx, 'id') }` lets the spread replace the `id` match, so any in-scope location matched;
+  those filters are now `AND: [...]` (the saved-view check had passed by accident).
+  (4) **Info items:** ED-26 now documents the ancestor path in `/auth/me` and that a location filter on an ancestor of the
+  scope root returns the in-scope descendants (the earlier wording "outside the scope returns nothing" is corrected).
+  Scan resolve's `allowed_actions` now follows the scope of each action's permission (small change, tested).
+  Regression tests: 5 more in `test/scoping` (28), the scoped replay 4 tests.
+- **Re-verification after the fixes:** clean-state `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit
+  647, web 792, client 14, ui-tokens 15, schemas 3); `format:check` clean; gen.mjs reproduces openapi.yaml with no diff,
+  `gen-api-md --check` and client `generate:check` up to date, Redocly valid; drift clean, schema lint 0 violations; API
+  e2e 731/731 in 58 files direct, pooled and pooled again, 0 skipped. No web code changed after the earlier mock (736) and
+  real-stack (65) runs.
+
+
 ---
 
 ## C. Open items
 
 | Item                                                                                                     | Why it matters                                                        | Owner / where tracked                                                                                    |
 | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Intermittent API test failure seen once in 5 runs (B.13)                                                 | Unknown cause; could hide a real race                                 | Claude; watch CI                                                                                         |
+| Intermittent API test failure seen once in 5 runs (B.13): very likely the schema-lint fixture deadlock fixed in B.22 | Confirm it does not recur | Claude; watch CI |
 | Label die-lines and print calibration unverified                                                         | Labels may be off the physical stock until printed and measured       | Founder 👤, M2-TAG-04, F-02                                                                              |
 | Real USB scanner not yet tested                                                                          | Scanner input timing is only simulated                                | Founder 👤, LIFE-08, F-02                                                                                |
 | **External penetration test** before the Cloud launch                                                    | Independent test of a multi-tenant internet-facing service            | M6-SEC-02; vendor to be booked at the start of M5 (F-21); no open cross-tenant finding allowed at launch |

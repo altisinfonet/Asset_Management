@@ -1,3 +1,4 @@
+import { locationScopeWhere } from '../../tenancy/index.js';
 import { personCreateSchema, personUpdateSchema, type PeopleService } from '../../people/index.js';
 import type { RefResolver } from '../refs.js';
 import type { MappedRecord, RowIssue } from '../types.js';
@@ -123,7 +124,8 @@ export class PersonHandler extends ServiceHandler {
       employee_ref: true,
       version: true,
     } as const;
-    const live = { archived_at: null };
+    // M2-LOC-03 (ED-26): a scoped import only matches people inside the caller's scope
+    const live = { archived_at: null, ...(await locationScopeWhere(env.tx, 'location_id')) };
     const [byEmail, byRef] = await Promise.all([
       emails.size
         ? env.tx.person.findMany({ where: { ...live, email_key: { in: [...emails] } }, select })

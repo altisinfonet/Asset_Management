@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { permits, type AuthContext } from '../auth/index.js';
+import { locationScopeFor, permits, type AuthContext } from '../auth/index.js';
 import { AttachmentsService } from '../files/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
@@ -31,7 +31,15 @@ import {
   stalePrecondition,
   writeAssetHistory,
 } from '../registry/index.js';
-import { TenancyService, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  assetInScope,
+  runWithLocationScope,
+  isLocationScoped,
+  locationInScope,
+  personInScope,
+  type Tx,
+} from '../tenancy/index.js';
 import {
   ASSIGNMENT_COLUMNS,
   type AssignmentRow,
@@ -222,7 +230,7 @@ export class CustodyService extends RegistryBase {
 
       const errors: FieldError[] = [];
       if (body.checkin_location_id) {
-        const location = await trx.location.findUnique({ where: { id: body.checkin_location_id } });
+        const location = await this.scopedLocation(trx, body.checkin_location_id);
         if (!location || location.archived_at) {
           errors.push(invalidRef('/checkin_location_id', 'No such location.'));
         }
@@ -320,7 +328,7 @@ export class CustodyService extends RegistryBase {
         ]);
       }
       if (body.to_location_id) {
-        const location = await trx.location.findUnique({ where: { id: body.to_location_id } });
+        const location = await this.scopedLocation(trx, body.to_location_id);
         if (!location || location.archived_at) {
           throw problem.validation([invalidRef('/to_location_id', 'No such location.')]);
         }
@@ -569,6 +577,12 @@ export class CustodyService extends RegistryBase {
         throw undoProblem('undo-expired', 'The time to undo this action has passed.');
       }
       if (!permits(auth.permissions, kind.permission)) throw problem.forbidden();
+      // M2-LOC-03 (ED-26): the rest runs under the scope of the undone action's permission too
+      const undoScope = locationScopeFor(auth.grants, kind.permission);
+      const inUndoScope = <T>(fn: () => Promise<T>) => runWithLocationScope(undoScope, fn);
+      if (!(await inUndoScope(() => assetInScope(trx, current.id)))) {
+        throw problem.notFound('Asset not found.');
+      }
       const payload = last.payload;
       const statusOf = (key: 'from_id' | 'to_id') => {
         const status = payload.status as Record<string, unknown> | undefined;
@@ -635,16 +649,18 @@ export class CustodyService extends RegistryBase {
       let holder: Target | null = null;
       if (reopenedFrom) {
         try {
-          holder = await this.resolveTarget(
-            trx,
-            {
-              ...(reopenedFrom.person_id ? { person_id: reopenedFrom.person_id } : {}),
-              ...(reopenedFrom.location_id ? { location_id: reopenedFrom.location_id } : {}),
-              ...(reopenedFrom.target_asset_id
-                ? { target_asset_id: reopenedFrom.target_asset_id }
-                : {}),
-            },
-            current.id,
+          holder = await inUndoScope(() =>
+            this.resolveTarget(
+              trx,
+              {
+                ...(reopenedFrom.person_id ? { person_id: reopenedFrom.person_id } : {}),
+                ...(reopenedFrom.location_id ? { location_id: reopenedFrom.location_id } : {}),
+                ...(reopenedFrom.target_asset_id
+                  ? { target_asset_id: reopenedFrom.target_asset_id }
+                  : {}),
+              },
+              current.id,
+            ),
           );
         } catch (err) {
           if (err instanceof ApiProblem && err.code === 'validation') {
@@ -686,6 +702,16 @@ export class CustodyService extends RegistryBase {
         reopened = (await loadAssignment(trx, id))!;
       }
       const location = locationFrom();
+      // M2-LOC-03 (ED-26): an undo never takes the asset out of the caller's location scope
+      if (
+        location.restore &&
+        !(await inUndoScope(async () => !isLocationScoped() || locationInScope(trx, location.id)))
+      ) {
+        throw undoProblem(
+          'undo-not-possible',
+          'The asset would go back to a place outside your scope, so the action cannot be undone here.',
+        );
+      }
       await this.touchAsset(trx, auth, current, {
         ...(restoreStatus && restoreStatus.id !== current.status_id
           ? { status_id: restoreStatus.id }
@@ -790,7 +816,9 @@ export class CustodyService extends RegistryBase {
   ): Promise<Page<AssignmentDto>> {
     return this.tx(auth, async (trx) => {
       const exists = await trx.asset.findUnique({ where: { id: assetId }, select: { id: true } });
-      if (!exists) throw problem.notFound('Asset not found.');
+      if (!exists || !(await assetInScope(trx, assetId))) {
+        throw problem.notFound('Asset not found.');
+      }
       return listAssignments(trx, { assetId }, query);
     });
   }
@@ -802,7 +830,9 @@ export class CustodyService extends RegistryBase {
   ): Promise<Page<AssignmentDto>> {
     return this.tx(auth, async (trx) => {
       const exists = await trx.person.findUnique({ where: { id: personId }, select: { id: true } });
-      if (!exists) throw problem.notFound('Person not found.');
+      if (!exists || !(await personInScope(trx, personId))) {
+        throw problem.notFound('Person not found.');
+      }
       return listAssignments(trx, { personId, state: query.state }, query);
     });
   }
@@ -814,7 +844,9 @@ export class CustodyService extends RegistryBase {
   ): Promise<Page<HistoryEventDto>> {
     return this.tx(auth, async (trx) => {
       const exists = await trx.person.findUnique({ where: { id: personId }, select: { id: true } });
-      if (!exists) throw problem.notFound('Person not found.');
+      if (!exists || !(await personInScope(trx, personId))) {
+        throw problem.notFound('Person not found.');
+      }
       return listHistory(
         trx,
         { personId },
@@ -880,6 +912,11 @@ export class CustodyService extends RegistryBase {
     return (await loadAssignment(trx, assignmentId))!;
   }
 
+  /** A location a custody action may name: outside the location scope it does not exist (ED-26). */
+  private async scopedLocation(trx: Tx, id: string) {
+    return (await locationInScope(trx, id)) ? trx.location.findUnique({ where: { id } }) : null;
+  }
+
   /** The person / location / asset the request points at, validated (422 with a pointer). */
   private async resolveTarget(
     trx: Tx,
@@ -891,7 +928,10 @@ export class CustodyService extends RegistryBase {
     assetId: string,
   ): Promise<Target> {
     if (body.person_id) {
-      const person = await trx.person.findUnique({ where: { id: body.person_id } });
+      // M2-LOC-03 (ED-26): a person outside the scope does not exist for a scoped principal
+      const person = (await personInScope(trx, body.person_id))
+        ? await trx.person.findUnique({ where: { id: body.person_id } })
+        : null;
       if (!person || person.archived_at) {
         throw problem.validation([invalidRef('/person_id', 'No such person.')]);
       }
@@ -907,7 +947,7 @@ export class CustodyService extends RegistryBase {
       return { type: 'person', id: person.id, name: person.display_name };
     }
     if (body.location_id) {
-      const location = await trx.location.findUnique({ where: { id: body.location_id } });
+      const location = await this.scopedLocation(trx, body.location_id);
       if (!location || location.archived_at) {
         throw problem.validation([invalidRef('/location_id', 'No such location.')]);
       }
@@ -923,10 +963,12 @@ export class CustodyService extends RegistryBase {
         },
       ]);
     }
-    const target = await trx.asset.findUnique({
-      where: { id: targetId },
-      select: { id: true, asset_tag: true, name: true, archived_at: true },
-    });
+    const target = (await assetInScope(trx, targetId))
+      ? await trx.asset.findUnique({
+          where: { id: targetId },
+          select: { id: true, asset_tag: true, name: true, archived_at: true },
+        })
+      : null;
     if (!target || target.archived_at) {
       throw problem.validation([invalidRef('/target_asset_id', 'No such asset.')]);
     }

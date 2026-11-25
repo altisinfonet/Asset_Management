@@ -321,8 +321,19 @@ This table is the catalogue in `apps/api/src/auth/permissions.ts`; a unit test f
 
 - **Grant rules.** Nobody can hand out a role holding permissions they do not hold themselves; a user manager cannot change,
   archive or reset a more privileged user; the last active administrator cannot be demoted, disabled or archived (`409`).
-- **Scope.** Role assignments are enforced tenant-wide today. Narrowing a role to a location subtree (story LOC-03) is
-  planned for M2 wave 3; until then it is refused. Reads and writes outside a future scope will behave as `404`.
+- **Scope (M2-LOC-03, ED-26).** A role assignment is org-wide (`scope_type=tenant`) or limited to a location subtree
+  (`scope_type=location` with `location_id`). A location-scoped principal sees and changes only records inside the
+  subtree: assets, accessories, consumables and loaner pools by their location, people by their home location, repairs,
+  loans, custody records and attachments through their asset or item, and the locations themselves. A record outside the
+  scope (or with no location at all) behaves exactly like a record that does not exist: `404` on a path id, absent from
+  lists, search, scan resolve and counts, and `422` `not-found` at the field when a request names it as a target (a
+  check-out to a person outside the scope, a move to a location outside it). Writes must keep the record inside the
+  scope (`422` code `required` at `/location_id`, `/home_location_id` or `/parent_id`). The scope is computed per
+  permission: an org-wide assignment that grants the same permission lifts it. A scoped assignment never grants the
+  org-only permissions (`user:read`, `user:manage`, `role:read`, `apikey:manage`, `audit:read`, `catalog:manage`,
+  `department:manage`, `notification:manage`), so a scoped "Administrator" is a location administrator. Exports,
+  imports and label batches of a scoped principal are its own only; exports and imports keep the requester's scope
+  for the worker. `GET /v1/auth/me` returns `location_scope` (`null` when org-wide).
 - **Search** returns each entity type only when the caller may read it (per-type permission), never a `403`.
 - The `audit:read` permission is reserved for the audit log endpoint, which is specified but not built yet
   (see [AUDIT.md](AUDIT.md)).

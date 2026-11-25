@@ -674,12 +674,12 @@ describe.skipIf(!dbEnabled)(
         await ownerTenantSql(A.tenantId, `select id from app.location where name = 'Site 0'`)
       ).rows[0].id as string;
       const room = (
-        await ownerTenantSql(A.tenantId, `select id from app.location where name = 'Room 0.0.0'`)
+        await ownerTenantSql(A.tenantId, `select id from app.location where name = 'Room 0.0.1'`)
       ).rows[0].id as string;
       const scoped: Stat[] = [];
       for (const [label, locationId, pattern] of [
         ['site', site, 'Room 0.%'],
-        ['room', room, 'Room 0.0.0'],
+        ['room', room, 'Room 0.0.1'],
       ] as const) {
         const user = await createScopedUser(app, A, 'technician', [locationId], `perf-${label}`);
         const inScope = (

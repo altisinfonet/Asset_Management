@@ -33,6 +33,8 @@ test.describe('an administrator adds and removes role assignments', () => {
     await page.getByRole('option', { name: 'Viewer' }).click();
     await add.getByRole('combobox', { name: /^Access/ }).click();
     await page.getByRole('option', { name: 'Limited to a location' }).click();
+    // the select hands focus back to its trigger as it closes; typing before that closes the list
+    await expect(add.getByRole('combobox', { name: /^Access/ })).toBeFocused();
 
     // the location is required before anything is sent
     await add.getByRole('button', { name: 'Add access' }).click();

@@ -91,6 +91,9 @@ test('an administrator adds a role limited to a site, then removes it', async ()
   const add = admin.getByRole('dialog', { name: `Add access for ${NAME}` });
   await choose(admin, /^Role/, 'Technician');
   await choose(admin, /^Access/, 'Limited to a location');
+  // the select hands focus back to its trigger as it closes: typing into the location before that
+  // would lose the focus again, and the list closes with it
+  await expect(add.getByRole('combobox', { name: /^Access/ })).toBeFocused();
   await add.getByRole('combobox', { name: /^Location/ }).fill(SITE);
   await admin
     .getByRole('option', { name: new RegExp(SITE) })

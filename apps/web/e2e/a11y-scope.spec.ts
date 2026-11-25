@@ -29,6 +29,7 @@ async function openAdd(p: Page) {
   const add = p.getByRole('dialog', { name: 'Add access for Priya Patel' });
   await add.getByRole('combobox', { name: /^Access/ }).click();
   await p.getByRole('option', { name: 'Limited to a location' }).click();
+  await expect(add.getByRole('combobox', { name: /^Access/ })).toBeFocused();
   return add;
 }
 

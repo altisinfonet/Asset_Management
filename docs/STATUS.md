@@ -1,6 +1,6 @@
 # Project status
 
-_Last updated: 2026-11-25 (v0.2.7, wave 3 part 2 completed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-25 (v0.2.7 released: tag `v0.2.7` and `main` are pushed to GitHub; wave 3 part 2 completed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
@@ -37,7 +37,7 @@ jobs, encrypted secrets, email), CI and security scanning.
 | Area                                                                  | Status | Stories |
 | --------------------------------------------------------------------- | ------ | ------- |
 | Locations tree (site › building › room), moves                        | ✅     | LOC-01, LOC-04 · LOC-02 🟡 (default location on model/category not built) |
-| People (with or without login)                                        | ✅     | USR-01 · USR-02 🟡 (no link-to-login action yet → USR-03) |
+| People (with or without login)                                        | ✅     | USR-01 · USR-02 (the link-to-login action came with USR-03, 0.2.5) |
 | Check-out / check-in (condition, photos) / transfer, dispose, lost & found | ✅ | LIFE-01…05, LIFE-07 |
 | Chain-of-custody history                                              | 🟡     | LIFE-06 (works; minor gaps noted in backlog) |
 | USB barcode scanner + scan panel                                      | 🟡     | LIFE-08 (needs a real-scanner test 👤) |

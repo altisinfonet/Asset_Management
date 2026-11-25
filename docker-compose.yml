@@ -43,7 +43,7 @@ x-api-env: &api-env
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:19
     # max_connections: the e2e suite in DIRECT mode keeps up to six test files with their pools open at once.
     command: ['postgres', '-c', 'max_connections=300']
     environment:
@@ -89,7 +89,7 @@ services:
   #   docker compose --profile pooling run --rm pgbouncer-check
   pgbouncer-check:
     profiles: ['pooling']
-    image: postgres:18
+    image: postgres:19
     environment:
       PGPASSWORD: dev
     entrypoint: ['sh', '-c']

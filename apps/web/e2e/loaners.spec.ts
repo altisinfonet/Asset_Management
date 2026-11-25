@@ -1,6 +1,14 @@
 import { expect, test } from './fixtures';
 import { wedge } from './m2-helpers';
-import { api, loadApp, looseDevice, poolWithDevices, staffPool, studentPool } from './w3-helpers';
+import {
+  api,
+  loadApp,
+  looseDevice,
+  makeUndeployable,
+  poolWithDevices,
+  staffPool,
+  studentPool,
+} from './w3-helpers';
 
 /**
  * The loaner desk and dashboard (M2-LOAN-02, M2-LOAN-04): ten devices lent and taken back, the
@@ -117,6 +125,53 @@ test.describe('loaner desk', () => {
     );
     await feedback.getByRole('button', { name: 'Return it instead' }).click();
     await expect(feedback).toContainText(`${out} returned`);
+  });
+
+  test('refuses a device in repair when it is scanned, naming its status', async ({ page }) => {
+    await loadApp(page);
+    const staff = await staffPool(page);
+    const members = await api<{
+      data: Array<{ asset: { id: string; asset_tag: string } }>;
+    }>(page, 'GET', `/v1/loaner-pools/${staff.id}/members?available=true`);
+    const broken = members.json.data[0]!.asset;
+    const status = await makeUndeployable(page, broken.id);
+
+    await page.goto('/loaners/desk');
+    const device = page.getByLabel('Device', { exact: true });
+    await device.fill(broken.asset_tag);
+    await device.press('Enter');
+    const feedback = page.getByTestId('desk-feedback');
+    await expect(feedback).toHaveAttribute('role', 'alert');
+    await expect(feedback).toContainText(
+      `${broken.asset_tag} is ${status} and cannot be lent. Choose another device.`,
+    );
+    await expect(page.getByRole('list', { name: 'Devices to lend' })).toHaveCount(0);
+  });
+
+  test('lends the next available device and shows which one to hand over', async ({ page }) => {
+    await loadApp(page);
+    const { devices } = await poolWithDevices(page, 'A cart', 3);
+    const tags = devices.map((d) => d.asset_tag).sort();
+
+    await page.goto('/loaners/desk');
+    await expect(page.getByRole('combobox', { name: 'Lend from' })).toContainText('A cart');
+    const next = page.getByRole('button', { name: 'Lend next available device' });
+    await expect(next).toBeDisabled();
+    await page.getByLabel('Borrower', { exact: true }).fill('Alice Owner');
+    await page.getByLabel('Borrower', { exact: true }).press('Enter');
+    await next.click();
+    const picked = page.getByTestId('desk-picked');
+    await expect(picked).toBeVisible();
+    const first = (await picked.textContent())!;
+    expect(tags).toContain(first);
+    await expect(page.getByTestId('desk-feedback')).toContainText(
+      `${first} is the next available device: lent to Alice Owner, due `,
+    );
+    await expect(page.getByTestId('desk-log')).toContainText(first);
+    // the next press gives another device of the cart
+    await next.click();
+    await expect(picked).not.toHaveText(first);
+    expect(tags).toContain(await picked.textContent());
   });
 
   test('extends an overdue loan from the dashboard', async ({ page }) => {

@@ -83,6 +83,10 @@ jobs:
         with:
           name: web-static-export
           path: apps/web/out
+      # The mock export is built here (test:e2e runs build:mock), and the web app imports the workspace
+      # packages from their dist/ output: build them first (`^...` = web's dependencies, not web itself).
+      - name: Build workspace packages the web app imports
+        run: pnpm --filter "@assettracker/web^..." run build
       - run: pnpm --filter @assettracker/web exec playwright install --with-deps chromium
       - run: pnpm --filter @assettracker/web test:e2e
       - uses: actions/upload-artifact@v4

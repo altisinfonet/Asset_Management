@@ -12,6 +12,12 @@ allowBuilds:
 
 injectWorkspacePackages: true
 
+# Security overrides (scripts/ci/audit.mjs). Remove each one once the parent package ships the fix itself.
+overrides:
+  # GHSA-7589-6fvf-x4pw (ReDoS in Schema.TemplateLiteral), fixed in effect 3.22.1. prisma 7.10.1, the latest
+  # stable release, still pins effect 3.20.0 through @prisma/config.
+  '@prisma/config>effect': 3.22.4
+
 minimumReleaseAgeExclude:
   - '@nestjs/common@12.5.1'
   - '@nestjs/core@12.5.1'

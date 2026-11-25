@@ -62,7 +62,9 @@ for (const e of allow) {
 }
 
 // ---- audit
-const run = spawnSync('pnpm audit --json', {
+// Command and arguments are passed separately: without a shell (Linux, macOS) a single
+// 'pnpm audit --json' string is looked up as one executable name and fails with ENOENT.
+const run = spawnSync('pnpm', ['audit', '--json'], {
   encoding: 'utf8',
   shell: process.platform === 'win32',
   maxBuffer: 64 * 1024 * 1024,
@@ -72,7 +74,7 @@ try {
   report = JSON.parse(run.stdout);
 } catch {
   console.error('pnpm audit did not return JSON (registry unreachable?)');
-  console.error(run.stderr || run.stdout);
+  console.error(run.error?.message || run.stderr || run.stdout);
   process.exit(2);
 }
 const advisories = Object.entries(report.advisories ?? {}).map(([npmId, a]) => ({

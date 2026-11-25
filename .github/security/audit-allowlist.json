@@ -1,13 +1,4 @@
 {
   "$comment": "Dependency-audit exceptions (M1-CI-03). Every entry MUST have a reason, an `added` date and an `expires` date (YYYY-MM-DD, at most 90 days after `added`) and the advisory id (GHSA-... or the numeric npm advisory id). scripts/ci/audit.mjs fails the build when an entry is expired, and warns when it no longer matches anything (delete it). Changes need CODEOWNERS review. See docs/engineering/ci.md.",
-  "entries": [
-    {
-      "id": "GHSA-fc5q-39xc-vjpf",
-      "package": "picomatch",
-      "reason": "ReDoS in extglob matching; no patched release is published yet (patched_versions: none). Reached only through dev tooling (vitest, tinyglobby, eslint-config-next); never installed in the runtime image (`pnpm deploy --prod`) and never fed untrusted glob patterns.",
-      "scope": "dev",
-      "added": "2026-11-18",
-      "expires": "2027-01-15"
-    }
-  ]
+  "entries": []
 }

@@ -750,8 +750,11 @@ describe('mock imports: the commit', () => {
   });
 
   it('cancels a running commit after the current batch; the rows already written stay', async () => {
-    setMockImportTiming({ batchMs: 300, batchRows: 1 });
+    // review at the fast pace of the other tests; only the commit is slow enough to cancel (setting the
+    // slow pace first also slowed the dry run to one row per 300 ms: seconds of waiting that a loaded
+    // machine stretched past the 15 s test timeout)
     const job = await reviewed();
+    setMockImportTiming({ batchMs: 300, batchRows: 1 });
     await importsApi.commit(job.id, job.dry_run_digest!, 'key-cancel-0001');
     await new Promise((resolve) => setTimeout(resolve, 350));
     await importsApi.cancel(job.id);

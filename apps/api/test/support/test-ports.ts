@@ -18,6 +18,7 @@ import {
   FakeStorageAdapter,
   FakeVirusScanner,
 } from '../../src/ports/fakes.js';
+import { assertEnqueueable } from '../../src/jobs/index.js';
 import { parseTemplateData } from '../../src/mail/index.js';
 import {
   currentTenantContext,
@@ -61,12 +62,29 @@ export class CapturingMailSender extends FakeMailSender {
   }
 }
 
+/**
+ * Job queue for tests (M2-SEC-01): records the jobs like the in-memory fake, but first applies the SAME
+ * job payload lint as the pg-boss adapter (`assertEnqueueable`: catalogued queue, ids-only payload, the
+ * tenantId of a tenant-scoped queue, and inside a tenant transaction that tenant). Every job any e2e test
+ * makes the application queue is therefore linted, whichever module queues it.
+ */
+export class LintingJobQueue extends FakeJobQueue {
+  override async enqueue(
+    name: string,
+    payload: Record<string, unknown>,
+    opts?: { tx?: unknown },
+  ): Promise<string | null> {
+    assertEnqueueable(name, payload, Boolean(opts?.tx));
+    return super.enqueue(name, payload);
+  }
+}
+
 /** Process-wide fakes (each vitest file has its own module registry, so tests do not share them). */
 export const testPorts = {
   audit: new CapturingAuditWriter(),
   mail: new CapturingMailSender(),
   secretBox: new FakeSecretBox(),
-  jobs: new FakeJobQueue(),
+  jobs: new LintingJobQueue(),
   outbox: new FakeOutbox(),
   storage: new FakeStorageAdapter(),
   scanner: new FakeVirusScanner(),

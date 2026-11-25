@@ -19,7 +19,7 @@ import {
   type StorageAdapter,
   type VirusScanner,
 } from '../../src/ports/index.js';
-import { FakeJobQueue, FakeVirusScanner } from '../../src/ports/fakes.js';
+import { FakeVirusScanner } from '../../src/ports/fakes.js';
 import { ClamdScanner, DisabledScanner } from '../../src/scanner/index.js';
 import {
   FileTokenSigner,
@@ -29,6 +29,7 @@ import {
 } from '../../src/storage/index.js';
 import { TenancyService } from '../../src/tenancy/index.js';
 import { ownerTenantSql, testPorts, startApp, type Client } from '../auth/support.js';
+import { LintingJobQueue } from '../support/test-ports.js';
 
 export type Driver = 'local' | 's3';
 
@@ -52,12 +53,12 @@ export interface FilesHarness {
   driver: Driver;
   storage: StorageAdapter;
   scanner: VirusScanner;
-  jobs: FakeJobQueue;
+  jobs: LintingJobQueue;
   config: { SCAN_REQUIRED: boolean };
   close(): Promise<void>;
 }
 
-function portsModule(storage: StorageAdapter, scanner: VirusScanner, jobs: FakeJobQueue): Type {
+function portsModule(storage: StorageAdapter, scanner: VirusScanner, jobs: LintingJobQueue): Type {
   @Global()
   @Module({
     providers: [
@@ -125,7 +126,7 @@ export async function startFilesApp(
   } else if (kind === 'off') scanner = new DisabledScanner();
   else scanner = new FakeVirusScanner();
 
-  const jobs = new FakeJobQueue();
+  const jobs = new LintingJobQueue();
   const { app } = await startApp(
     {
       FILES_LOCAL_DIR: join(tmp, 'unused'),

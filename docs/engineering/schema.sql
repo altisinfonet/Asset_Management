@@ -679,6 +679,13 @@ CREATE INDEX attachment_incomplete_idx ON app.attachment (tenant_id, created_at)
 CREATE INDEX attachment_pending_scan_idx ON app.attachment (tenant_id, uploaded_at)
   WHERE scan_status = 'pending' AND uploaded_at IS NOT NULL AND archived_at IS NULL;
 
+-- [M2 0170, ED-28] the polymorphic owner must be a record of the SAME tenant (no foreign key can say so):
+-- app.attachment_owner_guard() probes (tenant_id, id) of the table named by entity_type and raises
+-- foreign_key_violation (23503) otherwise. Not SECURITY DEFINER: under RLS it sees what the writer sees.
+CREATE TRIGGER attachment_owner_guard
+  BEFORE INSERT OR UPDATE OF tenant_id, entity_type, entity_id ON app.attachment
+  FOR EACH ROW EXECUTE FUNCTION app.attachment_owner_guard();
+
 -- [M2 0050] primary pictures: asset_model and asset reference an attachment of the same tenant
 ALTER TABLE app.asset_model ADD COLUMN image_attachment_id uuid,
   ADD CONSTRAINT asset_model_image_attachment_fk FOREIGN KEY (tenant_id, image_attachment_id) REFERENCES app.attachment (tenant_id, id);

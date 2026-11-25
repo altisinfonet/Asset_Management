@@ -41,6 +41,32 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
+### Added (M2-SEC-01, M2-OPS-01)
+
+- **Isolation harness extension** (M2-SEC-01, ED-28): the route replay now also probes, from the database catalogue,
+  every tenant table (the other tenant sees none of the rows, the owner sees all) and every foreign key between tenant
+  tables (a reference into another tenant is refused with 23503; a control proves an unenforced key would be reported);
+  explicit cross-tenant inserts for assignments, loans, loan alerts, repairs, import rows, pool memberships and
+  attachments; object keys tenant-prefixed by a CHECK on every key column, and tampered label PDF, export file and import
+  upload URLs refused on the local and S3 drivers; the e2e job queue applies the job payload lint and the real producer
+  of every catalogued queue (16) runs through it. All of it runs direct and through PgBouncer.
+- **Performance harness extension** (M2-OPS-01): nightly budgets for the 500-label PDF (< 30 s at p95) and for a
+  location-scoped user's asset list, search, tag lookup and scan resolve on the 50,000-asset tenant (ED-26 predicate);
+  `perf.yml` publishes `apps/api/test-results/*.json` with a job summary (`scripts/ci/perf-summary.mjs`).
+
+### Changed
+
+- Schema lint rule 8 requires `tenant_id` to be paired with `tenant_id` in a composite foreign key (migration 0170).
+
+### Fixed
+
+- **Attachment owner checked by the database** (ED-28, migration 0170): an attachment row could name a record of another
+  tenant as its owner when written outside the API (the API already refused it). A trigger now refuses it with 23503.
+- **Check-in 500 during partition rotation**: creating or dropping an `asset_history` partition could deadlock with a
+  custody transaction, and the deadlock detector sometimes cancelled the custody request. Partition DDL now waits at most
+  200 ms for a lock and retries, so it is always the side that yields (root cause of the intermittent e2e failure of
+  B.13 / B.22).
+
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 
 M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Merge commit message "Merge M2-LOC-03: location scoping of role assignments"; the release commit is tagged `v0.2.6`.

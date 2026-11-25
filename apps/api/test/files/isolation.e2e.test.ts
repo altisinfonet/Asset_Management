@@ -179,7 +179,8 @@ describe.skipIf(!dbEnabled)(`attachment isolation (${mode})`, () => {
     expect(await bad({ scan_status: 'quarantined' })).toBe('23514');
     expect(await bad({ entity_type: 'user_account' })).toBe('23514');
     expect(await bad({ scan_status: 'clean' })).toBe('23514'); // clean needs an upload
-    expect(await bad({ entity_type: 'asset_model' })).toBeUndefined();
+    // the owner must be a record of that type in the same tenant (0170, ED-28): an asset id is not a model
+    expect(await bad({ entity_type: 'asset_model' })).toBe('23503');
     expect(await bad({ scan_status: 'clean', uploaded_at: new Date() })).toBeUndefined();
     expect(await bad({ size_bytes: -1n })).toBe('23514');
     expect(await bad({ sha256: 'XYZ' })).toBe('23514');

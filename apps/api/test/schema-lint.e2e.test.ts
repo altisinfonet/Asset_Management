@@ -115,6 +115,16 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
         expected: /foreign key zz_fk_parent_id_fkey on app\.zz_fk must be composite/,
       },
       {
+        // M2-SEC-01 (0170): both column lists contain tenant_id, but tenant_id is paired with the parent's
+        // id, so the key does not keep the reference inside the tenant. The earlier form of rule 8 let it pass.
+        rule: '8. composite foreign key that pairs tenant_id with an id column',
+        ddl: `select app.create_tenant_table('zz_fkm_parent', 'v text');
+              select app.create_tenant_table('zz_fkm', 'parent_id uuid');
+              alter table app.zz_fkm add constraint zz_fkm_misaligned
+                foreign key (tenant_id, parent_id) references app.zz_fkm_parent (id, tenant_id);`,
+        expected: /foreign key zz_fkm_misaligned on app\.zz_fkm must be composite/,
+      },
+      {
         rule: '9. unclassified table in schema app',
         ddl: 'create table app.zz_unclassified (id int);',
         expected: /table app\.zz_unclassified is unclassified/,
@@ -289,11 +299,23 @@ describe.skipIf(!dbEnabled)('schema lint, role audit and migrations (M1-TEN-03, 
     // Both partitioned tables get partitions in the far-future year (audit_log and asset_history); drop
     // both before and after, otherwise a leftover of an earlier run that drew the same random year
     // makes the "created 6" count come out smaller.
+    // Dropping an asset_history partition drops its cloned foreign keys, which locks app.asset and
+    // app.assignment like creating one does (see ensurePartitions): with a short lock_timeout the drop
+    // gives up and retries instead of the deadlock detector cancelling a custody transaction of a test
+    // file running in parallel.
     const dropFutureYear = () =>
       withClient(env.migratorUrl!, async (c) => {
+        await c.query("set lock_timeout = '200ms'");
         for (const table of ['audit_log', 'asset_history'])
           for (const m of ['01', '02', '03'])
-            await c.query(`drop table if exists app.${table}_${year}_${m}`);
+            for (let attempt = 1; ; attempt++) {
+              const code = await sqlState(
+                c.query(`drop table if exists app.${table}_${year}_${m}`),
+              );
+              if (code === undefined) break;
+              if ((code !== '55P03' && code !== '40P01') || attempt >= 20) throw new Error(code);
+              await new Promise((r) => setTimeout(r, 100 * attempt));
+            }
       });
     beforeAll(dropFutureYear);
     afterAll(dropFutureYear);

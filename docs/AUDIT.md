@@ -474,6 +474,39 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (203 operations), `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; API e2e through PgBouncer, default settings, full environment: 731/731 in 58 files, 0 skipped, twice (both runs green, no rerun needed); real-stack browser suite 65 passed on a fresh stack (port 4174 free before the run).
 - **Findings:** none. The deadlock flake of B.13 / B.22 did not recur in the two pooled runs.
 
+### B.26 User guides (M2-DOC-01) - 2026-11-25 (documentation only, unreleased)
+
+- **Scope:** eight task-based guides for school and office administrators in `docs/guides/` (import, Google Admin,
+  labels, loaner day, repairs, location scoping, people and logins, schools / K-12), an index, and a script that remakes
+  the screenshots (`docs/guides/tools/shoot.mjs`, samples in `tools/samples`). No application code changed.
+- **Method:** every button and label in the guides was copied from `apps/web/src/i18n/messages/*.ts` and the behaviour
+  checked against ED-22, ED-24, ED-25 and ED-26. The screenshots were taken from a fresh seeded compose stack (project
+  `atdoc`, alternate ports, the founder's stack untouched) by driving the real screens as `admin@acme.example`,
+  `owner@acme.example` (with the authenticator code) and, for the scoping guide, `technician@acme.example` limited to one
+  site. The whole script ran end to end from a freshly created stack (`down -v`, `up`), 55 pictures, each under 200 KB
+  (about 3.5 MB together), and every picture was looked at. All image and file links in the guides resolve; the guides,
+  the script and the tool notes pass Prettier (checked explicitly, because `docs/` is in `.prettierignore`).
+- **Findings** (noticed while writing; none fixed, the guides describe the screens as they are):
+  1. The loaner desk has no "lend the next available device" action; ED-24's rule (the device idle the longest) exists
+     in the API only. The guide says so.
+  2. The desk accepts the tag of a not-deployable device (for example one that is In repair) into its list and refuses it
+     only when "Lend" is pressed.
+  3. On a first import every dry-run row repeats "A category, model or other reference is created by this import; the
+     rest of the checks run when it is committed.", which is noise to a reader and also means a row marked "Create" can
+     still fail at commit.
+  4. In a Google Admin import, DISABLED devices get the default undeployable status ("In repair") with no repair record,
+     and the Org unit path creates new top-level locations ("Students", "Staff", "Retired") beside the real sites.
+  5. On the People page at 1280 px the table is wider than the window and the Login column is partly hidden.
+  6. The Link-to-a-login picker lists accounts by display name only, so two accounts with the same name look alike until
+     one is chosen and the sentence under it shows the address.
+  7. The dashboard tile "Overdue" (all overdue check-outs, 5 in the demo data) and the loaner overview "Overdue" (loans
+     only, 2) are two different counts with the same word.
+  8. A login whose invitation is still pending is not in the Users tab, so it cannot be linked from that screen until it is
+     accepted (it can from the person page).
+- **Open:** the location-scoping guide shows the dialog "Change role and access" and must be refreshed when the Users
+  screen gets add / remove role assignment; the screenshots must be remade after any change to the screens they show;
+  review of the wording by the founder belongs to M2-UX-01.
+
 ---
 
 ## C. Open items

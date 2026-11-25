@@ -19,6 +19,7 @@ import {
   PERSON_STATUSES,
   PRESETS,
   buildXlsx,
+  departmentForPath,
   dictionary,
   looseKey,
   normKey,
@@ -1082,6 +1083,19 @@ function planRows(job: MockImportJob): void {
         });
       }
     }
+    // ED-29: the API rehearses every row against what it creates, except a location below a parent the
+    // same import creates: its checks wait for the commit (one line in the summary, not per row)
+    if (
+      plan !== 'error' &&
+      job.entity_type === 'location' &&
+      Object.values(refs).some((r) => typeof r === 'object' && r !== null && 'create' in r)
+    ) {
+      warnings.push({
+        field: null,
+        code: 'validated-at-commit',
+        message: 'Checked when the import runs (a record it needs is created on the way).',
+      });
+    }
     row.mapped = { ...mapped, refs } as unknown as Record<string, unknown>;
     row.plan = plan;
     row.errors = errors;
@@ -1122,6 +1136,11 @@ function finishDryRun(job: MockImportJob): void {
     counts: { ...job.plan },
     errors_by_code: [...byCode.values()].sort((a, b) => b.n - a.n).slice(0, 50),
     will_create: [...willCreate.values()].sort((a, b) => b.n - a.n).slice(0, 200),
+    validated_at_commit: rows.filter(
+      (r) =>
+        (r.plan === 'create' || r.plan === 'update') &&
+        r.warnings.some((w) => w.code === 'validated-at-commit'),
+    ).length,
     ...(setup ? { setup } : {}),
   };
   job.dry_run_digest = hex64(
@@ -1648,6 +1667,18 @@ function applyPreset(
     ...(preset.constants ? { constants: { ...preset.constants } } : {}),
   };
   const valueMap: Record<string, Record<string, unknown>> = {};
+  const departmentColumn = columns.find((c) => c.target === 'department');
+  if (preset.departmentPaths && departmentColumn) {
+    const departments = live(registry().departments).map((d) => ({ id: d.id, name: d.name }));
+    const entries: Record<string, unknown> = {};
+    for (const value of new Set(
+      rows.map((r) => (r[departmentColumn.index] ?? '').trim()).filter(Boolean),
+    )) {
+      const entry = departmentForPath(value, departments);
+      if (entry) entries[normKey(value)] = entry;
+    }
+    if (Object.keys(entries).length > 0) valueMap.department = entries;
+  }
   const statusColumn = columns.find((c) => c.target === 'status');
   if (preset.statusHints && statusColumn) {
     const labels = live(registry().statusLabels);
@@ -1660,7 +1691,9 @@ function applyPreset(
       const label =
         (wanted === 'deployable'
           ? labels.find((l) => l.is_default && l.state_type === 'deployable')
-          : undefined) ?? labels.find((l) => l.state_type === wanted);
+          : wanted === 'archived'
+            ? labels.find((l) => l.state_type === 'archived' && normKey(l.name) === 'retired')
+            : undefined) ?? labels.find((l) => l.state_type === wanted);
       if (label) entries[normKey(value)] = { id: label.id };
     }
     if (Object.keys(entries).length > 0) valueMap.status = entries;

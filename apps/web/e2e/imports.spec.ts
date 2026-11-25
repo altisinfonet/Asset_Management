@@ -261,12 +261,36 @@ test.describe('import wizard', () => {
     ).toContainText('Assigned to');
     await expect(
       columns.getByRole('combobox', { name: 'Field for column Org Unit Path' }),
-    ).toContainText('Location');
+    ).toContainText('Department');
     await expect(page.getByText('Fixed values')).toBeVisible();
     await expect(page.getByText(/Category = Chromebook/)).toBeVisible();
     await expect(
       page.getByRole('heading', { level: 1, name: 'Google Admin ChromeOS' }),
     ).toBeVisible();
+  });
+
+  test('explains once what is checked when importing, not on every row (ED-29)', async ({
+    page,
+  }) => {
+    await loadApp(page);
+    const { id } = await importAt(page, 'reviewed', {
+      entity: 'location',
+      csv: 'Path
+New Campus > Block A
+New Campus > Block B',
+      filename: 'places.csv',
+      mapping: { Path: 'path' },
+      importOptions: { on_match: 'skip' },
+    });
+    await page.goto(jobUrl(id));
+    const note = page.getByTestId('import-checks-note');
+    await expect(note).toContainText('Every row was checked as it will be imported');
+    await expect(note).toContainText(
+      '2 locations sit below a parent location this import creates, so their last checks run when you import.',
+    );
+    const table = page.getByRole('table', { name: 'Rows of the dry run' });
+    await expect(table.getByRole('row')).toHaveCount(3);
+    await expect(table).not.toContainText('Checked when the import runs');
   });
 
   test('says to run the dry run again when it changed after the one that was reviewed', async ({

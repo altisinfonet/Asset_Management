@@ -491,6 +491,8 @@ export interface Preset {
   options: Record<string, unknown>;
   constants?: Record<string, string>;
   statusHints?: Record<string, string>;
+  /** The department column holds organisational-unit paths (ED-29). */
+  departmentPaths?: boolean;
   setup?: {
     category: string;
     customFields: ReadonlyArray<{ key: string; label: string; data_type: 'text' | 'date' }>;
@@ -692,7 +694,7 @@ export const PRESETS: readonly Preset[] = [
     key: 'google_admin_chromeos',
     label: 'Google Admin: ChromeOS devices',
     description:
-      'The device list exported from the Google Admin console (Devices > Chrome > Devices > export). Devices become assets of the Chromebook category with their OS version, MAC addresses and last sync as custom fields; the organisational unit becomes the location; the annotated user is the person the device is checked out to. Re-importing the same file updates the devices by serial number.',
+      'The device list exported from the Google Admin console (Devices > Chrome > Devices > export). Devices become assets of the Chromebook category with their OS version, MAC addresses and last sync as custom fields; the organisational unit becomes the department; the annotated user is the person the device is checked out to; disabled and deprovisioned devices are Retired. Re-importing the same file updates the devices by serial number.',
     entity_type: 'asset',
     source: 'google_admin_csv',
     columns: [
@@ -707,7 +709,7 @@ export const PRESETS: readonly Preset[] = [
       c('assigned_to', 'User', 'Annotated user', 'Recent users'),
       c('cf:annotated_location', 'Location', 'Annotated location'),
       c('notes', 'Notes', 'Annotated notes'),
-      c('location', 'Org unit path', 'Organizational unit path', 'OU path'),
+      c('department', 'Org unit path', 'Organizational unit path', 'OU path'),
       c('cf:mac_address', 'MAC address'),
       c('cf:ethernet_mac_address', 'Ethernet MAC address'),
       c('cf:ip_address', 'Last known IP address', 'Last known network'),
@@ -766,6 +768,7 @@ export const PRESETS: readonly Preset[] = [
         model: 'create',
         manufacturer: 'create',
         location: 'create',
+        department: 'create',
         status: 'must_exist',
         person: 'must_exist',
       },
@@ -775,20 +778,40 @@ export const PRESETS: readonly Preset[] = [
       active: 'deployable',
       provisioned: 'deployable',
       'in pipeline': 'deployable',
-      disabled: 'undeployable',
+      disabled: 'archived',
       deprovisioned: 'archived',
       retired: 'archived',
     },
+    departmentPaths: true,
     setup: { category: GOOGLE_CATEGORY, customFields: GOOGLE_FIELDS },
     notes: [
       'Creating the import creates the Chromebook category and its custom fields if they do not exist yet.',
-      'Status: Active and Provisioned map to your default deployable label, Disabled to an undeployable one, Deprovisioned to an archived one. Check the value mapping.',
-      'To use the organisational unit as the department instead of the location, change the target of that column.',
+      'Status: Active and Provisioned map to your default deployable label; Disabled and Deprovisioned to Retired (your label of the archived type). Check the value mapping.',
+      'The organisational unit becomes the department: "/Students/Grade 5" is the department "Students / Grade 5", or an existing department of that name or called "Grade 5". Unknown units are created as departments (this needs department:manage); map or skip them in the value mapping. No location is created from the unit; map a location column yourself if you want one.',
     ],
   },
 ];
 
 export const presetOf = (key: string): Preset | undefined => PRESETS.find((p) => p.key === key);
+
+/** The department an organisational-unit path stands for (ED-29; the API's `departmentForPath`). */
+export function departmentForPath(
+  path: string,
+  departments: ReadonlyArray<{ id: string; name: string }>,
+): { id: string } | { create: true; name: string } | { skip: true } | null {
+  const key = (v: string) => v.replace(/\s+/g, ' ').trim().toLowerCase();
+  const parts = path
+    .split('/')
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (parts.length === 0) return path.trim() === '/' ? { skip: true } : null;
+  const name = parts.join(' / ').slice(0, 200);
+  const exact = departments.find((d) => key(d.name) === key(name));
+  if (exact) return { id: exact.id };
+  const last = departments.filter((d) => key(d.name) === key(parts[parts.length - 1]!));
+  if (last.length === 1) return { id: last[0]!.id };
+  return { create: true, name };
+}
 
 /** `GET /v1/imports/presets`: the data dictionary of one preset (column, target, description, required, example). */
 export function dictionary(preset: Preset) {

@@ -837,7 +837,7 @@ S_.LoanerPoolMemberBulkResult = obj({
 }, ['results', 'summary']);
 S_.LoanerCheckoutRequest = obj({
   person_id: uuid(),
-  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).'),
+  asset_id: uuid('A specific pool member. If omitted, the next available member is chosen (ED-24: the member idle the longest, a device never lent first, ties by the lowest asset tag; the answer names it).'),
   expected_return: date({ description: 'Defaults to today (UTC) + the pool\'s `default_loan_days`, else + the organisation\'s `default_expected_return_days`, else + 7 days (ED-24), cut to `max_loan_days`; an explicit date must not exceed the start day + pool.max_loan_days.' }),
   note: str({ maxLength: 2000 }),
 }, ['person_id'], { additionalProperties: false });
@@ -2566,7 +2566,7 @@ S_.Me.required.push('mfa_policy');
   }, ['index', 'header', 'non_blank', 'blank', 'distinct', 'distinct_capped', 'duplicates', 'type', 'date_order', 'max_length', 'samples']);
   S_.RowIssue = obj({
     field: nstr({ description: 'The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole.' }),
-    message: str(), code: str({ description: 'Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`...' }),
+    message: str(), code: str({ description: 'Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `validated-at-commit`, `unchanged`...' }),
   }, ['field', 'message', 'code']);
   S_.ImportJob = obj({
     id: uuid(),
@@ -2594,7 +2594,7 @@ S_.Me.required.push('mfa_policy');
     data_purged_at: ndt({ description: 'When the retention job removed the rows of the file, the profile, the sample rows, the value map and the uploaded file of this finished import (ED-25); null while they are kept. The counts, summary, mapping and options stay.' }),
     cancel_requested: bool(),
     error: nstr({ description: 'Why a failed import failed (a sentence; for a bad file it names the line).' }),
-    summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created).' },
+    summary: { type: ['object', 'null'], additionalProperties: true, description: 'After a dry run: `counts`, `errors_by_code`, `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created).' },
     requested_by: uuid(),
     created_at: dt(), updated_at: dt(),
     profile: { type: ['array', 'null'], items: S('ImportColumnProfile'), description: 'Per-column statistics (only on a single import, not in lists). Without `import:run` the `samples` of each column are empty.' },
@@ -2605,7 +2605,7 @@ S_.Me.required.push('mfa_policy');
   S_.ImportList = obj({ data: arr(S('ImportJob')), page: S('PageInfo') }, ['data', 'page']);
   S_.ImportCreate = obj({
     entity_type: en(ENTITY),
-    preset_key: str({ minLength: 1, maxLength: 64, description: 'A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then).' }),
+    preset_key: str({ minLength: 1, maxLength: 64, description: 'A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then); it maps the org unit path to the department (one value-map entry per unit, created when missing: `department:manage`) and Disabled / Deprovisioned devices to the archived (Retired) status (ED-29).' }),
     options: S('ImportOptions'),
   }, ['entity_type'], { additionalProperties: false });
   S_.ImportUpdate = obj({
@@ -2739,7 +2739,7 @@ S_.Me.required.push('mfa_policy');
   addOp('/v1/imports/{id}/dry-run', 'post', {
     tag: 'Imports', id: 'startImportDryRun', summary: 'Run the import without writing', perm: 'import:run', params: [ID], idem: 'none', extraErrors: [422],
     description: [
-      'Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.',
+      'Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. The references the commit would create (category, model, location, department, person...) are created for real inside a savepoint that is rolled back after each batch, so a row that needs one is checked like any other row (ED-29); only a location below a parent the same import creates is left to the commit (counted in `summary.validated_at_commit`, row warning `validated-at-commit`). **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.',
       'The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).',
       IMPORT_NOTE,
     ].join('\n\n'),

@@ -8,7 +8,7 @@ import {
   type ImportJob,
   type ImportUpdate,
 } from '@/lib/imports/api';
-import { assetsApi } from '@/lib/registry/api';
+import { assetsApi, statusApi } from '@/lib/registry/api';
 import { seedSession } from '@/test/render';
 import { MOCK_ACCOUNTS } from './fixtures';
 import { setMockScanDelay } from './m2-handlers';
@@ -370,6 +370,7 @@ describe('mock imports: creating and analysing', () => {
     const text = [
       'Serial Number,Annotated Asset ID,Status,Model,Annotated User,Org Unit Path,Last Sync',
       '5CD1,CHR-1,ACTIVE,HP Chromebook 14 G6,,/Students/Grade 5,2026-11-20',
+      '5CD2,CHR-2,DISABLED,HP Chromebook 14 G6,,/,2026-11-20',
     ].join('\n');
     const job = await analysed(text, { preset: 'google_admin_chromeos' });
     expect(Object.fromEntries(job.mapping.columns.map((c) => [c.index, c.target]))).toEqual({
@@ -378,13 +379,21 @@ describe('mock imports: creating and analysing', () => {
       2: 'status',
       3: 'model',
       4: 'assigned_to',
-      5: 'location',
+      5: 'department',
       6: 'cf:last_sync',
     });
     expect(job.mapping.constants).toEqual({ category: 'Chromebook' });
     expect(job.source).toBe('google_admin_csv');
     // "Active" is a deployable status: the default label is chosen for it
     expect(job.value_map!.status?.active).toMatchObject({ id: expect.any(String) });
+    // ED-29: a disabled device is Retired (the archived label), not in repair
+    const retired = (await statusApi.list()).data.find((l) => l.state_type === 'archived')!;
+    expect(job.value_map!.status?.disabled).toEqual({ id: retired.id });
+    // ED-29: the org unit is the department, created under its path; the root unit names none
+    expect(job.value_map!.department).toEqual({
+      '/students/grade 5': { create: true, name: 'Students / Grade 5' },
+      '/': { skip: true },
+    });
   });
 });
 

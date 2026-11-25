@@ -1618,7 +1618,7 @@ export interface paths {
         put?: never;
         /**
          * Run the import without writing
-         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
+         * @description Queues the dry run: every row is parsed with the mapping, its references are resolved, de-duplicated within the file and against the registry, and validated by the very code behind the API (`POST /v1/assets` ... in a mode that stops before the first write; people, locations and departments run the service in a transaction that is rolled back), then classified `create`, `update`, `skip` or `error` with per-row messages. The references the commit would create (category, model, location, department, person...) are created for real inside a savepoint that is rolled back after each batch, so a row that needs one is checked like any other row (ED-29); only a location below a parent the same import creates is left to the commit (counted in `summary.validated_at_commit`, row warning `validated-at-commit`). **No registry data is changed.** When it is done the import is `dry_run_done` with `dry_run_digest`, `counts.dry_run` and `summary`.
          *
          *     The caller needs the permissions the commit would use (the write permission of the entity, `asset:update` when `on_match` is `update`, `catalog:manage` and the like when missing references are created).
          *
@@ -5079,7 +5079,7 @@ export interface components {
             person_id: string;
             /**
              * Format: uuid
-             * @description A specific pool member. If omitted, the next available member is chosen (lowest asset tag first).
+             * @description A specific pool member. If omitted, the next available member is chosen (ED-24: the member idle the longest, a device never lent first, ties by the lowest asset tag; the answer names it).
              */
             asset_id?: string;
             /**
@@ -6440,7 +6440,7 @@ export interface components {
             /** @description The target field the problem belongs to (`serial`, `cf:os_version`), or null for the row as a whole. */
             field: string | null;
             message: string;
-            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `unchanged`... */
+            /** @description Stable code: `required`, `not-found`, `ambiguous-date`, `number`, `exists`, `duplicate-in-file`, `changed-since-dry-run`, `will-create`, `validated-at-commit`, `unchanged`... */
             code: string;
         };
         ImportJob: {
@@ -6509,7 +6509,7 @@ export interface components {
             cancel_requested: boolean;
             /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
             error: string | null;
-            /** @description After a dry run: `counts`, `errors_by_code` and `will_create` (references the commit would create, with counts). On a preset import: `setup` (what creating the import created). */
+            /** @description After a dry run: `counts`, `errors_by_code`, `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created). */
             summary: {
                 [key: string]: unknown;
             } | null;
@@ -6537,7 +6537,7 @@ export interface components {
         ImportCreate: {
             /** @enum {string} */
             entity_type: "asset" | "person" | "location" | "department";
-            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then). */
+            /** @description A built-in preset of the same entity type. `google_admin_chromeos` creates the Chromebook category and its custom fields when they do not exist (needs `catalog:manage` then); it maps the org unit path to the department (one value-map entry per unit, created when missing: `department:manage`) and Disabled / Deprovisioned devices to the archived (Retired) status (ED-29). */
             preset_key?: string;
             options?: components["schemas"]["ImportOptions"];
         };

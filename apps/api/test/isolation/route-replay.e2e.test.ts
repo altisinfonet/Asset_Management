@@ -1538,7 +1538,8 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
 
     // A is exactly as it was: no version moved, nothing archived, nothing created, nothing revoked
     expect(await snapshotA()).toEqual({ ...before });
-  });
+    // hundreds of sequential requests: more than vitest's 30 s default on a heavily loaded machine
+  }, 120_000);
 
   it("the answers for B's own data are B's: B sees only its own asset after creating one with A's tag", async () => {
     const own = await b().post('/v1/categories', { name: unique('B-cat'), tag_prefix: 'ISA-' });

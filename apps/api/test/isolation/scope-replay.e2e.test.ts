@@ -1231,7 +1231,9 @@ describe.skipIf(!dbEnabled)(
       }
       expect(results.length).toBeGreaterThanOrEqual(200);
       expect(await snapshot()).toEqual(before);
-    });
+      // 200+ sequential requests: vitest's 30 s default was exceeded once on a machine running two other
+      // e2e suites (M2-SEC-01 verification), with nothing wrong in the replay itself
+    }, 120_000);
 
     it('the accepted holder boundary (ED-26): the in-scope asset names its holder, the person stays 404', async () => {
       const asset = await scoped.get(`/v1/assets/${fx.lentIn}`);

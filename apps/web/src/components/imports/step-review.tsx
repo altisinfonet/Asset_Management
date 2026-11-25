@@ -275,9 +275,7 @@ export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean })
       <div className="flex flex-col gap-1 text-sm text-muted" data-testid="import-checks-note">
         <p>{t('importReview.checksNote')}</p>
         {deferred > 0 ? (
-          <p className="text-text">
-            {t('importReview.deferred', { count: formatNumber(deferred) })}
-          </p>
+          <p className="text-text">{t('importReview.deferred', { count: deferred })}</p>
         ) : null}
       </div>
 

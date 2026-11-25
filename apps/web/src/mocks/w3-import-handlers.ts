@@ -1085,10 +1085,17 @@ function planRows(job: MockImportJob): void {
     }
     // ED-29: the API rehearses every row against what it creates, except a location below a parent the
     // same import creates: its checks wait for the commit (one line in the summary, not per row)
+    const parentPath = locationPathOf(record)
+      .split(/[>/\\|›»]/)
+      .map((part) => part.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .slice(0, -1)
+      .join(' > ');
     if (
       plan !== 'error' &&
       job.entity_type === 'location' &&
-      Object.values(refs).some((r) => typeof r === 'object' && r !== null && 'create' in r)
+      parentPath !== '' &&
+      !findByName('location', parentPath)
     ) {
       warnings.push({
         field: null,

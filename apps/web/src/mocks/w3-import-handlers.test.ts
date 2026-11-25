@@ -806,6 +806,9 @@ describe('mock imports: other kinds of data', () => {
     expect(places.mapping.columns.map((c) => c.target)).toEqual(['path', 'kind']);
     await importsApi.startDryRun(places.id);
     const done = await settle(places.id, 'dry_run_done');
+    // ED-29: a location below a parent the import creates keeps its last checks for the commit,
+    // counted once in the summary (as the API does)
+    expect((done.summary as { validated_at_commit?: number }).validated_at_commit).toBe(1);
     await importsApi.commit(places.id, done.dry_run_digest!, 'key-places-0001');
     await settle(places.id, 'completed');
     const departments = await analysed('Name,Code\nRobotics Club,RC-1', {

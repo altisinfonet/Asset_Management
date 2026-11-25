@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping, isolation harness extension and user guides to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles done (unreleased); isolation harness extension and user guides to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -90,9 +90,15 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 open |
 | Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 
-### Next: wave 3 part 2
+### Wave 3 — part 2: location scoping done ✅ (unreleased, branch `worktree-agent-a06c49586ab451805`)
 
-In this order: M2-LOC-03 location scoping for roles, then SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.
+| Area | Stories |
+| ---- | ------- |
+| Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | LOC-03 |
+
+### Next: wave 3 part 2 (rest)
+
+In this order: SEC-01 (isolation-harness extension), OPS-01 (performance harness), DOC-01 (user guides), IMP-09 (waiting on the founder's sample data, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤.
 
 ## 4. Waiting on the founder 👤
 

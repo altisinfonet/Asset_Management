@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { type AuthContext, permits } from '../auth/index.js';
+import { type AuthContext, locationScopeFor, permits } from '../auth/index.js';
 import { AttachmentsService } from '../files/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import { CustodyService } from '../lifecycle/index.js';
@@ -32,6 +32,7 @@ import {
 import {
   TenancyService,
   assetInScope,
+  runWithLocationScope,
   isUniqueViolation,
   personInScope,
   scopedLocationIds,
@@ -269,6 +270,11 @@ export class RepairsService extends RegistryBase {
           );
         }
         assertAssetAction('open_repair', { ...state, hasAssignment: false });
+        // M2-LOC-03 (ED-26): the check-in half needs the asset inside the asset:checkin scope too
+        const checkinScope = locationScopeFor(auth.grants, 'asset:checkin');
+        if (!(await runWithLocationScope(checkinScope, () => assetInScope(trx, prior!.id)))) {
+          throw problem.notFound('Asset not found.');
+        }
         const checkedIn = await this.custody.checkin(
           auth,
           asset.id,

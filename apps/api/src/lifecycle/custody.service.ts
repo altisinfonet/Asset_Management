@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { permits, type AuthContext } from '../auth/index.js';
+import { locationScopeFor, permits, type AuthContext } from '../auth/index.js';
 import { AttachmentsService } from '../files/index.js';
 import { uuidv7 } from '../ids/uuidv7.js';
 import {
@@ -34,6 +34,7 @@ import {
 import {
   TenancyService,
   assetInScope,
+  runWithLocationScope,
   isLocationScoped,
   locationInScope,
   personInScope,
@@ -576,6 +577,12 @@ export class CustodyService extends RegistryBase {
         throw undoProblem('undo-expired', 'The time to undo this action has passed.');
       }
       if (!permits(auth.permissions, kind.permission)) throw problem.forbidden();
+      // M2-LOC-03 (ED-26): the rest runs under the scope of the undone action's permission too
+      const undoScope = locationScopeFor(auth.grants, kind.permission);
+      const inUndoScope = <T>(fn: () => Promise<T>) => runWithLocationScope(undoScope, fn);
+      if (!(await inUndoScope(() => assetInScope(trx, current.id)))) {
+        throw problem.notFound('Asset not found.');
+      }
       const payload = last.payload;
       const statusOf = (key: 'from_id' | 'to_id') => {
         const status = payload.status as Record<string, unknown> | undefined;
@@ -642,16 +649,18 @@ export class CustodyService extends RegistryBase {
       let holder: Target | null = null;
       if (reopenedFrom) {
         try {
-          holder = await this.resolveTarget(
-            trx,
-            {
-              ...(reopenedFrom.person_id ? { person_id: reopenedFrom.person_id } : {}),
-              ...(reopenedFrom.location_id ? { location_id: reopenedFrom.location_id } : {}),
-              ...(reopenedFrom.target_asset_id
-                ? { target_asset_id: reopenedFrom.target_asset_id }
-                : {}),
-            },
-            current.id,
+          holder = await inUndoScope(() =>
+            this.resolveTarget(
+              trx,
+              {
+                ...(reopenedFrom.person_id ? { person_id: reopenedFrom.person_id } : {}),
+                ...(reopenedFrom.location_id ? { location_id: reopenedFrom.location_id } : {}),
+                ...(reopenedFrom.target_asset_id
+                  ? { target_asset_id: reopenedFrom.target_asset_id }
+                  : {}),
+              },
+              current.id,
+            ),
           );
         } catch (err) {
           if (err instanceof ApiProblem && err.code === 'validation') {
@@ -694,7 +703,10 @@ export class CustodyService extends RegistryBase {
       }
       const location = locationFrom();
       // M2-LOC-03 (ED-26): an undo never takes the asset out of the caller's location scope
-      if (location.restore && isLocationScoped() && !(await locationInScope(trx, location.id))) {
+      if (
+        location.restore &&
+        !(await inUndoScope(async () => !isLocationScoped() || locationInScope(trx, location.id)))
+      ) {
         throw undoProblem(
           'undo-not-possible',
           'The asset would go back to a place outside your scope, so the action cannot be undone here.',

@@ -25,7 +25,14 @@ import type { AuthContext } from './auth-context.js';
 import { AuthMailer } from './auth-mailer.service.js';
 import { type SessionInfoDto, type UserDto, userDto } from './auth.dto.js';
 import type { RoleAssignmentBody, UserCreateBody, UserUpdateBody } from './auth.schemas.js';
-import { type GrantedRole, PolicyService, type PolicySubject } from './policy.service.js';
+import { PERMISSIONS } from './permissions.js';
+import {
+  type GrantedRole,
+  PolicyService,
+  type PolicySubject,
+  locationScopeFor,
+  permits,
+} from './policy.service.js';
 import { MfaService } from './mfa.service.js';
 import { SessionService } from './session.service.js';
 
@@ -222,7 +229,7 @@ export class UsersService {
       (locationIds.length > 0
         ? await trx.location.findMany({
             where: { id: { in: locationIds } },
-            select: { id: true, archived_at: true },
+            select: { id: true, archived_at: true, ancestor_ids: true },
           })
         : []
       ).map((l) => [l.id, l]),
@@ -281,6 +288,23 @@ export class UsersService {
     for (const role of roles) {
       if (!this.policy.canGrantRole(this.subject(auth), role.permissions)) {
         throw problem.forbidden('You cannot grant a role with more privileges than your own.');
+      }
+    }
+    // M2-LOC-03 (ED-26): nobody grants a permission wider than they hold it. Granting org-wide
+    // needs each permission of the role org-wide; granting at a location needs each permission
+    // org-wide or in a subtree that contains that location.
+    for (const a of assignments) {
+      const role = byId.get(a.role_id)!;
+      const target =
+        a.scope_type === 'location' ? (locations.get(a.location_id!)?.ancestor_ids ?? []) : null;
+      for (const permission of PERMISSIONS.filter((p) => permits(role.permissions, p))) {
+        const held = locationScopeFor(auth.grants, permission);
+        if (held === null) continue;
+        if (target === null || !held.some((root) => target.includes(root))) {
+          throw problem.forbidden(
+            'You cannot grant a role wider than you hold it: some of its permissions are limited to a location for you.',
+          );
+        }
       }
     }
     return byId;

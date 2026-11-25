@@ -37,6 +37,7 @@ import {
 import {
   Prisma,
   TenancyService,
+  locationInScope,
   locationScopeSql,
   locationScopeWhere,
   type Tx,
@@ -390,7 +391,9 @@ export class LoansService extends RegistryBase {
             if (!homes.has(member.loaner_pool_id)) {
               homes.set(member.loaner_pool_id, await this.liveHome(trx, member.loaner_pool_id));
             }
-            const home = homes.get(member.loaner_pool_id) ?? null;
+            const poolHome = homes.get(member.loaner_pool_id) ?? null;
+            // M2-LOC-03 (ED-26): never move a returned device out of the caller's scope
+            const home = poolHome && (await locationInScope(trx, poolHome)) ? poolHome : null;
             // undefined = the pool's home location; an explicit null = do not move the device
             const location =
               body.checkin_location_id === undefined ? home : body.checkin_location_id;

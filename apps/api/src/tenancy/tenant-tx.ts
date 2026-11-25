@@ -111,11 +111,10 @@ export async function withTenantTx<T>(
       );
     }
     // M2-LOC-03 (ED-26): an explicit scope on a nested call (a job acting for a scoped user inside
-    // the job's own transaction) narrows the context for that call; it never widens a scoped one.
-    if (ctx.locationScope !== undefined && outer.ctx.locationScope == null && locationScope) {
-      return active.run({ trx: outer.trx, ctx: { ...outer.ctx, locationScope } }, () =>
-        fn(outer.trx),
-      );
+    // the job's own transaction) narrows the context for that call to the intersection of both
+    // scopes; it never widens a scoped one.
+    if (ctx.locationScope !== undefined && locationScope !== null) {
+      return runWithLocationScope(locationScope, () => fn(outer.trx));
     }
     return fn(outer.trx);
   }
@@ -141,15 +140,45 @@ export async function withTenantTx<T>(
 }
 
 /**
- * M2-LOC-03 (ED-26): runs `fn` inside the enclosing tenant transaction with a location scope (a
- * worker job acting for a scoped user, for example an import step). `null` leaves the context as
- * it is; a scope never widens an already scoped context. Throws outside a tenant transaction.
+ * M2-LOC-03 (ED-26): the intersection of two location scopes (root ids of subtrees; `null` = not
+ * limited): the roots of either side that lie inside a subtree of the other. `[]` = nothing.
  */
-export function runWithLocationScope<T>(scope: readonly string[] | null, fn: () => T): T {
+export async function intersectLocationScopes(
+  trx: Tx,
+  a: readonly string[] | null,
+  b: readonly string[] | null,
+): Promise<readonly string[] | null> {
+  if (a === null) return b;
+  if (b === null) return a;
+  const ids = [...new Set([...a, ...b])].map((id) => uuid.parse(id));
+  if (ids.length === 0) return [];
+  const rows = await trx.$queryRaw<Array<{ id: string; ancestor_ids: string[] }>>`
+    select id, ancestor_ids from app.location where id = any(${ids}::uuid[])`;
+  const ancestors = new Map(rows.map((r) => [r.id, r.ancestor_ids]));
+  const inside = (root: string, others: readonly string[]) =>
+    others.some((o) => ancestors.get(root)?.includes(o) ?? false);
+  const out = new Set<string>();
+  for (const r of a) if (inside(r, b)) out.add(r);
+  for (const r of b) if (inside(r, a)) out.add(r);
+  return [...out].sort();
+}
+
+/**
+ * M2-LOC-03 (ED-26): runs `fn` inside the enclosing tenant transaction, narrowed to `scope` (the
+ * intersection with the current scope): a worker job acting for a scoped user, or a service that
+ * also needs a second permission whose grants are scoped differently. `null` leaves the context
+ * as it is; the result is never wider than the current scope. Throws outside a tenant transaction.
+ */
+export async function runWithLocationScope<T>(
+  scope: readonly string[] | null,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   const store = active.getStore();
   if (!store) throw new NoTenantTransactionError();
-  if (scope === null || store.ctx.locationScope != null) return fn();
-  const locationScope = scope.map((id) => uuid.parse(id));
+  if (scope === null) return fn();
+  const current = store.ctx.locationScope ?? null;
+  const locationScope = await intersectLocationScopes(store.trx, current, scope);
+  if (locationScope === current) return fn();
   return active.run({ trx: store.trx, ctx: { ...store.ctx, locationScope } }, fn);
 }
 

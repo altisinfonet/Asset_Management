@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { type AuthContext, permits } from '../auth/index.js';
+import { type AuthContext, locationScopeFor, permits } from '../auth/index.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { AppConfig } from '../config/env.js';
 import { uuidv7 } from '../ids/uuidv7.js';
@@ -24,7 +24,12 @@ import {
   type StorageAdapter,
 } from '../ports/index.js';
 import { AssetsFacade, RegistryBase } from '../registry/index.js';
-import { TenancyService, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  currentLocationScope,
+  intersectLocationScopes,
+  type Tx,
+} from '../tenancy/index.js';
 import { EXPORT_JOB } from './export-runner.js';
 import {
   FORBIDDEN_FILTERS,
@@ -127,6 +132,13 @@ export class ExportsService extends RegistryBase {
         );
       }
       const id = uuidv7();
+      // M2-LOC-03 (ED-26): the rows the requester may LIST: the export:run scope narrowed to the
+      // scope of the resource's read permission (they can differ with custom role bundles)
+      const scope = await intersectLocationScopes(
+        trx,
+        currentLocationScope(),
+        locationScopeFor(auth.grants, READ_PERMISSION[body.resource]),
+      );
       const row = await trx.export_job.create({
         data: {
           id,
@@ -136,8 +148,8 @@ export class ExportsService extends RegistryBase {
           format: body.format,
           filters,
           // M2-LOC-03 (ED-26): the worker applies the requester's scope as it was at request time
-          location_scoped: auth.locationScope != null,
-          location_scope: auth.locationScope ? [...auth.locationScope] : [],
+          location_scoped: scope !== null,
+          location_scope: scope ? [...scope] : [],
           created_by: auth.userId,
         },
       });

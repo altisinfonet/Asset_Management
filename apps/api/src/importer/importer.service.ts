@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { type AuthContext, permits } from '../auth/index.js';
+import { type AuthContext, locationScopeFor, permits } from '../auth/index.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { AppConfig } from '../config/env.js';
 import { uuidv7 } from '../ids/uuidv7.js';
@@ -22,7 +22,13 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { CategoriesService, CustomFieldsService, RegistryBase } from '../registry/index.js';
-import { TenancyService, isLocationScoped, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  currentLocationScope,
+  intersectLocationScopes,
+  isLocationScoped,
+  type Tx,
+} from '../tenancy/index.js';
 import { jobAuth } from './handlers/shared.js';
 import { IMPORT_ANALYZE_JOB, IMPORT_STEP_JOB } from './engine.js';
 import { ImportEngine } from './engine.js';
@@ -252,12 +258,20 @@ export class ImportsService extends RegistryBase {
     return !isLocationScoped() || requestedBy === auth.userId;
   }
 
-  /** The location scope a dry run / commit carries to the worker (ED-26). */
-  private scopeColumns(auth: AuthContext) {
-    return {
-      location_scoped: auth.locationScope != null,
-      location_scope: auth.locationScope ? [...auth.locationScope] : [],
-    };
+  /**
+   * The location scope a dry run / commit carries to the worker (ED-26): the import:run scope of the
+   * request narrowed to the scopes of the write permissions the import uses (custom role bundles
+   * can scope them differently).
+   */
+  private async scopeColumns(trx: Tx, auth: AuthContext, job: JobRecord) {
+    let scope: readonly string[] | null = currentLocationScope();
+    const entity = job.entity_type as EntityType;
+    const needs = [WRITE_PERMISSION[entity]];
+    if (entity === 'asset' && this.options(job).on_match === 'update') needs.push('asset:update');
+    for (const permission of needs) {
+      scope = await intersectLocationScopes(trx, scope, locationScopeFor(auth.grants, permission));
+    }
+    return { location_scoped: scope !== null, location_scope: scope ? [...scope] : [] };
   }
 
   private wrongState(
@@ -736,7 +750,7 @@ export class ImportsService extends RegistryBase {
         where: { id },
         data: {
           state: 'dry_running',
-          ...this.scopeColumns(auth),
+          ...(await this.scopeColumns(trx, auth, job)),
           cursor_row: 0,
           rows_processed: 0,
           plan_create: 0,
@@ -795,7 +809,7 @@ export class ImportsService extends RegistryBase {
         where: { id },
         data: {
           state: 'committing',
-          ...this.scopeColumns(auth),
+          ...(await this.scopeColumns(trx, auth, job)),
           cursor_row: 0,
           rows_processed: 0,
           done_create: 0,

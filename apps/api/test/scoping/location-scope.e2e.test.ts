@@ -31,7 +31,7 @@ import {
   startImportApp,
   unique,
 } from '../importer/support.js';
-import { createScopedUser } from './support.js';
+import { createScopedUser, createUserWith } from './support.js';
 
 type Scoped = Awaited<ReturnType<typeof createScopedUser>>;
 
@@ -794,5 +794,96 @@ describe.skipIf(!dbEnabled)(`location scoping of role assignments (${mode})`, ()
         .map((n) => n.entity_id);
     expect(await told(manager.client)).toEqual([f.conIn]);
     expect((await told(admin())).sort()).toEqual([f.conIn, f.conOut].sort());
+  });
+
+  // ------------------------------------------- mixed bundles (custom roles are v2; inserted here)
+
+  async function customRole(key: string, permissions: string[]): Promise<string> {
+    const id = randomUUID();
+    await ownerTenantSql(
+      t.tenantId,
+      'insert into app.role (id, tenant_id, key, name, permissions) values ($1, $2, $3, $4, $5)',
+      [id, t.tenantId, `${key}_${marker.slice(-6)}`.toLowerCase(), key, permissions],
+    );
+    return id;
+  }
+
+  it('nobody grants a permission wider than they hold it', async () => {
+    const userAdmin = await customRole('useradmin', ['user:read', 'user:manage', 'role:read']);
+    const mixed = await createUserWith(
+      ih.h.app,
+      t,
+      [
+        { role_id: userAdmin },
+        { role_id: t.roles.technician!, scope_type: 'location', location_id: siteIn },
+      ],
+      'grantor',
+    );
+    const grant = (assignment: Record<string, unknown>) =>
+      mixed.client.post('/v1/users', {
+        email: `${unique('g')}@scope.example`,
+        display_name: 'Granted',
+        send_invite: false,
+        status: 'active',
+        role_assignments: [{ role_id: t.roles.technician, ...assignment }],
+      });
+    // the technician permissions are theirs at "In" only: not org-wide, not at "Out"
+    expect((await grant({ scope_type: 'tenant' })).status).toBe(403);
+    expect((await grant({ scope_type: 'location', location_id: siteOut })).status).toBe(403);
+    expect((await grant({ scope_type: 'location', location_id: roomIn })).status).toBe(201);
+    // nor to themselves
+    const self = await mixed.client.get(`/v1/users/${mixed.id}`);
+    const widened = await mixed.client.patch(
+      `/v1/users/${mixed.id}`,
+      { role_assignments: [{ role_id: userAdmin }, { role_id: t.roles.technician }] },
+      ifMatch(self.headers.etag),
+    );
+    expect(widened.status).toBe(403);
+  });
+
+  it('a route permission held org-wide does not widen the records a scoped reader may see', async () => {
+    const exporter = await customRole('exporter', ['export:run', 'search:read']);
+    const mixed = await createUserWith(
+      ih.h.app,
+      t,
+      [
+        { role_id: exporter },
+        { role_id: t.roles.viewer!, scope_type: 'location', location_id: siteIn },
+      ],
+      'exporter',
+    );
+    const requested = await mixed.client.post('/v1/exports', { resource: 'assets' });
+    expect(requested.status, requested.raw).toBe(202);
+    const job = await ownerTenantSql(
+      t.tenantId,
+      'select location_scoped, location_scope from app.export_job where id = $1',
+      [requested.body.id],
+    );
+    expect(job.rows[0]).toEqual({ location_scoped: true, location_scope: [siteIn] });
+    const outTag = (await admin().get(`/v1/assets/${f.assetOut}`)).body.asset_tag as string;
+    const hits = await mixed.client.get(`/v1/search?q=${encodeURIComponent(outTag)}`);
+    expect(hits.body.data.map((h: Json) => h.id)).not.toContain(f.assetOut);
+    const own = await mixed.client.get(`/v1/search?q=${marker}%20in`);
+    expect(own.body.data.map((h: Json) => h.id)).toContain(f.assetIn);
+  });
+
+  it('returning a loan never moves the device out of the scope (pool home outside)', async () => {
+    const device = (
+      await newAsset(admin(), categoryId, { name: `${marker} cart device`, location_id: roomIn })
+    ).id;
+    await admin().post(`/v1/loaner-pools/${f.poolOut}/members`, { asset_id: device });
+    const lent = await admin().post(
+      `/v1/loaner-pools/${f.poolOut}/checkout`,
+      { person_id: f.personIn, asset_id: device },
+      key(),
+    );
+    expect(lent.status, lent.raw).toBe(201);
+    const tag = (await admin().get(`/v1/assets/${device}`)).body.asset_tag as string;
+    const back = await S().post('/v1/loans/return', { codes: [tag] }, key());
+    expect(back.status, back.raw).toBe(200);
+    expect(back.body.results[0].status).toBe(200);
+    const after = (await admin().get(`/v1/assets/${device}`)).body;
+    expect(after.location_id).toBe(roomIn);
+    expect(after.current_assignment).toBeNull();
   });
 });

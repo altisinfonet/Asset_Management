@@ -1,7 +1,7 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
-import { type AuthContext, permits } from '../auth/index.js';
+import { type AuthContext, locationScopeFor, permits } from '../auth/index.js';
 import { ScanResolverRegistry, type ScanResolution, type ScanResolver } from '../registry/index.js';
-import { locationScopeWhere, type Tx } from '../tenancy/index.js';
+import { locationScopeWhere, runWithLocationScope, type Tx } from '../tenancy/index.js';
 import { accessoryDto, consumableDto, outstandingByAccessory } from './dto.js';
 
 /**
@@ -26,9 +26,13 @@ export class StockScanResolver implements ScanResolver, OnModuleInit {
     for (const code of codes) {
       if (permits(auth.permissions, 'accessory:read')) {
         // M2-LOC-03 (ED-26): a label outside the caller's scope resolves to nothing
-        const row = await trx.accessory.findFirst({
-          where: { label_code: code, ...(await locationScopeWhere(trx, 'location_id')) },
-        });
+        const row = await runWithLocationScope(
+          locationScopeFor(auth.grants, 'accessory:read'),
+          async () =>
+            trx.accessory.findFirst({
+              where: { label_code: code, ...(await locationScopeWhere(trx, 'location_id')) },
+            }),
+        );
         if (row) {
           const out = (await outstandingByAccessory(trx, [row.id])).get(row.id) ?? 0;
           const dto = accessoryDto(row, out);
@@ -52,9 +56,13 @@ export class StockScanResolver implements ScanResolver, OnModuleInit {
       }
       if (permits(auth.permissions, 'consumable:read')) {
         // M2-LOC-03 (ED-26): a label outside the caller's scope resolves to nothing
-        const row = await trx.consumable.findFirst({
-          where: { label_code: code, ...(await locationScopeWhere(trx, 'location_id')) },
-        });
+        const row = await runWithLocationScope(
+          locationScopeFor(auth.grants, 'consumable:read'),
+          async () =>
+            trx.consumable.findFirst({
+              where: { label_code: code, ...(await locationScopeWhere(trx, 'location_id')) },
+            }),
+        );
         if (row) {
           const live = row.archived_at === null;
           const adjust = live && permits(auth.permissions, 'consumable:adjust');

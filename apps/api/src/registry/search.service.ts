@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import type { AuthContext } from '../auth/index.js';
-import { permits } from '../auth/index.js';
-import { locationScopeSql, Prisma, TenancyService, type Tx } from '../tenancy/index.js';
+import { locationScopeFor, permits } from '../auth/index.js';
+import {
+  locationScopeSql,
+  Prisma,
+  runWithLocationScope,
+  TenancyService,
+  type Tx,
+} from '../tenancy/index.js';
 import { assetScopeSql, escapeLike } from './asset-queries.js';
 import type { SearchType } from './schemas.js';
 
@@ -56,15 +62,31 @@ export class SearchService {
         // The three searches are independent statements of one transaction: run in sequence
         // (a Prisma interactive transaction is a single connection).
         const out: SearchResult[] = [];
+        // M2-LOC-03 (ED-26): each type under the search:read scope narrowed to its own permission
+        const scoped = (type: SearchType, run: () => Promise<SearchResult[]>) =>
+          runWithLocationScope(
+            locationScopeFor(
+              auth.grants,
+              SEARCH_TYPES_AVAILABLE.find((t) => t.type === type)!.permission,
+            ),
+            run,
+          );
         if (types.includes('asset'))
-          out.push(...(await this.assets(trx, q, contains, prefix, query.limit)));
+          out.push(
+            ...(await scoped('asset', () => this.assets(trx, q, contains, prefix, query.limit))),
+          );
         if (types.includes('model'))
           out.push(...(await this.models(trx, q, contains, prefix, query.limit)));
         if (types.includes('category'))
           out.push(...(await this.categories(trx, q, contains, prefix, query.limit)));
-        if (types.includes('person')) out.push(...(await this.people(trx, q, query.limit)));
+        if (types.includes('person'))
+          out.push(...(await scoped('person', () => this.people(trx, q, query.limit))));
         if (types.includes('location'))
-          out.push(...(await this.locations(trx, q, contains, prefix, query.limit)));
+          out.push(
+            ...(await scoped('location', () =>
+              this.locations(trx, q, contains, prefix, query.limit),
+            )),
+          );
         return { data: out };
       },
     );

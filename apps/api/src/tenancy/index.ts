@@ -23,6 +23,7 @@ export {
   NoTenantTransactionError,
   currentTenantContext,
   currentTenantTx,
+  intersectLocationScopes,
   runWithLocationScope,
   withPreTenantTx,
   withTenantTx,

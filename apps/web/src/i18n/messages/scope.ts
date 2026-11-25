@@ -12,6 +12,7 @@ export const scopeMessages = {
     accessOf: 'Access of {name}',
     wholeOrganisation: 'Whole organisation',
     limited: 'Limited to a location',
+    company: 'Whole company',
     location: 'Location',
     locationHint: 'The role applies to this location and everything inside it.',
     numbered: '{label} {n}',

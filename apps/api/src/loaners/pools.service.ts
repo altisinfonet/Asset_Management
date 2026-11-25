@@ -36,7 +36,17 @@ import {
   type TxScope,
 } from '../registry/index.js';
 import { CustodySettingsService } from '../lifecycle/index.js';
-import { Prisma, TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  assetInScope,
+  isLocationScoped,
+  isUniqueViolation,
+  locationInScope,
+  locationScopeSql,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import { type PoolCounts, type PoolRow, EMPTY_COUNTS, poolAuditView, poolDto } from './dto.js';
 import type {
   BulkMembersBody,
@@ -97,8 +107,11 @@ export class PoolsService extends RegistryBase {
             ? {}
             : { archived_at: null };
       const needle = query.q?.trim().toLowerCase();
+      // M2-LOC-03 (ED-26): the pools whose home location is inside the caller's scope
+      const inScope = await locationScopeWhere(trx, 'home_location_id');
       const filter = {
         AND: [
+          inScope,
           archived,
           needle ? { name_key: { contains: needle } } : {},
           query.is_active !== undefined ? { is_active: query.is_active } : {},
@@ -139,7 +152,7 @@ export class PoolsService extends RegistryBase {
     id: string,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const row = await trx.loaner_pool.findUnique({ where: { id } });
+      const row = await this.scopedPool(trx, id);
       if (!row) throw problem.notFound('Loaner pool not found.');
       return { data: await this.view(trx, row), version: row.version };
     });
@@ -180,6 +193,7 @@ export class PoolsService extends RegistryBase {
         left join app.assignment s on s.tenant_id = a.tenant_id and s.asset_id = a.id and s.checked_in_at is null
         cross join d
        where m.loaner_pool_id = any(${ids}::uuid[])
+         and ${locationScopeSql(Prisma.sql`a.location_id`)}
        group by m.loaner_pool_id`;
     for (const r of rows) {
       out.set(r.pool_id, {
@@ -212,7 +226,7 @@ export class PoolsService extends RegistryBase {
           default_loan_days: body.default_loan_days ?? null,
           max_loan_days: body.max_loan_days ?? null,
         };
-        await this.validate(trx, body, merged);
+        await this.validate(trx, body, merged, true);
         await this.assertUnique(trx, body.name, undefined);
         const row = await trx.loaner_pool.create({
           data: {
@@ -254,7 +268,7 @@ export class PoolsService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     try {
       return await this.tx(auth, async (trx) => {
-        const row = await trx.loaner_pool.findUnique({ where: { id } });
+        const row = await this.scopedPool(trx, id);
         if (!row || row.archived_at) throw problem.notFound('Loaner pool not found.');
         assertIfMatch(ifMatch, row.version);
 
@@ -335,7 +349,7 @@ export class PoolsService extends RegistryBase {
    */
   async archive(auth: AuthContext, id: string, ifMatch: IfMatch): Promise<void> {
     await this.tx(auth, async (trx) => {
-      const row = await trx.loaner_pool.findUnique({ where: { id } });
+      const row = await this.scopedPool(trx, id);
       if (!row || row.archived_at) throw problem.notFound('Loaner pool not found.');
       assertIfMatch(ifMatch, row.version);
       const [open] = await trx.$queryRaw<Array<{ n: bigint }>>`
@@ -377,14 +391,18 @@ export class PoolsService extends RegistryBase {
     query: MemberListQuery,
   ): Promise<Page<MemberDto>> {
     return this.tx(auth, async (trx) => {
-      const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+      const pool = await this.scopedPool(trx, poolId);
       if (!pool) throw problem.notFound('Loaner pool not found.');
       const terms = parseSort('asset_tag', {
         sortable: { asset_tag: { kind: 'string', column: 'k0' } },
         defaultSort: 'asset_tag',
       });
       const binding = bindingFor(terms, { pool: poolId, available: query.available });
-      const where: Prisma.Sql[] = [Prisma.sql`m.loaner_pool_id = ${poolId}::uuid`];
+      const where: Prisma.Sql[] = [
+        Prisma.sql`m.loaner_pool_id = ${poolId}::uuid`,
+        // M2-LOC-03 (ED-26): members outside the caller's scope are not listed
+        locationScopeSql(Prisma.sql`a.location_id`),
+      ];
       if (query.cursor) {
         const [k0, k1] = decodeCursor(query.cursor, terms, binding) as [string, string];
         if (
@@ -480,12 +498,14 @@ export class PoolsService extends RegistryBase {
     assetId: string,
     pointer: string,
   ): Promise<{ data: MemberDto; created: boolean }> {
-    const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+    const pool = await this.scopedPool(trx, poolId);
     if (!pool || pool.archived_at) throw problem.notFound('Loaner pool not found.');
-    const asset = await trx.asset.findUnique({
-      where: { id: assetId },
-      select: { id: true, archived_at: true },
-    });
+    const asset = (await assetInScope(trx, assetId))
+      ? await trx.asset.findUnique({
+          where: { id: assetId },
+          select: { id: true, archived_at: true },
+        })
+      : null;
     if (!asset) throw problem.validation([invalidRef(pointer, 'No such asset.')]);
     if (asset.archived_at) {
       throw problem.validation([
@@ -529,12 +549,14 @@ export class PoolsService extends RegistryBase {
   }
 
   private async removeMemberInTx(trx: Tx, poolId: string, assetId: string): Promise<void> {
-    const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+    const pool = await this.scopedPool(trx, poolId);
     if (!pool) throw problem.notFound('Loaner pool not found.');
     const member = await trx.loaner_pool_member.findFirst({
       where: { asset_id: assetId, loaner_pool_id: poolId },
     });
-    if (!member) throw problem.notFound('The asset is not a member of this pool.');
+    if (!member || !(await assetInScope(trx, assetId))) {
+      throw problem.notFound('The asset is not a member of this pool.');
+    }
     const [loan] = await trx.$queryRaw<Array<{ n: bigint }>>`
       select count(*) as n from app.assignment
        where asset_id = ${assetId}::uuid and loaner_pool_id = ${poolId}::uuid and checked_in_at is null`;
@@ -558,7 +580,7 @@ export class PoolsService extends RegistryBase {
     body: BulkMembersBody,
   ): Promise<BulkResponse<MemberDto>> {
     return this.tx(auth, async (trx) => {
-      const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+      const pool = await this.scopedPool(trx, poolId);
       if (!pool || pool.archived_at) throw problem.notFound('Loaner pool not found.');
       return runBulk(
         body.ids,
@@ -584,7 +606,7 @@ export class PoolsService extends RegistryBase {
     body: BulkMembersBody,
   ): Promise<BulkResponse<void>> {
     return this.tx(auth, async (trx) => {
-      const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+      const pool = await this.scopedPool(trx, poolId);
       if (!pool) throw problem.notFound('Loaner pool not found.');
       return runBulk(
         body.ids,
@@ -597,6 +619,12 @@ export class PoolsService extends RegistryBase {
   // ------------------------------------------------------------------------------------ helpers
 
   /** Refs and rules: live home location and owner, `max_loan_days >= default_loan_days`. */
+  /** The pool `id` when its home location is inside the caller's scope (ED-26), else null. */
+  async scopedPool(trx: Tx, id: string): Promise<PoolRow | null> {
+    const row = await trx.loaner_pool.findUnique({ where: { id } });
+    return row && (await locationInScope(trx, row.home_location_id)) ? row : null;
+  }
+
   private async validate(
     trx: Tx,
     body: {
@@ -604,16 +632,26 @@ export class PoolsService extends RegistryBase {
       owner_user_id?: string | null | undefined;
     },
     days: { default_loan_days: number | null; max_loan_days: number | null },
+    creating = false,
   ): Promise<void> {
     const errors: FieldError[] = [];
     if (body.home_location_id) {
-      const location = await trx.location.findUnique({
-        where: { id: body.home_location_id },
-        select: { archived_at: true },
-      });
+      const location = (await locationInScope(trx, body.home_location_id))
+        ? await trx.location.findUnique({
+            where: { id: body.home_location_id },
+            select: { archived_at: true },
+          })
+        : null;
       if (!location || location.archived_at) {
         errors.push(invalidRef('/home_location_id', 'No such location.'));
       }
+    } else if (isLocationScoped() && (creating || body.home_location_id === null)) {
+      // M2-LOC-03 (ED-26): a pool without a home location in scope would be invisible to the caller
+      errors.push({
+        pointer: '/home_location_id',
+        message: 'A home location inside your scope is required.',
+        code: 'required',
+      });
     }
     if (body.owner_user_id) {
       const user = await trx.user_account.findUnique({

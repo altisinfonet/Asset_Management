@@ -34,7 +34,13 @@ import {
   scanCandidates,
   type TxScope,
 } from '../registry/index.js';
-import { Prisma, TenancyService, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  locationScopeSql,
+  locationScopeWhere,
+  type Tx,
+} from '../tenancy/index.js';
 import { type LoanRow, type PoolRow, addDays, effectiveLoanDays, isoDay, loanDto } from './dto.js';
 import { PoolsService } from './pools.service.js';
 import {
@@ -263,6 +269,7 @@ export class LoansService extends RegistryBase {
         join app.asset a on a.tenant_id = m.tenant_id and a.id = m.asset_id
         join app.status_label sl on sl.tenant_id = a.tenant_id and sl.id = a.status_id
        where m.loaner_pool_id = ${poolId}::uuid and a.archived_at is null and sl.state_type = 'deployable'
+         and ${locationScopeSql(Prisma.sql`a.location_id`)}
          and not exists (select 1 from app.assignment s
                           where s.tenant_id = a.tenant_id and s.asset_id = a.id and s.checked_in_at is null)
        order by (select max(h.checked_in_at) from app.assignment h
@@ -433,7 +440,9 @@ export class LoansService extends RegistryBase {
         select s.checked_out_at, p.max_loan_days
           from app.assignment s
           join app.loaner_pool p on p.tenant_id = s.tenant_id and p.id = s.loaner_pool_id
-         where s.id = ${id}::uuid and s.asset_id is not null`;
+         where s.id = ${id}::uuid and s.asset_id is not null
+           and exists (select 1 from app.asset a where a.id = s.asset_id
+                        and ${locationScopeSql(Prisma.sql`a.location_id`)})`;
       if (!loan) throw problem.notFound('Loan not found.');
       const latest =
         loan.max_loan_days !== null
@@ -460,7 +469,7 @@ export class LoansService extends RegistryBase {
   private async loanById(trx: Tx, id: string): Promise<LoanRow | null> {
     const [row] = await trx.$queryRaw<LoanSqlRow[]>`
       select ${LOAN_COLUMNS} ${LOAN_FROM}
-       where s.id = ${id}::uuid and s.loaner_pool_id is not null`;
+       where s.id = ${id}::uuid and s.loaner_pool_id is not null and ${loanScopeSql()}`;
     return row ?? null;
   }
 
@@ -476,7 +485,7 @@ export class LoansService extends RegistryBase {
         state: [...states].sort(),
         due: query.due_within_days,
       };
-      const where: Prisma.Sql[] = [Prisma.sql`s.loaner_pool_id is not null`];
+      const where: Prisma.Sql[] = [Prisma.sql`s.loaner_pool_id is not null`, loanScopeSql()];
       if (query.loaner_pool_id)
         where.push(Prisma.sql`s.loaner_pool_id = ${query.loaner_pool_id}::uuid`);
       if (query.person_id) where.push(Prisma.sql`s.person_id = ${query.person_id}::uuid`);
@@ -534,6 +543,7 @@ export class LoansService extends RegistryBase {
         Prisma.sql`s.asset_id is not null`,
         Prisma.sql`s.checked_in_at is null`,
         Prisma.sql`s.expected_return < ${TODAY}`,
+        loanScopeSql(),
       ];
       if (query.loaner_pool_id)
         where.push(Prisma.sql`s.loaner_pool_id = ${query.loaner_pool_id}::uuid`);
@@ -608,8 +618,9 @@ export class LoansService extends RegistryBase {
     return this.tx(auth, async (trx) => {
       const [day] = await trx.$queryRaw<Array<{ today: string }>>`
         select to_char(${TODAY}, 'YYYY-MM-DD') as today`;
+      // M2-LOC-03 (ED-26): the pools, counts and activity inside the caller's scope
       const pools = await trx.loaner_pool.findMany({
-        where: { archived_at: null },
+        where: { archived_at: null, ...(await locationScopeWhere(trx, 'home_location_id')) },
         orderBy: [{ name: 'asc' }, { id: 'asc' }],
         take: 200,
       });
@@ -653,14 +664,14 @@ export class LoansService extends RegistryBase {
                   a.asset_tag, a.name as asset_name, s.person_id, pe.display_name as person_name,
                   s.loaner_pool_id, p.name as pool_name, s.expected_return
              ${LOAN_FROM}
-            where s.loaner_pool_id is not null
+            where s.loaner_pool_id is not null and ${loanScopeSql()}
             order by s.checked_out_at desc, s.id desc limit 20)
           union all
           (select s.checked_in_at as at, 'checked_in'::text as kind, s.id as assignment_id, s.asset_id,
                   a.asset_tag, a.name as asset_name, s.person_id, pe.display_name as person_name,
                   s.loaner_pool_id, p.name as pool_name, s.expected_return
              ${LOAN_FROM}
-            where s.loaner_pool_id is not null and s.checked_in_at is not null
+            where s.loaner_pool_id is not null and s.checked_in_at is not null and ${loanScopeSql()}
             order by s.checked_in_at desc, s.id desc limit 20)
         ) x
         order by at desc, assignment_id desc
@@ -698,7 +709,7 @@ export class LoansService extends RegistryBase {
 
   /** The pool, live and switched on (404 / `409 loaner-pool-inactive`). */
   private async livePool(trx: Tx, poolId: string): Promise<PoolRow> {
-    const pool = await trx.loaner_pool.findUnique({ where: { id: poolId } });
+    const pool = await this.pools.scopedPool(trx, poolId);
     if (!pool || pool.archived_at) throw problem.notFound('Loaner pool not found.');
     if (!pool.is_active) {
       throw new ApiProblem({
@@ -710,8 +721,9 @@ export class LoansService extends RegistryBase {
   }
 
   private async borrowerById(trx: Tx, id: string, pointer: string): Promise<PersonRow> {
-    const person = await trx.person.findUnique({
-      where: { id },
+    // M2-LOC-03 (ED-26): a borrower outside the caller's scope does not exist for them
+    const person = await trx.person.findFirst({
+      where: { id, ...(await locationScopeWhere(trx, 'location_id')) },
       select: {
         id: true,
         display_name: true,
@@ -734,6 +746,7 @@ export class LoansService extends RegistryBase {
       where: {
         archived_at: null,
         OR: [{ email_key: text.toLowerCase() }, { employee_ref: text }],
+        ...(await locationScopeWhere(trx, 'location_id')),
       },
       select: {
         id: true,
@@ -833,3 +846,6 @@ export class LoansService extends RegistryBase {
     return due;
   }
 }
+
+/** M2-LOC-03 (ED-26): a loan (the custody row `s`, its asset `a`) is visible inside the asset's scope. */
+const loanScopeSql = (): Prisma.Sql => locationScopeSql(Prisma.sql`a.location_id`);

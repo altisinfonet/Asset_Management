@@ -1,8 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { peopleApi } from '@/lib/registry/api';
+import { peopleApi, usersApi } from '@/lib/registry/api';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
+import { roleIdFor } from '@/mocks/registry-fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { resetRouter } from '@/test/navigation';
 import { renderApp, seedSession } from '@/test/render';
@@ -91,6 +92,34 @@ describe('person page: link to a login and unlink', () => {
     expect(await screen.findByText('Vera Viewer was unlinked from their login.')).toBeVisible();
     expect(await screen.findByRole('button', { name: 'Link to a login' })).toBeVisible();
     expect((await personNamed('Vera Viewer')).user_id).toBeNull();
+  });
+
+  it('tells accounts of the same name apart by email and role, and finds them by email', async () => {
+    const user = userEvent.setup();
+    await usersApi.invite({
+      email: 'vera.second@example.org',
+      display_name: 'Vera Viewer',
+      role_assignments: [{ role_id: roleIdFor('technician'), scope_type: 'tenant' }],
+    });
+    await openPerson('Jamie Okafor');
+    renderApp(<PersonView />, { workflows: true });
+    await user.click(await screen.findByRole('button', { name: 'Link to a login' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Link Jamie Okafor to a login' });
+    const box = within(dialog).getByRole('combobox', { name: /Login account/ });
+    await user.type(box, 'Vera');
+    await waitFor(async () =>
+      expect(await screen.findAllByRole('option', { name: /Vera Viewer/ })).toHaveLength(2),
+    );
+    const options = screen.getAllByRole('option', { name: /Vera Viewer/ });
+    expect(options.map((o) => o.textContent).sort()).toEqual([
+      'Vera Viewervera.second@example.org - Technician - (pending invitation)',
+      'Vera Viewerviewer@example.org - Viewer',
+    ]);
+    // the search matches the email as well as the name
+    await user.clear(box);
+    await user.type(box, 'second@example');
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1));
+    expect(screen.getByRole('option')).toHaveTextContent('vera.second@example.org');
   });
 
   it('is offered to Administrators only', async () => {

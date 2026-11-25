@@ -700,6 +700,8 @@ Status: done (M2 wave 3 part 2 follow-up, ED-27) - `POST /v1/users/{id}/role-ass
 - [ ] An administrator adds a role to a user for the whole organisation or limited to a location, and removes one assignment at a time; nobody grants wider than they hold (403).
 - [ ] The user's only assignment, the last active administrator and your own last administrator access cannot be removed (409, nothing changes).
 - [ ] Each add and remove revokes the target's sessions and is audited.
+- [ ] Pending logins are listed on the Users tab with a "Pending" badge and can be given access, linked to a person, resent and revoked (a pending login can be linked, ED-27).
+- [ ] The login picker shows the email and role names under each name and searches the email.
 
 ### E2.2 Lifecycle: check-out, check-in, transfer, history
 

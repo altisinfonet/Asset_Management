@@ -32,7 +32,7 @@ export const loginLinkMessages = {
     unlinkedLogin: 'the login account',
     confirmUnlink: 'Unlink',
     unlinked: '{person} was unlinked from their login.',
-    invited: 'invited',
+    invited: 'pending invitation',
     loadFailed: 'We could not load the login accounts.',
   },
 };

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { api, choose, runId, signInAsOwner, waitForMail } from './support';
+import { api, choose, pick, runId, signInAsOwner, waitForMail } from './support';
 
 /**
  * Real stack (compose api + Postgres + Mailpit), no mock. M2-USR-04 (ED-27): on Settings > Users the
@@ -142,4 +142,65 @@ test('the API refuses to remove the only access (409) and an assignment of nobod
   );
   expect(unknown.status).toBe(404);
   expect(await assignmentsOf()).toHaveLength(1);
+});
+
+test('a pending login is on the Users tab: badge, access and link to a person; the login picker tells same-named accounts apart', async () => {
+  const roles = await api<{ data: Array<{ id: string; key: string }> }>(admin, 'GET', '/v1/roles');
+  const technician = roles.json.data.find((r) => r.key === 'technician')!;
+  // two accounts with the same name: the second is still waiting for its invitation to be accepted
+  const waiting = `waiting-${id}@acme.example`.toLowerCase();
+  const created = await api<{ id: string }>(admin, 'POST', '/v1/users', {
+    email: waiting,
+    display_name: NAME,
+    role_assignments: [{ role_id: technician.id }],
+  });
+  expect(created.status).toBe(201);
+  const person = await api<{ id: string }>(admin, 'POST', '/v1/people', {
+    display_name: `E2E Person ${id}`,
+  });
+  expect(person.status).toBe(201);
+
+  await admin.goto('/settings/users');
+  const row = admin.getByRole('row', { name: new RegExp(waiting) });
+  await expect(row.getByText('Pending')).toBeVisible();
+  await expect(
+    admin.getByRole('row', { name: new RegExp(EMAIL) }).getByText('Pending'),
+  ).toHaveCount(0);
+
+  // its actions and its access dialog
+  await row.getByRole('button', { name: new RegExp(`Actions for ${NAME}`) }).click();
+  await expect(admin.getByRole('menuitem', { name: 'Resend invitation' })).toBeVisible();
+  await expect(admin.getByRole('menuitem', { name: 'Deactivate' })).toHaveCount(0);
+  await admin.getByRole('menuitem', { name: 'Change role and access' }).click();
+  const access = admin.getByRole('dialog', { name: `Role and access of ${NAME}` });
+  await expect(access.getByRole('button', { name: 'Remove access: Technician' })).toBeDisabled();
+  await access.getByRole('button', { name: 'Close' }).first().click();
+  await expect(access).toBeHidden();
+
+  // link it to a person (a pending login can be linked)
+  await row.getByRole('button', { name: new RegExp(`Actions for ${NAME}`) }).click();
+  await admin.getByRole('menuitem', { name: 'Link to a person' }).click();
+  const link = admin.getByRole('dialog', { name: `Link ${NAME} to a person` });
+  await pick(admin, /Person/, `E2E Person ${id}`, new RegExp(`E2E Person ${id}`));
+  await link.getByRole('button', { name: 'Link login' }).click();
+  await expect(row.getByRole('link', { name: `E2E Person ${id}` })).toBeVisible();
+
+  // the login picker of a person: same name, told apart by email and role, found by email
+  await admin.goto(`/people/view?id=${person.json.id}`);
+  await admin.getByRole('button', { name: 'Unlink login' }).click();
+  await admin
+    .getByRole('dialog', { name: /Unlink/ })
+    .getByRole('button', { name: 'Unlink' })
+    .click();
+  await admin.getByRole('button', { name: 'Link to a login' }).click();
+  const dialog = admin.getByRole('dialog', { name: `Link E2E Person ${id} to a login` });
+  const box = dialog.getByRole('combobox', { name: /Login account/ });
+  await box.fill(NAME);
+  await expect(admin.getByRole('option', { name: new RegExp(EMAIL) })).toContainText('Viewer');
+  await expect(admin.getByRole('option', { name: new RegExp(waiting) })).toContainText(
+    'pending invitation',
+  );
+  await box.fill(waiting);
+  await expect(admin.getByRole('option')).toHaveCount(1);
+  await expect(admin.getByRole('option')).toContainText(waiting);
 });

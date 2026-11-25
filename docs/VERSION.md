@@ -53,6 +53,11 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
   (disable or archive the user instead), removing the last active administrator's administrator assignment, removing your
   own last administrator access, the same role and scope twice, and more than 20 assignments. `PATCH /v1/users/{id}` still
   replaces the whole set. No migration.
+- **Pending logins on the Users tab** (ED-27): a login whose invitation is not accepted yet is listed with a "Pending"
+  badge and has access, link to a person, resend and revoke there (not devices, two-step reset or deactivate). A pending
+  login can be linked to a person.
+- **Login picker shows who is who**: "Link to a login" lists the email and the roles under each name (and "pending
+  invitation"), so two accounts with the same name can be told apart; search matches the email too.
 
 ## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
 

@@ -76,6 +76,16 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'users: a pending login on the Users tab with its actions',
+    open: async (p) => {
+      await p.goto('/settings/users');
+      const row = p.getByRole('row', { name: /Jordan Invited/ });
+      await expect(row.getByText('Pending')).toBeVisible();
+      await row.getByRole('button', { name: /Actions for Jordan Invited/ }).click();
+      await expect(p.getByRole('menuitem', { name: 'Resend invitation' })).toBeVisible();
+    },
+  },
+  {
     name: 'users: invite dialog limited to a location',
     open: async (p) => {
       await p.goto('/settings/users');

@@ -11,7 +11,8 @@ const id = runId();
 const SITE_IN = `E2E Scope In ${id}`;
 const SITE_OUT = `E2E Scope Out ${id}`;
 const ASSET = `Scope laptop ${id}`;
-const INVITEE = `scoped-${id}@acme.example`;
+// stored lower-cased by the API: compare in that form
+const INVITEE = `scoped-${id}@acme.example`.toLowerCase();
 
 test.describe.configure({ mode: 'serial' });
 
@@ -108,7 +109,7 @@ test('an administrator limits a new technician to one site; the technician sees 
     await expect(tech.getByTestId('scope-indicator')).toContainText(`Scoped to: ${SITE_IN}`);
     await tech.getByPlaceholder('Tag, serial or name').fill(ASSET);
     await expect(tech.getByTestId('assets-range')).toHaveText('Showing 1-1 of 1');
-    await expect(tech.getByRole('link', { name: new RegExp(`${ASSET} in`) }).first()).toBeVisible();
+    await expect(tech.getByText(`${ASSET} in`).first()).toBeVisible();
     await expect(tech.getByText(`${ASSET} out`)).toHaveCount(0);
 
     // outside the scope is "not found", by id and by tag

@@ -4,7 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.5** (milestone M2, wave 3 part 1). Tag `v0.2.5`; see the entry below for the commit.
+**Current version: 0.2.6** (milestone M2, wave 3 part 2). Tag `v0.2.6`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -41,7 +41,9 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ## Unreleased
 
-M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Branch `worktree-agent-a06c49586ab451805`, not merged.
+## 0.2.6 - 2026-11-25 - M2 wave 3 part 2: location scoping of role assignments
+
+M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Merge commit message "Merge M2-LOC-03: location scoping of role assignments"; the release commit is tagged `v0.2.6`.
 
 ### Added
 
@@ -71,14 +73,36 @@ M2 wave 3, part 2: location scoping of role assignments (M2-LOC-03, ED-26). Bran
 
 ### Fixed
 
+- Three bugs found and fixed in the implementer's own review of the scoping work: (1) the scope came from the route's
+  permission only, so a bundle holding `export:run`, `import:run` or `search:read` org-wide but the data permission at a
+  location could export, import or find records outside the scope (scopes are now intersected with the records' own
+  permission); (2) a user with an org-wide `user:manage` and a location-scoped role could grant that role org-wide,
+  including to themselves (a grant now needs each permission held as widely as granted); (3) a loan return sent the
+  device to the pool's home even when that place lay outside the caller's scope (it now stays where it is).
 - Test-only: the schema-lint fixture for foreign keys referenced the live `app.asset` table, so it held a SHARE ROW
   EXCLUSIVE lock there until its rollback. Check-ins of parallel test files deadlocked against it and answered 500 (seen
   in a pooled run). The fixture now references a table of its own transaction. This is very likely the "intermittent
   failure" of B.13. `E2E_LOG_LEVEL=error` shows the server side of a 500 in an e2e run.
 
+### Security
+
+Independent security review of the scoping work (AUDIT B.22), all fixed or decided before release:
+
+- **Existence oracles closed:** the saved-view reference check gave no warning for an out-of-scope location or person but
+  `not-found` for an unknown id; the import default location accepted an out-of-scope id (200) where an unknown id was
+  `422`, and the import value mapping by id resolved out-of-scope locations and people (their names showed in the dry-run
+  preview). All three now behave exactly like an unknown id.
+- **Prisma spread overwrote the id filter:** a `where` of the form `{ id: x, ...locationScopeWhere(trx, 'id') }` lets the
+  spread replace the `id` match, so any in-scope location matched. Those filters are now `AND: [...]`.
+- **Scan actions scoped:** scan resolve's `allowed_actions` follows the scope of each action's permission.
+- **Accepted boundary (decided by the founder):** an in-scope asset names an out-of-scope holder (id and name in
+  `current_assignment`, history, custody list, CSV export), and filtering by that holder id returns those in-scope assets;
+  the person record itself stays `404`. ED-26 states it and a test asserts it. ED-26 also documents the ancestor path in
+  `/auth/me` and that a location filter on an ancestor of the scope root returns the in-scope descendants.
+
 ### Verification
 
-See [AUDIT.md](AUDIT.md) B.22.
+See [AUDIT.md](AUDIT.md) B.22 (implementation and review) and B.23 (release).
 
 ## 0.2.5 - 2026-11-24 - M2 wave 3 part 1: imports, loaners, deferred items
 

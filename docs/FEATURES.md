@@ -8,7 +8,7 @@ stories behind it. Planned work from M2 wave 3 to M6 is included so this page sh
 next) · M3 mobile app · M4 self-hosted edition (first real users) · M5 Snipe-IT importer, reports, webhooks, licences ·
 M6 Cloud SaaS launch. Stories are in [05_backlog.md](05_backlog.md) (`M<n>-<AREA>-<nn>`; the table shows the short form, for
 example `AUTH-02` is `M1-AUTH-02`). The release each feature arrived in is in [VERSION.md](VERSION.md); the API behind it is in
-[API.md](API.md). Current version: **0.2.5**.
+[API.md](API.md). Current version: **0.2.6**.
 
 This page is maintained by hand: update the status here whenever a story changes state (see
 [`engineering/contributing.md`](engineering/contributing.md)).
@@ -18,7 +18,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | Area                                          | State                                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------------- |
 | Sign-in and security                          | ✅ passwords, two-step verification, sessions, invitations; SSO planned (M4/M6) |
-| Users and roles                               | ✅ five built-in roles; 🟡 location scoping and custom roles planned            |
+| Users and roles                               | ✅ five built-in roles; ✅ location scoping (0.2.6); ⏳ custom roles planned       |
 | Asset registry                                | ✅ complete for M1; list sorts incl. location, assignee, due date               |
 | Locations                                     | ✅ tree, moves and editing (type, parent, address)                              |
 | People                                        | ✅ with or without login; managed departments                                   |
@@ -63,7 +63,7 @@ This page is maintained by hand: update the status here whenever a story changes
 | User management                      | Invite, change role, disable, archive, resend or revoke an invitation, reset someone's MFA, end their sessions; cannot demote the last administrator or grant more than you hold |   ✅   |    M1     | AUTH-07, WEB-09 |
 | Users, roles and invitations screens | Settings > Users in the web app                                                                                                                                                  |   ✅   |    M1     | WEB-09          |
 | Role-aware navigation                | Menu entries and pages the signed-in user cannot open are hidden; the API enforces every request regardless                                                                      |   ✅   |    M1     | WEB-04          |
-| Location scoping for roles           | Limit a role assignment to a location subtree (for example one school) on Settings > Users; outside it records look like they do not exist (404), lists, search, counts, exports and imports stay inside it; "Scoped to" in the top bar (ED-26) |   ✅   | M2 wave 3 | M2-LOC-03       |
+| Location scoping for roles           | Limit a role assignment to a location subtree (for example one school) on Settings > Users; outside it records look like they do not exist (404), lists, search, counts, exports and imports stay inside it; "Scoped to" in the top bar (ED-26). Shipped in 0.2.6; the Users screen changes the role and scope of an existing assignment but cannot yet add or remove one |   ✅ 0.2.6   | M2 wave 3 | M2-LOC-03       |
 | Custom roles                         | Build your own permission bundles                                                                                                                                                |   ⏳   |    v2     | parked          |
 
 ## 3. Asset registry

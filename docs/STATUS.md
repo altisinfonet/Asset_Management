@@ -1,10 +1,10 @@
 # Project status
 
-_Last updated: 2026-11-24 (v0.2.5, wave 3 part 1). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-25 (v0.2.6, wave 3 part 2). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
-[VERSION.md](VERSION.md) (version history, current 0.2.5) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+[VERSION.md](VERSION.md) (version history, current 0.2.6) · [AUDIT.md](AUDIT.md) (quality and security audit record).
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles done (unreleased); isolation harness extension and user guides to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, user guides and the import trial to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -90,11 +90,11 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 open |
 | Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 
-### Wave 3 — part 2: location scoping done ✅ (unreleased, branch `worktree-agent-a06c49586ab451805`)
+### Wave 3 — part 2: location scoping done ✅ (v0.2.6, 2026-11-25)
 
 | Area | Stories |
 | ---- | ------- |
-| Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | LOC-03 |
+| Location scoping for roles: a role assignment limited to a location subtree on Settings → Users; outside it everything looks not found (404) and lists, search, scan, counts, the loaner dashboard, exports, imports, labels and notification recipients stay inside it; org-only permissions (users, roles, keys, catalogue, departments, notification rules) are never granted by a scoped assignment; "Scoped to" in the top bar; scoped route replay over every route (ED-26, migration 0150) ✅ | M2-LOC-03 done |
 
 ### Next: wave 3 part 2 (rest)
 
@@ -131,6 +131,7 @@ The full founder task list with timing is in [05_backlog.md](05_backlog.md) (F-0
 
 ## 5. Known gaps carried forward
 
+- The Users screen (Settings → Users) can edit a user's existing role assignments (role and location scope) but cannot yet add or remove one.
 - Label printing die-lines are unverified until the founder's print test (M2-TAG-04).
 - Loan and import notifications are wired. The tenant day of the loan alerts is UTC (there is no tenant time zone setting yet, ED-21).
 - Finished imports lose their rows, samples and file after 30 days (ED-25): download the error report first. The before-images for a v1.1 rollback go with them.

@@ -406,7 +406,7 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 - **Result:** 21/21 turbo tasks; API e2e direct 699/699; pooled 699/699 on the rerun; real-stack browser suite 64 passed; contract and drift checks clean.
 - **Findings:** (1) one pooled run saw 5 schema-lint violations for temporary far-future partitions (for example `app.asset_history_2044_01`) that `schema-lint.e2e.test.ts` creates while a parallel file's lint ran: test-only flake, fixed by a shared helper that the six isolation files use (the product lint function is unchanged); (2) `docs/engineering/tools/gen.mjs` failed from a plain checkout (`yaml` not installed): `yaml` is now a pinned root devDependency and contributing.md names the commands.
 
-### B.22 Location scoping for roles (M2-LOC-03) - 2026-11-25 (unreleased, branch `worktree-agent-a06c49586ab451805`)
+### B.22 Location scoping for roles (M2-LOC-03) - 2026-11-25 (released in 0.2.6, branch `worktree-agent-a06c49586ab451805`)
 
 - **Scope:** role assignments limited to a location subtree, enforced per permission by an application-layer predicate
   (`location_id IN` the subtree; RLS stays tenant-only; ED-26), on every scoped surface: assets, custody, people,
@@ -468,13 +468,19 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   real-stack (65) runs.
 
 
+### B.23 Release 0.2.6 verification - 2026-11-25 (version 0.2.6)
+
+- **Method:** the branch of B.22 merged to `main` with a no-fast-forward merge, the six `package.json` versions set to 0.2.6, then the release checks on `main` in the order of `contributing.md`, from a clean state (`next-env.d.ts`, `.next`, `src/generated` and `openapi.generated.json` removed), on a separate compose project (`atrel6`, alternate ports) that was torn down with `down -v` afterwards; the founder's stack was not touched.
+- **Result:** `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build --force` 21/21 (0 cached; API unit 647, web 792, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (203 operations), `gen-api-md --check` and api-client `generate:check` up to date; `db:pull` drift clean, `schema:lint` 0 violations and role audit OK; API e2e through PgBouncer, default settings, full environment: 731/731 in 58 files, 0 skipped, twice (both runs green, no rerun needed); real-stack browser suite 65 passed on a fresh stack (port 4174 free before the run).
+- **Findings:** none. The deadlock flake of B.13 / B.22 did not recur in the two pooled runs.
+
 ---
 
 ## C. Open items
 
 | Item                                                                                                     | Why it matters                                                        | Owner / where tracked                                                                                    |
 | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Intermittent API test failure seen once in 5 runs (B.13): very likely the schema-lint fixture deadlock fixed in B.22 | Confirm it does not recur | Claude; watch CI |
+| Intermittent API test failure seen once in 5 runs (B.13): very likely the schema-lint fixture deadlock fixed in B.22; did not recur in the two pooled runs of B.23 | Confirm it does not recur | Claude; watch CI |
 | Label die-lines and print calibration unverified                                                         | Labels may be off the physical stock until printed and measured       | Founder 👤, M2-TAG-04, F-02                                                                              |
 | Real USB scanner not yet tested                                                                          | Scanner input timing is only simulated                                | Founder 👤, LIFE-08, F-02                                                                                |
 | **External penetration test** before the Cloud launch                                                    | Independent test of a multi-tenant internet-facing service            | M6-SEC-02; vendor to be booked at the start of M5 (F-21); no open cross-tenant finding allowed at launch |

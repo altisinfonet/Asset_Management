@@ -14,6 +14,7 @@ import {
   ownerTenantSql,
   startRegistryApp,
 } from '../registry/support.js';
+import { createScopedUser } from '../scoping/support.js';
 
 /**
  * M1-REG-07 / M1-REG-08 performance budget on the real stack: two tenants of 50,000 assets each (so
@@ -662,6 +663,94 @@ describe.skipIf(!dbEnabled)(
       const dir = join(process.cwd(), 'test-results');
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'registry-plans-sorts.txt'), plans.join('\n'));
+    }, 600_000);
+
+    // M2-OPS-01 / ED-26: a location-scoped user's list, search and lookups carry the scope predicate
+    // (`location_id IN (<subtree>)`, plus the holder rules). Runs after the sorts test, which placed 90%
+    // of A's assets in 5 sites x 4 floors x 5 rooms: one site is about 18% of the 50k tenant, one room
+    // under 1%. Same budgets as for an organisation-wide user.
+    it(`location-scoped list p95 < ${BUDGET.list} ms, search < ${BUDGET.search} ms, lookup < ${BUDGET.lookup} ms (ED-26)`, async () => {
+      const site = (
+        await ownerTenantSql(A.tenantId, `select id from app.location where name = 'Site 0'`)
+      ).rows[0].id as string;
+      const room = (
+        await ownerTenantSql(A.tenantId, `select id from app.location where name = 'Room 0.0.0'`)
+      ).rows[0].id as string;
+      const scoped: Stat[] = [];
+      for (const [label, locationId, pattern] of [
+        ['site', site, 'Room 0.%'],
+        ['room', room, 'Room 0.0.0'],
+      ] as const) {
+        const user = await createScopedUser(app, A, 'technician', [locationId], `perf-${label}`);
+        const inScope = (
+          await ownerTenantSql(
+            A.tenantId,
+            `select a.asset_tag, a.label_code from app.asset a join app.location l on l.id = a.location_id
+              where l.name like $1 and a.archived_at is null order by random() limit 100`,
+            [pattern],
+          )
+        ).rows as Array<{ asset_tag: string; label_code: string }>;
+        expect(inScope.length).toBeGreaterThan(10);
+        const sget = async (url: string) => {
+          const res = await user.client.get(url);
+          if (res.status !== 200)
+            throw new Error(`${url} -> ${res.status} ${res.raw.slice(0, 300)}`);
+          return res;
+        };
+        const first = await sget('/v1/assets?limit=50&include_total=true');
+        const total = first.body.page?.total ?? first.body.total;
+        let cursor = first.body.page.next_cursor as string;
+        for (let i = 0; i < 5 && cursor; i++) {
+          cursor = (await sget(`/v1/assets?limit=50&cursor=${cursor}`)).body.page.next_cursor;
+        }
+        const lists = [
+          await measure(`scoped ${label}: list first page`, SAMPLES, async () => {
+            await sget('/v1/assets?limit=50');
+          }),
+          await measure(`scoped ${label}: list page 6 (cursor)`, SAMPLES, async () => {
+            if (cursor) await sget(`/v1/assets?limit=50&cursor=${cursor}`);
+          }),
+          await measure(`scoped ${label}: list text filter`, SAMPLES, async () => {
+            await sget('/v1/assets?limit=50&q=thinkpad');
+          }),
+          await measure(`scoped ${label}: list sort=-updated_at`, SAMPLES, async () => {
+            await sget('/v1/assets?limit=50&sort=-updated_at');
+          }),
+        ];
+        const searches = [
+          await measure(`scoped ${label}: search exact tag`, SAMPLES, async (i) => {
+            const res = await sget(`/v1/search?q=${inScope[i % inScope.length]!.asset_tag}`);
+            if (JSON.stringify(res.body).length < 10) throw new Error('search miss');
+          }),
+          await measure(`scoped ${label}: search word`, SAMPLES, async () => {
+            await sget('/v1/search?q=thinkpad');
+          }),
+        ];
+        const lookups = [
+          await measure(`scoped ${label}: lookup ?tag=`, SAMPLES, async (i) => {
+            const res = await sget(`/v1/assets?tag=${inScope[i % inScope.length]!.asset_tag}`);
+            if (res.body.data.length !== 1) throw new Error('scoped tag lookup miss');
+          }),
+          await measure(`scoped ${label}: scan/resolve`, SAMPLES, async (i) => {
+            await sget(`/v1/scan/resolve?code=${inScope[i % inScope.length]!.label_code}`);
+          }),
+        ];
+        // the scope really applies: an out-of-scope tag is not found
+        const outside = (
+          await ownerTenantSql(
+            A.tenantId,
+            `select a.asset_tag from app.asset a join app.location l on l.id = a.location_id
+              where l.name like 'Room 4.%' and a.archived_at is null limit 1`,
+          )
+        ).rows[0].asset_tag as string;
+        expect((await sget(`/v1/assets?tag=${outside}`)).body.data).toEqual([]);
+        if (typeof total === 'number') expect(total).toBeLessThan(PER_TENANT * 0.25);
+        for (const s of lists) expect(s.p95, s.name).toBeLessThan(limit(BUDGET.list));
+        for (const s of searches) expect(s.p95, s.name).toBeLessThan(limit(BUDGET.search));
+        for (const s of lookups) expect(s.p95, s.name).toBeLessThan(limit(BUDGET.lookup));
+        scoped.push(...lists, ...searches, ...lookups);
+      }
+      expect(scoped).toHaveLength(16);
     }, 600_000);
   },
 );

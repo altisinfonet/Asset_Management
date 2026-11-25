@@ -26,11 +26,23 @@ async function shell(email: string = MOCK_ACCOUNTS.owner) {
 
 /**
  * What a wedge scanner does: every key of the code, then Enter, within one burst. The keys are
- * dispatched in one go (no timers), so the gap between them cannot depend on how busy the test run is.
+ * dispatched in one go (no timers), and each carries a timestamp 5 ms after the previous one: the
+ * detector reads `event.timeStamp`, and every `fireEvent` flushes a React render of the shell, which on
+ * a saturated machine took more than the detector's 80 ms gap, so the burst read as typing and the
+ * test failed now and then (AUDIT B.27). The clock of the burst no longer depends on the machine.
  */
 function scanBurst(code: string) {
   const target = (document.activeElement as HTMLElement | null) ?? document.body;
-  for (const key of [...code, 'Enter']) fireEvent.keyDown(target, { key });
+  let at = performance.now();
+  const clock = vi.spyOn(Event.prototype, 'timeStamp', 'get').mockImplementation(() => at);
+  try {
+    for (const key of [...code, 'Enter']) {
+      at += 5;
+      fireEvent.keyDown(target, { key });
+    }
+  } finally {
+    clock.mockRestore();
+  }
 }
 
 async function firstAsset(query: Parameters<typeof assetsApi.list>[0]): Promise<Asset> {

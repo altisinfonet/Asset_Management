@@ -1,0 +1,11 @@
+Serial number,Asset ID,Status,Model,OS version,Last sync,User,Location,Notes,Org unit path,MAC address
+5CD4410001,GA-1001,ACTIVE,Lenovo 300e Chromebook 2nd Gen,126.0.6478.100,2026-11-20T08:12:00.000Z,gustav.eriksen@acme.example,Room 101,,/Students/Grade 9,3C:E9:F7:10:00:01
+5CD4410002,GA-1002,ACTIVE,Lenovo 300e Chromebook 2nd Gen,126.0.6478.100,2026-11-21T09:30:00.000Z,hanna.solberg@acme.example,Room 101,,/Students/Grade 9,3C:E9:F7:10:00:02
+5CD4410003,GA-1003,ACTIVE,Lenovo 300e Chromebook 2nd Gen,126.0.6478.101,2026-11-21T10:02:00.000Z,ivar.moen@acme.example,Room 102,,/Students/Grade 8,3C:E9:F7:10:00:03
+5CD4410004,GA-1004,ACTIVE,Acer Chromebook 311,126.0.6478.101,2026-11-22T07:45:00.000Z,,Room 102,Cracked corner,/Students/Grade 8,3C:E9:F7:10:00:04
+5CD4410005,GA-1005,PROVISIONED,Acer Chromebook 311,126.0.6478.101,2026-11-18T12:00:00.000Z,,Library,,/Spare pool,3C:E9:F7:10:00:05
+5CD4410006,GA-1006,PROVISIONED,Acer Chromebook 311,126.0.6478.100,2026-11-18T12:00:00.000Z,,Library,,/Spare pool,3C:E9:F7:10:00:06
+5CD4410007,GA-1007,DISABLED,HP Chromebook 14 G6,125.0.6422.80,2026-09-30T14:20:00.000Z,,Storage A,Screen replaced,/Staff,3C:E9:F7:10:00:07
+5CD4410008,GA-1008,ACTIVE,HP Chromebook 14 G6,126.0.6478.100,2026-11-23T08:00:00.000Z,julie.dahl@acme.example,Room 101,,/Students/Grade 9,3C:E9:F7:10:00:08
+5CD4410009,GA-1009,ACTIVE,HP Chromebook 14 G6,126.0.6478.100,2026-11-23T08:05:00.000Z,karl.strand@acme.example,Room 102,,/Students/Grade 8,3C:E9:F7:10:00:09
+5CD4410010,GA-1010,DEPROVISIONED,Dell Chromebook 3100,119.0.6045.200,2026-06-02T11:11:00.000Z,,Storage B,Retired by the district,/Retired,3C:E9:F7:10:00:10

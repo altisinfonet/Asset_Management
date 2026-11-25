@@ -28,6 +28,8 @@ import {
   rowQueryFor,
   rowsToWrite,
   setupOf,
+  deferredRowsOf,
+  rowWarnings,
   stepFor,
   stepperIndex,
   targetOptionsFor,
@@ -431,5 +433,22 @@ describe('progress, rows and the summary of a dry run', () => {
     expect(listRouteFor('person')).toBe('/people');
     expect(listRouteFor('location')).toBe('/locations');
     expect(listRouteFor('department')).toBe('/settings/departments');
+  });
+});
+
+describe('what the dry run leaves to the commit (ED-29)', () => {
+  it('counts the deferred rows once, from the summary', () => {
+    expect(deferredRowsOf({ summary: { validated_at_commit: 3 } })).toBe(3);
+    expect(deferredRowsOf({ summary: { validated_at_commit: 0 } })).toBe(0);
+    expect(deferredRowsOf({ summary: { counts: {} } })).toBe(0);
+    expect(deferredRowsOf({ summary: null })).toBe(0);
+  });
+
+  it('keeps "checked when the import runs" off the rows', () => {
+    const warnings = [
+      { code: 'will-create', field: 'location', message: 'Will create location "Annex"' },
+      { code: 'validated-at-commit', field: null, message: 'Checked when the import runs.' },
+    ];
+    expect(rowWarnings(warnings)).toEqual([warnings[0]]);
   });
 });

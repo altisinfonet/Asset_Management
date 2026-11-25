@@ -6,8 +6,10 @@ import {
   type HandlerEnv,
   type PointerMap,
   type WorkRow,
+  inNamedSavepoint,
   issuesOf,
   probe,
+  rehearse,
   zodIssues,
 } from './shared.js';
 
@@ -73,6 +75,13 @@ export abstract class ServiceHandler implements EntityHandler {
   ): Promise<{ version: number; row: Record<string, unknown> } | null>;
   /** Fields of the body that the importer treats as identifying (never part of an update). */
   protected abstract readonly identity: readonly string[];
+  /**
+   * Does the dry run rehearse the batch (ED-29: create the missing references in a savepoint that is
+   * rolled back, then check every row through the service)? Location imports do not: their references
+   * are rows of the same file (a parent created on the way is adopted by its own row at commit), which a
+   * rehearsal would report as already existing.
+   */
+  protected readonly rehearsed: boolean = true;
 
   private resolver(env: HandlerEnv, mode: 'dry' | 'commit'): RefResolver {
     const key = `service:${mode}`;
@@ -103,17 +112,67 @@ export abstract class ServiceHandler implements EntityHandler {
   }
 
   async plan(env: HandlerEnv, rows: WorkRow[]): Promise<Verdict[]> {
-    const resolver = this.resolver(env, 'dry');
+    if (!this.rehearsed) return this.planWith(env, rows, this.resolver(env, 'dry'), false);
+    // a fresh resolver: what it creates is rolled back with the rehearsal, so it is never memoised
+    return rehearse(env.tx, () =>
+      this.planWith(
+        env,
+        rows,
+        new RefResolver(
+          env.tx,
+          env.auth,
+          env.options,
+          env.valueMap,
+          env.refs,
+          'commit',
+          (kind) => this.refField(kind),
+          { import_job_id: env.job.id },
+        ),
+        true,
+      ),
+    );
+  }
+
+  private async planWith(
+    env: HandlerEnv,
+    rows: WorkRow[],
+    resolver: RefResolver,
+    guarded: boolean,
+  ): Promise<Verdict[]> {
     const preps: Prep[] = [];
-    for (const row of rows) preps.push(await this.prepare(env, resolver, row.mapped));
+    const failed = new Map<number, RowIssue[]>();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      if (!guarded) {
+        preps.push(await this.prepare(env, resolver, row.mapped));
+        continue;
+      }
+      // creating a reference can break the transaction: one row's savepoint keeps the others
+      try {
+        preps.push(
+          await inNamedSavepoint(env.tx, 'import_row', () =>
+            this.prepare(env, resolver, row.mapped),
+          ),
+        );
+      } catch (err) {
+        failed.set(i, issuesOf(err, this.pointer));
+        preps.push({ issues: [], warnings: [], create: {}, update: {}, pending: false });
+      }
+    }
     const find = await this.lookup(
       env,
       rows.map((r) => r.mapped),
       preps,
     );
     const out: Verdict[] = [];
-    for (let i = 0; i < rows.length; i++)
-      out.push(await this.planRow(env, rows[i]!, preps[i]!, find(i)));
+    for (let i = 0; i < rows.length; i++) {
+      const issues = failed.get(i);
+      out.push(
+        issues
+          ? { plan: 'error', errors: issues, warnings: [] }
+          : await this.planRow(env, rows[i]!, preps[i]!, find(i)),
+      );
+    }
     return out;
   }
 
@@ -189,11 +248,11 @@ export abstract class ServiceHandler implements EntityHandler {
     const parsed = this.createSchema.safeParse(prep.create);
     if (!parsed.success) return fail(zodIssues(parsed.error.issues, this.pointer));
     if (prep.pending) {
+      // only without the rehearsal (a location under a parent this import creates): checked when committed
       warnings.push({
         field: null,
         code: 'validated-at-commit',
-        message:
-          'A reference is created by this import; the rest of the checks run when it is committed.',
+        message: 'Checked when the import runs (a record it needs is created on the way).',
       });
     } else {
       const res = await probe(env.tx, () =>

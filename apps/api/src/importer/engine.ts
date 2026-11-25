@@ -558,6 +558,11 @@ export class ImportEngine {
         from app.import_row, jsonb_array_elements(warnings) w
        where job_id = ${job.id}::uuid and plan in ('create','update') and w->>'code' = 'will-create'
        group by 1, 2 order by n desc limit 200`;
+    // rows whose service checks wait for the commit (ED-29: a location under a parent this import creates)
+    const deferred = await tx.$queryRaw<Array<{ n: number }>>`
+      select count(*)::int as n from app.import_row
+       where job_id = ${job.id}::uuid and plan in ('create','update')
+         and warnings @> '[{"code":"validated-at-commit"}]'::jsonb`;
     const rowDigest = await tx.$queryRaw<Array<{ d: string | null }>>`
       select md5(string_agg(row_no::text || ':' || plan || ':' || coalesce(entity_id::text, ''), ',' order by row_no)) as d
         from app.import_row where job_id = ${job.id}::uuid`;
@@ -589,6 +594,7 @@ export class ImportEngine {
       counts: { create: n('create'), update: n('update'), skip: n('skip'), error: n('error') },
       errors_by_code: errorCodes,
       will_create: creates,
+      validated_at_commit: deferred[0]?.n ?? 0,
     };
     await tx.import_job.update({
       where: { id: job.id },

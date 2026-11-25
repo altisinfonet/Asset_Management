@@ -110,6 +110,8 @@ export class RefResolver {
   private readonly people = new Map<string, Promise<Named | null>>();
   /** Everything created by this resolver, for the caller's counters. */
   readonly created: Record<string, number> = {};
+  /** The records this resolver created, by id, with the words of the dry run's "Will create" warning. */
+  private readonly made = new Map<string, string>();
 
   constructor(
     private readonly tx: Tx,
@@ -122,6 +124,14 @@ export class RefResolver {
     /** Recorded with the audit entry of every location, department and person this resolver creates. */
     private readonly meta?: Record<string, unknown>,
   ) {}
+
+  /**
+   * The name a record was created under when THIS resolver created it (the rehearsal of a dry run
+   * reports it as "Will create"), else undefined.
+   */
+  createdName(id: string): string | undefined {
+    return this.made.get(id);
+  }
 
   private field(kind: RefKind): string {
     return this.overrideField ? this.overrideField(kind) : FIELD_OF[kind];
@@ -373,6 +383,7 @@ export class RefResolver {
       name = parts[i]!;
       this.created.location = (this.created.location ?? 0) + 1;
     }
+    this.made.set(id!, parts.join(' > '));
     return { kind: 'found', id: id!, name };
   }
 
@@ -535,6 +546,7 @@ export class RefResolver {
       });
       if (kind === 'person') this.people.set(normKey(name), Promise.resolve({ id, name: display }));
       this.created[kind] = (this.created[kind] ?? 0) + 1;
+      this.made.set(id, clean);
       return { kind: 'found', id, name: display };
     } catch (err) {
       if (err instanceof ApiProblem) {

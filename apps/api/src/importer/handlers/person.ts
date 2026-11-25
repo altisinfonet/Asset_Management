@@ -83,6 +83,14 @@ export class PersonHandler extends ServiceHandler {
       if (res.kind === 'found') {
         prep.create[column] = res.id;
         prep.update[column] = res.id;
+        const made = resolver.createdName(res.id);
+        if (made !== undefined) {
+          prep.warnings.push({
+            field: kind,
+            code: 'will-create',
+            message: `Will create ${kind} "${made}"`,
+          });
+        }
       } else if (res.kind === 'create') {
         prep.pending = true;
         prep.warnings.push({

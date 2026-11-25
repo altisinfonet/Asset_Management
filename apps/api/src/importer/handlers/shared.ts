@@ -131,6 +131,22 @@ export async function probe<T>(
   return result;
 }
 
+/**
+ * The dry run's rehearsal (ED-29): runs `fn` inside a savepoint that is ALWAYS rolled back, so the
+ * references a batch would create (category, model, location, department, person...) can really be
+ * created through their services and every row can then be checked against them exactly as the commit
+ * will. Nothing it writes survives; the result (or the error) is returned.
+ */
+export async function rehearse<T>(tx: Tx, fn: () => Promise<T>): Promise<T> {
+  await tx.$executeRaw`savepoint import_rehearsal`;
+  try {
+    return await fn();
+  } finally {
+    await tx.$executeRaw`rollback to savepoint import_rehearsal`;
+    await tx.$executeRaw`release savepoint import_rehearsal`;
+  }
+}
+
 /** The field of the import a service's JSON pointer belongs to. */
 export type PointerMap = (pointer: string) => string | null;
 

@@ -593,6 +593,20 @@ export interface WillCreate {
   count: number;
 }
 
+/**
+ * `summary.validated_at_commit` of a dry run (ED-29): the rows whose last checks wait for the commit (a
+ * location below a parent the same import creates). Said once above the rows, never on each row.
+ */
+export function deferredRowsOf(job: Pick<ImportJob, 'summary'>): number {
+  const n = (job.summary as { validated_at_commit?: unknown } | null)?.validated_at_commit;
+  return typeof n === 'number' && n > 0 ? n : 0;
+}
+
+/** The warnings a row shows: "checked when the import runs" is explained once for the whole import. */
+export function rowWarnings<W extends { code: string }>(warnings: readonly W[]): W[] {
+  return warnings.filter((w) => w.code !== 'validated-at-commit');
+}
+
 /** `summary.will_create` of a dry run: the records the commit would create on the way. */
 export function willCreateOf(job: Pick<ImportJob, 'summary'>): WillCreate[] {
   const list = (job.summary as { will_create?: unknown } | null)?.will_create;

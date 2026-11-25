@@ -348,6 +348,12 @@ export const importsMessages = {
   importReview: {
     heading: 'Dry run',
     banner: 'Preview. Nothing has been saved yet.',
+    checksNote:
+      'Every row was checked as it will be imported, including against the categories, models, locations and departments the import creates on the way. Only what changes in the meantime is decided when you import: a tag or serial number someone else takes, or a record someone edits after this check.',
+    deferred_one:
+      '{count} location sits below a parent location this import creates, so its last checks run when you import.',
+    deferred_other:
+      '{count} locations sit below a parent location this import creates, so their last checks run when you import.',
     checking: 'Checking your file...',
     waiting: 'Waiting for a worker to pick the check up.',
     progress: 'Checked {done} of {total} rows',

@@ -142,3 +142,21 @@ export const BUILTIN_ROLE_KEYS = BUILTIN_ROLES.map((r) => r.key);
 
 /** Permissions that make a role an "administrator" for the tenant MFA policy `admins`. */
 export const ADMIN_MARKER_PERMISSIONS: readonly string[] = [WILDCARD, 'user:manage'];
+
+/**
+ * Permissions a LOCATION-SCOPED role assignment never confers (M2-LOC-03, ED-26): they act on
+ * tenant-wide records that a location subtree cannot bound (accounts and their roles, API keys, the
+ * audit log, the shared catalogue, departments, tenant notification rules). A scoped "Administrator"
+ * is therefore a location administrator. The same permissions held through an org-wide assignment
+ * work as before.
+ */
+export const ORG_ONLY_PERMISSIONS: readonly string[] = [
+  'apikey:manage',
+  'audit:read',
+  'catalog:manage',
+  'department:manage',
+  'notification:manage',
+  'role:read',
+  'user:manage',
+  'user:read',
+];

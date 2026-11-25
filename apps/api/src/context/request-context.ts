@@ -23,6 +23,12 @@ export interface RequestContext {
   tenantId?: string;
   actorId?: string;
   actorType?: ActorType;
+  /**
+   * M2-LOC-03 (ED-26): the location subtrees the request is limited to, as the ids of their root
+   * locations; `null` or absent = not limited (an org-wide grant). Set by the auth guard from the
+   * grants that give the route's permission; every `withTenantTx` of the request inherits it.
+   */
+  locationScope?: readonly string[] | null;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -50,10 +56,12 @@ export function bindRequestIdentity(identity: {
   tenantId?: string;
   actorId?: string;
   actorType?: ActorType;
+  locationScope?: readonly string[] | null;
 }): void {
   const ctx = storage.getStore();
   if (!ctx) return;
   if (identity.tenantId !== undefined) ctx.tenantId = identity.tenantId;
   if (identity.actorId !== undefined) ctx.actorId = identity.actorId;
   if (identity.actorType !== undefined) ctx.actorType = identity.actorType;
+  if (identity.locationScope !== undefined) ctx.locationScope = identity.locationScope;
 }

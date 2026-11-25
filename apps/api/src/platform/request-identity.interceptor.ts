@@ -24,6 +24,8 @@ export class RequestIdentityInterceptor implements NestInterceptor {
         tenantId: principal.tenantId,
         actorId: principal.principalId,
         ...(principal.actorType ? { actorType: principal.actorType } : {}),
+        // M2-LOC-03 (ED-26): every tenant transaction of the request inherits the location scope
+        locationScope: principal.locationScope ?? null,
       });
     }
     return next.handle();

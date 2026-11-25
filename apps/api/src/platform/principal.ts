@@ -14,6 +14,11 @@ export interface RequestPrincipal {
   principalId: string;
   /** Who this is, for the audit trail (`audit_log.actor_type`). Defaults to `user` when absent. */
   actorType?: ActorType;
+  /**
+   * M2-LOC-03 (ED-26): root location ids of the subtrees this request is limited to; null/absent =
+   * not limited. Computed by the auth guard from the grants that give the route's permission.
+   */
+  locationScope?: readonly string[] | null;
 }
 
 declare module 'fastify' {

@@ -4,7 +4,7 @@ import type { AppConfig } from '../config/env.js';
 import { IdentityLookupService, generateToken, hashToken } from '../identity/index.js';
 import { ApiProblem, problem } from '../platform/index.js';
 import { AUDIT_WRITER, type AuditWriter } from '../ports/index.js';
-import { asBytes, TenancyService } from '../tenancy/index.js';
+import { asBytes, TenancyService, type Tx } from '../tenancy/index.js';
 import {
   loadGrants,
   loadMfaPolicy,
@@ -18,6 +18,7 @@ import { AuthMailer } from './auth-mailer.service.js';
 import type { LoginBody, MfaVerifyBody } from './auth.schemas.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
+import { locationScopeFor } from './policy.service.js';
 import { authProblem } from './problems.js';
 import { SecurityLogService } from './security-log.service.js';
 import { SessionService } from './session.service.js';
@@ -391,8 +392,39 @@ export class AuthService {
 
   // ------------------------------------------------------------------------------------------- me
 
+  /**
+   * M2-LOC-03 (ED-26): null when the principal holds an org-wide grant, otherwise the location
+   * subtrees it is limited to, with their names and paths (the web shell's "Scoped to" indicator).
+   */
+  private async locationScopeOf(trx: Tx, auth: AuthContext) {
+    const roots = locationScopeFor(auth.grants);
+    if (roots === null) return null;
+    const rows = await trx.location.findMany({
+      where: { id: { in: roots } },
+      select: { id: true, name: true, ancestor_ids: true },
+    });
+    const ancestorIds = [...new Set(rows.flatMap((r) => r.ancestor_ids))];
+    const names = new Map(
+      (
+        await trx.location.findMany({
+          where: { id: { in: ancestorIds } },
+          select: { id: true, name: true },
+        })
+      ).map((l) => [l.id, l.name]),
+    );
+    return {
+      locations: rows
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          path: r.ancestor_ids.map((id) => names.get(id) ?? '?').join(' / '),
+        }))
+        .sort((a, b) => a.path.localeCompare(b.path)),
+    };
+  }
+
   async me(auth: AuthContext) {
-    const { tenant, company, mfaPolicy, personId } = await this.tenancy.withTenantTx(
+    const { tenant, company, mfaPolicy, personId, scope } = await this.tenancy.withTenantTx(
       { tenantId: auth.tenantId, actorId: auth.principalId },
       async (trx) => ({
         tenant: await trx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } }),
@@ -401,6 +433,7 @@ export class AuthService {
         personId:
           (await trx.person.findFirst({ where: { user_id: auth.userId }, select: { id: true } }))
             ?.id ?? null,
+        scope: await this.locationScopeOf(trx, auth),
       }),
     );
     return {
@@ -438,6 +471,7 @@ export class AuthService {
         company_id: g.scopeCompanyId,
         location_id: g.scopeLocationId,
       })),
+      location_scope: scope,
       auth: {
         method: auth.method,
         mfa_verified: auth.mfaVerified,

@@ -10,6 +10,7 @@ import {
 } from './access.js';
 import { clientInfo } from './auth-context.js';
 import { AuthenticationService } from './authentication.service.js';
+import { locationScopeFor } from './policy.service.js';
 import { authProblem } from './problems.js';
 import { ApiProblem, problem } from '../platform/index.js';
 import { SecurityLogService } from './security-log.service.js';
@@ -104,8 +105,15 @@ export class AuthGuard implements CanActivate {
           );
     }
 
-    request.auth = auth;
+    // M2-LOC-03 (ED-26): the location subtrees this request is limited to, from the grants that
+    // give the route's permission (self-service and authenticated routes: the principal as a whole).
+    const locationScope = locationScopeFor(
+      auth.grants,
+      rule.kind === 'permission' ? rule.permission : undefined,
+    );
+    request.auth = { ...auth, locationScope };
     request.principal = {
+      locationScope,
       tenantId: auth.tenantId,
       principalId: auth.principalId,
       // Audit rows record who acted: a person (cookie session) or an API key (bearer).

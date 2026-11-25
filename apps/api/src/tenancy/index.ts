@@ -4,6 +4,16 @@
 // run a query: queries need a `Tx`, and a `Tx` only exists inside withTenantTx / withPreTenantTx.
 export { Prisma } from '../generated/prisma/client.js';
 export { asBytes } from './bytes.js';
+export {
+  assetInScope,
+  currentLocationScope,
+  isLocationScoped,
+  locationInScope,
+  locationScopeSql,
+  locationScopeWhere,
+  personInScope,
+  scopedLocationIds,
+} from './location-scope.js';
 export { isUniqueViolation, prismaCodeOf, sqlStateOf } from './errors.js';
 export { TenancyModule } from './tenancy.module.js';
 export { TenancyService, type PingResult, type TenancyOptions } from './tenancy.service.js';

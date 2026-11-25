@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { currentRequestId } from '../context/request-context.js';
+import { currentRequestContext, currentRequestId } from '../context/request-context.js';
 import type { Prisma } from '../generated/prisma/client.js';
 
 /**
@@ -16,6 +16,13 @@ export interface TenantContext {
   actorId?: string;
   /** correlation id: becomes `app.request_id` for the transaction. */
   requestId?: string;
+  /**
+   * M2-LOC-03 (ED-26): root ids of the location subtrees the transaction may see and change; `null`
+   * = not limited. Absent = inherit the ambient request's scope (set by the auth guard), so every
+   * transaction of a scoped request is scoped without each caller passing it. Jobs that act for a
+   * user (an export, an import commit) pass it explicitly.
+   */
+  locationScope?: readonly string[] | null;
 }
 
 /** Interactive transaction limits (Prisma defaults to 2 s wait / 5 s run, too tight for imports). */
@@ -90,6 +97,12 @@ export async function withTenantTx<T>(
   const effectiveRequestId = ctx.requestId ?? currentRequestId();
   const reqId = effectiveRequestId === undefined ? '' : requestId.parse(effectiveRequestId);
 
+  const scope =
+    ctx.locationScope !== undefined
+      ? ctx.locationScope
+      : (currentRequestContext()?.locationScope ?? null);
+  const locationScope = scope === null ? null : scope.map((id) => uuid.parse(id));
+
   const outer = active.getStore();
   if (outer) {
     if (outer.ctx.tenantId !== tenantId) {
@@ -106,7 +119,10 @@ export async function withTenantTx<T>(
                                    set_config('app.actor_id', ${actorId}, true),
                                    set_config('app.request_id', ${reqId}, true)`;
       return active.run(
-        { trx, ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId } },
+        {
+          trx,
+          ctx: { tenantId, actorId: ctx.actorId, requestId: effectiveRequestId, locationScope },
+        },
         () => fn(trx),
       );
     },

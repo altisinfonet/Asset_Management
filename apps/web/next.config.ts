@@ -25,8 +25,16 @@ export default function config(phase: string): NextConfig {
 
   if (phase === PHASE_DEVELOPMENT_SERVER) {
     const apiUrl = process.env.API_PROXY_URL ?? 'http://localhost:3000';
+    // Opening the dev server from another device (http://<LAN-IP>:3001): Next blocks cross-origin dev
+    // resources (its assets, HMR websocket) from hosts it does not know. DEV_ALLOWED_ORIGINS is a comma list
+    // of hostnames or IPs, e.g. "192.168.1.101,my-laptop.local". Dev-server phase only; the export never sees it.
+    const allowedDevOrigins = (process.env.DEV_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
     return {
       ...base,
+      ...(allowedDevOrigins.length > 0 ? { allowedDevOrigins } : {}),
       // Keep the exact /v1/health path; trailing-slash redirects would break the API.
       skipTrailingSlashRedirect: true,
       async rewrites() {

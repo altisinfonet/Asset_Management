@@ -29,7 +29,14 @@ import {
   stalePrecondition,
   writeAssetHistory,
 } from '../registry/index.js';
-import { TenancyService, isUniqueViolation, type Tx } from '../tenancy/index.js';
+import {
+  TenancyService,
+  assetInScope,
+  isUniqueViolation,
+  personInScope,
+  scopedLocationIds,
+  type Tx,
+} from '../tenancy/index.js';
 import type { RepairComplete, RepairCreate, RepairListQuery, RepairUpdate } from './schemas.js';
 
 type RepairRow = NonNullable<Awaited<ReturnType<Tx['maintenance_record']['findUnique']>>>;
@@ -133,8 +140,11 @@ export class RepairsService extends RegistryBase {
           : query.archived === 'include'
             ? {}
             : { archived_at: null };
+      // M2-LOC-03 (ED-26): the repairs of assets inside the caller's location scope only
+      const scopeIds = await scopedLocationIds(trx);
       const filter = {
         AND: [
+          scopeIds === null ? {} : { asset: { location_id: { in: scopeIds } } },
           archived,
           query.asset_id ? { asset_id: query.asset_id } : {},
           query.status?.length ? { status: { in: query.status } } : {},
@@ -174,7 +184,7 @@ export class RepairsService extends RegistryBase {
     id: string,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const row = await trx.maintenance_record.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row) throw problem.notFound('Repair not found.');
       const names = await this.namesFor(trx, [row]);
       return { data: repairDto(row, names(row)), version: row.version };
@@ -185,7 +195,7 @@ export class RepairsService extends RegistryBase {
   async summary(auth: AuthContext, assetId: string) {
     return this.tx(auth, async (trx) => {
       const asset = await trx.asset.findUnique({ where: { id: assetId }, select: { id: true } });
-      if (!asset) throw problem.notFound('Asset not found.');
+      if (!asset || !(await assetInScope(trx, assetId))) throw problem.notFound('Asset not found.');
       const [counts] = await trx.$queryRaw<Array<{ open: bigint; total: bigint }>>`
         select count(*) filter (where status in ('open', 'in_progress')) as open, count(*) as total
           from app.maintenance_record
@@ -382,7 +392,7 @@ export class RepairsService extends RegistryBase {
     body: RepairUpdate,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const found = await trx.maintenance_record.findUnique({ where: { id } });
+      const found = await this.scoped(trx, id);
       if (!found || found.archived_at) throw problem.notFound('Repair not found.');
       // The asset first (lock order is always asset, then record), then the record under that lock.
       const asset = (await lockAsset(trx, found.asset_id))!;
@@ -491,7 +501,7 @@ export class RepairsService extends RegistryBase {
     body: RepairComplete,
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
-      const found = await trx.maintenance_record.findUnique({ where: { id } });
+      const found = await this.scoped(trx, id);
       if (!found || found.archived_at) throw problem.notFound('Repair not found.');
       const asset = (await lockAsset(trx, found.asset_id))!;
       const row = (await trx.maintenance_record.findUnique({ where: { id } }))!;
@@ -577,7 +587,7 @@ export class RepairsService extends RegistryBase {
 
   async archive(auth: AuthContext, id: string, ifMatch: IfMatch): Promise<void> {
     await this.tx(auth, async (trx) => {
-      const row = await trx.maintenance_record.findUnique({ where: { id } });
+      const row = await this.scoped(trx, id);
       if (!row || row.archived_at) throw problem.notFound('Repair not found.');
       assertIfMatch(ifMatch, row.version);
       if (isOpen(row.status)) {
@@ -599,6 +609,12 @@ export class RepairsService extends RegistryBase {
   // ------------------------------------------------------------------------------- building blocks
 
   /** Optimistic write of one record: a concurrent change answers 412, a vanished row 404. */
+  /** The repair `id` when its asset is inside the caller's location scope (ED-26), else null. */
+  private async scoped(trx: Tx, id: string): Promise<RepairRow | null> {
+    const row = await trx.maintenance_record.findUnique({ where: { id } });
+    return row && (await assetInScope(trx, row.asset_id)) ? row : null;
+  }
+
   private async write(
     trx: Tx,
     auth: AuthContext,
@@ -727,7 +743,9 @@ export class RepairsService extends RegistryBase {
       if (!vendor || vendor.archived_at) errors.push(invalidRef('/vendor_id', 'No such vendor.'));
     }
     if (body.performed_by_person_id) {
-      const person = await trx.person.findUnique({ where: { id: body.performed_by_person_id } });
+      const person = (await personInScope(trx, body.performed_by_person_id))
+        ? await trx.person.findUnique({ where: { id: body.performed_by_person_id } })
+        : null;
       if (!person || person.archived_at) {
         errors.push(invalidRef('/performed_by_person_id', 'No such person.'));
       }

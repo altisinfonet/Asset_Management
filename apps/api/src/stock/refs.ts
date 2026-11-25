@@ -1,6 +1,6 @@
 import type { FieldError } from '../platform/index.js';
 import { invalidRef } from '../registry/index.js';
-import type { Tx } from '../tenancy/index.js';
+import { isLocationScoped, locationInScope, type Tx } from '../tenancy/index.js';
 
 export interface StockRefs {
   category_id?: string | undefined;
@@ -20,6 +20,7 @@ export async function checkStockRefs(
   kind: 'accessory' | 'consumable',
   refs: StockRefs,
   errors: FieldError[],
+  creating = false,
 ): Promise<void> {
   if (refs.category_id) {
     const category = await trx.category.findUnique({ where: { id: refs.category_id } });
@@ -43,8 +44,18 @@ export async function checkStockRefs(
     if (!row || row.archived_at) errors.push(invalidRef('/vendor_id', 'No such vendor.'));
   }
   if (refs.location_id) {
-    const row = await trx.location.findUnique({ where: { id: refs.location_id } });
+    // M2-LOC-03 (ED-26): a location outside the caller's scope does not exist for them
+    const row = (await locationInScope(trx, refs.location_id))
+      ? await trx.location.findUnique({ where: { id: refs.location_id } })
+      : null;
     if (!row || row.archived_at) errors.push(invalidRef('/location_id', 'No such location.'));
+  } else if (isLocationScoped() && (creating || refs.location_id === null)) {
+    // stock without a location in scope would be invisible to the scoped caller
+    errors.push({
+      pointer: '/location_id',
+      message: 'A location inside your scope is required.',
+      code: 'required',
+    });
   }
   if (refs.company_id) {
     const row = await trx.company.findUnique({ where: { id: refs.company_id } });

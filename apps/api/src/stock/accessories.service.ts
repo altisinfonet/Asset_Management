@@ -19,7 +19,17 @@ import {
   type OutboxPublisher,
 } from '../ports/index.js';
 import { RegistryBase, inUse, invalidRef, stalePrecondition } from '../registry/index.js';
-import { TenancyService, sqlStateOf, type Tx } from '../tenancy/index.js';
+import {
+  Prisma,
+  TenancyService,
+  assetInScope,
+  locationInScope,
+  locationScopeSql,
+  locationScopeWhere,
+  personInScope,
+  sqlStateOf,
+  type Tx,
+} from '../tenancy/index.js';
 import {
   type AccessoryDto,
   accessoryDto,
@@ -106,8 +116,11 @@ export class AccessoriesService extends RegistryBase {
             ? {}
             : { archived_at: null };
       const low = query.low_stock === undefined ? undefined : await lowStockIds(trx, 'accessory');
+      // M2-LOC-03 (ED-26): stock kept inside the caller's location scope only
+      const inScope = await locationScopeWhere(trx, 'location_id');
       const filter = {
         AND: [
+          inScope,
           archived,
           query.q ? { search_text: { contains: query.q.toLowerCase() } } : {},
           query.category_id ? { category_id: query.category_id } : {},
@@ -151,7 +164,9 @@ export class AccessoriesService extends RegistryBase {
   ): Promise<{ data: Record<string, unknown>; version: number }> {
     return this.tx(auth, async (trx) => {
       const row = await trx.accessory.findUnique({ where: { id } });
-      if (!row) throw problem.notFound('Accessory not found.');
+      if (!row || !(await locationInScope(trx, row.location_id))) {
+        throw problem.notFound('Accessory not found.');
+      }
       const out = await outstandingByAccessory(trx, [id]);
       return { data: accessoryDto(row, out.get(id) ?? 0), version: row.version };
     });
@@ -164,8 +179,13 @@ export class AccessoriesService extends RegistryBase {
     query: AccessoryAssignmentsQuery,
   ): Promise<Page<AssignmentDto>> {
     return this.tx(auth, async (trx) => {
-      const exists = await trx.accessory.findUnique({ where: { id }, select: { id: true } });
-      if (!exists) throw problem.notFound('Accessory not found.');
+      const exists = await trx.accessory.findUnique({
+        where: { id },
+        select: { id: true, location_id: true },
+      });
+      if (!exists || !(await locationInScope(trx, exists.location_id))) {
+        throw problem.notFound('Accessory not found.');
+      }
       return listAssignments(trx, { accessoryId: id, state: query.state }, query);
     });
   }
@@ -178,7 +198,7 @@ export class AccessoriesService extends RegistryBase {
   ): Promise<{ data: AccessoryDto; version: number }> {
     return this.tx(auth, async (trx) => {
       const errors: FieldError[] = [];
-      await checkStockRefs(trx, 'accessory', body, errors);
+      await checkStockRefs(trx, 'accessory', body, errors, true);
       const companyId = await resolveCompany(trx, body.company_id);
       if (!companyId) errors.push(invalidRef('/company_id', 'No company.'));
       if (errors.length > 0) throw problem.validation(errors);
@@ -522,7 +542,8 @@ export class AccessoriesService extends RegistryBase {
         version: number;
       }>
     >`select id, name, qty_total, min_qty, archived_at, version
-        from app.accessory where id = ${id}::uuid for update`;
+        from app.accessory where id = ${id}::uuid
+         and ${locationScopeSql(Prisma.sql`location_id`)} for update`;
     if (!row) throw problem.notFound('Accessory not found.');
     return row;
   }
@@ -541,7 +562,10 @@ export class AccessoriesService extends RegistryBase {
     },
   ): Promise<Target> {
     if (body.person_id) {
-      const person = await trx.person.findUnique({ where: { id: body.person_id } });
+      // M2-LOC-03 (ED-26): a person outside the caller's scope does not exist for them
+      const person = (await personInScope(trx, body.person_id))
+        ? await trx.person.findUnique({ where: { id: body.person_id } })
+        : null;
       if (!person || person.archived_at) {
         throw problem.validation([invalidRef('/person_id', 'No such person.')]);
       }
@@ -557,16 +581,20 @@ export class AccessoriesService extends RegistryBase {
       return { type: 'person', id: person.id, name: person.display_name };
     }
     if (body.location_id) {
-      const location = await trx.location.findUnique({ where: { id: body.location_id } });
+      const location = (await locationInScope(trx, body.location_id))
+        ? await trx.location.findUnique({ where: { id: body.location_id } })
+        : null;
       if (!location || location.archived_at) {
         throw problem.validation([invalidRef('/location_id', 'No such location.')]);
       }
       return { type: 'location', id: location.id, name: location.name };
     }
-    const target = await trx.asset.findUnique({
-      where: { id: body.target_asset_id! },
-      select: { id: true, asset_tag: true, name: true, archived_at: true },
-    });
+    const target = (await assetInScope(trx, body.target_asset_id!))
+      ? await trx.asset.findUnique({
+          where: { id: body.target_asset_id! },
+          select: { id: true, asset_tag: true, name: true, archived_at: true },
+        })
+      : null;
     if (!target || target.archived_at) {
       throw problem.validation([invalidRef('/target_asset_id', 'No such asset.')]);
     }

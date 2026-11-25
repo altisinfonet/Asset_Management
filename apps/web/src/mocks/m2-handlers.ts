@@ -23,6 +23,7 @@ import {
   type FieldError,
 } from './registry-handlers';
 import { mutateRegistry, registry } from './registry-state';
+import { inScope, scopedLocationErrors } from './scope';
 import { onMockReset } from './state';
 import { rememberImportUpload } from './w3-state';
 
@@ -313,6 +314,7 @@ const locationHandlers: HttpHandler[] = [
   http.get('/v1/locations', ({ request }) => {
     const guard = requireSession(request, { permission: 'location:read' });
     if (!guard.ok) return guard.response;
+    const scope = guard.user.locationScope;
     return paginate(
       request,
       registry().locations,
@@ -321,6 +323,8 @@ const locationHandlers: HttpHandler[] = [
         defaultSort: 'name',
         haystack: (l) => [l.name, l.code],
         filter: (l, p) => {
+          // M2-LOC-03: a scoped principal lists only its subtrees
+          if (!inScope(scope, l.id)) return false;
           if (p.get('parent_id') && l.parent_id !== p.get('parent_id')) return false;
           if (p.get('root') === 'true' && l.parent_id) return false;
           if (p.get('root') === 'false' && !l.parent_id) return false;
@@ -339,7 +343,9 @@ const locationHandlers: HttpHandler[] = [
     const guard = requireSession(request, { permission: 'location:read' });
     if (!guard.ok) return guard.response;
     const found = registry().locations.find((l) => l.id === params.id);
-    return found ? oneLocation(found) : notFound('Location');
+    return found && inScope(guard.user.locationScope, found.id)
+      ? oneLocation(found)
+      : notFound('Location');
   }),
 
   http.post('/v1/locations', async ({ request }) => {
@@ -361,6 +367,16 @@ const locationHandlers: HttpHandler[] = [
     if (body.company_id && body.company_id !== DEFAULT_COMPANY) {
       errors.push(missing('/company_id', 'No such company.'));
     }
+    // M2-LOC-03: a scoped principal adds below its scope roots, never at the top level
+    errors.push(
+      ...scopedLocationErrors(
+        guard.user.locationScope,
+        body.parent_id,
+        '/parent_id',
+        true,
+        'A parent location inside your scope is required.',
+      ).filter((e) => !(e.code === 'not-found' && errors.some((x) => x.pointer === '/parent_id'))),
+    );
     if (errors.length > 0) return validation(errors);
     const name = String(body.name).trim();
     const taken = data.locations.some(
@@ -404,7 +420,9 @@ const locationHandlers: HttpHandler[] = [
     if (bodyErrors.length > 0) return validation(bodyErrors);
     const data = registry();
     const existing = data.locations.find((l) => l.id === params.id);
-    if (!existing || existing.archived_at) return notFound('Location');
+    if (!existing || existing.archived_at || !inScope(guard.user.locationScope, existing.id)) {
+      return notFound('Location');
+    }
     const stale = checkIfMatch(request, existing._v);
     if (stale) return stale;
 
@@ -412,7 +430,17 @@ const locationHandlers: HttpHandler[] = [
     let move: MockLocation | null | undefined;
     if (body.parent_id !== undefined && body.parent_id !== existing.parent_id) {
       const parent = body.parent_id ? data.locations.find((l) => l.id === body.parent_id) : null;
-      if (body.parent_id && (!parent || parent.archived_at)) {
+      if (guard.user.locationScope && !body.parent_id) {
+        // M2-LOC-03: a scoped principal cannot move a location to the top level
+        errors.push({
+          pointer: '/parent_id',
+          message: 'A parent location inside your scope is required.',
+          code: 'required',
+        });
+      } else if (
+        body.parent_id &&
+        (!parent || parent.archived_at || !inScope(guard.user.locationScope, parent.id))
+      ) {
         errors.push(missing('/parent_id', 'No such location.'));
       } else if (
         parent &&
@@ -678,6 +706,7 @@ const personHandlers: HttpHandler[] = [
   http.get('/v1/people', ({ request }) => {
     const guard = requireSession(request, { permission: 'person:read' });
     if (!guard.ok) return guard.response;
+    const scope = guard.user.locationScope;
     return paginate(
       request,
       registry().people,
@@ -691,6 +720,8 @@ const personHandlers: HttpHandler[] = [
         // `search_text` of the API: name, e-mail and employee number
         haystack: (p) => [p.display_name, p.email, p.employee_ref],
         filter: (p, params) => {
+          // M2-LOC-03: a scoped principal lists the people whose home location is in scope
+          if (!inScope(scope, p.location_id)) return false;
           const kinds = csv(params, 'kind');
           if (kinds.length > 0 && !kinds.includes(p.kind ?? 'employee')) return false;
           if (params.get('status') && p.status !== params.get('status')) return false;
@@ -714,7 +745,9 @@ const personHandlers: HttpHandler[] = [
     const guard = requireSession(request, { permission: 'person:read' });
     if (!guard.ok) return guard.response;
     const found = registry().people.find((p) => p.id === params.id);
-    return found ? onePerson(found) : notFound('Person');
+    return found && inScope(guard.user.locationScope, found.location_id)
+      ? onePerson(found)
+      : notFound('Person');
   }),
 
   http.post('/v1/people', async ({ request }) => {
@@ -730,6 +763,17 @@ const personHandlers: HttpHandler[] = [
       !data.locations.some((l) => l.id === body.location_id && !l.archived_at)
     ) {
       errors.push(missing('/location_id', 'No such location.'));
+    } else {
+      // M2-LOC-03: a scoped principal gives every new person a home location inside its scope
+      errors.push(
+        ...scopedLocationErrors(
+          guard.user.locationScope,
+          body.location_id,
+          '/location_id',
+          true,
+          'A home location inside your scope is required.',
+        ),
+      );
     }
     if (
       body.department_id &&

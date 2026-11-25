@@ -86,6 +86,7 @@ const KIND_CODE = {
   assignment: '0012',
   attachment: '0013',
   department: '0014',
+  roleAssignment: '0015',
 } as const;
 
 type Kind = keyof typeof KIND_CODE;
@@ -208,6 +209,20 @@ export const MOCK_ROLES: S['Role'][] = [
 
 export function roleIdFor(key: string): string {
   return (MOCK_ROLES.find((role) => role.key === key) ?? MOCK_ROLES[4]!).id;
+}
+
+/** A stored role assignment as the API returns it (`roleAssignmentDto`): every field present. */
+export function roleAssignmentView(
+  a: Partial<S['RoleAssignment']> & { role_id: string },
+  id: string,
+): S['RoleAssignment'] {
+  return {
+    id,
+    role_id: a.role_id,
+    scope_type: a.scope_type ?? 'tenant',
+    company_id: a.company_id ?? null,
+    location_id: a.location_id ?? null,
+  };
 }
 
 // ---- deterministic helpers -------------------------------------------------------------------
@@ -630,7 +645,27 @@ export function buildSeed(): RegistryData {
       last_login_at: null,
       invitation_expires_at: iso(NOW - DAY),
     }),
+    // M2-LOC-03: a technician limited to Room 101 and everything below it
+    userBase({
+      id: '0190a6b2-0000-7000-8000-000000000011',
+      email: MOCK_ACCOUNTS.scopedTechnician,
+      display_name: 'Theo Scoped',
+      status: 'active',
+      role_assignments: [
+        { role_id: roleIdFor('technician'), scope_type: 'location', location_id: rooms[0] },
+      ],
+      mfa_enabled: false,
+      last_login_at: iso(NOW - 4 * DAY),
+    }),
   ] as MockUserRecord[];
+  // every assignment as the API returns it: its id, and company_id / location_id always present
+  let assignmentN = 0;
+  for (const user of users) {
+    user.role_assignments = user.role_assignments.map((a) => {
+      assignmentN += 1;
+      return roleAssignmentView(a, uid('roleAssignment', assignmentN));
+    });
+  }
 
   const custody = seedCustody({
     assets,

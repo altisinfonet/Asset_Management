@@ -636,7 +636,7 @@ function InviteDialog({
         const user = await usersApi.invite({
           email: String(values.email).trim(),
           display_name: String(values.display_name).trim(),
-          role_id: String(values.role_id),
+          role_assignments: [{ role_id: String(values.role_id), scope_type: 'tenant' }],
         });
         await refresh();
         toast({ variant: 'success', title: t('users.invited', { email: user.email }) });

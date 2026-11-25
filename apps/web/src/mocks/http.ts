@@ -1,6 +1,7 @@
 import { HttpResponse } from 'msw';
 import { hasPermission } from '@/lib/auth/permissions';
-import { findUser, loadState, type MockUser } from './state';
+import { withScope, type ScopedUser } from './scope';
+import { findUser, loadState } from './state';
 
 /**
  * Helpers shared by every mock handler: RFC 9457 problem responses, the session / CSRF /
@@ -54,7 +55,7 @@ export function problem(status: number, code: string, title: string, extra: Prob
   });
 }
 
-export type Guard = { ok: true; user: MockUser } | { ok: false; response: Response };
+export type Guard = { ok: true; user: ScopedUser } | { ok: false; response: Response };
 
 /**
  * Session check shared by authenticated endpoints: 401, CSRF on mutations, limited sessions
@@ -66,7 +67,9 @@ export function requireSession(
   options: { mutation?: boolean; allowLimited?: boolean; permission?: string } = {},
 ): Guard {
   const session = loadState().session;
-  const user = session ? findUser(session.email) : undefined;
+  const account = session ? findUser(session.email) : undefined;
+  // M2-LOC-03: the effective permissions and location scope of the account's role assignments
+  const user = account ? withScope(account) : undefined;
   if (!session || !user) {
     return { ok: false, response: problem(401, 'unauthorized', 'Authentication required') };
   }

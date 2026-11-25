@@ -11,6 +11,7 @@ import {
   type ListConfig,
 } from './registry-handlers';
 import { registry } from './registry-state';
+import { scopedLocationErrors } from './scope';
 import {
   checkDate,
   checkInt,
@@ -192,6 +193,12 @@ const accessoryHandlers: HttpHandler[] = [
     const body = await readBody(request);
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors = validateAccessory(body, true);
+    if (errors.length === 0) {
+      // M2-LOC-03: a scoped principal stocks inside its scope
+      errors.push(
+        ...scopedLocationErrors(guard.user.locationScope, body.location_id, '/location_id', true),
+      );
+    }
     if (errors.length > 0) return validation(errors);
     const created = mutateW2((data) => {
       const stamp = nowIso();
@@ -581,6 +588,11 @@ const consumableHandlers: HttpHandler[] = [
     const body = await readBody(request);
     if (!body) return fail('bad-request', { detail: 'Malformed JSON body' });
     const errors = validateConsumable(body, true);
+    if (errors.length === 0) {
+      errors.push(
+        ...scopedLocationErrors(guard.user.locationScope, body.location_id, '/location_id', true),
+      );
+    }
     if (errors.length > 0) return validation(errors);
     const created = mutateW2((data) => {
       const stamp = nowIso();

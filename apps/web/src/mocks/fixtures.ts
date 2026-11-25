@@ -54,6 +54,11 @@ export const MOCK_ACCOUNTS = {
   multiTenant: 'multi@example.org',
   /** The organisation requires MFA: after login the session is limited until enrolment. */
   mfaRequired: 'needs-mfa@example.org',
+  /**
+   * Technician limited to Room 101 (M2-LOC-03): `location_scope` names the room, and the lists show
+   * only what is inside it.
+   */
+  scopedTechnician: 'theo.scoped@example.org',
 } as const;
 
 export const MOCK_TENANTS = [

@@ -275,9 +275,7 @@ test.describe('import wizard', () => {
     await loadApp(page);
     const { id } = await importAt(page, 'reviewed', {
       entity: 'location',
-      csv: 'Path
-New Campus > Block A
-New Campus > Block B',
+      csv: ['Path', 'New Campus > Block A', 'New Campus > Block B'].join('\n'),
       filename: 'places.csv',
       mapping: { Path: 'path' },
       importOptions: { on_match: 'skip' },

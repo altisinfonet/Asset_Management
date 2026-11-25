@@ -7,7 +7,7 @@ import { RequirePermission } from '@/components/auth/access-denied';
 import { isSettingsSection, type SettingsSection } from '@/lib/routes';
 
 /** Permission each settings page needs; anything not listed falls back to catalogue management. */
-const SECTION_PERMISSION: Record<SettingsSection, string | readonly string[]> = {
+export const SECTION_PERMISSION: Record<SettingsSection, string | readonly string[]> = {
   organisation: SETTINGS_PERMISSIONS,
   users: 'user:read',
   categories: 'catalog:manage',

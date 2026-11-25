@@ -14,7 +14,7 @@ import { authApi } from './auth-api';
 import { setCsrfToken } from './http';
 import { hasAnyPermission } from './permissions';
 import { onMfaEnrolmentRequired, onUnauthorized } from './session-events';
-import type { Me } from './types';
+import type { LocationScope, Me } from './types';
 
 export type AuthState =
   | { status: 'loading' }
@@ -38,6 +38,12 @@ export interface AuthContextValue {
   me: Me | undefined;
   /** True when the principal holds one of the permissions (always false while not signed in). */
   can: (permission: string | readonly string[] | undefined) => boolean;
+  /**
+   * M2-LOC-03 (ED-26): the location subtrees the principal is limited to (`me.location_scope`), or
+   * null for an org-wide principal (and while not signed in). A scoped principal only sees records
+   * inside these subtrees and must give every new record a location inside them.
+   */
+  locationScope: LocationScope | null;
   /** Re-run the `/v1/auth/me` bootstrap (after login, MFA or enrolment). */
   refresh: () => Promise<AuthState>;
   signOut: () => Promise<void>;
@@ -47,6 +53,7 @@ const AuthContext = createContext<AuthContextValue>({
   state: { status: 'loading' },
   me: undefined,
   can: () => false,
+  locationScope: null,
   refresh: async () => ({ status: 'loading' }),
   signOut: async () => {},
 });
@@ -133,6 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       state,
       me,
       can: (permission) => (me ? hasAnyPermission(me.permissions, permission) : false),
+      // `?? null`: an older API without the field is treated as org-wide
+      locationScope: me?.location_scope ?? null,
       refresh,
       signOut,
     };

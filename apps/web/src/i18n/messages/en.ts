@@ -10,6 +10,7 @@ import { stockMessages } from './stock';
 import { undoMessages } from './undo';
 import { viewsMessages } from './views';
 import { registryMessages } from './registry';
+import { scopeMessages } from './scope';
 
 /**
  * English message catalogue (the only locale in M1). Every user-facing string of the app shell and
@@ -488,6 +489,7 @@ export const en = {
   ...viewsMessages,
   ...loanersMessages,
   ...importsMessages,
+  ...scopeMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

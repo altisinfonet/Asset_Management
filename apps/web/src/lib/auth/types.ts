@@ -13,6 +13,9 @@ export type LoginResponse = Schemas['LoginResponse'];
 export type MfaVerifyRequest = Schemas['MfaVerifyRequest'];
 export type MfaMethod = MfaVerifyRequest['method'];
 export type Me = Schemas['Me'];
+/** M2-LOC-03: the subtrees a location-scoped principal is limited to (`Me.location_scope`, when not null). */
+export type LocationScope = NonNullable<Me['location_scope']>;
+export type ScopeLocation = Schemas['ScopeLocation'];
 export type InvitationInfo = Schemas['InvitationInfo'];
 export type AcceptInvitationRequest = Schemas['AcceptInvitationRequest'];
 export type MfaEnrolment = Schemas['MfaEnrolment'];

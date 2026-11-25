@@ -2,9 +2,10 @@ import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
 import { ModulesContainer } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Client, dbEnabled } from '../auth/support.js';
-import { mode } from '../support/db.js';
+import { type Client, dbEnabled, ownerSql } from '../auth/support.js';
+import { env, mode } from '../support/db.js';
 import { discoverRoutes } from '../support/routes.js';
+import { foreignKeyProbe, foreignKeyProbeControl, visibilityProbe } from './catalogue-probes.js';
 import {
   type App,
   type TenantFixture,
@@ -1137,6 +1138,113 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
       columns: [{ header: 'Serial', target: 'serial' }],
     });
     expect(importTemplate.status, importTemplate.raw).toBe(201);
+    // M2-SEC-01: a row of A in every remaining tenant table, so the catalogue probes below cover every
+    // table and every foreign key (rows the worker, the mailer or the login flow write in production are
+    // inserted directly, as the owner, inside A's tenant context)
+    const transferAsset = (
+      await a.post('/v1/assets', { category_id: category.id, name: `${marker} moved` })
+    ).body;
+    await a.post(
+      `/v1/assets/${transferAsset.id}/checkout`,
+      { person_id: person.id },
+      { headers: { 'idempotency-key': `seed-move-out-${marker}` } },
+    );
+    const moved = await a.post(
+      `/v1/assets/${transferAsset.id}/transfer`,
+      { location_id: location.id },
+      { headers: { 'idempotency-key': `seed-move-${marker}` } },
+    );
+    expect(moved.status, moved.raw).toBe(201);
+    expect(
+      (
+        await a.put('/v1/notification-preferences/export.completed', {
+          in_app: true,
+          email: 'digest',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await a.put('/v1/notification-rules/consumable.low_stock', { enabled: true })).status,
+    ).toBe(200);
+    // an asset checked out to another asset (assignment.target_asset_id)
+    const docked = (
+      await a.post('/v1/assets', { category_id: category.id, name: `${marker} docked` })
+    ).body;
+    const dock = await a.post(
+      `/v1/assets/${docked.id}/checkout`,
+      { target_asset_id: transferAsset.id },
+      { headers: { 'idempotency-key': `seed-dock-${marker}` } },
+    );
+    expect(dock.status, dock.raw).toBe(201);
+    // the invited user's role assignments scoped to A's location and to A's company (no API for that yet)
+    for (const [scope, column, value] of [
+      ['location', 'scope_location_id', location.id],
+      ['company', 'scope_company_id', '(select id from app.company where is_default)'],
+    ] as const) {
+      await ownerTenantSql(
+        A.tenantId,
+        `insert into app.role_assignment (id, tenant_id, user_id, role_id, scope_type, ${column})
+         values ($1, $2, $3, $4, '${scope}', ${scope === 'location' ? '$5::uuid' : value})`,
+        [
+          randomUUID(),
+          A.tenantId,
+          invited.id,
+          A.roles.technician,
+          ...(scope === 'location' ? [value] : []),
+        ],
+      );
+    }
+    await ownerTenantSql(
+      A.tenantId,
+      `insert into app.import_row (tenant_id, job_id, row_no, line_no, raw) values ($1, $2, 1, 2, '["x"]'::jsonb)`,
+      [A.tenantId, importJob.body.id],
+    );
+    await ownerTenantSql(
+      A.tenantId,
+      `insert into app.loan_alert (id, tenant_id, assignment_id, kind, alert_date, expected_return)
+       values ($1, $2, $3, 'due_soon', current_date, current_date + 1)`,
+      [randomUUID(), A.tenantId, loan.assignment.id],
+    );
+    await ownerTenantSql(
+      A.tenantId,
+      `insert into app.mail_outbox (id, tenant_id, template) values ($1, $2, 'auth.mfa-enabled')`,
+      [randomUUID(), A.tenantId],
+    );
+    await ownerTenantSql(
+      A.tenantId,
+      `insert into app.notification_delivery (id, tenant_id, user_id, type, channel, status)
+       values ($1, $2, $3, 'export.completed', 'in_app', 'delivered')`,
+      [randomUUID(), A.tenantId, adminId],
+    );
+    // identity (non-tenant schema, foreign keys into app): the login and recovery flows' rows
+    for (const [sql, params] of [
+      [
+        `insert into identity.external_identity (tenant_id, user_id, provider, subject) values ($1, $2, 'google', $3)`,
+        [A.tenantId, viewer.id, `sub-${marker}`],
+      ],
+      [
+        `insert into identity.mfa_challenge (tenant_id, user_id, token_hash, expires_at) values ($1, $2, $3, now() + interval '5 minutes')`,
+        [A.tenantId, viewer.id, Buffer.from(randomUUID())],
+      ],
+      [
+        `insert into identity.mfa_factor (id, tenant_id, user_id, type, secret_encrypted) values ($1, $2, $3, 'totp', $4)`,
+        [randomUUID(), A.tenantId, viewer.id, Buffer.from('not-a-real-secret')],
+      ],
+      [
+        `insert into identity.mfa_recovery_code (id, tenant_id, user_id, code_hash) values ($1, $2, $3, $4)`,
+        [randomUUID(), A.tenantId, viewer.id, Buffer.from(randomUUID())],
+      ],
+      [
+        `insert into identity.password_reset_token (tenant_id, user_id, token_hash, expires_at) values ($1, $2, $3, now() + interval '1 hour')`,
+        [A.tenantId, viewer.id, Buffer.from(randomUUID())],
+      ],
+      [
+        `insert into identity.security_event (id, tenant_id, event_type) values ($1, $2, 'other')`,
+        [randomUUID(), A.tenantId],
+      ],
+    ] as const) {
+      await ownerSql(sql, [...params]);
+    }
     fx = {
       repairId: repair.body.id,
       repairAssetId: repairAsset.id,
@@ -1451,6 +1559,46 @@ describe.skipIf(!dbEnabled)(`route replay: tenant B against tenant A's ids (${mo
     expect(scanB.body.asset.id).toBe(created.body.id);
     expect((await b().get(`/v1/scan/resolve?code=${fx.labelCode}`)).status).toBe(404);
   });
+
+  // ---- M2-SEC-01: probes driven by the database catalogue (every table, every foreign key)
+
+  /**
+   * Tenant tables in which these fixtures give A no row, with the reason. The probe FAILS for a table
+   * that has no row of A and is not listed here (a new table must get a fixture row, so it is probed),
+   * and for a listed table that does have rows (a stale entry).
+   */
+  const NO_ROWS_OF_A: Record<string, string> = {};
+
+  it('every tenant table: B sees none of A’s rows, A sees all of them (auto-discovered, both modes)', async () => {
+    const r = await visibilityProbe(A.tenantId, B.tenantId);
+    expect(r.leaks, 'tables in which tenant B reads rows of tenant A').toEqual([]);
+    expect(r.ownMismatch, 'tables in which tenant A does not see its own rows').toEqual([]);
+    expect(
+      r.empty.filter((t) => !(t in NO_ROWS_OF_A)),
+      'tenant tables without a fixture row of A: give them one in this file',
+    ).toEqual([]);
+    expect(
+      Object.keys(NO_ROWS_OF_A).filter((t) => !r.empty.includes(t)),
+      'stale NO_ROWS_OF_A entries',
+    ).toEqual([]);
+    expect(r.checked.length).toBeGreaterThanOrEqual(40);
+  });
+
+  it.skipIf(!env.adminUrl)(
+    'every foreign key between tenant tables refuses a reference into another tenant (auto-discovered)',
+    async () => {
+      const r = await foreignKeyProbe([A.tenantId, B.tenantId]);
+      expect(r.failures, 'foreign keys that do not keep the reference inside the tenant').toEqual(
+        [],
+      );
+      expect(r.unprobed, 'foreign keys without a referencing fixture row of A or B').toEqual([]);
+      expect(r.probed.length).toBeGreaterThanOrEqual(80);
+      // the control: a composite key that is not enforced is reported (the probe can see a leak)
+      const control = await foreignKeyProbeControl(A.tenantId);
+      expect(control.failures).toEqual([expect.stringMatching(/^zz_probe_fk .*ACCEPTED/)]);
+    },
+    120_000,
+  );
 
   it('a request without a credential never reaches tenant data', async () => {
     const anon = b().clone();

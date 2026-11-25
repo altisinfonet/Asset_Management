@@ -32,9 +32,14 @@ describe('ensurePartitions retry (ED-28 "Partition DDL yields", migration 0180)'
     const pauses: number[] = [];
     // 55P03 is what both layers raise: a NOWAIT lock that is taken and an expired lock_timeout; 40P01 too
     const { client, statements } = scriptedClient(['55P03', '55P03', '40P01']);
-    const created = await ensurePartitions(client, new Date('2040-01-15T00:00:00Z'), 3, async (ms) => {
-      pauses.push(ms);
-    });
+    const created = await ensurePartitions(
+      client,
+      new Date('2040-01-15T00:00:00Z'),
+      3,
+      async (ms) => {
+        pauses.push(ms);
+      },
+    );
     expect(created).toBe(6);
     expect(pauses).toHaveLength(3);
     // growing backoff: 250 ms per attempt so far plus at most 100 ms of jitter
@@ -51,7 +56,9 @@ describe('ensurePartitions retry (ED-28 "Partition DDL yields", migration 0180)'
 
   it('gives up after the last attempt and surfaces the lock error', async () => {
     const { client } = scriptedClient(Array<string>(PARTITION_ATTEMPTS).fill('55P03'));
-    await expect(ensurePartitions(client, new Date(), 1, async () => undefined)).rejects.toMatchObject({
+    await expect(
+      ensurePartitions(client, new Date(), 1, async () => undefined),
+    ).rejects.toMatchObject({
       code: '55P03',
     });
   });

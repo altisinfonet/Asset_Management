@@ -1570,6 +1570,20 @@ addOp('/v1/users/{id}/mfa', 'delete', {
   description: 'For a user who lost their device and recovery codes: removes all MFA factors and recovery codes and revokes all their sessions. If tenant policy requires MFA the user must enrol again at the next sign-in. You cannot reset your own MFA this way (`409 conflict`; use `DELETE /v1/auth/mfa`). Audited.',
   success: { 204: okResp(204, 'MFA reset.') },
 });
+// ================================================================ [M2-USR-04] role assignments, one at a time (ED-27)
+addOp('/v1/users/{id}/role-assignments', 'post', {
+  tag: 'Access', id: 'addUserRoleAssignment', summary: 'Add a role assignment to a user', perm: 'user:manage', params: [ID], ifMatch: true,
+  description: 'Adds ONE role assignment (a role for the whole organisation, or limited to a location subtree with `scope_type=location` and `location_id`, ED-26) to the user and returns the updated user with its new `ETag`. The rules of `PATCH /v1/users/{id}` apply: nobody grants a role with permissions they lack or wider than they hold them (`403`), a location-scoped assignment never grants the org-only permissions, an unknown or archived role or location is `422` (`/role_id`, `/location_id`). `409 conflict` when the user already holds the same role with the same scope or already has 20 assignments. The target\'s sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_assigned`).',
+  body: jsonBody(S('RoleAssignment')),
+  success: { 201: okResp(201, 'The user with the new assignment.', S('User'), { etag: true }) },
+});
+addOp('/v1/users/{id}/role-assignments/{assignment_id}', 'delete', {
+  tag: 'Access', id: 'removeUserRoleAssignment', summary: 'Remove a role assignment of a user', perm: 'user:manage', ifMatch: true,
+  params: [ID, { name: 'assignment_id', in: 'path', required: true, description: 'Id of a role assignment of this user (`User.role_assignments[].id`).', schema: uuid() }],
+  description: 'Removes ONE role assignment and returns the updated user with its new `ETag`. `404` for an assignment that is not this user\'s. `409 conflict` (the user is unchanged) when it is the user\'s only assignment (add another first, or disable or archive the user), when it is the assignment that makes the last active administrator an administrator, or when it would remove your own last administrator access (`user:manage` for the whole organisation). The target\'s sessions are revoked (yours stays when you edit yourself) and the change is audited (`user.role_removed`).',
+  success: { 200: okResp(200, 'The user without the assignment.', S('User'), { etag: true }) },
+});
+// ================================================================ [M2-USR-04] END
 addOp('/v1/roles', 'get', { tag: 'Access', id: 'listRoles', summary: 'List roles', perm: 'role:read', hasId: false, description: 'Built-in roles in the MVP (custom roles arrive in v2).', success: { 200: okResp(200, 'All roles of the tenant.', S('RoleList'), { replay: false }) } });
 addOp('/v1/companies', 'get', { tag: 'Access', id: 'listCompanies', summary: 'List companies', perm: 'company:read', hasId: false, description: 'Every tenant has a default company; multi-company management UI arrives in v2.', success: { 200: okResp(200, 'All companies of the tenant.', S('CompanyList'), { replay: false }) } });
 addOp('/v1/api-keys', 'get', {

@@ -25,10 +25,12 @@ import { ApiKeysService } from './api-keys.service.js';
 import { type AuthContext, CurrentAuth } from './auth-context.js';
 import {
   apiKeyCreateSchema,
+  roleAssignmentSchema,
   userCreateSchema,
   userListQuerySchema,
   userUpdateSchema,
   uuidParam,
+  type RoleAssignmentBody,
   type UserCreateBody,
   type UserUpdateBody,
 } from './auth.schemas.js';
@@ -121,6 +123,40 @@ export class AccessController {
     @RequiredIfMatch() ifMatch: IfMatch,
   ): Promise<void> {
     await this.users.archive(auth, id, ifMatch);
+  }
+
+  @Post('users/:id/role-assignments')
+  @RequirePermission('user:manage')
+  @HttpCode(201)
+  async addRoleAssignment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @RequiredIfMatch() ifMatch: IfMatch,
+    @Body(new ZodValidationPipe(roleAssignmentSchema)) body: RoleAssignmentBody,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { user, version } = await this.users.addRoleAssignment(auth, id, ifMatch, body);
+    setEtag(reply, version);
+    return user;
+  }
+
+  @Delete('users/:id/role-assignments/:assignment_id')
+  @RequirePermission('user:manage')
+  async removeRoleAssignment(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', idParam()) id: string,
+    @Param('assignment_id', idParam()) assignmentId: string,
+    @RequiredIfMatch() ifMatch: IfMatch,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const { user, version } = await this.users.removeRoleAssignment(
+      auth,
+      id,
+      assignmentId,
+      ifMatch,
+    );
+    setEtag(reply, version);
+    return user;
   }
 
   @Post('users/:id/invitation/resend')

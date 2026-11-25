@@ -1316,7 +1316,7 @@ export interface paths {
          * My exports
          * @description The caller's exports, newest first. `download_url` is never set in a list; fetch one export for a link.
          *
-         *     Requires permission `export:run`.
+         *     Requires permission `export:run`. Every principal lists its own exports only.
          */
         get: operations["listExports"];
         put?: never;
@@ -1328,7 +1328,7 @@ export interface paths {
          *
          *     The same query parameters as the list endpoint (`GET /v1/assets`, `/v1/people` or `/v1/locations`) without paging (`limit`, `cursor`, `include_total`, `fields`, `expand`), as a flat object: arrays are sent as arrays of strings, booleans and numbers as such; custom-field filters as `"cf[key]": "value"`.
          *
-         *     Requires permission `export:run`.
+         *     Requires permission `export:run`. A location-scoped requester (ED-26) gets only the rows inside its scope: the scope at request time is stored with the export and applied by the worker.
          */
         post: operations["createExport"];
         delete?: never;
@@ -1468,7 +1468,7 @@ export interface paths {
          * List imports
          * @description Newest first. Without the heavy members (`profile`, `samples`, `value_map`, `confidence`): fetch one import for those.
          *
-         *     Requires permission `import:read`.
+         *     Requires permission `import:read`. A location-scoped principal (ED-26) lists only the imports it started itself.
          */
         get: operations["listImports"];
         put?: never;
@@ -1598,7 +1598,7 @@ export interface paths {
          *
          *     Every long step is a background job: poll `GET /v1/imports/{id}` (`state`, `progress`, `counts`) until it leaves the running state. Nothing is written to the registry before the commit; a dry run changes no registry data.
          *
-         *     Requires permission `import:run`.
+         *     Requires permission `import:run`. A location-scoped principal (ED-26) imports only inside its scope: rows match existing records inside the scope only, and a location, person or parent outside it is reported like one that does not exist. The scope at commit time travels with the job.
          */
         post: operations["commitImport"];
         delete?: never;
@@ -1762,7 +1762,7 @@ export interface paths {
          * Request a PDF label sheet
          * @description Queues a worker job that renders QR and/or Code128 labels for the assets (explicit `asset_ids`, or the current list `filter`) into a PDF on the chosen template, starting at `start_position` on the first sheet. Answers `202` with the batch; poll `GET /v1/labels/batches/{id}` until `status` is `ready`, then download the PDF from the short-lived `download_url`. Each QR encodes `<web base url>/s/<label_code>`, each Code128 the asset tag. A `label_printed` event is added to the history of every asset when the file is ready, and a `label.batch.ready` event (ids only) is published.
          *
-         *     Requires permission `asset:label`.
+         *     Requires permission `asset:label`. For a location-scoped principal (ED-26) an asset outside its scope is reported like a missing one (`422` at `/asset_ids/<n>`), and a filter selects inside the scope only.
          */
         post: operations["createLabelBatch"];
         delete?: never;
@@ -2042,7 +2042,7 @@ export interface paths {
          * Loaner dashboard
          * @description Per-pool counts (pool size, available, out, overdue, due today, due soon) with their totals, and the latest check-outs and returns. Counts cover live (not archived) pools and members; "today" is the UTC date (`as_of`). Inactive pools are listed (with `is_active: false`) and counted.
          *
-         *     Requires permission `loaner:read`.
+         *     Requires permission `loaner:read`. For a location-scoped principal (ED-26) the pools, counts and activity inside its scope.
          */
         get: operations["getLoanerDashboard"];
         put?: never;
@@ -2846,7 +2846,7 @@ export interface paths {
          * Resolve a scanned code
          * @description Accepts the opaque QR `label_code`, the whole label URL (`<PUBLIC_URL>/s/<label_code>` or `/s/<label_code>`: its last path segment is used) a Code128 `asset_tag` or the exact device `serial` number (matched case-insensitively, tried in that order; `match_type` says which one it was), and returns the asset with the actions allowed right now. `entity_type` says what the code identifies: `asset`, or (M2 wave 2) `accessory` / `consumable`, which are found by the `label_code` of their label only and answered with their own member (`accessory` / `consumable`) and actions; the accessory and consumable answers need `accessory:read` / `consumable:read` (without it the code is a plain 404). `404` when nothing matches in the caller's tenant and scope: unknown, foreign and out-of-scope codes are indistinguishable. Enumeration resistance: a signed-in caller whose lookups keep missing (60 per throttle window by default) is answered `429` with `Retry-After` for every code until the window ends (hits never count towards the limit). The web route `/s/<label_code>` sends signed-out users to sign-in first and reveals nothing about the code; this endpoint answers `401` without a credential whatever the code. Responses are `Cache-Control: private, no-store`. A serial number is not unique per organisation: when it belongs to more than one asset the answer is `409 conflict` (scan the label or enter the tag instead) rather than a guess.
          *
-         *     Requires permission `asset:read`.
+         *     Requires permission `asset:read`. A code of a record outside the scope of a location-scoped principal answers `404`, like an unknown code (ED-26).
          */
         get: operations["resolveScan"];
         put?: never;
@@ -2870,7 +2870,7 @@ export interface paths {
          *
          *     **Availability:** `asset`, `model`, `category`, `person` (name, email, employee number) and `location` (name, code) results. Matching is a case-insensitive prefix / trigram match on tag, serial, name and code. Archived records are excluded.
          *
-         *     Requires permission `search:read`.
+         *     Requires permission `search:read`. For a location-scoped principal (ED-26) assets, people and locations inside its scope only; models and categories are the tenant-wide catalogue.
          */
         get: operations["search"];
         put?: never;
@@ -3040,7 +3040,7 @@ export interface paths {
          * Create or invite a user
          * @description Creates an account in status `invited` and (with `send_invite`) emails a single-use invitation link. A matching `Person` record is created automatically.
          *
-         *     Requires permission `user:manage`.
+         *     Requires permission `user:manage`. A role assignment can be limited to a location subtree with `scope_type=location` and `location_id` (ED-26).
          */
         post: operations["createUser"];
         delete?: never;
@@ -5718,6 +5718,11 @@ export interface components {
                  */
                 scope: "off" | "admins" | "all";
             };
+            /** @description [M2-LOC-03] `null` when the principal holds at least one org-wide role assignment; otherwise the location subtrees it is limited to (the web shell shows "Scoped to: ..."). A principal with both kinds is limited per permission: see the Permissions section. */
+            location_scope: {
+                /** @description The roots of the subtrees the principal is limited to, by path. Empty when the scoped assignments name no location any more. */
+                locations: components["schemas"]["ScopeLocation"][];
+            } | null;
         };
         SessionExpiry: {
             /**
@@ -5856,6 +5861,7 @@ export interface components {
             /** Format: uuid */
             role_id: string;
             /**
+             * @description `tenant`: the whole organisation. `location`: the location named by `location_id` and everything below it (ED-26); the org-only permissions of the role (`user:*`, `role:read`, `apikey:manage`, `audit:read`, `catalog:manage`, `department:manage`, `notification:manage`) do not apply. `company`: accepted, enforced like `tenant` until company scoping ships.
              * @default tenant
              * @enum {string}
              */
@@ -5867,7 +5873,7 @@ export interface components {
             company_id?: string | null;
             /**
              * Format: uuid
-             * @description Required when scope_type=location; the grant covers the location subtree.
+             * @description Required when scope_type=location: an existing, active location; the grant covers it and its whole subtree. A missing or archived location is `422` (`not-found` at `/role_assignments/<n>/location_id`).
              */
             location_id?: string | null;
         };
@@ -6704,6 +6710,13 @@ export interface components {
         ImportTemplateApply: {
             /** Format: uuid */
             template_id: string;
+        };
+        ScopeLocation: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description The names from the top of the tree down to this location, joined with " / ". */
+            path: string;
         };
     };
     responses: {

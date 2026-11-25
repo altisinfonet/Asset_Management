@@ -73,6 +73,44 @@ Emails (invitations, password resets) appear at **http://localhost:8025**.
 Mock mode has its own accounts: password `correct horse battery staple`, authenticator code always
 `123456`; the account list is in `apps/web/src/mocks/fixtures.ts`.
 
+### Open the app from another device on your network
+
+By default the app works at `http://localhost:3001` only. From another machine (`http://192.168.1.101:3001`) sign-in
+does not stick: the session cookie is `Secure`, and a browser keeps a `Secure` cookie over plain HTTP only on
+`localhost`. For local development you can switch that off (never in production, the API refuses to start with it):
+
+1. In `.env` (copy `.env.example` when you have none) set, with your machine's LAN address:
+
+   ```
+   SESSION_COOKIE_SECURE=false
+   WEB_BASE_URL=http://192.168.1.101:3001
+   ```
+
+   `WEB_BASE_URL` makes the links in invitation and password-reset mails point at the LAN address. Attachments and
+   photos are served by MinIO; for them to open from the other device also set
+   `S3_PUBLIC_ENDPOINT=http://192.168.1.101:9000` and allow port 9000 in the firewall.
+
+2. `docker compose up -d` recreates the api, worker and scheduler with the new settings (no rebuild needed). The API
+   log says `SESSION_COOKIE_SECURE=false ...` as a reminder.
+3. Serve the website as usual (binds every interface): `node apps/web/scripts/serve-static.mjs apps/web/out --port=3001 --proxy=http://localhost:3000`.
+   For the dev server (4b) add `DEV_ALLOWED_ORIGINS=192.168.1.101` to `.env` (a comma list), otherwise Next blocks
+   its assets and hot reload for that address.
+4. Open `http://192.168.1.101:3001` on the other device and sign in. `http://localhost:3001` keeps working.
+5. **Windows firewall:** allow inbound TCP 3001 for the Private profile (PowerShell as administrator):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Asset Tracker web (dev)" -Direction Inbound -Protocol TCP -LocalPort 3001 -Action Allow -Profile Private
+   ```
+
+   If the network is classed as Public, change it to Private (Settings > Network) or add `Public` to `-Profile`. Remove
+   the rule when you are done: `Remove-NetFirewallRule -DisplayName "Asset Tracker web (dev)"`.
+
+Only the cookie name and the `Secure` flag change (`at_session` instead of `__Host-at_session`); `HttpOnly`,
+`SameSite=Lax`, the CSRF header and server-side sessions are the same. Sign in again after switching, an old cookie is
+not read. Anything beyond your own trusted network needs **HTTPS** instead: put a TLS reverse proxy in front (for
+example Caddy with a local certificate, or `mkcert`) and keep `SESSION_COOKIE_SECURE=true`; browsers then accept the
+cookie from any address. To go back, remove the two lines and run `docker compose up -d` again.
+
 ## 5. Rebuilding after changes
 
 | What changed                                       | What to run                                                                                                        |

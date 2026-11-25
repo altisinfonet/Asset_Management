@@ -129,6 +129,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.26 | 2026-11-25 | User guides (M2-DOC-01, drafts)                                     | Eight guides, screenshots by script; eight findings, fixed by B.24 and B.27 |
 | B.27 | 2026-11-25 | Guide-writing fixes (ED-29)                                         | Seven fixes; root cause of the B.13 / B.22 deadlock flake (0180)          |
 | B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
+| B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -579,6 +580,32 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   the cores (7 workers): average 55 %, queue above 28 for 6 s only, 759/759, 3.7 min instead of 2.8. The mock
   configuration now uses `workers: '25%'` outside CI (`apps/web/playwright.config.ts`).
 - **Open:** none from this integration.
+
+### B.29 LAN access in local development (ED-30) - 2026-11-25 (unreleased, branch `lan-dev-access`)
+
+- **Scope:** the founder wants to open the portal at `http://<LAN-IP>:3001` as well as `http://localhost:3001` in local
+  development over plain HTTP (static build served by `serve-static.mjs` against the compose API).
+- **Root cause (verified):** `SessionService` always named the cookie `__Host-at_session` and always set `Secure`. A browser
+  stores a `Secure` cookie received over HTTP only in a secure context, which `localhost` is and a LAN IP is not, so the
+  login succeeded and the cookie was dropped. A `__Host-` cookie must be `Secure`, so the name had to change with the flag.
+- **Change (ED-30):** `SESSION_COOKIE_SECURE` (default `true`; `false` = `at_session` without `Secure`, rest unchanged),
+  refused by `loadConfig` when `NODE_ENV=production`, one start-up warning from the api role, only the active mode's cookie
+  name is read. Compose passes `SESSION_COOKIE_SECURE`, `WEB_BASE_URL` and `S3_PUBLIC_ENDPOINT` from `.env` (defaults
+  unchanged); `next.config.ts` reads `DEV_ALLOWED_ORIGINS` into `allowedDevOrigins` in the dev-server phase only;
+  `.env.example`, getting-started, developer guide (firewall command, HTTPS alternative), threat model T-AUTH-4 / T-SH-2.
+- **Tests:** unit 6 new in 2 files (config: default true, false allowed in development and test, refused in production;
+  `session.service.test.ts`: cookie strings in both modes and reading only the active name); API e2e file
+  `session-cookie-insecure.e2e.test.ts` (3: attributes of `at_session`, me / CSRF / logout, the secure-mode name is not
+  accepted). The e2e `Client` learns the cookie name from `Set-Cookie`, so the existing suites are unchanged.
+- **Result** (compose project `atlan`, ports 20xxx, torn down with `down -v`; the founder's stack untouched):
+  `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build` 21/21 (API unit 660, web 811);
+  `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (contract unchanged); API e2e direct 771/771 in
+  65 files, 0 skipped. A real container started with `SESSION_COOKIE_SECURE=false` logged the warning and a `curl` login
+  returned `Set-Cookie: at_session=...; Path=/; HttpOnly; SameSite=Lax; Max-Age=...` that `GET /v1/auth/me` accepted.
+- **Accepted risk:** with the flag off the cookie travels in clear text on the LAN and loses the `__Host-` guard against a
+  sibling-subdomain write; acceptable for a trusted development network with demo data, hence the production refusal and
+  the warning. Not tested: a real second machine and browser (the cookie behaviour follows from the browser rule above).
+- **Open:** none.
 
 ---
 

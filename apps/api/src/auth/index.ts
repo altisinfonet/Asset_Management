@@ -27,13 +27,16 @@ export {
   BUILTIN_ROLES,
   BUILTIN_ROLE_KEYS,
   PERMISSIONS,
+  ORG_ONLY_PERMISSIONS,
   WILDCARD,
   type BuiltinRole,
   type Permission,
 } from './permissions.js';
 export {
   PolicyService,
+  grantPermissions,
   isSubset,
+  locationScopeFor,
   permits,
   type GrantedRole,
   type PolicyResource,

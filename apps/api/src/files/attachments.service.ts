@@ -26,7 +26,7 @@ import {
   isImageMime,
   sniffContent,
 } from './content.js';
-import { lookupOwner } from './owners.js';
+import { lookupOwner, ownerInScope } from './owners.js';
 import { type AttachmentCreate, type AttachmentListQuery, type OwnerType } from './schemas.js';
 import { effectiveMaxBytes, parseFilesSettings } from './settings.js';
 
@@ -300,7 +300,9 @@ export class AttachmentsService {
       const row = (await trx.attachment.findFirst({
         where: { id, archived_at: null },
       })) as AttachmentRow | null;
-      if (!row) throw problem.notFound('Attachment not found.');
+      if (!row || !(await ownerInScope(trx, row.entity_type, row.entity_id))) {
+        throw problem.notFound('Attachment not found.');
+      }
       if (row.uploaded_at) return { kind: 'ok', row };
 
       const info = await this.storage.head(row.storage_key);
@@ -414,7 +416,9 @@ export class AttachmentsService {
       const found = (await trx.attachment.findFirst({
         where: { id, archived_at: null },
       })) as AttachmentRow | null;
-      if (!found) throw problem.notFound('Attachment not found.');
+      if (!found || !(await ownerInScope(trx, found.entity_type, found.entity_id))) {
+        throw problem.notFound('Attachment not found.');
+      }
       return found;
     });
     return toDto(row, {
@@ -424,33 +428,40 @@ export class AttachmentsService {
   }
 
   async list(auth: AuthContext, query: AttachmentListQuery): Promise<Page<AttachmentDto>> {
-    const page = await this.tx(auth, (trx) =>
-      listPage<Record<string, unknown>>({
-        query,
-        spec: ATTACHMENT_LIST_SPEC,
-        filters: { entity_type: query.entity_type, entity_id: query.entity_id, kind: query.kind },
-        fetch: async ({ take, orderBy, where }) => {
-          const and: object[] = [
-            { archived_at: null, entity_type: query.entity_type, entity_id: query.entity_id },
-            ...(query.kind ? [{ kind: query.kind }] : []),
-            ...(where ? [where] : []),
-          ];
-          return (await trx.attachment.findMany({
-            where: { AND: and },
-            orderBy,
-            take,
-          })) as unknown as Record<string, unknown>[];
-        },
-        count: () =>
-          trx.attachment.count({
-            where: {
-              archived_at: null,
+    const page = await this.tx(auth, async (trx) =>
+      // M2-LOC-03 (ED-26): the files of a record outside the caller's scope are not listed
+      !(await ownerInScope(trx, query.entity_type, query.entity_id))
+        ? { data: [], page: { next_cursor: null, has_more: false } }
+        : listPage<Record<string, unknown>>({
+            query,
+            spec: ATTACHMENT_LIST_SPEC,
+            filters: {
               entity_type: query.entity_type,
               entity_id: query.entity_id,
-              ...(query.kind ? { kind: query.kind } : {}),
+              kind: query.kind,
             },
+            fetch: async ({ take, orderBy, where }) => {
+              const and: object[] = [
+                { archived_at: null, entity_type: query.entity_type, entity_id: query.entity_id },
+                ...(query.kind ? [{ kind: query.kind }] : []),
+                ...(where ? [where] : []),
+              ];
+              return (await trx.attachment.findMany({
+                where: { AND: and },
+                orderBy,
+                take,
+              })) as unknown as Record<string, unknown>[];
+            },
+            count: () =>
+              trx.attachment.count({
+                where: {
+                  archived_at: null,
+                  entity_type: query.entity_type,
+                  entity_id: query.entity_id,
+                  ...(query.kind ? { kind: query.kind } : {}),
+                },
+              }),
           }),
-      }),
     );
     // Both URLs ride along with the list, so a screen never needs a request per item. The download
     // URL costs one storage HEAD per CLEAN item (the object must still be the scanned one); they run
@@ -510,7 +521,9 @@ export class AttachmentsService {
       const row = (await trx.attachment.findFirst({
         where: { id, archived_at: null },
       })) as AttachmentRow | null;
-      if (!row) throw problem.notFound('Attachment not found.');
+      if (!row || !(await ownerInScope(trx, row.entity_type, row.entity_id))) {
+        throw problem.notFound('Attachment not found.');
+      }
       const usage = {
         assets: await trx.asset.count({ where: { image_attachment_id: id } }),
         models: await trx.asset_model.count({ where: { image_attachment_id: id } }),

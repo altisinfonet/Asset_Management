@@ -13,7 +13,10 @@ import { signInAsOwner } from './support';
  *
  * ED-29: the 48 devices are 24 ACTIVE, 8 PROVISIONED, 8 DISABLED and 8 DEPROVISIONED in six org units.
  * The org unit becomes the department ("Students / Grade 5" ...), no location is created, and the 16
- * disabled or deprovisioned devices are Retired, none "In repair".
+ * disabled or deprovisioned devices are Retired, none "In repair". The demo's Chromebook cart already
+ * holds the tags CHR-00001, -04, -07 and -10, so those four rows are errors, and the dry run says so
+ * (before ED-29 it showed them as "Create", because their new models skipped the check, and they failed
+ * at commit): 44 devices are imported.
  */
 const SAMPLE = join(
   __dirname,
@@ -129,12 +132,16 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   await expect(created.or(updated).first()).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText('Preview. Nothing has been saved yet.')).toBeVisible();
   expect(await total()).toBe(before);
-  // every row is checked before the import, none is left to the commit; 48 new (or, on a rerun, 48 unchanged)
-  await expect(page.getByTestId('import-tile-error')).toContainText('0');
+  // every row is checked before the import, none is left to the commit: the four tags of the demo
+  // cart are found now, not at commit; 44 new (or, on a rerun, 44 unchanged)
+  await expect(page.getByTestId('import-tile-error')).toContainText('4');
+  await expect(page.getByRole('list', { name: 'Reasons rows were rejected' })).toContainText(
+    '4 rows',
+  );
   await expect(page.getByTestId('import-checks-note')).not.toContainText('when you import.');
   const fresh = before === 0;
   await expect(page.getByTestId(fresh ? 'import-tile-create' : 'import-tile-skip')).toContainText(
-    '48',
+    '44',
   );
   if (fresh) {
     await expect(page.getByRole('list', { name: 'Records the import would create' })).toContainText(
@@ -154,7 +161,7 @@ test('imports the Google Admin export: preset, dry run that writes nothing, comm
   }
 
   // the Chromebooks are in the registry (created now, or updated when an earlier run made them)
-  expect(await total()).toBe(48);
+  expect(await total()).toBe(44);
   // ED-29: disabled and deprovisioned devices are Retired, none is "In repair"
   expect(await count('/v1/assets?limit=1&include_total=true&q=5CD00000&state_type=archived')).toBe(
     16,

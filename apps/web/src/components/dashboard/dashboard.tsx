@@ -148,6 +148,7 @@ export function Dashboard() {
               count={overdue.data?.rows.length ?? 0}
               href={routes.assetsFiltered({ overdue: true })}
               empty={t('dashboard.overduePanel.empty')}
+              hint={t('dashboard.overduePanel.hint')}
               extraLink={
                 canLoaners
                   ? { href: routes.loaners, label: t('dashboard.overduePanel.loanerLink') }
@@ -285,11 +286,14 @@ function Panel({
   count,
   href,
   empty,
+  hint,
   extraLink,
   children,
 }: {
   id: string;
   title: string;
+  /** What the card counts, in one line under its title. */
+  hint?: string;
   query: Pick<UseQueryResult, 'isPending' | 'isError' | 'refetch'>;
   total: number | undefined;
   count: number;
@@ -326,6 +330,11 @@ function Panel({
           </Link>
         ) : null}
       </div>
+      {hint ? (
+        <p className="-mt-1 text-sm text-muted" data-testid={`panel-${id}-hint`}>
+          {hint}
+        </p>
+      ) : null}
       {query.isPending ? (
         <div className="flex flex-col gap-2">
           <Skeleton className="h-9 w-full" />

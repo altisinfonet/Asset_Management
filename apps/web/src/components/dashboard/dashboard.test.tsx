@@ -58,7 +58,7 @@ describe('Dashboard', () => {
     expect(tile('ready')).toHaveTextContent('Ready');
     expect(tile('assigned')).toHaveTextContent(`${assigned.page.total}Assigned`);
     expect(tile('inRepair')).toHaveTextContent(`${inRepair.page.total}Not deployable`);
-    expect(tile('overdue')).toHaveTextContent(`${overdue.page.total}Overdue`);
+    expect(tile('overdue')).toHaveTextContent(`${overdue.page.total}Overdue check-outs`);
     expect(tile('ready')).toHaveAttribute('href', '/assets?state_type=deployable');
     expect(tile('assigned')).toHaveAttribute('href', '/assets?assigned=yes');
     expect(tile('inRepair')).toHaveAttribute('href', '/assets?state_type=undeployable');
@@ -71,6 +71,10 @@ describe('Dashboard', () => {
   it('lists the overdue check-outs, the low stock and the open repairs, each row a link', async () => {
     renderApp(<Dashboard />);
     const overdue = await screen.findByTestId('panel-overdue');
+    // what the card counts is said, so its number is not read as overdue loans only
+    expect(within(overdue).getByTestId('panel-overdue-hint')).toHaveTextContent(
+      'Every checked-out asset past its return date, loans included.',
+    );
     const overdueTotal = (await assetsApi.list({ overdue: true, limit: 1, include_total: true }))
       .page.total!;
     await waitFor(() => expect(within(overdue).getAllByRole('listitem').length).toBeGreaterThan(0));

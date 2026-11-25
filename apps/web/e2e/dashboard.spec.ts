@@ -7,7 +7,7 @@ const TILES = [
   { id: 'ready', label: 'Ready', href: '/assets?state_type=deployable' },
   { id: 'assigned', label: 'Assigned', href: '/assets?assigned=yes' },
   { id: 'inRepair', label: 'Not deployable', href: '/assets?state_type=undeployable' },
-  { id: 'overdue', label: 'Overdue', href: '/assets?overdue=1' },
+  { id: 'overdue', label: 'Overdue check-outs', href: '/assets?overdue=1' },
 ] as const;
 
 async function tileCount(page: Page, id: string): Promise<number> {

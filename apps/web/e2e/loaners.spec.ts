@@ -194,8 +194,12 @@ test.describe('loaner desk', () => {
 
   test('the main dashboard links its overdue card to the loaner dashboard', async ({ page }) => {
     await page.goto('/');
+    // the two numbers say what they count: every overdue check-out here, loans only there
+    await expect(page.getByTestId('tile-overdue')).toContainText('Overdue check-outs');
+    await expect(page.getByTestId('panel-overdue-link')).toHaveText('Overdue loans only');
     await page.getByTestId('panel-overdue-link').click();
     await expect(page).toHaveURL(/\/loaners\/?$/);
+    await expect(page.getByTestId('loaner-total-overdue')).toContainText('Overdue loans');
     await expect(page.getByRole('heading', { level: 1, name: 'Loaners' })).toBeVisible();
     // the card of a pool opens its overdue devices
     const pool = await studentPool(page);

@@ -18,7 +18,8 @@ export const loanersMessages = {
       inPool: 'In pools',
       available: 'Available',
       onLoan: 'On loan',
-      overdue: 'Overdue',
+      // loans from pools only; the main dashboard's "Overdue check-outs" also counts regular check-outs
+      overdue: 'Overdue loans',
       dueToday: 'Due today',
       dueSoon: 'Due soon',
     },
@@ -272,9 +273,10 @@ export const loanersMessages = {
     defaults: {
       heading: 'Loan defaults',
       description:
-        'The return date a regular check-out starts with, and when borrowers are reminded. A pool lends for its own default length.',
+        'The return date a regular check-out starts with, and when borrowers are reminded. A pool with its own loan length lends for that; a pool without one lends for the number of days below.',
       expectedDays: 'Return date offered at check-out (days from today)',
-      expectedHint: 'Leave empty to offer no date.',
+      expectedHint:
+        'Leave empty to offer no date at check-out. Loaner pools without their own length then lend for 7 days.',
       reminder: 'Remind the borrower (days before the due date)',
       reminderHint: '0 sends no reminder.',
       save: 'Save defaults',

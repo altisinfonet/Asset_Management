@@ -145,9 +145,11 @@ late** it is. Use the list above the table to look at one pool. **Recent activit
 To give a borrower more time, press **Extend** next to the loan, choose **New due date** (it must be later than the
 current one and within what the pool allows), add a reason if you want, and press **Extend loan**.
 
-The main **Dashboard** has a tile and a panel **Overdue check-outs**: every checked-out device past its return date,
-loans included, so its number can be higher than **Overdue loans**. The link **Overdue loans only** under the panel opens
-the loaner dashboard.
+The main **Dashboard** has five tiles across the top (**All assets**, **Ready**, **Assigned**, **Not deployable** and
+**Overdue check-outs**), two charts, and under **Needs attention** a table **Overdue check-outs** with the asset, the
+holder, the due date and the status. It counts every checked-out device past its return date, loans included, as the line
+under its title says, so its number can be higher than **Overdue loans**. The link **Overdue loans only** under the table
+opens the loaner dashboard.
 
 ![Overdue check-outs on the main dashboard](img/04-home-overdue.png)
 

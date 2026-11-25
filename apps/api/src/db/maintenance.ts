@@ -38,6 +38,15 @@ export async function withOwnerClient<T>(
  * now. The call is one statement = one transaction, so a deadlock victim rolled back completely and
  * simply running it again is safe (idempotent): it is retried a few times with a growing pause for
  * `deadlock_detected` (40P01) and `lock_not_available` (55P03) before the error is surfaced.
+ *
+ * The DDL must be the side that gives up, not the application's transaction. A partition of
+ * asset_history clones its foreign keys, so creating one takes SHARE ROW EXCLUSIVE locks on app.asset
+ * and app.assignment one after the other, while a custody transaction holds a row lock on one of them
+ * and wants the other: a lock cycle. Without a lock timeout the deadlock detector cancels whichever
+ * process checks first, often the check-in (a 500 to the user; seen in the e2e suite, whose partition
+ * test runs next to the custody tests). So the call runs in its own transaction with a `lock_timeout`
+ * far below `deadlock_timeout` (1 s by default): the DDL stops waiting first (55P03) and is retried,
+ * and the application's transaction proceeds. Every caller passes a dedicated autocommit connection.
  */
 export async function ensurePartitions(
   client: Queryable,
@@ -46,12 +55,16 @@ export async function ensurePartitions(
 ): Promise<number> {
   for (let attempt = 1; ; attempt++) {
     try {
+      await client.query('begin');
+      await client.query(`set local lock_timeout = '${PARTITION_LOCK_TIMEOUT_MS}ms'`);
       const { rows } = await client.query(
         'select app.ensure_partitions($1::date, $2::int) as created',
         [from.toISOString().slice(0, 10), months],
       );
+      await client.query('commit');
       return Number(rows[0]?.created ?? 0);
     } catch (err) {
+      await client.query('rollback').catch(() => undefined);
       const code = (err as { code?: string }).code;
       if ((code !== '40P01' && code !== '55P03') || attempt >= PARTITION_ATTEMPTS) throw err;
       await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
@@ -59,7 +72,8 @@ export async function ensurePartitions(
   }
 }
 
-const PARTITION_ATTEMPTS = 6;
+const PARTITION_ATTEMPTS = 10;
+const PARTITION_LOCK_TIMEOUT_MS = 200;
 
 /** Violations reported by `app.schema_lint()` (empty = clean). */
 export async function schemaLint(client: Queryable): Promise<string[]> {

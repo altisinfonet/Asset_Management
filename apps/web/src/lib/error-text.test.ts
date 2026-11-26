@@ -31,4 +31,23 @@ describe('uiErrorText', () => {
     const bare = toUiError(new ApiError('x', 409, { code: 'conflict' }));
     expect(uiErrorText(t, bare)).toBe(t('error.conflict'));
   });
+
+  it('says which accessories still hold an asset (409 of dispose and archive)', () => {
+    const error = toUiError(
+      new ApiError('x', 409, {
+        code: 'conflict',
+        detail: '3 accessory unit(s) in 2 open assignment(s) are checked out to this asset.',
+        usage: { accessory_assignments: 2, units: 3 },
+      }),
+    );
+    expect(uiErrorText(t, error)).toBe(
+      '3 accessory units are still checked out to this asset. Check them in on the Stock page first.',
+    );
+    const one = toUiError(
+      new ApiError('x', 409, { code: 'conflict', usage: { accessory_assignments: 1, units: 1 } }),
+    );
+    expect(uiErrorText(t, one)).toBe(
+      '1 accessory unit is still checked out to this asset. Check it in on the Stock page first.',
+    );
+  });
 });

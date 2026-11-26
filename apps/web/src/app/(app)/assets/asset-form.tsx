@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { CustomFieldInput } from '@/components/registry/custom-field-input';
 import { DepartmentPicker } from '@/components/registry/department-picker';
 import { LocationPicker } from '@/components/registry/location-picker';
+import { LifecycleStatusHint } from '@/components/lifecycle/status-hint';
 import { NoRepairNotice } from '@/components/repairs/no-repair-notice';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
@@ -516,6 +517,15 @@ export function AssetForm({ mode, lookups, source }: AssetFormProps) {
             variant="inline"
             // the repair moved the asset's status: take the new version, keep what was typed
             onLogged={() => void reload(true)}
+          />
+        ) : null}
+        {mode === 'edit' && base.asset && !base.asset.value.archived_at ? (
+          <LifecycleStatusHint
+            asset={base.asset.value}
+            etag={base.asset.etag}
+            statusId={state.status_id}
+            // the action changed the asset: show it rather than a form with a stale version
+            onDone={() => router.push(routes.assetView(base.asset!.value.id))}
           />
         ) : null}
       </fieldset>

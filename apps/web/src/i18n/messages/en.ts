@@ -1,6 +1,7 @@
 import { departmentsMessages } from './departments';
 import { importsMessages } from './imports';
 import { labelsMessages } from './labels';
+import { lifecycleMessages } from './lifecycle';
 import { loginLinkMessages } from './loginlink';
 import { loanersMessages } from './loaners';
 import { m2Messages } from './m2';
@@ -174,6 +175,10 @@ export const en = {
     server: 'Something went wrong on our side. Try again in a moment.',
     unknown: 'Something went wrong.',
     inUse: 'Still in use by {usage}. Move or archive those first.',
+    accessoriesHeld_one:
+      '{count} accessory unit is still checked out to this asset. Check it in on the Stock page first.',
+    accessoriesHeld_other:
+      '{count} accessory units are still checked out to this asset. Check them in on the Stock page first.',
   },
   usage: {
     assets_one: '{count} asset',
@@ -286,8 +291,6 @@ export const en = {
       departments: 'Departments',
     },
     links: { imports: 'Imports', loanerPools: 'Loaner pools' },
-    placeholderTitle: '{section} is not built yet',
-    placeholderDescription: 'This settings page is a placeholder for a later story.',
   },
   login: {
     title: 'Sign in',
@@ -527,6 +530,7 @@ export const en = {
   ...loanersMessages,
   ...importsMessages,
   ...scopeMessages,
+  ...lifecycleMessages,
 } as const;
 
 type Join<K extends string, P extends string> = `${K}.${P}`;

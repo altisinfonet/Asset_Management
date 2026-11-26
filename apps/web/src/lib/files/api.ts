@@ -7,7 +7,9 @@ import type {
   AttachmentKind,
   AttachmentUpload,
   FilesSettings,
+  FilesSettingsUpdate,
   Page,
+  Versioned,
 } from '@/lib/registry/types';
 
 /**
@@ -52,11 +54,27 @@ export const attachmentsApi = {
   },
 };
 
-/** `GET /v1/settings/files`: the upload cap that applies to the organisation (`catalog:read`). */
+/**
+ * `GET /v1/settings/files`: the upload cap that applies to the organisation (`catalog:read`);
+ * `PUT` replaces the override and the EXIF option (`catalog:manage`, `If-Match` the settings ETag).
+ */
 export const filesSettingsApi = {
   async get(): Promise<FilesSettings> {
     const { data } = await http().GET('/v1/settings/files');
     return data as FilesSettings;
+  },
+  /** The settings with their ETag, for the Organisation page's form. */
+  async read(): Promise<Versioned<FilesSettings>> {
+    const value = await filesSettingsApi.get();
+    return { value, etag: getApi().etags.etagFor('/v1/settings/files') };
+  },
+  async put(body: FilesSettingsUpdate, etag?: string): Promise<Versioned<FilesSettings>> {
+    const ifMatch = etag ?? (await filesSettingsApi.read()).etag ?? '';
+    const { data } = await http().PUT('/v1/settings/files', {
+      params: { header: { 'If-Match': ifMatch } },
+      body,
+    });
+    return { value: data as FilesSettings, etag: getApi().etags.etagFor('/v1/settings/files') };
   },
 };
 

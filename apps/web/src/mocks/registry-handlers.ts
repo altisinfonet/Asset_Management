@@ -1077,6 +1077,12 @@ function setAssetArchived(
 ): MockAsset {
   const target = data.assets.find((a) => a.id === id)!;
   target.archived_at = archive ? nowIso() : null;
+  // a restored disposal loses its record and gets the tenant default status (`POST .../restore`)
+  if (!archive && target.disposal) {
+    target.disposal = null;
+    const fallback = data.statusLabels.find((st) => st.is_default && !st.archived_at);
+    if (fallback) target.status_id = fallback.id;
+  }
   target._v += 1;
   pushHistory(
     data,
@@ -1552,6 +1558,53 @@ const assetHandlers: HttpHandler[] = [
         });
       }
       return mutateRegistry((data) => applyAssetPatch(data, id, changes as Body, guard.user.id));
+    });
+  }),
+
+  // `POST /v1/assets/bulk-move` (M1-REG-09): one location (or none) for every listed asset.
+  http.post('/v1/assets/bulk-move', async ({ request }) => {
+    const guard = requireSession(request, { mutation: true, permission: 'asset:update' });
+    if (!guard.ok) return guard.response;
+    const body = await readBody(request);
+    const ids = bulkIds(body);
+    if (!Array.isArray(ids)) return ids;
+    const locationId = body?.location_id;
+    if (locationId === undefined || (locationId !== null && typeof locationId !== 'string')) {
+      return validation([{ pointer: '/location_id', message: 'Required', code: 'invalid_type' }]);
+    }
+    if (
+      typeof locationId === 'string' &&
+      !registry().locations.some((l) => l.id === locationId && !l.archived_at)
+    ) {
+      return validation([
+        { pointer: '/location_id', message: 'No such location.', code: 'not-found' },
+      ]);
+    }
+    const outside = scopedLocationErrors(
+      guard.user.locationScope,
+      locationId,
+      '/location_id',
+      false,
+    );
+    if (outside.length > 0) return validation(outside);
+    const note = text(body?.note);
+    return bulkResponse(ids, (id) => {
+      const existing = registry().assets.find((a) => a.id === id);
+      if (!existing || !inScope(guard.user.locationScope, existing.location_id)) {
+        return itemProblem(404, 'not-found', 'Not found');
+      }
+      if (existing.archived_at) {
+        return itemProblem(409, 'conflict', 'The asset is archived', {
+          detail: 'Archived assets cannot be moved. Restore it first.',
+        });
+      }
+      return mutateRegistry((data) => {
+        const before = data.history.length;
+        const moved = applyAssetPatch(data, id, { location_id: locationId }, guard.user.id);
+        const event = data.history[before];
+        if (note && event) event.payload = { ...event.payload, note };
+        return moved;
+      });
     });
   }),
 

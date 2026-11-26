@@ -17,6 +17,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
+import { DisposeDialog } from '@/components/lifecycle/lifecycle-dialogs';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
 import { DepartmentPicker } from '@/components/registry/department-picker';
 import { LocationPicker } from '@/components/registry/location-picker';
@@ -116,6 +117,7 @@ export function AssetsTable() {
   const [exportOpen, setExportOpen] = useState(() => !!params.get('export'));
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [disposeOpen, setDisposeOpen] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [results, setResults] = useState<{ title: string; results: BulkResult[] } | null>(null);
 
@@ -360,11 +362,30 @@ export function AssetsTable() {
 
   const applyEdit = async (patch: BulkEditPatch) => {
     setProgress({ done: 0, total: selectedItems.length });
-    const outcome = await runBulk(selectedItems, (ids) => assetsApi.bulkUpdate(ids, patch), {
-      onProgress: (done, totalCount) => setProgress({ done, total: totalCount }),
-    });
+    // the location is a move (`bulk-move`: a history entry per asset), everything else an update
+    const outcome = await runBulk(
+      selectedItems,
+      (ids) =>
+        'location_id' in patch
+          ? assetsApi.bulkMove(ids, patch.location_id, patch.note)
+          : assetsApi.bulkUpdate(ids, patch),
+      { onProgress: (done, totalCount) => setProgress({ done, total: totalCount }) },
+    );
     setBulkEditOpen(false);
-    await finishBulk(t('assets.bulk.editResultsTitle'), outcome);
+    await finishBulk(
+      'location_id' in patch ? t('bulkMove.resultsTitle') : t('assets.bulk.editResultsTitle'),
+      outcome,
+    );
+  };
+
+  /** Bulk dispose (M2-LIFE-05): one request per asset; checked-out assets are left out up front. */
+  const disposable = selectedRows.filter((row) => !row.current_assignment);
+  const startBulkDispose = () => {
+    const skipped = selectedRows.length - disposable.length;
+    if (skipped > 0) {
+      toast({ variant: 'info', title: t('lifecycle.dispose.bulkSkipped', { count: skipped }) });
+    }
+    if (disposable.length > 0) setDisposeOpen(true);
   };
 
   const archiveSelected = async () => {
@@ -784,6 +805,11 @@ export function AssetsTable() {
               </Button>
             ) : null}
             {canArchive ? (
+              <Button size="sm" disabled={disposable.length === 0} onClick={startBulkDispose}>
+                {t('lifecycle.dispose.bulkSubmit', { count: disposable.length })}
+              </Button>
+            ) : null}
+            {canArchive ? (
               <Button size="sm" onClick={() => setArchiveOpen(true)}>
                 {t('common.archive')}
               </Button>
@@ -840,6 +866,14 @@ export function AssetsTable() {
           {selectedItems.length > 8 ? ', ...' : ''}
         </p>
       </ConfirmDialog>
+      {canArchive ? (
+        <DisposeDialog
+          open={disposeOpen}
+          onOpenChange={setDisposeOpen}
+          assets={disposable}
+          onBulkDone={(outcome) => finishBulk(t('lifecycle.dispose.resultsTitle'), outcome)}
+        />
+      ) : null}
       <BulkResultsDialog
         results={results?.results ?? null}
         title={results?.title ?? ''}

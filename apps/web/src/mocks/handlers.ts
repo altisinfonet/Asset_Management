@@ -25,6 +25,7 @@ import { roleIdFor } from './registry-fixtures';
 import { registry } from './registry-state';
 import { locationScopeView, withScope } from './scope';
 import { departmentHandlers } from './dept-handlers';
+import { lifecycleHandlers } from './lifecycle-handlers';
 import { linkHandlers } from './link-handlers';
 import { m2Handlers } from './m2-handlers';
 import { registryHandlers } from './registry-handlers';
@@ -279,6 +280,7 @@ export const handlers: HttpHandler[] = [
   ...m2Handlers,
   ...departmentHandlers,
   ...linkHandlers,
+  ...lifecycleHandlers,
   ...w2Handlers,
   ...w3Handlers,
 

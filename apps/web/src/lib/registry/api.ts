@@ -18,6 +18,7 @@ import type {
   CheckinRequest,
   CheckoutRequest,
   CustodyResult,
+  DisposeRequest,
   HistoryEvent,
   Department,
   DepartmentCreate,
@@ -26,6 +27,8 @@ import type {
   LocationCreate,
   LocationUpdate,
   Manufacturer,
+  MarkFoundRequest,
+  MarkLostRequest,
   Page,
   Person,
   PersonCreate,
@@ -130,6 +133,20 @@ export const assetsApi = {
   /** `POST /v1/assets/bulk-update`: the same changes to up to 100 assets; one result per id. */
   async bulkUpdate(ids: string[], changes: BulkChanges): Promise<BulkAssetResult> {
     const { data } = await http().POST('/v1/assets/bulk-update', { body: { ids, changes } });
+    return data as BulkAssetResult;
+  },
+  /**
+   * `POST /v1/assets/bulk-move`: every listed asset to one location (`null` clears it), with an
+   * optional note on each history entry; the same rules as a single move.
+   */
+  async bulkMove(
+    ids: string[],
+    locationId: string | null,
+    note?: string,
+  ): Promise<BulkAssetResult> {
+    const { data } = await http().POST('/v1/assets/bulk-move', {
+      body: { ids, location_id: locationId, ...(note ? { note } : {}) },
+    });
     return data as BulkAssetResult;
   },
   /** `POST /v1/assets/bulk-archive` (up to 100 ids). */
@@ -241,6 +258,59 @@ export const custodyApi = {
       body,
     });
     return outcome(data as TransferResult, response);
+  },
+};
+
+// ---- lost, found and dispose (M2-LIFE-05) ---------------------------------------------------------
+
+/** What a lifecycle action answers with: the asset after it and its new ETag. */
+function lifecycleResult(data: unknown, response: Response, id: string): Versioned<Asset> {
+  return {
+    value: data as Asset,
+    etag: response.headers.get('etag') ?? etagFor(`/v1/assets/${id}`),
+  };
+}
+
+/**
+ * The lifecycle actions of the state machine (`registry/asset-actions.ts` of the API). Each takes the
+ * retry key and, optionally, the ETag the user acted on (`If-Match`: a changed asset answers `412`).
+ */
+export const lifecycleApi = {
+  /** `POST /v1/assets/{id}/mark-lost`: a lost-type status; an open check-out is closed. */
+  async markLost(
+    id: string,
+    body: MarkLostRequest,
+    options: CustodyCallOptions,
+  ): Promise<Versioned<Asset>> {
+    const { data, response } = await http().POST('/v1/assets/{id}/mark-lost', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return lifecycleResult(data, response, id);
+  },
+  /** `POST /v1/assets/{id}/mark-found`: back to a deployable status, and optionally a new place. */
+  async markFound(
+    id: string,
+    body: MarkFoundRequest,
+    options: CustodyCallOptions,
+  ): Promise<Versioned<Asset>> {
+    const { data, response } = await http().POST('/v1/assets/{id}/mark-found', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return lifecycleResult(data, response, id);
+  },
+  /** `POST /v1/assets/{id}/dispose`: an archived-type status, the reason and date, and archived. */
+  async dispose(
+    id: string,
+    body: DisposeRequest,
+    options: CustodyCallOptions,
+  ): Promise<Versioned<Asset>> {
+    const { data, response } = await http().POST('/v1/assets/{id}/dispose', {
+      params: { path: { id }, header: custodyHeaders(options) },
+      body,
+    });
+    return lifecycleResult(data, response, id);
   },
 };
 

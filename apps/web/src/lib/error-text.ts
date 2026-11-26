@@ -30,9 +30,15 @@ export function usageSummary(t: Translator['t'], usage: UiError['usage']): strin
 
 /**
  * The sentence to show for a failed call: the counts of what still uses the record when the API
- * sent them (409 `usage`), else the problem's own `detail`, else the catalogue message of the status.
+ * sent them (409 `usage`; accessories still checked out to an asset get their own sentence), else the problem's own `detail`, else the catalogue message of the status.
  */
 export function uiErrorText(t: Translator['t'], error: UiError): string {
+  // Archiving or disposing of an asset that accessories are still checked out to (M2-LIFE-05):
+  // `usage` is `{ accessory_assignments, units }`, which reads badly as a generic count list.
+  const held = error.usage?.accessory_assignments;
+  if (held) {
+    return t('error.accessoriesHeld', { count: error.usage?.units ?? held, assignments: held });
+  }
   const used = usageSummary(t, error.usage);
   if (used) return t('error.inUse', { usage: used });
   return error.detail ?? t(error.messageKey);

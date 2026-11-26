@@ -6,6 +6,9 @@ import {
   ArrowRightLeft,
   Copy,
   LogIn,
+  MapPinCheck,
+  SearchX,
+  Trash2,
   LogOut,
   PackageSearch,
   Pencil,
@@ -19,6 +22,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AttachmentsPanel } from '@/components/files/attachments-panel';
 import { useLabels } from '@/components/labels/labels-provider';
+import {
+  DisposeDialog,
+  MarkFoundDialog,
+  MarkLostDialog,
+} from '@/components/lifecycle/lifecycle-dialogs';
 import { AssetRepairs } from '@/components/repairs/asset-repairs';
 import { NoRepairNotice } from '@/components/repairs/no-repair-notice';
 import { AssetDetails, AssetStatusBadge } from '@/components/registry/asset-details';
@@ -42,6 +50,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { assetsApi } from '@/lib/registry/api';
 import { useLookups } from '@/lib/registry/queries';
 import { availableActions, type CustodyAction } from '@/lib/custody/helpers';
+import { lifecycleActions, type LifecycleAction } from '@/lib/registry/lifecycle';
 import { routes } from '@/lib/routes';
 import { uiErrorText } from '@/lib/error-text';
 
@@ -163,6 +172,7 @@ function AssetById({ id }: { id: string }) {
   const custody = useCustody();
   const labels = useLabels();
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [lifecycle, setLifecycle] = useState<LifecycleAction | null>(null);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
   const primaryAction = useRef<HTMLButtonElement>(null);
   const scanned = params.get('scanned') === '1';
@@ -233,6 +243,14 @@ function AssetById({ id }: { id: string }) {
     transfer: ArrowRightLeft,
   };
   const holder = value.current_assignment;
+  // M2-LIFE-05: lost, found and dispose; "Mark as found" leads when the asset is lost
+  const lifecycleOffered = lifecycleActions(value, can);
+  const LIFECYCLE_ICON: Record<LifecycleAction, LucideIcon> = {
+    mark_lost: SearchX,
+    mark_found: MapPinCheck,
+    dispose: Trash2,
+  };
+  const disposal = value.disposal;
 
   const setTab = (next: string) => {
     const query = new URLSearchParams(params.toString());
@@ -313,6 +331,21 @@ function AssetById({ id }: { id: string }) {
               <Copy aria-hidden className="size-4" />
               {t('assetView.copyTag')}
             </Button>
+            {lifecycleOffered.map((action) => {
+              const Icon = LIFECYCLE_ICON[action];
+              const leads = action === 'mark_found' && actions.length === 0;
+              return (
+                <Button
+                  key={action}
+                  ref={leads ? primaryAction : undefined}
+                  variant={leads ? 'primary' : 'secondary'}
+                  onClick={() => setLifecycle(action)}
+                >
+                  <Icon aria-hidden className="size-4" />
+                  {t(`lifecycle.actions.${action}`)}
+                </Button>
+              );
+            })}
             {can('asset:label') && !archived ? (
               <Button onClick={() => labels.open({ kind: 'assets', assets: [value] })}>
                 <Printer aria-hidden className="size-4" />
@@ -363,6 +396,17 @@ function AssetById({ id }: { id: string }) {
           </>
         }
       />
+      {archived && disposal ? (
+        <Banner tone="info" className="mb-4 max-w-3xl">
+          <span data-testid="disposal-banner">
+            {t('lifecycle.dispose.disposedBanner', {
+              date: disposal.disposed_on,
+              reason: t(`lifecycle.dispose.reasons.${disposal.reason}`),
+            })}
+            {disposal.note ? ` ${disposal.note}` : ''}
+          </span>
+        </Banner>
+      ) : null}
       {archived ? null : (
         <div className="mb-4 empty:hidden">
           <NoRepairNotice
@@ -422,6 +466,24 @@ function AssetById({ id }: { id: string }) {
         </TabsContent>
       </Tabs>
 
+      <MarkLostDialog
+        open={lifecycle === 'mark_lost'}
+        onOpenChange={(next) => !next && setLifecycle(null)}
+        asset={value}
+        etag={etag}
+      />
+      <MarkFoundDialog
+        open={lifecycle === 'mark_found'}
+        onOpenChange={(next) => !next && setLifecycle(null)}
+        asset={value}
+        etag={etag}
+      />
+      <DisposeDialog
+        open={lifecycle === 'dispose'}
+        onOpenChange={(next) => !next && setLifecycle(null)}
+        assets={[value]}
+        etag={etag}
+      />
       <ConfirmDialog
         open={archiveOpen}
         onOpenChange={setArchiveOpen}

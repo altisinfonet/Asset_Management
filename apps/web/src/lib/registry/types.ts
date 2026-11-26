@@ -46,6 +46,7 @@ export type AttachmentKind = Attachment['kind'];
 export type AttachmentEntity = Attachment['entity_type'];
 export type ScanStatus = Attachment['scan_status'];
 export type FilesSettings = S['FilesSettings'];
+export type FilesSettingsUpdate = S['FilesSettingsUpdate'];
 export type CheckinCondition = NonNullable<CheckinRequest['condition']>;
 export type HistoryEvent = S['HistoryEvent'];
 export type SearchResult = S['SearchResult'];
@@ -59,6 +60,13 @@ export type BulkAssetResult = S['BulkAssetResult'];
 export type BulkAssetUpdate = S['BulkAssetUpdate'];
 /** The changes a bulk edit applies to every selected asset. */
 export type BulkChanges = BulkAssetUpdate['changes'];
+/** M2-LIFE-05: the bodies of `mark-lost`, `mark-found` and `dispose`, and the bulk move. */
+export type MarkLostRequest = S['MarkLostRequest'];
+export type MarkFoundRequest = S['MarkFoundRequest'];
+export type DisposeRequest = S['DisposeRequest'];
+export type DisposalReason = DisposeRequest['reason'];
+export type AssetDisposal = S['AssetDisposal'];
+export type BulkAssetMove = S['BulkAssetMove'];
 
 export const CUSTOM_FIELD_TYPES: readonly CustomFieldType[] = [
   'text',

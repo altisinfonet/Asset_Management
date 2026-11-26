@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { DepartmentPicker } from '@/components/registry/department-picker';
+import { LocationPicker } from '@/components/registry/location-picker';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Banner } from '@/components/ui/banner';
@@ -14,22 +15,32 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
+import { Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { useAuth } from '@/lib/auth/auth-context';
 import type { BulkItem, BulkResult } from '@/lib/registry/bulk';
+import { statusHintKind } from '@/lib/registry/lifecycle';
 import type { Lookups } from '@/lib/registry/queries';
 import { uiErrorText } from '@/lib/error-text';
 
-/** What a bulk edit may change (the contract's `changes` of `POST /v1/assets/bulk-update`). */
+/**
+ * What a bulk edit may change: the contract's `changes` of `POST /v1/assets/bulk-update`, or the
+ * location, which is a move (`POST /v1/assets/bulk-move`, with a history note).
+ */
 export type BulkEditPatch =
   | { status_id: string }
   | { category_id: string }
   | { vendor_id: string }
-  | { department_id: string | null };
-type BulkField = 'status_id' | 'category_id' | 'vendor_id' | 'department_id';
+  | { department_id: string | null }
+  | { location_id: string | null; note?: string };
+type BulkField = 'status_id' | 'category_id' | 'vendor_id' | 'department_id' | 'location_id';
 
-/** "Edit N assets" (wireframe WEB-07): choose a field and a value, preview the tags, apply. */
+/**
+ * "Edit N assets" (wireframe WEB-07): choose a field and a value, preview the tags, apply. Location
+ * moves the assets; a location-scoped user (ED-26) picks only inside its scope (the picker lists
+ * nothing else) and cannot clear the location.
+ */
 export function BulkEditDialog({
   open,
   onOpenChange,
@@ -46,11 +57,12 @@ export function BulkEditDialog({
   onApply: (patch: BulkEditPatch) => void;
 }) {
   const t = useT();
-  const { can } = useAuth();
+  const { can, locationScope } = useAuth();
   const [field, setField] = useState<BulkField>('status_id');
+  const [note, setNote] = useState('');
   const [value, setValue] = useState('');
-  /** Department only: set "no department" on every selected asset. */
-  const [clearDepartment, setClearDepartment] = useState(false);
+  /** Department and location: set "none" on every selected asset. */
+  const [clearValue, setClearValue] = useState(false);
   const active = <T extends { id: string; name: string; archived_at?: string | null }>(list: T[]) =>
     list.filter((x) => !x.archived_at).map((x) => ({ value: x.id, label: x.name }));
   const options =
@@ -81,32 +93,55 @@ export function BulkEditDialog({
               onValueChange={(v) => {
                 setField(v as typeof field);
                 setValue('');
-                setClearDepartment(false);
+                setClearValue(false);
+                setNote('');
               }}
               options={[
                 { value: 'status_id', label: t('assets.columns.status') },
                 { value: 'category_id', label: t('assets.columns.category') },
                 { value: 'vendor_id', label: t('assets.columns.vendor') },
                 { value: 'department_id', label: t('assets.columns.department') },
+                { value: 'location_id', label: t('bulkMove.location') },
               ]}
             />
           )}
         </Field>
         <Field label={t('assets.bulk.newValue')}>
           {(c) =>
-            field === 'department_id' ? (
+            field === 'location_id' ? (
+              <div className="flex flex-col gap-2">
+                <LocationPicker
+                  {...c}
+                  value={clearValue ? '' : value}
+                  disabled={clearValue}
+                  onChange={setValue}
+                />
+                {locationScope ? (
+                  <p className="text-sm text-muted">{t('bulkMove.scopedHint')}</p>
+                ) : (
+                  <Checkbox
+                    label={t('bulkMove.noLocation')}
+                    checked={clearValue}
+                    onCheckedChange={(v) => {
+                      setClearValue(v === true);
+                      if (v === true) setValue('');
+                    }}
+                  />
+                )}
+              </div>
+            ) : field === 'department_id' ? (
               <div className="flex flex-col gap-2">
                 <DepartmentPicker
                   {...c}
-                  value={clearDepartment ? '' : value}
-                  disabled={clearDepartment}
+                  value={clearValue ? '' : value}
+                  disabled={clearValue}
                   onChange={setValue}
                 />
                 <Checkbox
                   label={t('assets.bulk.noDepartment')}
-                  checked={clearDepartment}
+                  checked={clearValue}
                   onCheckedChange={(v) => {
-                    setClearDepartment(v === true);
+                    setClearValue(v === true);
                     if (v === true) setValue('');
                   }}
                 />
@@ -122,6 +157,23 @@ export function BulkEditDialog({
             )
           }
         </Field>
+        {field === 'location_id' ? (
+          <Field label={t('bulkMove.note')}>
+            {(c) => (
+              <Textarea
+                {...c}
+                value={note}
+                maxLength={2000}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            )}
+          </Field>
+        ) : null}
+        {field === 'status_id' && statusHintKind(lookups.statusById.get(value)?.state_type) ? (
+          <p className="text-sm text-muted" data-testid="bulk-lifecycle-note">
+            {t('lifecycle.statusHint.bulk')}
+          </p>
+        ) : null}
         {can('repair:manage') &&
         field === 'status_id' &&
         lookups.statusById.get(value)?.state_type === 'undeployable' ? (
@@ -144,7 +196,7 @@ export function BulkEditDialog({
           <Button onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
           <Button
             variant="primary"
-            disabled={!value && !clearDepartment}
+            disabled={!value && !clearValue}
             loading={progress !== null}
             onClick={() =>
               onApply(
@@ -154,7 +206,12 @@ export function BulkEditDialog({
                     ? { category_id: value }
                     : field === 'vendor_id'
                       ? { vendor_id: value }
-                      : { department_id: clearDepartment ? null : value },
+                      : field === 'location_id'
+                        ? {
+                            location_id: clearValue ? null : value,
+                            ...(note.trim() ? { note: note.trim() } : {}),
+                          }
+                        : { department_id: clearValue ? null : value },
               )
             }
           >

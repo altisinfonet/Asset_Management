@@ -1029,7 +1029,7 @@ Founder request (2026-11-18): the Security page cannot know up front whether the
 
 #### M2-UX-01 - M2 founder acceptance walk-through
 Size: S - Owner: Founder - Deps: all M2 stories
-Status: open - the founder acceptance walk-through; needs M2-IMP-09 (real files, F-09) and the hardware of M2-TAG-04 (F-02). The guides (M2-DOC-01) are reviewed in it.
+Status: open - the founder acceptance walk-through; needs M2-IMP-09 (real files, F-09) and the hardware of M2-TAG-04 (F-02). The guides (M2-DOC-01) are reviewed in it. The checklist to follow, 45 steps with the exit-criteria map: [docs/acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md).
 - [ ] Founder completes the exit-criteria script (items 1 to 8) on the Compose stack with real data and real hardware.
 - [ ] UX change requests are logged as stories; the founder rates import and check-out speed against the "30 minutes to 100 labelled assets" target.
 

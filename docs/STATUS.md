@@ -138,7 +138,8 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 ### Next: wave 3 part 2 (rest)
 
 Only two items remain: IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin export, F-09 👤), then the
-founder acceptance walk-through M2-UX-01 👤.
+founder acceptance walk-through M2-UX-01 👤. The walk-through checklist (45 steps, exit-criteria map, the hardware and real-file steps marked) is
+ready: [acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md).
 
 ## 4. Waiting on the founder 👤
 

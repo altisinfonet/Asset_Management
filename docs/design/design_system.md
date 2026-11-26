@@ -316,7 +316,7 @@ React Native components, one `theme` object generated from `tokens.json`, fonts 
 ## 11. Design decisions (2026-11-17)
 
 **Decided (founder accepted):**
-- **Theme:** three choices, System (follow `prefers-color-scheme`, the default), Light and Dark, stored as a manual override (D6, section 3). Set from the top bar's Theme menu or the System / Light / Dark switch in the sidebar footer. All three share one token set; components never use a `dark:` variant.
+- **Theme:** three choices, System (follow `prefers-color-scheme`, the default), Light and Dark, stored as a manual override (D6, section 3). Set from the top bar's Theme menu (the only theme control since 0.2.8: the sidebar-footer switch of 0.2.7 was removed) or the command palette. All three share one token set; components never use a `dark:` variant.
 - **Web density:** as proposed. 14px body, 13px table cells, 36px comfortable rows, 28px compact option (sections 2 and 3.1 to 3.2).
 - **Row click:** opens the 480px detail drawer (W11). Enter opens the full asset page.
 - **Mobile home:** the Scan screen (M1, section 7).

@@ -661,7 +661,7 @@ Status: done (M2 wave 1) - `app.location` with trigger-maintained `ancestor_ids`
 
 #### M2-LOC-02 - Asset location and moves
 Size: M - Owner: Claude - Deps: M2-LOC-01
-Status: partial (M2 wave 1) - `asset.location_id` FK, writable on create/update, `POST /v1/assets/{id}/move` and `bulk-move`, filters `location_id` + `include_sublocations`, `expand=location`, history events. Not done: the optional default location on models and categories (the contract has no field).
+Status: partial (M2 wave 1) - `asset.location_id` FK, writable on create/update, `POST /v1/assets/{id}/move` and `bulk-move`, filters `location_id` + `include_sublocations`, `expand=location`, history events; the web bulk move (bulk Edit > Location with a history note, location-scoped users only inside their scope) since v0.2.8. Not done: the optional default location on models and categories (the contract has no field).
 - [ ] Expand migration adds nullable `asset.location_id` (composite FK) using the expand/contract pattern; `asset_model` and category gain an optional default location.
 - [ ] `POST /v1/assets/{id}/move` changes location with a note, writing a history event, audit and outbox event; bulk move through the bulk helper.
 - [ ] List and search filters include location with "include sublocations".
@@ -735,10 +735,10 @@ Status: done (M2 wave 1) - transfer in one transaction, one audit entry, one `tr
 
 #### M2-LIFE-05 - Retirement, disposal, lost and found
 Size: S - Owner: Claude - Deps: M2-LIFE-03
-Status: done (M2 wave 1) - dispose (reason enum + note + date, archived-type status, archived), mark-lost (closes the custody) and mark-found; the state-machine table test covers every state and action.
-- [ ] Disposal action sets an archived-type status with reason (enum + free text) and date; disposed assets are excluded from active counts and hidden from default lists.
-- [ ] Mark lost / mark found actions with notes; lost assets cannot be checked out; found returns them to a chosen ready status.
-- [ ] All transitions covered by a state-machine test table (which state types allow which actions).
+Status: done (API in M2 wave 1; web screens in v0.2.8, ED-32) - dispose (reason enum + note + date, archived-type status, archived), mark-lost (closes the custody) and mark-found; the state-machine table test covers every state and action. Web (v0.2.8): **Mark as lost or stolen** (also on a checked-out asset, the dialog says the check-out ends), **Mark as found** (status and "Where is it now?") and **Dispose** (reason, date, note; the 409 of accessories still checked out to the asset said plainly) on the asset page, **Dispose** in the bulk bar (one request per asset, checked-out assets left out); a lost or archived status picked by hand in the form or bulk edit points at the actions (the API still accepts it, ED-32); MSW mocks, unit tests, mock e2e with axe (`e2e/lifecycle.spec.ts`), real-stack e2e (`e2e-real/lifecycle.spec.ts`).
+- [x] Disposal action sets an archived-type status with reason (enum + free text) and date; disposed assets are excluded from active counts and hidden from default lists. (API wave 1; the **Dispose** dialog on the asset page and in the bulk bar, v0.2.8.)
+- [x] Mark lost / mark found actions with notes; lost assets cannot be checked out; found returns them to a chosen ready status. (API wave 1; **Mark as lost or stolen** and **Mark as found** on the asset page, v0.2.8.)
+- [x] All transitions covered by a state-machine test table (which state types allow which actions).
 
 #### M2-LIFE-06 - Chain-of-custody history
 Size: M - Owner: Claude - Deps: M2-LIFE-04
@@ -956,7 +956,7 @@ Status: done (v0.2.5, 2026-11-24; M2 wave 3) - Assets > Import and Settings > Im
 
 #### M2-IMP-09 - Import test corpus and real-data trial
 Size: M - Owner: Both - Deps: M2-IMP-05, F-09
-Status: partial (corpus done 2026-11-26, ED-31; not released yet) - the corpus: 17 checked-in fixtures in `apps/api/test/importer/fixtures/corpus` (built by `corpus.ts`, byte-exact) run through upload, analysis, mapping, dry run and commit by `test/importer/corpus.e2e.test.ts`, and a generated messy file (`messyAssetCsv`) in `test/perf/import-corpus-scale.e2e.test.ts`, 2,000 rows in every e2e run and 100,000 in the nightly perf job (`PERF=1`). One message fixed (a value over a field's length limit), one gap logged (M2-IMP-10, `.txt` Unicode text refused at upload). Open: the real-file trial, waiting on the founder's anonymised spreadsheet and Google Admin export (F-09); until then only synthetic data has been imported and the baseline time is open.
+Status: partial (corpus done 2026-11-26, ED-31; released in v0.2.8) - the corpus: 17 checked-in fixtures in `apps/api/test/importer/fixtures/corpus` (built by `corpus.ts`, byte-exact) run through upload, analysis, mapping, dry run and commit by `test/importer/corpus.e2e.test.ts`, and a generated messy file (`messyAssetCsv`) in `test/perf/import-corpus-scale.e2e.test.ts`, 2,000 rows in every e2e run and 100,000 in the nightly perf job (`PERF=1`). One message fixed (a value over a field's length limit), one gap logged (M2-IMP-10, `.txt` Unicode text refused at upload). Open: the real-file trial, waiting on the founder's anonymised spreadsheet and Google Admin export (F-09); until then only synthetic data has been imported and the baseline time is open.
 - [x] Corpus of messy fixtures (BOM, mixed encodings, duplicate serials, European decimals and dates, merged header rows, 100k rows) stored in the repo and run in CI.
 - [ ] Founder-supplied real files imported end to end; defects are fixed or logged as stories; time from file to labelled assets is recorded as the baseline for the "100 labelled assets under 30 minutes" target.
 
@@ -1029,7 +1029,7 @@ Founder request (2026-11-18): the Security page cannot know up front whether the
 
 #### M2-UX-01 - M2 founder acceptance walk-through
 Size: S - Owner: Founder - Deps: all M2 stories
-Status: open - the founder acceptance walk-through; needs M2-IMP-09 (real files, F-09) and the hardware of M2-TAG-04 (F-02). The guides (M2-DOC-01) are reviewed in it. The checklist to follow, 45 steps with the exit-criteria map: [docs/acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md).
+Status: open - the founder acceptance walk-through; needs M2-IMP-09 (real files, F-09) and the hardware of M2-TAG-04 (F-02). The guides (M2-DOC-01) are reviewed in it. The checklist to follow, 45 steps with the exit-criteria map: [docs/acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md). The gaps the preparation run found (no lost / found / dispose screens, no bulk move, the Settings placeholder, guide and doc differences, Open PDF) were closed in v0.2.8 and the checklist updated (ED-32).
 - [ ] Founder completes the exit-criteria script (items 1 to 8) on the Compose stack with real data and real hardware.
 - [ ] UX change requests are logged as stories; the founder rates import and check-out speed against the "30 minutes to 100 labelled assets" target.
 

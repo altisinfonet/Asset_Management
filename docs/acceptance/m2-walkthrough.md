@@ -5,8 +5,10 @@ http://localhost:3001, signed in as the demo users, and mark every step **OK** o
 
 - **45 steps**, grouped by area; plan for two to three hours without the hardware steps. Steps marked 👤 **needs hardware / real data** need
   your label printer and scanner, or your own files.
-- Written for **version 0.2.7** (`main` at `d1f826c`). Every step was checked with a real browser against a fresh stack of that
-  build before it was written down; where the real app does not do what the backlog says, the step says `(known issue: ...)`.
+- Written for **version 0.2.7** (`main` at `d1f826c`) and updated for **version 0.2.8**, which closed the gaps the first
+  preparation run found (steps 2, 4, 5, 13, 18, 38 and 39 test the new screens; see "Notes from the preparation run" at the end).
+  Every step was checked against a fresh stack of the build it was written for; where the real app does not do what the
+  backlog says, the step says `(known issue: ...)`.
 - Do the steps **in order**: later steps use what earlier ones made (for example the laptop `LAP00004`, the person Bjorn
   Haugen, the location "Walkthrough annex").
 - Words in **bold** are labels on the screen, exactly as written there.
@@ -117,12 +119,12 @@ full path above into the **File name** box.
 
 - [ ] OK - [ ] Not OK — note: ____
 
-### Step 2. Theme switch
+### Step 2. Theme menu
 
 - **Sign in as:** `admin@acme.example` (still signed in)
-- **Where:** the bottom of the sidebar: **System**, **Light**, **Dark**.
-- **Do:** click **Dark**, look at the Dashboard; click **Light**; reload the page (F5); click **System**.
-- **You should see:** the whole app, including the charts and tiles, turns dark, then light. After the reload the choice is still **Light**. **System**
+- **Where:** the **Theme** button in the top bar (sun, moon or screen icon, right of the bell). It is the only theme control; the sidebar has none.
+- **Do:** open **Theme**, choose **Dark**, look at the Dashboard; open it again, choose **Light**; reload the page (F5); open it and choose **Use system setting**.
+- **You should see:** the whole app, including the charts and tiles, turns dark, then light. After the reload the choice is still **Light**. **Use system setting**
   follows your Windows setting. Text stays readable and the teal accent colour is used in both.
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -145,7 +147,7 @@ full path above into the **File name** box.
 
 - [ ] OK - [ ] Not OK — note: ____
 
-### Step 4. Move a location, move an asset
+### Step 4. Move a location, move an asset, move several assets
 
 - **Sign in as:** `admin@acme.example`
 - **Where:** **Locations**, then **Assets**.
@@ -153,19 +155,27 @@ full path above into the **File name** box.
   1. Select **Walkthrough annex (renamed)**, press **Move**, type `Oslo` in **New parent**, choose **Oslo HQ (OSL)**, press **Move**. (Open Oslo HQ with the Right arrow if you cannot see it.)
   2. Go to **Assets**, search `LAP00048`, open it, press **Edit**. In **Location** type `Walkthrough annex` and choose **Walkthrough annex (renamed)**. Press **Save**.
   3. Open the asset's **History** tab, then go back to **Locations** and select the annex.
+  4. Move several at once: in **Assets** search `LAP0004`, tick **LAP00042** and **LAP00047** (LAP00047 is checked out: a move is allowed anyway, the location is where it is). In the bar under the table press **Edit**. **Field**
+     **Location**; in **New value** type `Walkthrough annex` and choose **Walkthrough annex (renamed)**; **Note for the history** `Walk-through bulk move`.
+     Press **Apply to 2 assets**.
 - **You should see:**
   - After the move the location reads **Oslo HQ > Walkthrough annex (renamed)** ("Everything inside it moves along with it").
   - The asset's History has **Location changed**, "Moved from ... to Walkthrough annex (renamed)".
-  - The annex shows **Assets here (1)** with LAP00048.
-- **Known gap, not a failure:** moving **many** assets at once has no screen. Bulk **Edit** offers only Status, Category, Supplier and Department
-  (the bulk-move API exists). Note it only if it matters to you.
+  - The annex shows **Assets here (1)** with LAP00048; after the bulk move **Assets here (3)** with LAP00042, LAP00047 and LAP00048.
+  - The bulk edit says "Done: 2 assets updated."; LAP00042's History has its own **Location changed** entry with the note.
+  - The **Field** list of the bulk edit has Status, Category, Supplier, Department and **Location**; with Location there is also
+    **No location (whereabouts unknown)** (a user limited to a site, step 34, sees only the places of that site and no "no location").
 
 - [ ] OK - [ ] Not OK — note: ____
 
 ### Step 5. Departments
 
 - **Sign in as:** `admin@acme.example`
-- **Where:** sidebar **Settings**, then **Departments** in the Settings list. (Settings opens on **Organisation**, which still says "Organisation is not built yet": that is a known placeholder.)
+- **Where:** sidebar **Settings**, then **Departments** in the Settings list.
+- **First, the Settings landing page:** Settings opens on **Organisation**: **About** with the organisation's name **Acme**, the
+  plan and the **Currency**, then **Check-out defaults** (the same two numbers as on the loaner pools page) and **Files and photos**
+  (**Largest upload (MB)**, "Uploads up to ... are accepted now", and **Remove location and camera data (EXIF) from uploaded photos**).
+  Change nothing there. As the Asset manager you can save the two forms; the name and currency cannot be changed on screen.
 - **Do:**
   1. Read the list. Press **Add department**, Name `Walkthrough homeroom`, press **Add department**.
   2. Press **Edit Walkthrough homeroom**, rename it `Walkthrough homeroom 8A`, press **Save**.
@@ -272,19 +282,36 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 
 - [ ] OK - [ ] Not OK — note: ____
 
-### Step 13. Lost and found, and dispose (known issue)
+### Step 13. Lost and found, and dispose
 
 - **Sign in as:** `admin@acme.example`
-- **Where:** an asset's page, **Edit**.
+- **Where:** an asset's page (the buttons next to **Edit**), and **Stock**.
 - **Do:**
-  1. Open `LAP00060` (Ready). Press **Edit**, **Status** **Lost or stolen**, **Save**. Then **Edit** again and set **Ready to deploy** (found).
-  2. Open `LAP00053`. **Edit**, **Status** **Retired**, **Save** (dispose). Look at the asset list (search `LAP00053`).
-  3. Open `LAP00009`, **Check out** to Alice Johansen, then **Edit**, **Status** **Lost or stolen**, **Save**. Look at the page; then press **Check in** to tidy up.
-- **You should see:** the status changes and **History** has "Status changed from ... to Lost or stolen". A lost or retired asset has no **Check out** button.
-- **(known issue: there are no Mark lost, Mark found or Dispose buttons.** The backlog story LIFE-05 has them as API calls only (`mark-lost`, `mark-found`, `dispose`); the screen offers only the status list.
-  What follows from that, found while preparing this step: a **Retired** asset still shows in the default list "Active assets" (a real disposal would archive it and
-  record a reason and date); setting **Lost or stolen** on a checked-out asset leaves it **Assigned to** the person (the real "mark lost" closes the custody).)
-  Mark OK if the status route works as described; write in the note whether you want the three actions on screen.
+  1. Open `LAP00009`, press **Check out**, check it out to Alice Johansen (as in step 8, no photo needed). Then press
+     **Mark as lost or stolen**. Read the window, type `Left on the bus` in **What happened**, press **Mark as lost**.
+  2. Press **Mark as found**. In **Where is it now?** type `Library` and choose **Library**; press **Mark as found**. Open **History**.
+  3. Open `LAP00053`, press **Dispose**. **Reason** **Recycled**, leave **Date** as today, **Note** `Walk-through disposal`; press **Dispose**.
+     Then go to **Assets** and search `LAP00053`; set **Show** to **Archived only**.
+  4. The accessory check: in **Stock**, **Accessories**, on **Wireless mouse** press **Check out**, **Check out to** **Asset**, choose
+     `LAP00060`, **Quantity** `1`, **Check out**. Open `LAP00060`, press **Dispose**, **Reason** **Scrapped**, press **Dispose**; read the
+     message and press **Cancel**. Back on **Wireless mouse**, press **Return** on the LAP00060 row and return the unit.
+  5. Open `LAP00060`, press **Edit**, and in **Status** choose **Lost or stolen** (do not save); then choose **Retired**; press **Cancel**.
+- **You should see:**
+  - The lost window: "It is checked out to Alice Johansen. Marking it lost closes that check-out: Alice Johansen no longer holds it."
+    After it: "LAP00009 is marked lost", status **Lost or stolen**, no **Assigned to**, no **Check out**, **Check in** or **Transfer**,
+    and a **Mark as found** button (no **Mark as lost or stolen**).
+  - After found: "LAP00009 is marked found", **Ready to deploy**, **Check out** is back, and the location is Library. History has
+    "Marked lost: Left on the bus" and "Marked found", and the check-out to Alice is closed.
+  - The dispose window says the asset will be archived ("... The asset is then archived: it leaves the asset list and the counts.
+    Restore brings it back."). After it: "LAP00053 is disposed of and archived", the archived mark, a line
+    "Disposed of on <today>: Recycled. Walk-through disposal" and a **Restore** button. The asset is not in **Active assets**; it is listed
+    with **Archived only**.
+  - For LAP00060 with the mouse on it the dispose is refused inside the window: "1 accessory unit is still checked out to this asset.
+    Check it in on the Stock page first." Nothing changes.
+  - In the edit form, **Lost or stolen** shows a note "Setting a lost status here does not close a check-out. Use Mark as lost
+    or stolen instead: it also ends the check-out." with **Mark as lost instead**; **Retired** shows the same kind of note with
+    **Dispose instead**. (Saving the status by hand is still allowed; the note tells you what it does not do.)
+  - The bar under the asset list also has **Dispose of N assets** (checked-out assets in the selection are left out, with a message).
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -361,14 +388,14 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
   1. Search `LAP0000`, tick the boxes of three rows. The bar under the table shows **Print labels (3)**. Press it.
   2. Read the dialog **Print labels**: **Sheet template**, **Codes on the label** (**QR code**, **Code 128 barcode**), **Text on the label**, **One label**, **Sheet preview**.
   3. In **Sheet preview** click position **4**. Press **Generate PDF**.
-  4. When it says **Your labels are ready**, press **Download PDF** and open the file.
+  4. When it says **Your labels are ready**, press **Open PDF**, look at the new tab and close it; then press **Download PDF** and open the file.
   5. Open the bell, and one of the three assets' **History**.
 - **You should see:**
   - Six templates: US Letter 30-up (Avery 5160 layout), A4 21-up (Avery L7160 layout), A4 24-up 3 x 8 (Avery L7159 layout), US Letter 10-up (Avery 5163 layout) QR and Code128, Single label 50 x 25 mm, Single label 2 x 1 inch for thermal / roll printers. For the first one: "3 x 10 labels of 66.68 x 25.4 mm".
   - The preview of one label at real size ("Actual size. The QR code holds a web address with an opaque code, never the asset id.") and a sheet of 30 numbered positions marked **Already used**, **Gets a label**, **Left empty**; after your click: "First label goes in position 4".
   - "Your labels are ready", "3 labels on 1 sheet. Print at 100% ("Actual size"), not "Fit to page"." The saved PDF has **three** labels, in the **second row** of the sheet (positions 4, 5, 6), each with a QR code, the tag and the name.
   - The bell has **Your labels are ready** (step 23 turns on the e-mail for it). Each asset's History has **Label printed (letter-30up-qr)**.
-  - Both **Open PDF** and **Download PDF** save the PDF file.
+  - **Open PDF** shows the sheet in a new browser tab (nothing is saved); **Download PDF** saves the file.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -700,7 +727,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 - **Read:** `01-import-your-spreadsheet.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** in **Assets**, **Import**, **Assets**, press **Download the Assets template (CSV)**, open it, and use **What the template contains**. Then upload `school-devices.csv` again to the column screen, type a name under **Saved mappings** and press **Save this mapping**; leave the wizard without importing.
 - **You should see:** `assets-template.csv` with the columns Asset tag, Name, Serial number, Category, Manufacturer, Model, Status, Location, Department, Vendor, Assigned to, ... and an example row. After saving, the mapping is offered under **Saved mappings** ("Choose a saved mapping", **Use this mapping**).
-  One thing to check against the app: the guide says the error report names row 8 with the field `category`; the app lists `category, model` for it (a small difference, see the end of this file).
+  Also check the guide's error report example against step 27: row 8 names the fields `category, model`.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -708,7 +735,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 
 - **Read:** `02-import-from-google-admin.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** guide step 7, "Next term: import again": run the import of step 25 again and read the dry run; then look at **Settings**, **Departments**.
-- **You should see:** every device **Skipped** ("Nothing to change; left as it is."), and the departments created from the org units (**Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**). Also compare the guide's "Who can do this" sentence with what you saw: the import worked for the Asset manager.
+- **You should see:** every device **Skipped** ("Nothing to change; left as it is."), and the departments created from the org units (**Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**). Also compare the guide's "Who can do this" sentence with what you saw: it says an Administrator or an Asset manager can run the first import, and the import worked for the Asset manager.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -799,11 +826,16 @@ Mark item 8 here: - [ ] Passes (0 skipped) - [ ] Fails — note: ____
 
 ## Notes from the preparation run
 
-Findings while clicking through every step on a fresh stack of version 0.2.7. None of them blocks a step; they are listed so you can judge them.
+Findings while clicking through every step on a fresh stack of version 0.2.7, and what version 0.2.8 did about them.
 
-- **Lost, found and dispose have no screens** (step 13): the three actions exist in the API only; a status change is the only route in the web app and it neither archives a retired asset nor ends the custody of a lost one.
-- **Bulk move has no screen** (step 4): bulk **Edit** changes Status, Category, Supplier or Department, not Location.
-- **Settings opens on a placeholder** (**Organisation**, "Organisation is not built yet").
-- **Small differences between guides, docs and screen:** guide 1 says the error report names the field `category` for row 8 (the app says `category, model`);
-  `docs/getting-started.md` calls the consumable actions "issue" and "adjust" (the buttons are **Use** and **Save count**) and puts notification settings under "Account > Notifications" (it is **User menu**, **Notification settings**);
-  **Open PDF** on the label window saves the PDF like **Download PDF** (the file is delivered as a download).
+- **Lost, found and dispose had no screens** (step 13): fixed in 0.2.8. The asset page has **Mark as lost or stolen**, **Mark as found**
+  and **Dispose**; the asset list has **Dispose of N assets**. A status picked by hand in the form is still allowed, with a note that
+  points at the right action (ED-32).
+- **Bulk move had no screen** (step 4): fixed in 0.2.8. Bulk **Edit** has **Location**.
+- **Settings opened on a placeholder** (step 5): fixed in 0.2.8. **Organisation** shows the organisation and the settings the API
+  has (check-out defaults, files and photos). The name and currency are shown, not edited: there is no way to change them yet.
+- **Small differences between guides, docs and screen:** fixed in 0.2.8. Guide 1 names `category, model` for row 8; guide 2 says an
+  Asset manager can run the first Google import; `docs/getting-started.md` says **Use** and **Save count** for consumables and
+  **User menu**, **Notification settings**; **Open PDF** on the label window shows the PDF instead of saving it.
+- **Theme switch:** 0.2.8 removed the System / Light / Dark switch from the bottom of the sidebar; the **Theme** button in the top
+  bar is the only theme control (step 2).

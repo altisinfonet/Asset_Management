@@ -35,6 +35,7 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 | ED-29 | Google Admin import: org unit to department, disabled devices retired; the dry run rehearses what it creates; next available loaner and label fixes; partition locks taken up front (0180) | M2 | `openapi.yaml` (contract text), `schema.sql`, `data_model.md` changed, migration 0180 |
 | ED-30 | Development over plain HTTP from a LAN address: `SESSION_COOKIE_SECURE=false` gives an `at_session` cookie without `Secure`; refused in production | M2 | none in the contract (cookie name and flag are runtime configuration; the default is unchanged) |
 | ED-31 | The import test corpus (M2-IMP-09): what each messy file does, the length message of a row error, `.txt` Unicode text refused at upload (M2-IMP-10) | M2 | none in the contract (message text only), no migration |
+| ED-32 | Lost, found and dispose on screen (M2-LIFE-05): a lost or retired status set by hand stays allowed and is pointed at the actions; bulk dispose is one request per asset; Settings > Organisation shows what the API exposes | M2 | none (web only; the API and the contract are unchanged) |
 
 ## ED-01. `person` is separate from `user_account`
 
@@ -390,3 +391,36 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 - **Rationale.** The importer's claims (ADR 0010 section 2, M2-IMP-02/03) were tested on unit-level samples and two synthetic files; a corpus that runs the full pipeline is the check that the claims hold together (sniffing, decoding, header detection, mapping, the facade's validation, the error report and the export). Most cases already behaved as documented; the one message that did not read like the rest was fixed in the shared helper of all four entity handlers.
 - **Consequences.** A new fixture is added in `corpus.ts`, written with `node apps/api/test/importer/corpus.ts apps/api/test/importer/fixtures/corpus` and given its case in the test. No contract change (row messages are free text), no migration. The real-file trial with the founder's files (second criterion of M2-IMP-09, F-09) is still open.
 - **Milestone.** M2 (M2-IMP-09).
+
+## ED-32. Lost, found and dispose on screen; a status set by hand; the Organisation page
+
+- **Decision** (v0.2.8, the M2 close-out before the founder walk-through).
+  - **The actions.** The asset page offers **Mark as lost or stolen** (any asset that is not lost or archived, checked out or
+    not: `POST /v1/assets/{id}/mark-lost` closes the open check-out and the dialog says so), **Mark as found** (lost assets:
+    a ready status and "Where is it now?", `mark-found` with `location_id` only when it changed) and **Dispose** (reason,
+    date, note; `dispose` archives). Dispose is offered on a checked-out asset too: the dialog warns, and the API's
+    `409 asset-already-checked-out` is shown in it, so the person learns why instead of missing the button. The `409` for
+    accessory units still checked out to the asset (`usage.accessory_assignments`, `usage.units`) gets its own sentence.
+  - **A lost or retired status set by hand stays allowed.** `PATCH /v1/assets/{id}` and `bulk-update` keep accepting any
+    live status label (API semantics unchanged): a lost-type label set that way does not close the check-out and an
+    archived-type one does not archive. The asset form and the bulk edit say so when such a label is picked and point at
+    the action (the form offers it in place, like the "no repair logged" notice); saving is not blocked. Refusing those
+    labels in `PATCH` (or making `PATCH` run the action) would change the contract and the importer's status mapping
+    (the Google Admin import retires disabled devices by status, ED-29), so it is left for a later story if the founder
+    asks for it.
+  - **Bulk.** There is no bulk endpoint for the three actions. Bulk **Dispose** loops over the selected assets, one
+    request each with its own retry key, after leaving checked-out ones out (a toast says how many); the outcome uses
+    the results dialog of the other bulk actions. Lost and found stay single-asset actions (rare, and each needs its own
+    note or place). The bulk move uses `POST /v1/assets/bulk-move` from the bulk edit ("Location"); a location-scoped
+    user sees only the locations of its scope in the picker and cannot clear the location (ED-26).
+  - **Settings > Organisation.** The contract has no endpoint to read or change the organisation's name or currency, so
+    the page shows them read-only from `GET /v1/auth/me` (`tenant.name`, `plan`, `base_currency`) and edits what the API
+    does expose: the check-out defaults (`/v1/settings/custody`, the same form as on the loaner pools page) and the file
+    settings (`/v1/settings/files`: the upload cap in whole MB, never above the plan, and EXIF stripping). The
+    placeholder ("Organisation is not built yet") is gone.
+- **Rationale.** Every API operation was built and tested in M2 wave 1; the walk-through preparation found that the web
+  app had no way to reach them, so the founder's checklist could only test a status change that leaves custody open.
+- **Consequences.** Web only: no contract change, no migration, no API change. The "Open PDF" button of the label
+  window fetches the sheet into an `application/pdf` blob URL (the stored file is served as an attachment, so a plain
+  link downloads it).
+- **Milestone.** M2 (M2-LIFE-05, M2-UX-01 preparation).

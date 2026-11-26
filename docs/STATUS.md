@@ -1,10 +1,10 @@
 # Project status
 
-_Last updated: 2026-11-25 (v0.2.7 released: tag `v0.2.7` and `main` are pushed to GitHub; wave 3 part 2 completed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-26 (v0.2.8 prepared: the M2 close-out before the founder walk-through, the import test corpus and the walk-through checklist; tag `v0.2.8` local, not pushed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
-[VERSION.md](VERSION.md) (version history, current 0.2.7) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+[VERSION.md](VERSION.md) (version history, current 0.2.8) · [AUDIT.md](AUDIT.md) (quality and security audit record).
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); v0.2.8 closed the gaps found while preparing the founder walk-through (lost, found and dispose screens, bulk move, the Organisation settings page, doc fixes) and added the import test corpus and the walk-through checklist; the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -87,7 +87,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
-| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; messy-file test corpus in CI (unreleased, ED-31) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 partial (corpus done, real-file trial open), IMP-10 open |
+| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; messy-file test corpus in CI (v0.2.8, ED-31) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 partial (corpus done, real-file trial open), IMP-10 open |
 | Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 
 ### Wave 3 — part 2: location scoping done ✅ (v0.2.6, 2026-11-25)
@@ -130,16 +130,26 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | Change | Status |
 | ------ | ------ |
 | Dashboard: five tiles (All assets, Ready, Assigned, Not deployable, Overdue check-outs), "Assets by status" chart and "Utilisation" meter, the overdue check-outs as a table under "Needs attention" (with the line saying what it counts) | ✅ |
-| Teal palette in the System, Light and Dark themes; theme switch in the sidebar footer; tokens and design system updated | ✅ |
+| Teal palette in the System, Light and Dark themes; theme switch in the sidebar footer (removed in 0.2.8: the top-bar Theme menu is the only theme control); tokens and design system updated | ✅ |
 | CI: the dependency audit and the mock web e2e job run again (`effect` override, `picomatch` allow-list entry removed) | ✅ |
 | LAN access in development: `SESSION_COOKIE_SECURE=false` (dev only, refused in production), compose passes the LAN settings (ED-30) | ✅ |
 | Guide screenshots re-shot with the teal design (59) | ✅ |
 
-### Next: wave 3 part 2 (rest)
+### M2 close-out before the walk-through ✅ (v0.2.8, 2026-11-26)
 
-Only two items remain: IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin export, F-09 👤), then the
-founder acceptance walk-through M2-UX-01 👤. The walk-through checklist (45 steps, exit-criteria map, the hardware and real-file steps marked) is
-ready: [acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md).
+| Change | Stories |
+| ------ | ------- |
+| Lost, found and dispose on screen: **Mark as lost or stolen** (closes an open check-out), **Mark as found** (where it is now), **Dispose** (reason, date, note; archived) on the asset page, **Dispose** in the bulk bar; a lost or retired status set by hand in the form or bulk edit points at these actions (ED-32) ✅ | LIFE-05 (web criteria) |
+| Bulk move: **Location** in the bulk edit (`bulk-move`, with a history note; a site-limited user picks only inside its site) ✅ | LOC-02, REG-09 |
+| Settings opens on **Organisation** (name, plan, currency; check-out defaults; file settings) instead of a placeholder ✅ | — |
+| **Open PDF** shows the label sheet in a new tab; the sidebar theme switch removed (top-bar Theme menu only); guide and getting-started fixes (row 8 fields, Use / Save count, Notification settings path, who runs the first Google import) ✅ | DOC-01 |
+| Import test corpus in CI (17 messy files, 100,000 rows nightly; ED-31) ✅ and the founder walk-through checklist (45 steps) ✅ | IMP-09 (corpus), UX-01 (checklist) |
+
+### Next: the founder's part of M2
+
+Only two items remain: the real-file import trial of IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin
+export, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤 with the checklist
+[acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md) (45 steps; updated for 0.2.8, its "known issue" notes are resolved).
 
 ## 4. Waiting on the founder 👤
 

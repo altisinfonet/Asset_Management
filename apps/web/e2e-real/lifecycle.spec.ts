@@ -175,9 +175,21 @@ test('bulk edit moves two assets to a location, each with a history entry', asyn
   const two = await newAsset('Move two');
   await page.goto('/assets');
   await page.getByPlaceholder('Tag, serial or name').fill(id);
-  await expect(page.getByRole('row', { name: new RegExp(one.tag) })).toBeVisible();
+  // a new search clears the selection: tick only once the list shows the search's result (every
+  // row is one of this run's assets), not the unfiltered first page that is still on screen
+  const rows = page
+    .getByRole('row')
+    .filter({ has: page.getByRole('checkbox', { name: /^Select row / }) });
+  await expect
+    .poll(async () => {
+      const texts = await rows.allInnerTexts();
+      return texts.length >= 2 && texts.every((text) => text.includes(id));
+    })
+    .toBe(true);
   await page.getByRole('checkbox', { name: `Select row ${one.tag}` }).click();
   await page.getByRole('checkbox', { name: `Select row ${two.tag}` }).click();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  await expect(page.getByText('2 rows selected')).toBeVisible();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit 2 assets' });
   await choose(page, 'Field', 'Location');
@@ -190,7 +202,7 @@ test('bulk edit moves two assets to a location, each with a history entry', asyn
     .click();
   await dialog.getByRole('textbox', { name: 'Note for the history' }).fill(`Term ${id}`);
   await dialog.getByRole('button', { name: 'Apply to 2 assets' }).click();
-  await expect(page.getByText('Done: 2 assets updated.')).toBeVisible();
+  await expect(page.getByText('Done: 2 assets updated.', { exact: true })).toBeVisible();
 
   const [a, b] = [await read(one.id), await read(two.id)];
   expect(a.location_id).not.toBeNull();

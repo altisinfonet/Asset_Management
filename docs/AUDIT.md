@@ -132,6 +132,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
 | B.30 | 2026-11-25 | Release 0.2.7: GitHub main (PRs #15, #16) plus wave 3 part 2 and ED-30 | One conflict (dashboard) resolved, GitHub files preserved; API e2e 771/771 direct and pooled, real-stack 68/68, mock 759/759 |
 | B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31; released in 0.2.8) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
+| B.32 | 2026-11-26 | Release 0.2.8: M2 close-out before the founder walk-through (ED-32, ED-33), corpus and checklist merged | Lost/found/dispose, bulk move, Organisation page, Open PDF, unlink duplicates fixed; API e2e 791/791 direct and pooled, real-stack 72/72, mock 767/767 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -697,6 +698,59 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   API e2e with `ADMIN_DATABASE_URL`, mail, MinIO and clamd set: 790/790 in 67 files direct and 790/790 through
   PgBouncer with the `app_one` negative control (passed), 0 skipped (`assert-no-skips.mjs`); every suite passed on its first run. Web untouched, so no mock browser run.
 - **Open:** M2-IMP-10 (accept `.txt` / `.tsv` import files); the real-file trial of M2-IMP-09.
+
+### B.32 Release 0.2.8: M2 close-out before the founder walk-through - 2026-11-26 (version 0.2.8)
+
+- **Scope:** branch `m2-closeout` from `main` (`d1f826c`): no-fast-forward merges of `imp-09-corpus` (`6c509cd`, B.31)
+  and `m2-acceptance` (`dcbb0bd`, the 45-step checklist); both touched `05_backlog.md` and `STATUS.md` and merged
+  without conflicts (both sides kept, checked in the diff). Then the gaps of the checklist's preparation run and two
+  founder items that came in during the work.
+- **What changed:**
+  - **Lost, found and dispose on screen** (M2-LIFE-05 web criteria, ED-32): asset page actions over the existing
+    `mark-lost`, `mark-found`, `dispose` operations (retry key, optional `If-Match`), bulk **Dispose** (one request per
+    asset, checked-out assets left out), the 409 of accessories still on an asset said plainly (`usage.accessory_assignments`),
+    a disposal banner on archived assets; a lost or archived status picked by hand in the asset form or bulk edit shows
+    a note pointing at the actions (the API still accepts it; ED-32 says why).
+  - **Bulk move:** Location in the bulk edit over `bulk-move` with a history note; a location-scoped user sees only its
+    scope and cannot clear the location.
+  - **Settings > Organisation** replaces the placeholder: the contract has no tenant name or currency endpoint, so the
+    page shows name, plan and currency from `GET /v1/auth/me` and edits what exists (`/v1/settings/custody`, shared with
+    the loaner pools page, and `/v1/settings/files`).
+  - **Open PDF** fetches the sheet into an `application/pdf` blob URL in a new tab (the stored file is an attachment).
+  - **Docs:** guide 1 (`category, model`), guide 2 (an Asset manager can run the first Google import: `import:run`,
+    `catalog:manage`, `department:manage` in `auth/permissions.ts`), `getting-started.md` (**Use**, **Save count**,
+    user menu > **Notification settings**).
+  - **Founder item 1:** the System / Light / Dark switch removed from the sidebar footer (with its test and the
+    `theme.systemShort` key); the top-bar Theme menu stays. Design system, guides index, FEATURES, STATUS, walk-through
+    step 2 updated; `06-scoped-assets.png` (the one guide picture showing the sidebar footer) re-shot.
+  - **Founder item 2 (ED-33):** unlinking the login's own automatic person record made one more empty record with the
+    same name each time. `DELETE /v1/people/{id}/link-user` now answers 409 for it; `Person.is_login_placeholder`
+    (read-only, through `gen.mjs`); badge, no Unlink button with the reason in its place, no Unlink person in the Users
+    menu, and an unlink message that says where the login went with **Open the new record**. The rule is "no
+    `created_by` and no `updated_by`": `created_by` alone took the seeded Alice Johansen, linked to a new login while
+    re-shooting guide 7, for the login's record (caught by the screenshot script and fixed before release; a unit test
+    pins it). The founder's three empty duplicates were not touched.
+  - Walk-through steps 2, 4, 5, 13, 18, 38, 39 and 44 updated and the "known issue" notes resolved; step 4 uses LAP00042
+    and LAP00047 (LAP00046 is not in the demo data); steps 4, 5 and 13 were clicked through on a fresh stack with a
+    throw-away script (labels, demo data, refusal texts as written).
+- **Tests added:** web unit (lifecycle helpers, asset page actions, bulk move and dispose, form hint, Organisation page,
+  accessory sentence, login's own record, mock handlers), mock e2e `e2e/lifecycle.spec.ts` (8, axe in each) and
+  updated people and a11y specs, real-stack `e2e-real/lifecycle.spec.ts` (4) and an extended
+  `link-undo-sorts.spec.ts`, API e2e for the unlink refusal (people-link) and an API unit test of the rule.
+- **Result** on the final code (compose project `atclose`, host ports 24000 to 24901, every stack fresh with `down -v`;
+  the founder's `assettracker` stack and folder untouched): `pnpm install --frozen-lockfile` clean; `turbo run lint
+  typecheck test build --force` 21/21, 0 cached (API unit 662, web 843, api-client 14, ui-tokens 15, schemas 3);
+  `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with no diff (205 operations), `gen-api-md --check`,
+  api-client `generate:check` and Redocly (0 errors, 0 warnings) clean; `db:pull` no drift, `schema:lint` 0 violations;
+  API e2e with `ADMIN_DATABASE_URL`, mail, MinIO and clamd: 791/791 in 67 files direct and 791/791 through PgBouncer
+  with the `app_one` negative control, 0 skipped; web mock e2e 767/767 (Chrome); web real-stack e2e 72/72 on a fresh
+  stack.
+- **Reruns and fixes during verification:** the new real-stack bulk-move test ticked rows before the search had
+  replaced the list (a new search clears the selection) and matched a toast text twice: fixed in the test. The new
+  real-stack refusal check sent a body-less DELETE with a JSON content type (400): fixed in the test. One mock e2e run
+  had `axe: users: remove access confirmation (dark)` time out picking a location option (the light variant passed;
+  unrelated to this change); the final full run passed.
+- **Open:** M2-IMP-09 real-file trial (F-09), M2-IMP-10, M2-UX-01 (the founder's walk-through).
 
 ---
 

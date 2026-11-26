@@ -70,7 +70,7 @@ released: the import test corpus (branch `imp-09-corpus`, M2-IMP-09 first criter
   injection), each run through upload, analysis, mapping, dry run and commit in every API e2e run; a generated 100,000-row
   messy file in the nightly perf job (2,000 rows in every e2e run).
 - **Founder walk-through checklist** (M2-UX-01): `docs/acceptance/m2-walkthrough.md`, 45 steps with the exit-criteria
-  map, the hardware and real-file steps marked; steps 2, 4, 5, 13, 18, 38 and 39 updated for this release.
+  map, the hardware and real-file steps marked; steps 2, 4, 5, 13, 18, 38, 39 and 44 updated for this release.
 
 ### Changed
 

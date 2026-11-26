@@ -6,7 +6,7 @@ http://localhost:3001, signed in as the demo users, and mark every step **OK** o
 - **45 steps**, grouped by area; plan for two to three hours without the hardware steps. Steps marked 👤 **needs hardware / real data** need
   your label printer and scanner, or your own files.
 - Written for **version 0.2.7** (`main` at `d1f826c`) and updated for **version 0.2.8**, which closed the gaps the first
-  preparation run found (steps 2, 4, 5, 13, 18, 38 and 39 test the new screens; see "Notes from the preparation run" at the end).
+  preparation run found (steps 2, 4, 5, 13, 18, 38, 39 and 44 test the new screens; see "Notes from the preparation run" at the end).
   Every step was checked against a fresh stack of the build it was written for; where the real app does not do what the
   backlog says, the step says `(known issue: ...)`.
 - Do the steps **in order**: later steps use what earlier ones made (for example the laptop `LAP00004`, the person Bjorn

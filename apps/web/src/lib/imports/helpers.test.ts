@@ -38,7 +38,35 @@ import {
   withEntry,
   withImportContentType,
   withTarget,
+  isKnownCode,
 } from './helpers';
+import { importsMessages } from '@/i18n/messages/imports';
+
+describe('row problem codes (BUG-3)', () => {
+  it('has words for every schema-check code, so "too_big (name)" is never shown raw', () => {
+    const catalogue = importsMessages.importCodes as Record<string, string>;
+    for (const code of [
+      'too_big',
+      'too_small',
+      'invalid_type',
+      'invalid_format',
+      'invalid_value',
+      'not_multiple_of',
+      'invalid_union',
+      'invalid_key',
+      'invalid_element',
+      'custom',
+      'unrecognized_keys',
+      'unknown-field',
+      'serial-taken',
+    ]) {
+      expect(isKnownCode(code), code).toBe(true);
+      expect(catalogue[code], code).toMatch(/^[a-z]/);
+    }
+    expect(catalogue.too_big).toBe('a value is too long or too large');
+    expect(isKnownCode('odd')).toBe(false);
+  });
+});
 
 const mapping = (
   targets: Array<string | null>,
@@ -316,7 +344,21 @@ describe('references and the value map', () => {
     value: text,
     count: 2,
     suggestion: matched ? { id: 'rec', name: text } : null,
+    issue: null,
     entry: null,
+  });
+
+  it('a value whose rows would still fail (ambiguous location, model in another category) needs a decision (ED-37)', () => {
+    const lab: ImportValue = {
+      ...value('Lab 1', false),
+      issue: { code: 'ambiguous', message: '"Lab 1" matches 2 locations' },
+    };
+    expect(needsDecision(lab, 'location', { references: {} }, {})).toBe(true);
+    // creating it does not help: "Create all that are missing" leaves it alone
+    expect(createAllMissing([{ kind: 'location', values: [lab] }], {})).toEqual({});
+    // an explicit decision settles it
+    const decided = withEntry({}, 'location', 'Lab 1', { id: 'loc' });
+    expect(needsDecision(lab, 'location', { references: {} }, decided)).toBe(false);
   });
 
   it('a value needs a decision when nothing matches it, nothing was decided and missing records are not created', () => {

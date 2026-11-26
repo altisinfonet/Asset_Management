@@ -497,6 +497,21 @@ describe('mock imports: the values of a reference column', () => {
     );
   });
 
+  it('says a bare location name is ambiguous when the same file creates another of that name (ED-37)', async () => {
+    const csv = [
+      'Serial Number,Asset ID,Category,Location,Assigned to',
+      '5CG0101,AMB-0001,Chromebook,Room 101,',
+      '5CG0102,AMB-0002,Chromebook,Annex / Room 101,',
+    ].join('\n');
+    const job = await mapped(csv);
+    const locations = await importsApi.values(job.id, 'location');
+    const bare = locations.data.find((v) => v.value === 'Room 101')!;
+    expect(bare.suggestion).toBeNull();
+    expect(bare.issue).toMatchObject({ code: 'ambiguous' });
+    expect(bare.issue?.message).toContain('"Annex > Room 101" named in this file');
+    expect(locations.data.find((v) => v.value === 'Annex / Room 101')?.issue).toBeNull();
+  });
+
   it('searches with q, answers 422 for a kind without a column and 403 without import:run', async () => {
     const job = await mapped();
     const found = await importsApi.values(job.id, 'location', { q: '999' });

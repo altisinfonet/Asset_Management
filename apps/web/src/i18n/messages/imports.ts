@@ -208,6 +208,8 @@ export const importsMessages = {
     options: {
       heading: 'Duplicates and settings',
       matchOn: 'Recognise existing assets by',
+      matchOnAutoHint:
+        'A new tag with a serial number another asset already has is an error: a serial number is never used twice.',
       matchOptions: {
         auto: 'Tag, else serial number',
         asset_tag: 'Asset tag',
@@ -302,6 +304,7 @@ export const importsMessages = {
       matches: 'Matches {name}',
       willCreate: 'Will be created',
       notFound: 'Not found: its rows will be errors',
+      problem: 'Needs a decision: its rows will be errors',
       decided: 'Decided by you',
     },
     actions: {
@@ -435,6 +438,23 @@ export const importsMessages = {
     conflict: 'the record conflicts with another',
     'too-deep': 'a location path is too deep',
     internal: 'an unexpected error',
+    'serial-taken': 'the serial number belongs to another asset',
+    archived: 'the record is archived',
+    integer: 'a value is not a whole number',
+    currency: 'a currency code is not valid',
+    'unknown-field': 'a value is not a field of the record',
+    // the codes of the schema checks (ED-31: the row's own message says the limit)
+    too_big: 'a value is too long or too large',
+    too_small: 'a value is too short or too small',
+    invalid_type: 'a value has the wrong type',
+    invalid_format: 'a value is not in the expected format',
+    invalid_value: 'a value is not one of the allowed ones',
+    not_multiple_of: 'a number has too many decimals',
+    invalid_union: 'a value is not valid',
+    invalid_key: 'a value is not valid',
+    invalid_element: 'a value in a list is not valid',
+    custom: 'a value is not valid',
+    unrecognized_keys: 'a value is not a field of the record',
   },
   importRun: {
     heading: 'Importing',

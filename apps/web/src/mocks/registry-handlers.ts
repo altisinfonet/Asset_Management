@@ -13,6 +13,7 @@ import {
 } from './registry-fixtures';
 import { locationPathText, subtreeIds } from '@/lib/registry/locations';
 import { mutateRegistry, registry } from './registry-state';
+import { w3 } from './w3-state';
 import { inScope, scopedLocationErrors } from './scope';
 
 /**
@@ -1257,6 +1258,15 @@ export function assetFilter(a: MockAsset, p: URLSearchParams): boolean {
   }
   if (p.get('vendor_id') && a.vendor_id !== p.get('vendor_id')) return false;
   if (p.get('department_id') && a.department_id !== p.get('department_id')) return false;
+  // ED-38: the assets an import created
+  const importJob = p.get('import_job_id');
+  if (
+    importJob &&
+    !w3().importRows.some(
+      (r) => r.job_id === importJob && r.result === 'created' && r.created_id === a.id,
+    )
+  )
+    return false;
   const before = p.get('warranty_end_before');
   if (before && !(a.warranty_end && a.warranty_end <= before)) return false;
   const after = p.get('warranty_end_after');

@@ -430,12 +430,14 @@ export const entryFor = (
 
 /** A value the dry run would reject: no decision, no record of that name, and missing records are not created. */
 export function needsDecision(
-  value: Pick<ImportValue, 'value' | 'suggestion'>,
+  value: Pick<ImportValue, 'value' | 'suggestion'> & { issue?: ImportValue['issue'] },
   kind: ImportRefKind,
   options: Pick<ImportOptions, 'references'> | undefined,
   valueMap: ImportValueMap,
 ): boolean {
   if (entryFor(valueMap, kind, value.value)) return false;
+  // ED-37: a name that exists but would still fail the dry run (ambiguous, or in another category)
+  if (value.issue) return true;
   if (value.suggestion) return false;
   return policyOf(options, kind) === 'must_exist';
 }
@@ -449,7 +451,8 @@ export function createAllMissing(
   for (const group of values) {
     if (!canCreate(group.kind)) continue;
     for (const value of group.values) {
-      if (value.suggestion || entryFor(next, group.kind, value.value)) continue;
+      // a value with an issue (ambiguous, another category) is not fixed by creating it
+      if (value.suggestion || value.issue || entryFor(next, group.kind, value.value)) continue;
       next = withEntry(next, group.kind, value.value, { create: true });
     }
   }
@@ -564,6 +567,23 @@ const KNOWN_CODES = [
   'conflict',
   'too-deep',
   'internal',
+  'serial-taken',
+  'archived',
+  'integer',
+  'currency',
+  'unknown-field',
+  // BUG-3: the schema checks' own codes (zod), never shown raw
+  'too_big',
+  'too_small',
+  'invalid_type',
+  'invalid_format',
+  'invalid_value',
+  'not_multiple_of',
+  'invalid_union',
+  'invalid_key',
+  'invalid_element',
+  'custom',
+  'unrecognized_keys',
 ] as const;
 export type KnownCode = (typeof KNOWN_CODES)[number];
 export const isKnownCode = (code: string): code is KnownCode =>

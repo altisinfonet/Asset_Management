@@ -119,6 +119,7 @@ export function toLabelFilter(query: AssetListQuery): LabelAssetFilter | null {
   }
   if (query.assigned !== undefined) filter.assigned = query.assigned;
   if (query.assigned_person_id) filter.assigned_person_id = query.assigned_person_id;
+  if (query.import_job_id) filter.import_job_id = query.import_job_id;
   if (query.sort?.length) filter.sort = query.sort.join(',');
   return filter;
 }

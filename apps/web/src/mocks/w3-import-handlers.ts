@@ -743,6 +743,38 @@ function findByName(kind: RefKind, text: string): Named | null {
   return same.length === 1 || (same.length > 1 && kind !== 'model') ? same[0]! : null;
 }
 
+/**
+ * ED-37: a bare location name that several locations have, counting the paths of the same column that
+ * the import creates ("Lab 1" next to "Main Building / Lab 1"), is ambiguous on the value step too.
+ */
+function bareLocationIssue(
+  value: string,
+  fileValues: readonly string[],
+): { code: string; message: string } | null {
+  if (/[>/]/.test(value)) return null;
+  const key = normKey(value);
+  const existing = namedList('location').filter((l) => normKey(l.name.split(' > ').pop()) === key);
+  const keys = new Set(existing.map((l) => pathKey(l.name)));
+  let created: string | null = null;
+  for (const text of fileValues) {
+    const parts = text
+      .split(/[>/]/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2 || normKey(parts[parts.length - 1]) !== key) continue;
+    const path = parts.join(' > ');
+    created ??= path;
+    keys.add(pathKey(path));
+  }
+  if (keys.size < 2) return null;
+  return {
+    code: 'ambiguous',
+    message: created
+      ? `"${value}" matches ${keys.size} locations, counting "${created}" named in this file; write the full path such as "Site > Building > ${value}".`
+      : `"${value}" matches ${keys.size} locations; write the full path such as "Site > Building > ${value}".`,
+  };
+}
+
 // ---- reading a row ------------------------------------------------------------------------------------------------------
 
 interface MappedRecord {
@@ -890,6 +922,8 @@ function matchExisting(
   keys: string[];
   existing: { id: string; label: string; version: number } | null;
   ambiguous: boolean;
+  /** ED-35: "tag, else serial": a new tag whose serial number another live asset has (that asset's tag). */
+  serialTakenBy?: string | null;
 } {
   const data = registry();
   const f = mapped.f;
@@ -911,12 +945,15 @@ function matchExisting(
       const hit = mode === 'asset_tag' ? byTag : mode === 'serial' ? bySerial : byExt;
       const ambiguous =
         options.match_on === 'auto' && !!byTag && !!bySerial && byTag.id !== bySerial.id;
+      const serialTakenBy =
+        options.match_on === 'auto' && tag && !byTag && bySerial ? bySerial.asset_tag : null;
       return {
         keys: [tag && `tag:${tag}`, serial && `serial:${serial}`, ext && `ext:${ext}`].filter(
           Boolean,
         ) as string[],
         existing: hit ? { id: hit.id, label: hit.asset_tag, version: hit._v } : null,
         ambiguous,
+        serialTakenBy,
       };
     }
     case 'person': {
@@ -979,6 +1016,30 @@ function planRows(job: MockImportJob): void {
   const seen = new Map<string, number>();
   for (const row of rows) {
     const { mapped, issues } = mapRow(job, row.raw, options);
+    // ED-36: a lone "TOTAL ITEMS: 120" cell at the foot of the sheet is skipped as a summary line
+    const filled = row.raw.map((cell) => cell.trim()).filter(Boolean);
+    if (
+      filled.length === 1 &&
+      /\d/.test(filled[0]!) &&
+      /^(?:grand\s+|sub\s*-?\s*)?(?:totals?|sum|count)\b/i.test(filled[0]!)
+    ) {
+      Object.assign(row, {
+        mapped: { ...mapped, refs: {} },
+        plan: 'skip',
+        errors: [],
+        warnings: [
+          {
+            field: null,
+            code: 'summary-row',
+            message: `A summary line ("${filled[0]!.slice(0, 60)}"), not data; skipped.`,
+          },
+        ],
+        entity_id: null,
+        entity_version: null,
+        dup_of: null,
+      });
+      continue;
+    }
     const errors: Issue[] = issues.filter((i) => i.code !== 'will-create');
     const warnings: Issue[] = [];
     // references
@@ -1045,6 +1106,13 @@ function planRows(job: MockImportJob): void {
       const first = seen.get(key);
       if (first === undefined) seen.set(key, row.row_no);
       else if (dupOf === null || first < dupOf) dupOf = first;
+    }
+    if (match.serialTakenBy && dupOf === null) {
+      errors.push({
+        field: 'serial',
+        code: 'serial-taken',
+        message: `Serial number ${String(mapped.f.serial)} is already used by ${match.serialTakenBy}.`,
+      });
     }
     if (errors.length > 0) plan = 'error';
     else if (dupOf !== null && options.on_match !== 'update') {
@@ -2473,10 +2541,12 @@ export const importHandlers: HttpHandler[] = [
       distinct: counts.size,
       data: grouped.slice(0, limit).map(([value, count]) => {
         const res = resolveRef({ ...job, value_map: {} }, strict, kind, value);
+        const issue = kind === 'location' ? bareLocationIssue(value, [...counts.keys()]) : null;
         return {
           value,
           count,
-          suggestion: res.kind === 'found' ? { id: res.id, name: res.name } : null,
+          suggestion: res.kind === 'found' && !issue ? { id: res.id, name: res.name } : null,
+          issue,
           entry: valueMap[kind]?.[normKey(value)] ?? null,
         };
       }),

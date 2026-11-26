@@ -687,6 +687,24 @@ describe('import: match the values', () => {
     });
   });
 
+  it('shows a name that matches but would still fail as needing a decision (ED-37, BUG-5)', async () => {
+    const job = await mapped(
+      [
+        'Serial Number,Asset ID,Category,Location',
+        '5CG0201,AMB-0201,Chromebook,Room 101',
+        '5CG0202,AMB-0202,Chromebook,Annex / Room 101',
+      ].join('\n'),
+    );
+    open(job.id, 'values');
+    renderApp(<JobScreen />);
+    await screen.findByRole('table', { name: 'Values of Location' });
+    const row = screen.getByRole('row', { name: /^Room 101/ });
+    expect(row).toHaveTextContent('Needs a decision: its rows will be errors');
+    expect(row).toHaveTextContent('"Annex > Room 101" named in this file');
+    expect(row).not.toHaveTextContent('Matches');
+    expect(screen.getByTestId('import-values-open')).toHaveTextContent('1 value still needs');
+  });
+
   it('does not offer to create a status label, and searches the values of a long column', async () => {
     const text = [
       'Serial Number,Asset ID,Category,Status',
@@ -937,7 +955,7 @@ describe('import: commit, progress and summary', () => {
     const job = await reviewed();
     open(job.id);
     const user = userEvent.setup();
-    const { container } = renderApp(<JobScreen />);
+    const { container } = renderApp(<JobScreen />, { workflows: true });
     await user.click(await screen.findByRole('button', { name: 'Import 4 rows' }));
     const progress = await screen.findByTestId('import-progress-text');
     expect(screen.getByTestId('import-step-caption')).toHaveTextContent('Step 6 of 6: Import');
@@ -952,7 +970,6 @@ describe('import: commit, progress and summary', () => {
     expect(screen.getByTestId('import-done-skipped')).toHaveTextContent('1');
     expect(screen.getByTestId('import-done-failed')).toHaveTextContent('1');
     expect(screen.getByRole('link', { name: 'View assets' })).toHaveAttribute('href', '/assets');
-    expect(screen.getByRole('link', { name: 'Print labels for the new assets' })).toBeVisible();
     // the row that could not be imported is listed, with the problem
     const failed = await screen.findByRole('table', { name: 'Rows that could not be imported' });
     await waitFor(() => expect(within(failed).getAllByRole('row')).toHaveLength(2));
@@ -961,6 +978,15 @@ describe('import: commit, progress and summary', () => {
     expect(
       (await assetsApi.list({ q: 'IMP-000', limit: 20 })).data.map((a) => a.asset_tag).sort(),
     ).toEqual(['IMP-0001', 'IMP-0002', 'IMP-0003', 'IMP-0005']);
+    // BUG-2 (ED-38): the label window opens for exactly the assets this import created
+    expect(
+      (await assetsApi.list({ import_job_id: job.id, limit: 20 })).data
+        .map((a) => a.asset_tag)
+        .sort(),
+    ).toEqual(['IMP-0001', 'IMP-0002', 'IMP-0003', 'IMP-0005']);
+    await user.click(screen.getByRole('button', { name: 'Print labels for the new assets' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Print labels' });
+    expect(await within(dialog).findByText('4 assets match the current filter')).toBeVisible();
   });
 
   it('stops after the current batch when cancelled and says how many rows were written', async () => {

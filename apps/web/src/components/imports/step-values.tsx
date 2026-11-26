@@ -276,6 +276,15 @@ function ValueGroup({
       header: t('importValues.columns.status'),
       cell: (row) => {
         if (actionOf(row) !== AUTO) return <Badge>{t('importValues.status.decided')}</Badge>;
+        if (row.issue) {
+          // ED-37: a record of that name exists, but the dry run would still reject these rows
+          return (
+            <div className="flex max-w-md flex-col items-start gap-1">
+              <Badge tone="danger">{t('importValues.status.problem')}</Badge>
+              <span className="text-sm text-muted">{row.issue.message}</span>
+            </div>
+          );
+        }
         if (row.suggestion) {
           return (
             <Badge tone="success">

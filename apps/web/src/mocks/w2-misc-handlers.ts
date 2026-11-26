@@ -281,6 +281,7 @@ const FILTER_KEYS = [
   'company_id',
   'vendor_id',
   'parent_asset_id',
+  'import_job_id',
   'warranty_end_before',
   'warranty_end_after',
   'purchase_date_from',

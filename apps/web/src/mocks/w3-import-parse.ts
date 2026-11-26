@@ -202,7 +202,16 @@ export const FIELD_SPECS: Record<EntityType, FieldSpec[]> = {
       'text',
       'The tag printed on the label. Left empty, the next tag of the numbering template is used. Never changed by an import.',
       'LAP-00042',
-      ['tag', 'asset id', 'asset number', 'inventory number', 'annotated asset id', 'barcode'],
+      [
+        'tag',
+        'tag no',
+        'tag number',
+        'asset id',
+        'asset number',
+        'inventory number',
+        'annotated asset id',
+        'barcode',
+      ],
     ),
     f('name', 'Name', 'text', 'A display name for the asset.', "Anna's laptop", [
       'asset name',
@@ -211,6 +220,8 @@ export const FIELD_SPECS: Record<EntityType, FieldSpec[]> = {
       'computer name',
       'description',
       'title',
+      'item',
+      'item name',
     ]),
     f(
       'serial',
@@ -274,9 +285,17 @@ export const FIELD_SPECS: Record<EntityType, FieldSpec[]> = {
       ['dept', 'cost centre', 'cost center', 'team', 'division', 'org unit'],
       { ref: 'department' },
     ),
-    f('vendor', 'Vendor', 'ref', 'Who the asset was bought from.', 'CDW', ['supplier'], {
-      ref: 'vendor',
-    }),
+    f(
+      'vendor',
+      'Vendor',
+      'ref',
+      'Who the asset was bought from.',
+      'CDW',
+      ['supplier', 'purchased from', 'bought from'],
+      {
+        ref: 'vendor',
+      },
+    ),
     f(
       'assigned_to',
       'Assigned to',
@@ -292,7 +311,7 @@ export const FIELD_SPECS: Record<EntityType, FieldSpec[]> = {
       'date',
       'When it was bought (2024-03-07 or day/month/year).',
       '2024-03-07',
-      ['purchased', 'bought', 'date purchased', 'acquired', 'invoice date'],
+      ['purchased', 'bought', 'date purchased', 'date of purchase', 'acquired', 'invoice date'],
     ),
     f(
       'purchase_cost',
@@ -587,7 +606,7 @@ export const PRESETS: readonly Preset[] = [
     options: { match_on: 'auto', on_match: 'skip' },
     notes: [
       'Recommended order: locations, departments, people, then assets, so every reference exists. Missing categories, manufacturers, models, locations, departments and vendors can be created by the import; people and status labels must exist.',
-      'An empty asset tag gets the next tag of the numbering template. An existing tag or serial number is skipped, updated or reported, as the import option says.',
+      'An empty asset tag gets the next tag of the numbering template. With "Tag, else serial number" a row is the existing asset with its tag (or, when it has no tag, its serial number): skipped, updated or reported, as the import option says. A new tag with a serial number another asset already has is a row error: a serial number is never used twice. A summary line such as "TOTAL ITEMS: 120" at the end of the sheet is skipped.',
     ],
   },
   {

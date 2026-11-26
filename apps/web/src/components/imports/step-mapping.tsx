@@ -547,7 +547,12 @@ export function StepMapping({
             {t('importMapping.options.heading')}
           </legend>
           {entity === 'asset' ? (
-            <Field label={t('importMapping.options.matchOn')}>
+            <Field
+              label={t('importMapping.options.matchOn')}
+              hint={
+                edit.match_on === 'auto' ? t('importMapping.options.matchOnAutoHint') : undefined
+              }
+            >
               {(control) => (
                 <Select
                   {...control}

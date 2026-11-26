@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { FormError } from '@/components/auth/form-error';
 import { RowProblems } from '@/components/imports/step-review';
+import { useHasLabels, useLabels } from '@/components/labels/labels-provider';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -294,6 +295,35 @@ export function StepDone({ job, canRun }: { job: ImportJob; canRun: boolean }) {
   );
 }
 
+/**
+ * "Print labels for the new assets" (walk-through BUG-2, ED-38): the print-labels dialog for exactly the
+ * assets this import created (the asset filter `import_job_id`), not the whole asset list.
+ */
+function PrintNewAssets({ job }: { job: ImportJob }) {
+  const { t } = useI18n();
+  const hasLabels = useHasLabels();
+  if (!hasLabels) return null;
+  return <PrintNewAssetsButton job={job} label={t('importDone.printLabels')} />;
+}
+
+function PrintNewAssetsButton({ job, label }: { job: ImportJob; label: string }) {
+  const labels = useLabels();
+  return (
+    <Button
+      onClick={() =>
+        labels.open({
+          kind: 'filter',
+          query: { import_job_id: job.id },
+          total: job.counts.commit.created,
+        })
+      }
+    >
+      <Printer aria-hidden className="size-4" />
+      {label}
+    </Button>
+  );
+}
+
 function Actions({ job, canRun }: { job: ImportJob; canRun: boolean }) {
   const { t } = useI18n();
   const router = useRouter();
@@ -328,13 +358,10 @@ function Actions({ job, canRun }: { job: ImportJob; canRun: boolean }) {
             </Link>
           </Button>
         ) : null}
-        {job.state === 'completed' && job.entity_type === 'asset' ? (
-          <Button asChild>
-            <Link href={routes.assets}>
-              <Printer aria-hidden className="size-4" />
-              {t('importDone.printLabels')}
-            </Link>
-          </Button>
+        {job.state === 'completed' &&
+        job.entity_type === 'asset' &&
+        job.counts.commit.created > 0 ? (
+          <PrintNewAssets job={job} />
         ) : null}
         {retryable ? (
           <Button asChild variant="primary">

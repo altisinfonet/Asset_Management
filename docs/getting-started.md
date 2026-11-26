@@ -183,9 +183,9 @@ until it is `healthy`. The signatures live in the `clamdata` volume, so later st
 | Page (signed in as the demo `admin@acme.example`)   | What to try                                                                                          |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | **Assets** > select rows > **Print labels**            | Pick a sheet template, start the batch: it renders in the background (worker); the dialog polls and offers the PDF when it is ready. A notification arrives too. |
-| **Stock** (`/stock`)                                    | Accessories (check out several units, return some) and consumables (receive, issue, adjust with a note). Issue below the minimum: the stock managers get a "Low stock" notification. |
+| **Stock** (`/stock`)                                    | Accessories (check out several units, return some) and consumables (**Receive**, **Use**, and **Save count** with a note). Use units until the count falls below the minimum: the stock managers get a "Low stock" notification. |
 | **Repairs** (`/repairs`)                                | Open a repair on an asset (its status changes, "restore" on completion), complete it with a cost.    |
-| **Bell** in the header, **Account > Notifications**    | The in-app list, mark read, and per type choose in-app and email (immediate, daily digest, off). **Settings > Notifications** (administrators) turns types off or re-addresses them to other roles. |
+| **Bell** in the header, user menu (top right) > **Notification settings** | The in-app list, mark read, and per type choose in-app and email (immediate, daily digest, off). **Settings > Notifications** (administrators) turns types off or re-addresses them to other roles. |
 | **Assets** > **Views**, **Export**                     | Save the current filters as a personal view and share it with the organisation (needs `view:share`); export the list as CSV (needs `export:run`), the file is ready after a few seconds and removed after 24 hours. |
 | **Account > Security**                                 | Shows whether the organisation policy requires two-step verification for you.                        |
 

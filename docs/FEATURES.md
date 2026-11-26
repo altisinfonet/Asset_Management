@@ -155,7 +155,7 @@ location scoping, people and logins, K-12 mapping) are in [guides/](guides/READM
 | Feature              | What it does                                                                                                            | Status | Milestone | Stories |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------- | :----: | :-------: | ------- |
 | Accessories          | Items like cables and docks tracked by quantity: check out to people, partial returns, derived availability, scan codes |   ✅   |    M2     | ACC-01  |
-| Consumables          | Items that are used up: receive, issue, return, adjust (with a note) on an append-only ledger with a running balance    |   ✅   |    M2     | ACC-02  |
+| Consumables          | Items that are used up: receive, use, return, count (**Receive**, **Use**, **Save count**, with a note) on an append-only ledger with a running balance    |   ✅   |    M2     | ACC-02  |
 | Minimum-stock alerts | Notify the stock managers once when an item crosses its minimum, re-armed on restock                                    |   ✅   |    M2     | ACC-03  |
 | Stock screens        | Stock list with a low-stock filter, detail page, check-out and check-in with quantities, movement history, holders      |   ✅   |    M2     | ACC-04  |
 
@@ -174,7 +174,7 @@ location scoping, people and logins, K-12 mapping) are in [guides/](guides/READM
 | Feature                | What it does                                                                                                           | Status | Milestone | Stories         |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | :----: | :-------: | --------------- |
 | In-app notifications   | Bell with unread count, list, mark read and mark all read                                                              |   ✅   |    M2     | NOT-01, NOT-02  |
-| E-mail and digests     | Instant or daily-digest e-mail per user; per-user preferences (Account > Notifications)                                |   ✅   |    M2     | NOT-01, NOT-02  |
+| E-mail and digests     | Instant or daily-digest e-mail per user; per-user preferences (user menu > Notification settings)                                |   ✅   |    M2     | NOT-01, NOT-02  |
 | Notification rules     | Administrators choose who is notified for which event (Settings > Notifications)                                       |   ✅   |    M2     | NOT-02          |
 | Events covered         | Infected upload, asset checked out, export ready, import finished, low stock (consumables and accessories), label batch ready or failed |   ✅   |    M2     | NOT-01          |
 | Loan events            | Overdue loans (daily while out, the text escalates after a week and two weeks) and due-soon reminders for loaner loans reach the borrower with a login and the pool owner or managers |   ✅   | M2 wave 3 | LOAN-03         |

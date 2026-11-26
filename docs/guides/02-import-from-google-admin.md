@@ -3,9 +3,9 @@
 Bring every Chromebook your school manages in Google Admin into the Asset Tracker. The tracker already knows what the
 Google device export looks like, so the columns are matched for you. This guide uses ten example Chromebooks.
 
-**Who can do this:** Administrators (the import creates the "Chromebook" category the first time, which needs permission
-to manage the catalogue, and the departments of new organisational units, which needs `department:manage`) and Asset
-managers once the category and the departments exist.
+**Who can do this:** an Administrator or an Asset manager. Both can run the first import, which creates the "Chromebook"
+category (needs permission to manage the catalogue) and the departments of new organisational units (needs
+`department:manage`). A role limited to one site cannot, because it never holds those two permissions.
 **How long it takes:** about five minutes, plus the time Google needs to prepare the export.
 
 ## Before you start
@@ -124,7 +124,7 @@ updated. An asset that is checked out to somebody keeps its status.
 
 | What you see                                                                                            | What to do                                                                                                                                            |
 | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Starting this import creates the Chromebook category … That needs permission to manage the catalogue." | Ask an Administrator to run the first import. Later imports need no extra permission.                                                                 |
+| "Starting this import creates the Chromebook category … That needs permission to manage the catalogue." | Ask an Administrator or an Asset manager to run the first import (a site-limited role cannot create the category).                                                              |
 | A row says a record "does not exist" for the **User**                                                   | That person is not in **People** yet, or the e-mail address is different. Import the people first, or fix the address, and run the import again.      |
 | A device shows **Retired**                                                                              | It was **DISABLED** or **DEPROVISIONED** in Google. Re-enable it in Google and import again, or change its status in the register.                    |
 | Devices have no asset tag you recognise                                                                 | Their **Asset ID** was empty in Google. The tracker gave them the next number of your tag numbering. Fill in the Asset ID in Google and import again. |

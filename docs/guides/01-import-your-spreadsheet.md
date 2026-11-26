@@ -166,7 +166,8 @@ unchanged**, so you can correct the row in place:
 | `Warnings` | Things the import will do on the way                |
 
 For the example file the report says: row 6, field `purchase_cost`, "Purchase cost "about 389" is not a number", and
-row 8, field `category`, "The row has no category (map a Category column or choose a default category)". Correct those
+row 8, fields `category, model`, "The row has no category (map a Category column or choose a default category)" (the
+model is named too, because it can only be matched once the device has a category). Correct those
 two cells in your spreadsheet, then upload the file again. Rows that were already imported are **left as they are**
 (with the default setting **Leave it as it is**), so only the two corrected devices are created.
 

@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useCustody } from '@/components/custody/custody-provider';
 import { AttachmentsPanel } from '@/components/files/attachments-panel';
 import { useLabels } from '@/components/labels/labels-provider';
@@ -174,8 +174,6 @@ function AssetById({ id }: { id: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [lifecycle, setLifecycle] = useState<LifecycleAction | null>(null);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
-  const primaryAction = useRef<HTMLButtonElement>(null);
-  const scanned = params.get('scanned') === '1';
   const tabParam = params.get('tab');
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? '')
     ? (tabParam as Tab)
@@ -200,11 +198,8 @@ function AssetById({ id }: { id: string }) {
     enabled: asset.isSuccess,
   });
 
-  // Arriving from a scan: the primary custody action takes focus, so Enter starts the hand-over.
-  const loaded = asset.isSuccess;
-  useEffect(() => {
-    if (scanned && loaded) primaryAction.current?.focus();
-  }, [scanned, loaded]);
+  // Arriving from a scan (`&scanned=1`), focus stays in the top bar's scan field so a scanner can read
+  // label after label (founder decision, walk-through step 17); the scan provider announces the asset.
 
   if (asset.isLoading) {
     return (
@@ -306,7 +301,6 @@ function AssetById({ id }: { id: string }) {
               return (
                 <Button
                   key={action}
-                  ref={index === 0 ? primaryAction : undefined}
                   variant={index === 0 ? 'primary' : 'secondary'}
                   onClick={() => custody.open({ assets: [value], action, onDone: refresh })}
                 >
@@ -337,7 +331,6 @@ function AssetById({ id }: { id: string }) {
               return (
                 <Button
                   key={action}
-                  ref={leads ? primaryAction : undefined}
                   variant={leads ? 'primary' : 'secondary'}
                   onClick={() => setLifecycle(action)}
                 >

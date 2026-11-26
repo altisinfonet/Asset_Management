@@ -77,6 +77,65 @@ describe('AssetsTable: saved views on the server', () => {
     expect(screen.getByPlaceholderText('Tag, serial or name')).toHaveValue('PRJ-');
   });
 
+  it('clears the view with "Clear all filters", applies it again when chosen again, and exports what is shown', async () => {
+    // walk-through step 24 (BUG-1): the view was still selected after Clear all, so choosing it did nothing
+    setMockExportDelay(50);
+    const sent: unknown[] = [];
+    server.events.on('request:start', async ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/v1/exports') {
+        sent.push(await request.clone().json());
+      }
+    });
+    const user = userEvent.setup();
+    renderApp(<AssetsTable />, { workflows: true });
+    await loaded();
+    await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'PRJ-');
+    await screen.findByText('Showing 1-10 of 10', {}, { timeout: 5000 });
+    await user.click(screen.getByRole('button', { name: 'Save view' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Save this view' });
+    await user.type(within(dialog).getByRole('textbox', { name: /^View name/ }), 'Beamers');
+    await user.click(within(dialog).getByRole('button', { name: 'Save view' }));
+    expect(await screen.findByText('View "Beamers" saved.')).toBeVisible();
+    expect(await viewSelect()).toHaveTextContent('Beamers');
+
+    await user.click(screen.getByRole('button', { name: 'Clear all filters' }));
+    await waitFor(() => expect(screen.getByPlaceholderText('Tag, serial or name')).toHaveValue(''));
+    expect(await viewSelect()).toHaveTextContent('All assets');
+    expect(screen.queryByRole('button', { name: 'Update view' })).not.toBeInTheDocument();
+
+    await user.click(await viewSelect());
+    await user.click(await screen.findByRole('option', { name: 'Beamers' }));
+    await waitFor(
+      () => expect(screen.getByTestId('assets-range')).toHaveTextContent('Showing 1-10 of 10'),
+      { timeout: 5000 },
+    );
+    expect(screen.getByPlaceholderText('Tag, serial or name')).toHaveValue('PRJ-');
+    expect(screen.getByRole('button', { name: 'Clear all filters' })).toBeVisible();
+
+    // a filter changed by hand: the selector says so, and choosing the view again restores it
+    await user.type(screen.getByPlaceholderText('Tag, serial or name'), 'X');
+    await waitFor(async () => expect(await viewSelect()).toHaveTextContent('Beamers (changed)'), {
+      timeout: 5000,
+    });
+    await user.click(await viewSelect());
+    await user.click(await screen.findByRole('option', { name: 'Beamers' }));
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText('Tag, serial or name')).toHaveValue('PRJ-'),
+    );
+    await screen.findByText('Showing 1-10 of 10', {}, { timeout: 5000 });
+
+    await user.click(screen.getByRole('button', { name: 'Export CSV' }));
+    const exportDialog = await screen.findByRole('dialog', { name: 'Export to CSV' });
+    await within(exportDialog).findByRole('link', { name: 'Download CSV' }, { timeout: 4000 });
+    expect(within(exportDialog).getByTestId('export-status')).toHaveTextContent(
+      '10 rows exported.',
+    );
+    expect(sent.at(-1)).toEqual({
+      resource: 'assets',
+      filters: { q: 'PRJ-', archived: 'exclude' },
+    });
+  });
+
   it('shares a view with the organisation, renames it, updates it and deletes it', async () => {
     const user = userEvent.setup();
     renderApp(<AssetsTable />, { workflows: true });

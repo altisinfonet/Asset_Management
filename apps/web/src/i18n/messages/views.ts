@@ -7,6 +7,7 @@ export const viewsMessages = {
     shared: 'shared',
     sharedBy: 'shared by {name}',
     sharedOption: '{name} (shared)',
+    modified: '{name} (changed)',
     share: 'Share with everyone in the organisation',
     shareHint: 'Everyone who can see assets can use this view; only you can change it.',
     update: 'Update view',

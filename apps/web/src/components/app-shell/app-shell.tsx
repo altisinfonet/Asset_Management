@@ -90,6 +90,12 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
   const scanRef = useRef<HTMLInputElement>(null);
+  // the scan provider sends focus back here after a scan opens an asset
+  const setScanField = scan.setScanField;
+  useEffect(() => {
+    setScanField(scanRef.current);
+    return () => setScanField(null);
+  }, [setScanField]);
   const canCreateAsset = auth.can('asset:create');
   const canImport = auth.can('import:run');
   const canLoanerDesk = auth.can('loaner:checkout');
@@ -397,7 +403,9 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
     event.preventDefault();
     const code = new FormData(event.currentTarget).get('scan');
     if (typeof code === 'string' && code.trim()) {
-      event.currentTarget.reset();
+      // cleared at once (not after the lookup), so the next scan typed right away starts empty
+      if (scanRef.current) scanRef.current.value = '';
+      else event.currentTarget.reset();
       void scan.scan(code, 'field');
     }
   };

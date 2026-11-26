@@ -8,17 +8,17 @@ import { heldAsset, pick, readyAsset, wedge } from './m2-helpers';
  * also uses the real keyboard with no pause). A person types at 100 ms or more between keys.
  */
 test.describe('wedge scanner on any page', () => {
-  test('a scan with nothing focused opens the asset, with its primary action focused', async ({
+  test('a scan with nothing focused opens the asset and puts focus in the scan field', async ({
     page,
   }) => {
+    // founder decision (walk-through step 17): the next scan goes into the scan field, never into
+    // the Check out / Check in button
     const asset = await readyAsset(page);
     await gotoApp(page, '/settings/organisation');
     await wedge(page, asset.asset_tag);
     await expect(page.getByTestId('asset-tag')).toHaveText(asset.asset_tag);
-    // Enter now starts the check-out
-    await expect(page.getByRole('button', { name: 'Check out', exact: true })).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('dialog', { name: `Check out ${asset.asset_tag}` })).toBeVisible();
+    await expect(page.getByPlaceholder('Scan or type tag')).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Check out', exact: true })).not.toBeFocused();
   });
 
   test('works from the dashboard, the people list and the locations tree alike', async ({
@@ -29,7 +29,7 @@ test.describe('wedge scanner on any page', () => {
       await gotoApp(page, url);
       await wedge(page, asset.asset_tag);
       await expect(page.getByTestId('asset-tag')).toHaveText(asset.asset_tag);
-      await expect(page.getByRole('button', { name: 'Check in', exact: true })).toBeFocused();
+      await expect(page.getByPlaceholder('Scan or type tag')).toBeFocused();
     }
   });
 
@@ -119,6 +119,30 @@ test.describe('manual entry in the top bar', () => {
     await page.getByPlaceholder('Scan or type tag').fill(serial);
     await page.getByPlaceholder('Scan or type tag').press('Enter');
     await expect(page.getByTestId('asset-tag')).toHaveText('AT-00007');
+  });
+});
+
+test.describe('a scanner reading label after label into the top bar (walk-through step 17)', () => {
+  test('ten fast scans in a row open the tenth asset, keep the field focused and lose nothing', async ({
+    page,
+  }) => {
+    const tags = Array.from({ length: 10 }, (_, i) => `AT-${String(101 + i).padStart(5, '0')}`);
+    await gotoApp(page, '/assets');
+    await page.keyboard.press('/');
+    const field = page.getByPlaceholder('Scan or type tag');
+    await expect(field).toBeFocused();
+    // a keyboard-wedge scanner: a few ms between keys, Enter, and the next label right away
+    for (const tag of tags) {
+      await page.keyboard.type(tag, { delay: 2 });
+      await page.keyboard.press('Enter');
+    }
+    const last = tags.at(-1)!;
+    await expect(page.getByTestId('asset-tag')).toHaveText(last, { timeout: 15_000 });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('');
+    await expect(page.getByTestId('scan-announcement')).toContainText(`Opened ${last}`);
+    await expect(page.getByText(/No asset matches/)).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
 

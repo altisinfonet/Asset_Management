@@ -27,6 +27,12 @@ import {
 } from '@/lib/views/convert';
 
 const DEFAULT_VIEW = '__default__';
+/** The selector's value while the list no longer shows what the chosen view applied. */
+const MODIFIED_VIEW = '__modified__';
+
+/** The filters of a list state (search included; columns and sort are not filters), as a comparable key. */
+const filtersKey = (state: AssetViewState): string => JSON.stringify(toDefinition(state).filters);
+const DEFAULT_FILTERS = filtersKey(defaultViewState());
 export const SAVED_VIEWS_KEY = ['saved-views'] as const;
 
 /**
@@ -50,6 +56,8 @@ export function SavedViewsBar({
   const { me, can } = useAuth();
   const client = useQueryClient();
   const [activeId, setActiveId] = useState(DEFAULT_VIEW);
+  /** The filters the chosen view put on the list (or the list had when it was saved or updated). */
+  const [appliedFilters, setAppliedFilters] = useState(DEFAULT_FILTERS);
   const [saveOpen, setSaveOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -69,7 +77,16 @@ export function SavedViewsBar({
     const all = views.data ?? [];
     return [...all.filter((view) => view.is_owner), ...all.filter((view) => !view.is_owner)];
   }, [views.data]);
-  const active = list.find((view) => view.id === activeId);
+  const chosen = list.find((view) => view.id === activeId);
+  const currentFilters = filtersKey(current);
+  // "Clear all filters" (or clearing them one by one) leaves the view: the selector says "All assets"
+  // again, so choosing the view afterwards is a real change and applies it (BUG-1, walk-through step 24).
+  const active =
+    chosen && currentFilters === DEFAULT_FILTERS && appliedFilters !== DEFAULT_FILTERS
+      ? undefined
+      : chosen;
+  // Filters changed since the view was applied: the selector says so, and choosing the view restores it.
+  const modified = !!active && currentFilters !== appliedFilters;
 
   // Views from this browser (the earlier version) move to the account the first time the list loads.
   useEffect(() => {
@@ -100,9 +117,11 @@ export function SavedViewsBar({
   );
 
   const apply = (id: string) => {
+    if (id === MODIFIED_VIEW) return;
     setActiveId(id);
     setDropped(null);
     if (id === DEFAULT_VIEW) {
+      setAppliedFilters(DEFAULT_FILTERS);
       onApply(defaultViewState());
       return;
     }
@@ -113,6 +132,7 @@ export function SavedViewsBar({
     const result = degradeState(warned.state, refs);
     const parts = [...new Set([...warned.dropped, ...result.dropped])];
     if (parts.length > 0) setDropped({ name: view.name, parts });
+    setAppliedFilters(filtersKey(result.state));
     onApply(result.state);
   };
 
@@ -143,10 +163,13 @@ export function SavedViewsBar({
         {t('assets.views.label')}
         <Select
           aria-label={t('assets.views.label')}
-          value={active ? active.id : DEFAULT_VIEW}
+          value={active ? (modified ? MODIFIED_VIEW : active.id) : DEFAULT_VIEW}
           onValueChange={apply}
           className="w-56"
           options={[
+            ...(active && modified
+              ? [{ value: MODIFIED_VIEW, label: t('savedViews.modified', { name: active.name }) }]
+              : []),
             { value: DEFAULT_VIEW, label: t('assets.views.all') },
             ...list.map((view) => ({ value: view.id, label: label(view) })),
           ]}
@@ -164,6 +187,7 @@ export function SavedViewsBar({
               void savedViewsApi
                 .update(active.id, toDefinition(current))
                 .then(() => {
+                  setAppliedFilters(filtersKey(current));
                   toast({
                     variant: 'success',
                     title: t('savedViews.updateDone', { name: active.name }),
@@ -233,6 +257,7 @@ export function SavedViewsBar({
             } catch (err) {
               await refresh();
               setActiveId(created.id);
+              setAppliedFilters(filtersKey(current));
               const ui = getApi().toUiError(err);
               toast({
                 variant: 'warning',
@@ -245,6 +270,7 @@ export function SavedViewsBar({
           }
           await refresh();
           setActiveId(created.id);
+          setAppliedFilters(filtersKey(current));
           setDropped(null);
           toast({ variant: 'success', title: t('savedViews.saved', { name }) });
         }}

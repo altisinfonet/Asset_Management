@@ -62,12 +62,22 @@ describe('AssetView: custody actions', () => {
     expect(overview.nextElementSibling).toHaveTextContent(/Overdue/);
   });
 
-  it('arriving from a scan puts focus on the primary action', async () => {
+  it('arriving from a scan leaves focus where it is (the scan field), not on the primary action', async () => {
+    // founder decision (walk-through step 17): the next scan must not land on Check out / Check in
     const free = await ready();
     open(`id=${free.id}&scanned=1`);
-    renderApp(<AssetView />, { workflows: true });
-    const button = await screen.findByRole('button', { name: 'Check out' });
-    await waitFor(() => expect(button).toHaveFocus());
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    field.focus();
+    try {
+      renderApp(<AssetView />, { workflows: true });
+      const button = await screen.findByRole('button', { name: 'Check out' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(button).not.toHaveFocus();
+      expect(field).toHaveFocus();
+    } finally {
+      field.remove();
+    }
   });
 
   it('the Check out button opens the dialog for the asset', async () => {

@@ -124,6 +124,43 @@ describe('keyboard-wedge scanner (global)', () => {
     expect(screen.getByPlaceholderText('Scan or type tag')).toHaveValue('');
   });
 
+  it('stays in the scan field after it opens an asset and announces the asset, scan after scan', async () => {
+    // founder decision (walk-through step 17): a wedge scanner reads label after label into the field
+    await shell();
+    const assets = (
+      await assetsApi.list({
+        state_type: ['deployable'],
+        assigned: false,
+        sort: ['asset_tag'],
+        limit: 3,
+      })
+    ).data;
+    const user = userEvent.setup();
+    const field = screen.getByPlaceholderText('Scan or type tag');
+    await user.click(field);
+    for (const asset of assets) await user.keyboard(`${asset.asset_tag}{Enter}`);
+    await waitFor(() => expect(router.push).toHaveBeenCalledTimes(assets.length));
+    assets.forEach((asset, i) =>
+      expect(router.push).toHaveBeenNthCalledWith(i + 1, `/assets/view?id=${asset.id}&scanned=1`),
+    );
+    expect(field).toHaveFocus();
+    const last = assets.at(-1)!;
+    await waitFor(() =>
+      expect(screen.getByTestId('scan-announcement')).toHaveTextContent(
+        last.name ? `Opened ${last.asset_tag}, ${last.name}.` : `Opened ${last.asset_tag}.`,
+      ),
+    );
+  });
+
+  it('a wedge scan with nothing focused opens the asset and puts focus in the scan field', async () => {
+    await shell();
+    const asset = await firstAsset({ state_type: ['deployable'], assigned: false });
+    document.body.focus();
+    scanBurst(asset.asset_tag);
+    await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByPlaceholderText('Scan or type tag')).toHaveFocus());
+  });
+
   it('a serial number resolves like a tag (fallback to the exact serial lookup)', async () => {
     await shell();
     const asset = await firstAsset({ state_type: ['deployable'], assigned: false });

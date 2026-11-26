@@ -341,6 +341,8 @@ export const m2Messages = {
   },
   scan: {
     openPanel: 'Scan assets',
+    opened: 'Opened {tag}, {name}.',
+    openedTag: 'Opened {tag}.',
     notFound: 'No asset matches "{code}".',
     ambiguous:
       'More than one asset has the serial number "{code}". Scan its label or enter its asset tag instead.',

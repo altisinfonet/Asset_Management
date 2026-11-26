@@ -56,6 +56,11 @@ interface ScanContextValue {
    * field never reach it; only the bursts of a scanner while nothing editable has focus.
    */
   setScanTarget: (target: ScanTarget | null) => void;
+  /**
+   * The top bar's scan field (pass null when it unmounts). After a scan from the field or a wedge scan
+   * opens an asset, focus goes back to it so a scanner can read label after label.
+   */
+  setScanField: (field: HTMLInputElement | null) => void;
   panelOpen: boolean;
   openPanel: () => void;
   closePanel: () => void;
@@ -111,8 +116,8 @@ const LOG_LIMIT = 50;
 
 /**
  * Keyboard-wedge scanning and manual tag entry (M2-LIFE-08). Scanned or typed text resolves through
- * `GET /v1/scan/resolve`: in the default mode the asset opens (its primary custody action takes
- * focus); in batch mode every scan checks the asset out to one person or in, and the result is
+ * `GET /v1/scan/resolve`: in the default mode the asset opens (focus stays in, or returns to, the
+ * top bar's scan field and the opened asset is announced); in batch mode every scan checks the asset out to one person or in, and the result is
  * logged and announced. A global key listener recognises a wedge scanner (a burst of keys then
  * Enter) when nothing editable is focused, so scanning works from any page.
  */
@@ -137,6 +142,9 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const target = useRef<ScanTarget | null>(null);
   const last = useRef<{ code: string; at: number } | null>(null);
   const counter = useRef(0);
+  const field = useRef<HTMLInputElement | null>(null);
+  /** What the last scan opened, for screen readers (the page changes under the scan field). */
+  const [announcement, setAnnouncement] = useState('');
 
   const log = useCallback((entry: Omit<ScanLogEntry, 'id'>) => {
     // a scan that failed may be tried again at once (after fixing what was missing)
@@ -190,6 +198,16 @@ export function ScanProvider({ children }: { children: ReactNode }) {
           if (isAssetCode(outcome.code)) pushRecent({ type: 'asset', code: outcome.code });
           setPanelOpen(false);
           router.push(routes.assetScanned(asset.id));
+          // Stay in the scan field (founder decision, walk-through step 17): the field lives in the
+          // app shell, so it stays mounted across the page change and nothing typed meanwhile is lost.
+          if (source !== 'panel' && field.current && document.activeElement !== field.current) {
+            const active = document.activeElement as HTMLElement | null;
+            if (!active || active === document.body || !isTypingTarget(active))
+              field.current.focus();
+          }
+          setAnnouncement(
+            asset.name ? t('scan.opened', { tag, name: asset.name }) : t('scan.openedTag', { tag }),
+          );
           if (batchRef.current.sound) beep('ok');
           return;
         }
@@ -249,6 +267,9 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const setScanTarget = useCallback((next: ScanTarget | null) => {
     target.current = next;
   }, []);
+  const setScanField = useCallback((next: HTMLInputElement | null) => {
+    field.current = next;
+  }, []);
 
   /** Scans are handled one at a time, in the order they arrived (a scanner can outrun the API). */
   const scan = useCallback(
@@ -298,6 +319,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     () => ({
       scan,
       setScanTarget,
+      setScanField,
       panelOpen,
       openPanel: () => setPanelOpen(true),
       closePanel: () => {
@@ -311,13 +333,16 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       setSound: (sound) => setBatch((current) => ({ ...current, sound })),
       clearLog: () => setBatch((current) => ({ ...current, log: [] })),
     }),
-    [scan, setScanTarget, panelOpen, batch],
+    [scan, setScanTarget, setScanField, panelOpen, batch],
   );
 
   return (
     <ScanContext.Provider value={value}>
       {children}
       <ScanPanel />
+      <div role="status" aria-live="polite" className="sr-only" data-testid="scan-announcement">
+        {announcement}
+      </div>
     </ScanContext.Provider>
   );
 }

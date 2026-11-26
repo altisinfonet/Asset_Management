@@ -339,6 +339,8 @@ export const CORPUS: Record<string, () => Buffer> = {
         ['duptag-1', 'DUP-003', 'Same tag, other case', 'Laptops', '', '', ''],
         ['', 'EXISTING-SN', 'Serial already in the registry', 'Laptops', '', '', ''],
         ['EXISTING-TAG', 'DUP-004', 'Tag already in the registry', 'Laptops', '', '', ''],
+        // ED-35: a new tag whose serial is another asset's is a row error, not a second asset
+        ['NEWTAG-1', 'EXISTING-SN2', 'New tag, serial in the registry', 'Laptops', '', '', ''],
         ['', 'DUP-005', 'Unique', 'Laptops', '', '', ''],
       ]),
       'utf8',

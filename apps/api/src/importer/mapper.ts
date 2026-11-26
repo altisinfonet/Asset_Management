@@ -162,6 +162,20 @@ export interface MapContext {
   constants?: Record<string, string>;
 }
 
+/**
+ * A summary line at the foot of a spreadsheet ("TOTAL ITEMS: 120", "Grand total 58,000"): exactly one
+ * non-empty cell, which starts with total / subtotal / grand total / sum / count and holds a number.
+ * Returns that cell, or null. Such a row is skipped by the dry run with its own reason (ED-36) instead of
+ * failing on whatever field it lacks.
+ */
+export function summaryRowText(cells: readonly string[]): string | null {
+  const filled = cells.map((c) => cellText(c)).filter((c) => c !== '');
+  if (filled.length !== 1) return null;
+  const text = filled[0]!;
+  if (text.length > 120 || !/\d/.test(text)) return null;
+  return /^(?:grand\s+|sub\s*-?\s*)?(?:totals?|sum|count)\b/i.test(text) ? text : null;
+}
+
 /** One row of cells -> the typed record and the problems with the cells themselves. */
 export function mapRow(
   cells: readonly string[],

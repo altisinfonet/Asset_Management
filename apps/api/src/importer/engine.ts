@@ -17,7 +17,7 @@ import {
   inNamedSavepoint,
   jobAuth,
 } from './handlers/shared.js';
-import { type ColumnPlan, checkMapping, mapRow, planColumns } from './mapper.js';
+import { type ColumnPlan, checkMapping, mapRow, planColumns, summaryRowText } from './mapper.js';
 import { applyPreset } from './presets.js';
 import type { RefServices } from './refs.js';
 import {
@@ -435,8 +435,10 @@ export class ImportEngine {
           baseCurrency: env.baseCurrency,
           constants: (job.mapping as { constants?: Record<string, string> }).constants ?? {},
         });
-        const keys = handler.keys(record, env);
-        return { r, record, issues, keys };
+        // ED-36: a "TOTAL ITEMS: 120" line at the foot of the sheet is skipped, not a row error
+        const summary = summaryRowText(r.raw);
+        const keys = summary ? { k1: null, k2: null } : handler.keys(record, env);
+        return { r, record, issues, keys, summary };
       });
       // 2. in-file duplicates: against earlier batches (stored keys) and inside this batch
       const first = await this.earlierKeys(
@@ -462,6 +464,20 @@ export class ImportEngine {
       const work: WorkRow[] = [];
       const verdicts = new Map<number, Verdict>();
       for (const p of prepared) {
+        if (p.summary !== null) {
+          verdicts.set(p.r.row_no, {
+            plan: 'skip',
+            errors: [],
+            warnings: [
+              {
+                field: null,
+                code: 'summary-row',
+                message: `A summary line ("${p.summary.slice(0, 60)}"), not data; skipped.`,
+              },
+            ],
+          });
+          continue;
+        }
         if (p.issues.length > 0) {
           verdicts.set(p.r.row_no, { plan: 'error', errors: p.issues, warnings: [] });
           continue;

@@ -246,17 +246,37 @@ describe.skipIf(!dbEnabled)(`people, location and department imports (${mode})`,
     const rows = await allRows(admin(), job.id);
     expect(rows[0]!.errors[0]).toMatchObject({ field: 'location', code: 'not-found' });
     expect(rows[0]!.errors[0].message).toMatch(/Create it first/);
-    // a missing person alone is a warning: the asset is still imported, unassigned
+    // ED-34 (walk-through BUG-4): a person that matches nothing makes the row an error, as the value
+    // step ("Not found: its rows will be errors") and guide 2 say
     const ok = await patchImport(admin(), job.id, {
       options: { references: { location: 'create' } },
     });
     expect(ok.status).toBe(200);
     const dry2 = await dryRun(ih, admin(), t.tenantId, job.id);
     const rows2 = await allRows(admin(), job.id);
-    expect(dry2.counts.dry_run.create).toBe(1);
-    expect(rows2[0]!.warnings.map((w: Json) => w.code)).toEqual(
+    expect(dry2.counts.dry_run).toMatchObject({ create: 0, error: 1 });
+    expect(rows2[0]!.errors).toEqual([
+      expect.objectContaining({ field: 'assigned_to', code: 'not-found' }),
+    ]);
+    expect(rows2[0]!.errors[0].message).toMatch(/No person named "ghost@example.com"/);
+    // without the hand-over the column is not used: the asset is imported with a warning
+    expect((await patchImport(admin(), job.id, { options: { assign: false } })).status).toBe(200);
+    const dry3 = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry3.counts.dry_run.create).toBe(1);
+    const rows3 = await allRows(admin(), job.id);
+    expect(rows3[0]!.warnings.map((w: Json) => w.code)).toEqual(
       expect.arrayContaining(['not-found']),
     );
+    // "Create it" for people (the value step's policy) creates the person and hands the asset over
+    expect(
+      (
+        await patchImport(admin(), job.id, {
+          options: { assign: true, references: { location: 'create', person: 'create' } },
+        })
+      ).status,
+    ).toBe(200);
+    const dry4 = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry4.counts.dry_run).toMatchObject({ create: 1, error: 0 });
     expect(mappingOf(job, { Serial: 'serial' }).columns).toHaveLength(job.headers.length);
   });
 });

@@ -23,6 +23,7 @@ import {
 } from '../ports/index.js';
 import { CategoriesService, CustomFieldsService, RegistryBase } from '../registry/index.js';
 import {
+  Prisma,
   TenancyService,
   currentLocationScope,
   intersectLocationScopes,
@@ -35,7 +36,7 @@ import { IMPORT_ANALYZE_JOB, IMPORT_STEP_JOB } from './engine.js';
 import { ImportEngine } from './engine.js';
 import { FileFormatError } from './csv-reader.js';
 import { type CustomTarget, type EntityType, type RefKind, specOf } from './fields.js';
-import { RefResolver } from './refs.js';
+import { RefResolver, type Resolution, createsLocations, locationTextsOf } from './refs.js';
 import { formatOf } from './reader.js';
 import { GOOGLE_CHROMEBOOK_CATEGORY, PRESETS, type Preset, presetOf } from './presets.js';
 import type {
@@ -52,6 +53,7 @@ import {
   type ImportState,
   type JobRow,
   type RowIssue,
+  type ValueMap,
   RUNNING_STATES,
   optionsSchema,
 } from './types.js';
@@ -1075,6 +1077,60 @@ export class ImportsService extends RegistryBase {
 
   // ---------------------------------------------------------------------------------------- values
 
+  /**
+   * For the model values of an asset import: the category and manufacturer each value's rows resolve to
+   * (ED-37), so the value step checks a model inside its rows' category, as the dry run does. A category
+   * that does not exist (yet) is `null`: the import creates it and the model with it.
+   */
+  private async modelScopes(
+    trx: Tx,
+    job: JobRecord,
+    options: ImportOptions,
+    context: RefResolver,
+    idx: number,
+    hasColumn: boolean,
+  ): Promise<Map<string, Array<{ categoryId: string | null; manufacturerId: string | null }>>> {
+    const mapping = (job.mapping ?? {}) as {
+      columns?: Array<{ index: number; target: string | null }>;
+      constants?: Record<string, string>;
+    };
+    const constants = mapping.constants ?? {};
+    const colOf = (target: string) => (mapping.columns ?? []).find((c) => c.target === target);
+    const cell = (c: { index: number } | undefined) =>
+      c ? Prisma.sql`nullif(btrim(raw->>${c.index}::int), '')` : Prisma.sql`null::text`;
+    const model = hasColumn
+      ? Prisma.sql`btrim(raw->>${idx}::int)`
+      : Prisma.sql`${constants.model ?? ''}::text`;
+    const rows = await trx.$queryRaw<Array<{ v: string; c: string | null; m: string | null }>>`
+      select distinct ${model} as v, ${cell(colOf('category'))} as c, ${cell(colOf('manufacturer'))} as m
+        from app.import_row where job_id = ${job.id}::uuid and nullif(${model}, '') is not null
+       limit 5000`;
+    const idOf = async (kind: RefKind, text: string | null | undefined) => {
+      if (!text) return null;
+      const res = await context.resolve(kind, text);
+      return res.kind === 'found' ? res.id : null;
+    };
+    const out = new Map<
+      string,
+      Array<{ categoryId: string | null; manufacturerId: string | null }>
+    >();
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const categoryText = r.c ?? constants.category ?? null;
+      const categoryId = categoryText
+        ? await idOf('category', categoryText)
+        : (options.defaults.category ?? null);
+      const manufacturerId = await idOf('manufacturer', r.m ?? constants.manufacturer ?? null);
+      const key = `${r.v}|${categoryId}|${manufacturerId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const list = out.get(r.v) ?? [];
+      list.push({ categoryId, manufacturerId });
+      out.set(r.v, list);
+    }
+    return out;
+  }
+
   async values(
     auth: AuthContext,
     id: string,
@@ -1119,41 +1175,61 @@ export class ImportsService extends RegistryBase {
           )[0]?.n ?? 0)
         : 1;
       const options = optionsSchema.parse(job.options ?? {});
-      const resolver = new RefResolver(
-        trx,
-        jobAuth(auth.tenantId, auth.userId),
-        {
-          ...options,
-          references: Object.fromEntries(
-            (ENTITY_REFS[entity].concat(['status']) as RefKind[]).map((k) => [k, 'must_exist']),
-          ) as never,
-        },
-        {},
-        this.refServices,
-        'dry',
-      );
-      const valueMap = (job.value_map ?? {}) as Record<string, Record<string, unknown>>;
-      const models =
+      // ED-37: the same resolver rules as the dry run, with nothing created: a name that would be created
+      // comes back "not found" (the web says "Will be created" or "Not found" by the kind's policy).
+      const lookOnly = (valueMap: ValueMap) =>
+        new RefResolver(
+          trx,
+          jobAuth(auth.tenantId, auth.userId),
+          {
+            ...options,
+            references: Object.fromEntries(
+              (ENTITY_REFS[entity].concat(['status']) as RefKind[]).map((k) => [k, 'must_exist']),
+            ) as never,
+          },
+          valueMap,
+          this.refServices,
+          'dry',
+        );
+      const valueMap = (job.value_map ?? {}) as ValueMap;
+      // the value itself is looked up by name (its own entry is shown apart, as `entry`) ...
+      const resolver = lookOnly({});
+      // ... the other references of its rows (a model's category and manufacturer) as the dry run sees them
+      const context = lookOnly(valueMap);
+      if (kind === 'location' && createsLocations(options)) {
+        resolver.planLocations(() => locationTextsOf(trx, job));
+      }
+      const scopes =
         kind === 'model'
-          ? await trx.asset_model.findMany({
-              where: { archived_at: null },
-              select: { id: true, name: true },
-            })
-          : [];
+          ? await this.modelScopes(trx, job, options, context, idx, col !== undefined)
+          : null;
       const data = [];
       for (const g of grouped) {
         let suggestion: { id: string; name: string } | null = null;
-        if (kind === 'model') {
-          const same = models.filter((m) => normKey(m.name) === normKey(g.v));
-          if (same.length === 1) suggestion = { id: same[0]!.id, name: same[0]!.name };
-        } else {
-          const res = await resolver.resolve(kind, g.v);
-          if (res.kind === 'found') suggestion = { id: res.id, name: res.name };
+        let issue: { code: string; message: string } | null = null;
+        const results: Resolution[] = [];
+        if (scopes) {
+          for (const scope of scopes.get(g.v) ?? [{ categoryId: null, manufacturerId: null }]) {
+            // a category that does not exist yet is created by the import, and so is the model
+            if (scope.categoryId === null) results.push({ kind: 'create', name: g.v });
+            else results.push(await resolver.resolve('model', g.v, scope));
+          }
+        } else results.push(await resolver.resolve(kind, g.v));
+        for (const res of results) {
+          if (res.kind === 'error' && res.issue.code !== 'not-found') {
+            issue = { code: res.issue.code, message: res.issue.message };
+            break;
+          }
+        }
+        if (!issue && results.length > 0 && results.every((r) => r.kind === 'found')) {
+          const first = results[0] as Extract<Resolution, { kind: 'found' }>;
+          suggestion = { id: first.id, name: first.name };
         }
         data.push({
           value: g.v,
           count: g.n,
           suggestion,
+          issue,
           entry: valueMap[kind]?.[normKey(g.v)] ?? null,
         });
       }

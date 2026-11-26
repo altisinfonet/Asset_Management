@@ -555,6 +555,14 @@ export function assetConditions(q: AssetListQuery, cf: CustomFieldFilter[]): Pri
   if (q.in_loaner_pool !== undefined) {
     c.push(q.in_loaner_pool ? Prisma.sql`exists (${member})` : Prisma.sql`not exists (${member})`);
   }
+  // BUG-2 (ED-38): the assets an import created, from its rows (key (tenant_id, job_id, row_no)); after
+  // the rows are purged (ED-25) the filter matches nothing
+  if (q.import_job_id) {
+    c.push(
+      Prisma.sql`a.id in (select r.created_id from app.import_row r
+        where r.job_id = ${q.import_job_id}::uuid and r.result = 'created' and r.created_id is not null)`,
+    );
+  }
   if (q.department_id) c.push(Prisma.sql`a.department_id = ${q.department_id}::uuid`);
   if (q.company_id) c.push(Prisma.sql`a.company_id = ${q.company_id}::uuid`);
   if (q.vendor_id) c.push(Prisma.sql`a.vendor_id = ${q.vendor_id}::uuid`);

@@ -102,6 +102,36 @@ export function splitPath(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The distinct texts of the column (or preset constant) an import maps to `target` that look like a path
+ * (they hold a separator): what `RefResolver.planLocations` needs to know which locations the file creates.
+ */
+export async function locationTextsOf(
+  tx: Tx,
+  job: { id: string; mapping: unknown },
+  target = 'location',
+): Promise<string[]> {
+  const mapping = (job.mapping ?? {}) as {
+    columns?: Array<{ index: number; target: string | null }>;
+    constants?: Record<string, string>;
+  };
+  const out: string[] = [];
+  const constant = mapping.constants?.[target];
+  if (constant) out.push(constant);
+  const col = (mapping.columns ?? []).find((c) => c.target === target);
+  if (col) {
+    const rows = await tx.$queryRaw<Array<{ v: string }>>`
+      select distinct btrim(raw->>${col.index}::int) as v from app.import_row
+       where job_id = ${job.id}::uuid and raw->>${col.index}::int ~ '[>/|›»\\\\]'`;
+    for (const r of rows) out.push(r.v.replace(/\s+/g, ' '));
+  }
+  return out;
+}
+
+/** Does the import create locations it does not find (the default `create` policy)? */
+export const createsLocations = (options: ImportOptions): boolean =>
+  (options.references.location ?? 'create') === 'create';
+
 export class RefResolver {
   private readonly named = new Map<string, Promise<Named[]>>();
   private models?: Promise<ModelEntry[]>;
@@ -326,6 +356,55 @@ export class RefResolver {
     return hit;
   }
 
+  /**
+   * The location texts of the import's own file (BUG-5, ED-37): the paths it will create count when a
+   * bare name is resolved, so "Lab 1" is told apart from "Main Building > Lab 1" the same way on the
+   * value step, in the dry run and at commit, whatever the order of the rows. Set by the caller only
+   * when the import may create locations.
+   */
+  planLocations(texts: () => Promise<string[]>): this {
+    this.plannedTexts = texts;
+    return this;
+  }
+
+  private plannedTexts?: () => Promise<string[]>;
+  private plannedPaths?: Promise<string[][]>;
+
+  /** The paths (two parts or more, every prefix included) that the file's location cells name. */
+  private planned(): Promise<string[][]> {
+    if (!this.plannedTexts) return Promise.resolve([]);
+    this.plannedPaths ??= this.plannedTexts().then((texts) => {
+      const seen = new Map<string, string[]>();
+      for (const text of texts) {
+        const entry = this.valueMap.location?.[normKey(text)];
+        // a value mapped to a record or left empty creates nothing; "create it" may rename it
+        if (entry && !('create' in entry)) continue;
+        const parts = splitPath(entry && 'create' in entry ? (entry.name ?? text) : text);
+        for (let k = 2; k <= parts.length; k++) {
+          const prefix = parts.slice(0, k);
+          seen.set(prefix.map(normKey).join('>'), prefix);
+        }
+      }
+      return [...seen.values()];
+    });
+    return this.plannedPaths;
+  }
+
+  /** The live location at the end of a full path, or null. */
+  private async existingPath(parts: readonly string[]): Promise<Named | null> {
+    let parent: string | null = null;
+    let last: Named | null = null;
+    for (const part of parts) {
+      const hit: Named | undefined = (await this.childrenOf(parent)).find(
+        (c) => normKey(c.name) === normKey(part),
+      );
+      if (!hit) return null;
+      parent = hit.id;
+      last = hit;
+    }
+    return last;
+  }
+
   private async location(text: string): Promise<Resolution> {
     const parts = splitPath(text);
     if (parts.length === 0) return { kind: 'none' };
@@ -342,22 +421,43 @@ export class RefResolver {
     }
     if (depth === parts.length && last) return { kind: 'found', id: last.id, name: last.name };
     if (parts.length === 1 && depth === 0) {
-      // a bare name: fine when exactly one live location has it, wherever it sits
+      // A bare name: fine when exactly one location has it, wherever it sits. The locations this import
+      // creates count too (ED-37), so the answer does not depend on whether their row came first.
       this.allLocations ??= locationScopeWhere(this.tx, 'id').then((inScope) =>
         this.tx.location.findMany({
           where: { archived_at: null, ...inScope },
           select: { id: true, name: true, parent_id: true },
         }),
       );
-      const same = (await this.allLocations).filter((l) => normKey(l.name) === normKey(parts[0]!));
-      if (same.length === 1) return { kind: 'found', id: same[0]!.id, name: same[0]!.name };
-      if (same.length > 1) {
+      const key = normKey(parts[0]!);
+      const candidates = new Map<string, { found?: Named; path?: string[] }>();
+      for (const l of await this.allLocations) {
+        if (normKey(l.name) === key) candidates.set(l.id, { found: l });
+      }
+      // named in the message whether or not an earlier row (or batch) already created it: same words either way
+      let plannedExample: string | null = null;
+      for (const path of await this.planned()) {
+        if (normKey(path[path.length - 1]!) !== key) continue;
+        plannedExample ??= path.join(' > ');
+        const there = await this.existingPath(path);
+        if (there) candidates.set(there.id, { found: there });
+        else candidates.set(`path:${path.map(normKey).join('>')}`, { path });
+      }
+      if (candidates.size === 1) {
+        const only = [...candidates.values()][0]!;
+        if (only.found) return { kind: 'found', id: only.found.id, name: only.found.name };
+        // the one location of that name is one this import creates: the bare name means it
+        return this.location(only.path!.join(' > '));
+      }
+      if (candidates.size > 1) {
         return {
           kind: 'error',
           issue: {
             field: this.field('location'),
             code: 'ambiguous',
-            message: `"${parts[0]}" matches ${same.length} locations; write the full path such as "Site > Building > ${parts[0]}".`,
+            message: plannedExample
+              ? `"${parts[0]}" matches ${candidates.size} locations, counting "${plannedExample}" named in this file; write the full path such as "Site > Building > ${parts[0]}".`
+              : `"${parts[0]}" matches ${candidates.size} locations; write the full path such as "Site > Building > ${parts[0]}".`,
           },
         };
       }

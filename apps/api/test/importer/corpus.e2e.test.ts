@@ -346,7 +346,11 @@ describe.skipIf(!dbEnabled)(`import corpus (${mode})`, () => {
   it('duplicate serials and tags inside the file and against the registry', async () => {
     const cat = await admin().post('/v1/categories', { name: 'Existing kit' });
     expect(cat.status).toBe(201);
-    for (const body of [{ serial: 'EXISTING-SN' }, { asset_tag: 'EXISTING-TAG' }]) {
+    for (const body of [
+      { serial: 'EXISTING-SN' },
+      { asset_tag: 'EXISTING-TAG' },
+      { serial: 'EXISTING-SN2' },
+    ]) {
       const res = await admin().post('/v1/assets', { category_id: cat.body.id, ...body });
       expect(res.status, res.raw).toBe(201);
     }
@@ -366,10 +370,20 @@ describe.skipIf(!dbEnabled)(`import corpus (${mode})`, () => {
       ['skip', 'duplicate-in-file'],
       ['skip', expect.any(String)],
       ['skip', expect.any(String)],
+      ['error', 'serial-taken'],
       ['create', ''],
     ]);
     expect(rows[1]!.duplicate_of).toBe(1);
     expect(rows[3]!.duplicate_of).toBe(3);
+    // ED-35 (walk-through BUG-6): "tag, else serial" with a new tag and a serial the registry has
+    const existing = (await admin().get('/v1/assets?serial=EXISTING-SN2')).body.data[0];
+    expect(rows[6]!.errors[0]).toMatchObject({
+      field: 'serial',
+      code: 'serial-taken',
+      message: `Serial number EXISTING-SN2 is already used by ${existing.asset_tag}.`,
+    });
+    // with no tag the same registry serial is a match, not an error (row 5 is skipped as existing)
+    expect(rows[4]!.warnings.map((w: Json) => w.code)).toContain('exists');
 
     // on_match error: the registry matches become row errors with a code and a message
     const strict = await analyse('duplicates.csv', { options: { on_match: 'error' } });
@@ -379,7 +393,9 @@ describe.skipIf(!dbEnabled)(`import corpus (${mode})`, () => {
       expect(r.errors[0].message).toMatch(/already/i);
     }
     const { job: finished } = await commitAll(done);
-    expect(finished.counts.commit).toMatchObject({ created: 3, skipped: 4, error: 0 });
+    expect(finished.counts.commit).toMatchObject({ created: 3, skipped: 4, error: 1 });
+    // the commit did not create a second asset with that serial
+    expect((await admin().get('/v1/assets?serial=EXISTING-SN2')).body.data).toHaveLength(1);
   });
 
   it('blank required fields are row errors that name the field', async () => {

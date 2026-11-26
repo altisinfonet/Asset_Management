@@ -146,7 +146,7 @@ export const PRESETS: readonly Preset[] = [
     options: { match_on: 'auto', on_match: 'skip' },
     notes: [
       'Recommended order: locations, departments, people, then assets, so every reference exists. Missing categories, manufacturers, models, locations, departments and vendors can be created by the import; people and status labels must exist.',
-      'An empty asset tag gets the next tag of the numbering template. An existing tag or serial number is skipped, updated or reported, as the import option says.',
+      'An empty asset tag gets the next tag of the numbering template. With "Tag, else serial number" a row is the existing asset with its tag (or, when it has no tag, its serial number): skipped, updated or reported, as the import option says. A new tag with a serial number another asset already has is a row error: a serial number is never used twice. A summary line such as "TOTAL ITEMS: 120" at the end of the sheet is skipped.',
     ],
   },
   {

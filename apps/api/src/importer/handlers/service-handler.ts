@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { RefResolver } from '../refs.js';
+import { RefResolver, createsLocations, locationTextsOf } from '../refs.js';
 import type { MappedRecord, Outcome, RowIssue, Verdict } from '../types.js';
 import {
   type EntityHandler,
@@ -87,18 +87,26 @@ export abstract class ServiceHandler implements EntityHandler {
     const key = `service:${mode}`;
     let r = env.memo.get(key) as RefResolver | undefined;
     if (!r) {
-      r = new RefResolver(
-        env.tx,
-        env.auth,
-        env.options,
-        env.valueMap,
-        env.refs,
-        mode,
-        (kind) => this.refField(kind),
-        { import_job_id: env.job.id },
-      );
+      r = this.newResolver(env, mode);
       env.memo.set(key, r);
     }
+    return r;
+  }
+
+  private newResolver(env: HandlerEnv, mode: 'dry' | 'commit'): RefResolver {
+    const r = new RefResolver(
+      env.tx,
+      env.auth,
+      env.options,
+      env.valueMap,
+      env.refs,
+      mode,
+      (kind) => this.refField(kind),
+      { import_job_id: env.job.id },
+    );
+    // ED-37: the `location` column of a people import counts the locations the file creates
+    if (env.job.entity_type === 'person' && createsLocations(env.options))
+      r.planLocations(() => locationTextsOf(env.tx, env.job));
     return r;
   }
 
@@ -114,23 +122,7 @@ export abstract class ServiceHandler implements EntityHandler {
   async plan(env: HandlerEnv, rows: WorkRow[]): Promise<Verdict[]> {
     if (!this.rehearsed) return this.planWith(env, rows, this.resolver(env, 'dry'), false);
     // a fresh resolver: what it creates is rolled back with the rehearsal, so it is never memoised
-    return rehearse(env.tx, () =>
-      this.planWith(
-        env,
-        rows,
-        new RefResolver(
-          env.tx,
-          env.auth,
-          env.options,
-          env.valueMap,
-          env.refs,
-          'commit',
-          (kind) => this.refField(kind),
-          { import_job_id: env.job.id },
-        ),
-        true,
-      ),
-    );
+    return rehearse(env.tx, () => this.planWith(env, rows, this.newResolver(env, 'commit'), true));
   }
 
   private async planWith(

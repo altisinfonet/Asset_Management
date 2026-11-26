@@ -1025,6 +1025,7 @@ S_.LabelAssetFilter = obj({
   include_sublocations: bool({ default: true }),
   assigned: bool(), assigned_person_id: uuid(), overdue: bool(),
   company_id: uuid(), vendor_id: uuid(), parent_asset_id: uuid(),
+  import_job_id: uuid({ description: '[ED-38] The assets this import created ("Print labels for the new assets").' }),
   warranty_end_before: date(), warranty_end_after: date(),
   purchase_date_from: date(), purchase_date_to: date(),
   updated_since: dt(),
@@ -1706,6 +1707,7 @@ const assetFilters = [
   qp('overdue', bool(), '[M2-W1] true = checked out with an `expected_return` before today (UTC); false = every other asset.'),
   qp('loaner_pool_id', uuid(), '[LOAN] Members of this loaner pool (ED-20).'),
   qp('in_loaner_pool', bool(), '[LOAN] true = member of any loaner pool, false = in none.'),
+  qp('import_job_id', uuid(), '[ED-38] The assets this import created (its rows with result `created`). Matches nothing once the import\'s rows are purged (ED-25).'),
   qp('warranty_end_before', date(), 'Warranty ends on or before.'),
   qp('warranty_end_after', date(), 'Warranty ends on or after.'),
   qp('purchase_date_from', date(), 'Purchased on or after.'),
@@ -2655,9 +2657,10 @@ S_.Me.required.push('mfa_policy');
   S_.ImportRowList = obj({ data: arr(S('ImportRow')), page: S('PageInfo') }, ['data', 'page']);
   S_.ImportValue = obj({
     value: str({ description: 'A distinct value of the column (trimmed).' }), count: int(),
-    suggestion: { type: ['object', 'null'], properties: { id: uuid(), name: str() }, required: ['id', 'name'], description: 'The existing record with that name, if exactly one.' },
+    suggestion: { type: ['object', 'null'], properties: { id: uuid(), name: str() }, required: ['id', 'name'], description: 'The existing record the value resolves to by name, by the rules of the dry run (a model inside the category of its rows; a bare location name counting the locations this import creates). Null when nothing matches (the import creates it or reports the rows, by the kind\'s policy) and when `issue` is set.' },
+    issue: { type: ['object', 'null'], properties: { code: str({ description: '`ambiguous` (a bare location name that several locations have, counting those the import creates) or `invalid` (a model that exists only in another category than its rows\').' }), message: str() }, required: ['code', 'message'], description: '[ED-37] Why the rows of this value will fail the dry run although a record of that name exists: they need a decision (map the value, or the category, or write the full path). Null otherwise.' },
     entry: { oneOf: [S('ImportValueEntry'), { type: 'null' }], description: 'What the value map says now.' },
-  }, ['value', 'count', 'suggestion', 'entry']);
+  }, ['value', 'count', 'suggestion', 'issue', 'entry']);
   S_.ImportValues = obj({ field: en(REFS), column: nstr(), distinct: int({ description: 'Distinct values in the column (`data` is capped by `limit`).' }), data: arr(S('ImportValue')) }, ['field', 'column', 'distinct', 'data']);
   S_.ImportPresetColumn = obj({ column: str(), target: str(), description: str(), required: str(), example: str() }, ['column', 'target', 'description', 'required', 'example']);
   S_.ImportPreset = obj({
@@ -2749,7 +2752,7 @@ S_.Me.required.push('mfa_policy');
   });
   addOp('/v1/imports/{id}/values', 'get', {
     tag: 'Imports', id: 'listImportValues', summary: 'Distinct values of a reference column', perm: 'import:run', extraErrors: [422], params: [ID, { name: 'field', in: 'query', required: true, schema: en(REFS), description: 'The reference kind (the column mapped to it, or the preset constant).' }, P('Limit'), P('Q')],
-    description: 'For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry.',
+    description: 'For the value mapping step: the distinct values of the column mapped to the reference with their row counts, the existing record that matches each by name, and the current value-map entry. [ED-37] A value is resolved by the same rules as the dry run, so a value shown as matched never fails the dry run for its name: a model is looked up in the category (and manufacturer) of its rows, and a bare location name counts the locations the import itself creates from the paths of the same column; when a record of that name exists but the rows will still fail, `issue` says why.',
     success: { 200: okResp(200, 'The values.', S('ImportValues'), { replay: false }) },
   });
   addOp('/v1/imports/{id}/dry-run', 'post', {

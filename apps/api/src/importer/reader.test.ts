@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { PRESETS } from './presets.js';
 import { analyseFile } from './analysis.js';
 import { FileFormatError } from './csv-reader.js';
-import { suggestMapping } from './fields.js';
-import { type MapContext, checkMapping, mapRow, planColumns } from './mapper.js';
+import { partialScore, suggestMapping } from './fields.js';
+import { type MapContext, checkMapping, mapRow, planColumns, summaryRowText } from './mapper.js';
 import { detectHeaderIndex, headerNames } from './reader.js';
 import { templateCsv, templateOf, templateXlsx } from './template-files.js';
 import { optionsSchema } from './types.js';
@@ -161,6 +161,64 @@ describe('mapping suggestions (M2-IMP-03)', () => {
     expect(Object.values(dup).filter((t) => t === 'serial')).toHaveLength(1);
   });
 
+  it('reads the headers of a messy school register (walk-through BUG-7)', () => {
+    expect(
+      guess('asset', [
+        'Sr No',
+        'Tag No.',
+        'Item',
+        'Serial #',
+        'Type',
+        'Brand',
+        'Model No',
+        'Condition',
+        'Room',
+        'Dept',
+        'Date of Purchase',
+        'Price (Rs)',
+        'Bought From',
+        'Remarks',
+      ]),
+    ).toEqual({
+      'Sr No': null,
+      'Tag No.': 'asset_tag',
+      Item: 'name',
+      'Serial #': 'serial',
+      Type: 'category',
+      Brand: 'manufacturer',
+      'Model No': 'model',
+      Condition: 'status',
+      Room: 'location',
+      Dept: 'department',
+      'Date of Purchase': 'purchase_date',
+      'Price (Rs)': 'purchase_cost',
+      'Bought From': 'vendor',
+      Remarks: 'notes',
+    });
+    // "tag no" with and without the full stop, in any case
+    expect(guess('asset', ['TAG NO'])).toEqual({ 'TAG NO': 'asset_tag' });
+  });
+
+  it('prefers a whole phrase over a single word of a header', () => {
+    // "bought" (purchase date) is one word of "Bought From"; "bought from" (vendor) is all of it
+    expect(guess('asset', ['Bought From', 'Purchase Dt'])).toMatchObject({
+      'Bought From': 'vendor',
+    });
+    // a header that only contains a synonym as a word still gets it, below an exact header
+    expect(guess('asset', ['Supplier Name', 'Supplier'])).toEqual({
+      'Supplier Name': null,
+      Supplier: 'vendor',
+    });
+    expect(guess('asset', ['Supplier Name'])).toEqual({ 'Supplier Name': 'vendor' });
+    // longer phrases score higher than single words, both below an exact synonym (0.9)
+    const words = partialScore('Date of Purchase (dd/mm)', ['purchase date', 'date of purchase']);
+    const word = partialScore('Date of Purchase (dd/mm)', ['purchase']);
+    expect(words).toBeGreaterThan(word);
+    expect(words).toBeLessThan(0.9);
+    // short synonyms never match inside other words
+    expect(partialScore('Postcode', ['po'])).toBe(0);
+  });
+
   it('matches custom fields by key, label and the export prefix', () => {
     const s = suggestMapping(
       'asset',
@@ -313,5 +371,23 @@ describe('templates (M2-IMP-07)', () => {
     );
     expect(t.headers.slice(-2)).toEqual(['cf:os', 'cf:mac']);
     expect(templateXlsx(PRESETS[0]!, t).subarray(0, 2).toString()).toBe('PK');
+  });
+});
+
+describe('summary lines at the foot of a sheet (ED-36)', () => {
+  it('recognises a lone total cell with a number', () => {
+    expect(summaryRowText(['', 'TOTAL ITEMS: 120', '', ''])).toBe('TOTAL ITEMS: 120');
+    expect(summaryRowText(['Grand total 58,000'])).toBe('Grand total 58,000');
+    expect(summaryRowText(['  Sub-total: 12 ', ''])).toBe('Sub-total: 12');
+    expect(summaryRowText(['Count = 4'])).toBe('Count = 4');
+  });
+
+  it('leaves real rows alone', () => {
+    // more than one filled cell, no number, or not a total word at the start
+    expect(summaryRowText(['TOTAL-001', 'Laptops'])).toBeNull();
+    expect(summaryRowText(['Total'])).toBeNull();
+    expect(summaryRowText(['LAP-0042'])).toBeNull();
+    expect(summaryRowText(['Totally new laptop 2'])).toBeNull();
+    expect(summaryRowText(['', '', ''])).toBeNull();
   });
 });

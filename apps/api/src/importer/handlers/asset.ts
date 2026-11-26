@@ -11,7 +11,7 @@ import {
   loadAsset,
   toFieldDef,
 } from '../../registry/index.js';
-import { RefResolver, type Resolution } from '../refs.js';
+import { RefResolver, type Resolution, createsLocations, locationTextsOf } from '../refs.js';
 import type { MappedRecord, Outcome, RowIssue, Verdict } from '../types.js';
 import { normKey, parseBoolean, parseDate, parseNumber } from '../values.js';
 import {
@@ -139,17 +139,21 @@ export class AssetHandler implements EntityHandler {
       where: { archived_at: null },
       select: { id: true, name: true, state_type: true, is_default: true },
     });
+    const resolver = new RefResolver(
+      env.tx,
+      env.auth,
+      env.options,
+      env.valueMap,
+      env.refs,
+      mode === 'dry' ? 'dry' : 'commit',
+      undefined,
+      { import_job_id: env.job.id },
+    );
+    // ED-37: a bare location name counts the locations this file creates, as the value step does
+    if (createsLocations(env.options))
+      resolver.planLocations(() => locationTextsOf(env.tx, env.job));
     const cache: AssetStepCache = {
-      resolver: new RefResolver(
-        env.tx,
-        env.auth,
-        env.options,
-        env.valueMap,
-        env.refs,
-        mode === 'dry' ? 'dry' : 'commit',
-        undefined,
-        { import_job_id: env.job.id },
-      ),
+      resolver,
       defs: defRows.map((r) => ({ ...toFieldDef(r), categoryId: r.category_id })),
       statuses: new Map(statusRows.map((s) => [s.id, s])),
       defaultStatusId: statusRows.find((s) => s.is_default)?.id ?? null,
@@ -287,12 +291,16 @@ export class AssetHandler implements EntityHandler {
       const res = await resolver.resolve('person', rec.r.assigned_to);
       out.assignee = res;
       if (res.kind === 'error') {
-        // a missing person never blocks the asset: it is created and the hand-over is reported
-        out.warnings.push({
-          ...res.issue,
-          message: `${res.issue.message} The asset is imported without an assignee.`,
-        });
         out.assignee = null;
+        // ED-34: a person that matches nothing makes the row an error, as the value step and guide 2 say
+        // (choose "Use an existing one", "Leave it empty" or "Create it" for the value). Without the
+        // hand-over (`assign: false`) the column is not used, so it only warns.
+        if (options.assign) out.issues.push(res.issue);
+        else
+          out.warnings.push({
+            ...res.issue,
+            message: `${res.issue.message} The asset is imported without an assignee.`,
+          });
       }
     }
 
@@ -453,6 +461,7 @@ export class AssetHandler implements EntityHandler {
     env: HandlerEnv,
     rec: MappedRecord,
     found: Found,
+    dupOf: number | null,
   ): {
     hit: { id: string; asset_tag: string; version: number; archived_at: Date | null } | null;
     issue?: RowIssue;
@@ -508,6 +517,20 @@ export class AssetHandler implements EntityHandler {
           return serialAmbiguous
             ? { hit: null, issue: ambiguous() }
             : { hit: serialHits[0] ?? null };
+        // ED-35 (founder decision): a new tag with a serial number another live asset already has is a row
+        // error, never a second asset with that serial. A serial repeated inside the file follows the
+        // duplicate-in-file rule of the later row instead (its earlier row may be the asset found here).
+        const taken = serialHits.find((a) => !a.archived_at);
+        if (tag && taken && dupOf === null) {
+          return {
+            hit: null,
+            issue: {
+              field: 'serial',
+              code: 'serial-taken',
+              message: `Serial number ${String(rec.f.serial).slice(0, 60)} is already used by ${taken.asset_tag}.`,
+            },
+          };
+        }
         return { hit: null };
       }
     }
@@ -556,7 +579,7 @@ export class AssetHandler implements EntityHandler {
     const fail = (issues: RowIssue[]): Verdict => ({ plan: 'error', errors: issues, warnings });
     if (prep.issues.length > 0) return fail(prep.issues);
 
-    const { hit, issue } = this.match(env, row.mapped, found);
+    const { hit, issue } = this.match(env, row.mapped, found, row.dup_of);
     if (issue) return fail([issue]);
     const policy = env.options.on_match;
 
@@ -728,7 +751,7 @@ export class AssetHandler implements EntityHandler {
     const found =
       (env.memo.get('asset:existing') as Found | undefined) ??
       (await this.existing(env, [row.mapped]));
-    const { hit, issue } = this.match(env, row.mapped, found);
+    const { hit, issue } = this.match(env, row.mapped, found, row.dup_of);
     if (issue) return { result: 'error', errors: [issue], warnings };
     const policy = env.options.on_match;
     const meta = { import_job_id: env.job.id, import_row: row.row_no };

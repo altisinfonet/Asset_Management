@@ -384,6 +384,7 @@ export const assetListSchema = listQuerySchema.extend({
   overdue: boolParam.optional(),
   loaner_pool_id: z.uuid().optional(),
   in_loaner_pool: boolParam.optional(),
+  import_job_id: z.uuid().optional(),
   company_id: z.uuid().optional(),
   vendor_id: z.uuid().optional(),
   parent_asset_id: z.uuid().optional(),

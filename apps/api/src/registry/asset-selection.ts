@@ -36,6 +36,7 @@ export const ASSET_SELECTION_KEYS = [
   'overdue',
   'loaner_pool_id',
   'in_loaner_pool',
+  'import_job_id',
   'company_id',
   'vendor_id',
   'parent_asset_id',

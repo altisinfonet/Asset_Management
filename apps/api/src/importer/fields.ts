@@ -69,6 +69,8 @@ const ASSET_FIELDS: FieldSpec[] = [
     synonyms: [
       'asset tag',
       'tag',
+      'tag no',
+      'tag number',
       'asset id',
       'assetid',
       'asset number',
@@ -95,6 +97,9 @@ const ASSET_FIELDS: FieldSpec[] = [
       'computer name',
       'description',
       'title',
+      'item',
+      'item name',
+      'item description',
     ],
   }),
   f({
@@ -207,7 +212,15 @@ const ASSET_FIELDS: FieldSpec[] = [
     ref: 'vendor',
     description: 'Who the asset was bought from.',
     example: 'CDW',
-    synonyms: ['vendor', 'supplier', 'purchased from', 'reseller', 'dealer'],
+    synonyms: [
+      'vendor',
+      'supplier',
+      'purchased from',
+      'bought from',
+      'supplied by',
+      'reseller',
+      'dealer',
+    ],
   }),
   f({
     key: 'assigned_to',
@@ -243,6 +256,8 @@ const ASSET_FIELDS: FieldSpec[] = [
       'purchased',
       'bought',
       'date purchased',
+      'date of purchase',
+      'date bought',
       'acquired',
       'acquisition date',
       'invoice date',
@@ -627,11 +642,74 @@ export interface Suggestion {
   confidence: number;
 }
 
+/** The words of a header or synonym: lower case, accents and punctuation removed. */
+function wordsOf(text: string): string[] {
+  return text
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+/**
+ * Words that name a field only when they are the whole header: "Supplier Name" is the supplier, not the
+ * asset's name; "Item Type" is not the asset's name either.
+ */
+const GENERIC_WORDS: ReadonlySet<string> = new Set([
+  'name',
+  'title',
+  'description',
+  'item',
+  'type',
+  'kind',
+  'class',
+  'value',
+  'amount',
+  'state',
+]);
+
+/** Does `phrase` occur in `words` as whole, consecutive words? */
+function containsPhrase(words: readonly string[], phrase: readonly string[]): boolean {
+  if (phrase.length === 0 || phrase.length > words.length) return false;
+  for (let i = 0; i + phrase.length <= words.length; i++) {
+    if (phrase.every((w, j) => words[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/**
+ * How well a header that is not exactly a synonym still names a field (0 = not at all). A synonym found
+ * as whole words of the header scores by the share of the header it covers, so a longer phrase beats a
+ * single word ("Bought From" is the vendor's "bought from", not the purchase date's "bought"); a synonym
+ * hidden inside a longer word ("purchasedate" in "purchasedateutc") scores lowest.
+ */
+export function partialScore(header: string, synonyms: readonly string[]): number {
+  const words = wordsOf(header);
+  const loose = looseKey(header);
+  let best = 0;
+  for (const synonym of synonyms) {
+    const phrase = wordsOf(synonym);
+    const key = looseKey(synonym);
+    const generic = phrase.length === 1 && GENERIC_WORDS.has(phrase[0]!);
+    if (key.length >= 4 && !generic && containsPhrase(words, phrase)) {
+      best = Math.max(best, 0.6 + 0.25 * (phrase.length / Math.max(words.length, 1)));
+    } else if (
+      loose.length >= 5 &&
+      key.length >= 5 &&
+      (loose.includes(key) || key.includes(loose))
+    ) {
+      best = Math.max(best, 0.5);
+    }
+  }
+  return Math.min(best, 0.85);
+}
+
 /**
  * Heuristic mapping of headers to targets: case- and punctuation-insensitive (`Serial No.`, `S/N`,
- * `service_tag`), exact synonym first, then a header that contains a synonym; every target is taken by
- * at most one column (the best match). Custom fields match their key or label (`cf:<key>` exports
- * match exactly).
+ * `service_tag`), exact synonym first, then a header that contains a synonym as whole words (the longer
+ * the phrase the better), then one that contains it inside a word; every target is taken by at most one
+ * column (the best match). Custom fields match their key or label (`cf:<key>` exports match exactly).
  */
 export function suggestMapping(
   entity: EntityType,
@@ -654,13 +732,11 @@ export function suggestMapping(
     if (loose === '') return;
     for (const spec of specs) {
       let score = 0;
-      const own = [spec.key, spec.label, ...spec.synonyms].map(looseKey);
+      const phrases = [spec.key, spec.label, ...spec.synonyms];
+      const own = phrases.map(looseKey);
       if (own.includes(loose))
         score = loose === looseKey(spec.key) || loose === looseKey(spec.label) ? 1 : 0.9;
-      else if (loose.length >= 5) {
-        const partial = own.some((o) => o.length >= 5 && (loose.includes(o) || o.includes(loose)));
-        if (partial) score = 0.55;
-      }
+      else score = partialScore(header, phrases);
       // an export writes the ancestors of a location in `path` next to its own `name`
       if (entity === 'location' && spec.key === 'path' && loose === 'path' && hasNameColumn)
         score = 0;

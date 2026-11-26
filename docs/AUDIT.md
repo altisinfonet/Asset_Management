@@ -131,6 +131,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
 | B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
 | B.30 | 2026-11-25 | Release 0.2.7: GitHub main (PRs #15, #16) plus wave 3 part 2 and ED-30 | One conflict (dashboard) resolved, GitHub files preserved; API e2e 771/771 direct and pooled, real-stack 68/68, mock 759/759 |
+| B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31, unreleased) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -641,6 +642,61 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   the fresh stack; API e2e with the full environment including `ADMIN_DATABASE_URL`: 771/771 in 65 files, 0 skipped,
   direct and through PgBouncer with the `app_one` negative control; mock browser suite (`PW_CHANNEL=chrome`) 759/759 (3.8 min). Every suite passed on its first run; no rerun was needed.
 - **Open:** the three known items added to section C.
+
+### B.31 Import test corpus (M2-IMP-09, first criterion; ED-31) - 2026-11-26 (unreleased; branch `imp-09-corpus` from `d1f826c`)
+
+- **Scope:** the first criterion of M2-IMP-09: a corpus of messy files in the repo, run in CI. The second criterion (the
+  founder's real files, F-09) was not attempted.
+- **Method:** `apps/api/test/importer/corpus.ts` writes 17 fixtures into `apps/api/test/importer/fixtures/corpus`
+  (next to the 48-device Google Admin sample), byte for byte as Excel and similar tools write them; `.gitattributes`
+  marks the directory `-text` (no line-ending conversion; `git ls-files --eol` shows CRLF kept in the index) and XLSX
+  binary. `test/importer/corpus.e2e.test.ts` (18 cases) runs each through the real pipeline at the level of the other
+  importer suites (attachment create, upload and content sniffing, scan marked clean, `analyze`, the suggested mapping,
+  dry run, rows, `errors.csv`, commit, the created assets read back through `/v1/assets`) and first checks that every
+  checked-in file equals the builder's output. The scale case, `test/perf/import-corpus-scale.e2e.test.ts`, generates
+  its file at test time (`messyAssetCsv`, deterministic, asserted by building it twice).
+- **Results per fixture** (all now pass; "as is" = no code change needed):
+  - `utf8-bom.csv` as is (BOM not in the first header; accents, `€` currency hint, CJK). `utf16le-unicode-text.txt`:
+    the importer reads it as is (UTF-16 LE, tab), but the upload refuses the `.txt` name (`415`, "The file name
+    extension "txt" does not match text/csv"); imported under a `.csv` name; logged as **M2-IMP-10**.
+    `windows-1252.csv` as is (é, ü, ñ, smart quotes, `€` = 0x80). `mixed-line-endings.csv` as is (CRLF, LF, lone CR;
+    line numbers 2, 3, 4, 7; quoted line breaks kept as `\n`).
+  - `semicolon-european.csv` as is: `;`, `1.234,56` = 1234.56, `12.000` = 12000, `1.299,00 €` in EUR, `31.12.2025` and
+    `31/12/2025`, the column inferred day-first so `01.02.2025` = 1 February; a lone `12,500` is 12500 under `auto`
+    (documented in the contract), 12.5 with `number_format: comma` (re-import updates that one asset).
+    `quoted-fields.csv` as is; `unclosed-quote.csv` as is (file fails: "Line 3: a quoted field is never closed").
+  - `title-rows.csv` and `merged-header.xlsx` as is (title, blank and merged group rows skipped; header line 5 and
+    row 4). `trailing-empty.csv` as is (`Column E..G` unmapped; empty and whitespace rows not data).
+    `header-variants.csv` as is.
+  - `duplicates.csv` as is (in-file serial and tag repeats in another case or padding skipped with
+    `duplicate-in-file` and `duplicate_of`; registry matches skipped, or row errors under `on_match: error`; the dry run
+    left every registry count unchanged). `blank-required.csv` as is (blank category = row error on `category`; a row
+    with only a category is a valid asset with a numbered tag, as the API allows). `cell-over-limit.csv` as is (file
+    fails: "Line 3: a cell is longer than 32,000 characters.").
+  - `too-long.csv` **fixed**: the rows were errors with the right field and code `too_big`, but the message was the
+    schema library's "Too big: expected string to have <=200 characters". `zodIssues` (shared by the asset, person,
+    location and department handlers) now says "Too long: at most 200 characters." (tag 64, notes 10,000).
+  - `cell-types.xlsx` as is: styled serials (built-in 14 and custom `dd.mm.yyyy`) to ISO, text numbers and text dates,
+    formula cached values (number and text), `#DIV/0!` a `number` row error quoting it, a General-number date a `date`
+    row error, leading-zero and 12-digit numeric serials kept, the hidden first sheet skipped (`sheets` lists the two
+    visible ones), `parse.sheet` reads the third and the hidden one.
+  - `formula-injection.csv` as is: the import stores `=1+1`, `+SUM(...)`, `-2+3`, `@cmd`, a tab-led formula (trimmed)
+    and an `=` category as text, removing only an existing apostrophe guard (ED-19); the error report guards the formula
+    header and every formula cell (no cell starts with `= + - @` tab or CR); the asset export (`POST /v1/exports`, run
+    in process) guards the imported names again.
+  - Scale: 2,000 rows in every e2e run (through the real upload); 100,000 rows with `PERF=1` here: 11.1 MB, analysis
+    9.3 s, dry run 84.7 s, commit 236.4 s = 24,869 rows/min, exactly 98,000 created, 1,000 duplicates skipped and 1,000
+    impossible dates as `date` errors; the perf gates (10,000 rows/min, dry run of 100k under 10 min) held.
+- **CI:** `ci.yml` api-e2e already runs `test/**/*.e2e.test.ts` direct and pooled, so both new files run there with no
+  workflow change (the scale file at 2,000 rows). `perf.yml` already runs `test/perf` with `PERF=1`, which gives the
+  100,000-row case; a comment says so and `perf-summary.mjs` prints `import-corpus-perf.json`.
+- **Result** (compose project `atimp`, ports 22xxx, fresh volumes, torn down with `down -v`; the founder's stack
+  untouched): `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck test build` 21/21, 0 cached (API unit
+  660, web 815, api-client 14, ui-tokens 15, schemas 3); `format:check` clean; `gen.mjs` reproduces `openapi.yaml` with
+  no diff (205 operations), `gen-api-md --check`, api-client `generate:check` and Redocly clean (no contract change);
+  API e2e with `ADMIN_DATABASE_URL`, mail, MinIO and clamd set: 790/790 in 67 files direct and 790/790 through
+  PgBouncer with the `app_one` negative control (passed), 0 skipped (`assert-no-skips.mjs`); every suite passed on its first run. Web untouched, so no mock browser run.
+- **Open:** M2-IMP-10 (accept `.txt` / `.tsv` import files); the real-file trial of M2-IMP-09.
 
 ---
 

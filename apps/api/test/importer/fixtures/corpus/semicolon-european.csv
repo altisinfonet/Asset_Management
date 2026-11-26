@@ -1,0 +1,7 @@
+Asset Tag;Serial Number;Name;Category;Purchase Date;Cost;Warranty End;Notes
+;EU-001;Laptop A;Laptops;31.12.2025;1.234,56;31/12/2027;
+;EU-002;Laptop B;Laptops;01.02.2025;999,90;01/02/2027;
+;EU-003;Laptop C;Laptops;15.06.2024;12.000;15/06/2026;
+;EU-004;Laptop D;Laptops;5.3.2024;1.299,00 €;05/03/2026;"a; b"
+;EU-005;Laptop E;Laptops;2024-11-30;0,99;;
+;EU-006;Laptop F;Laptops;;12,500;;three decimals

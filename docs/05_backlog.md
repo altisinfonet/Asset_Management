@@ -956,9 +956,16 @@ Status: done (v0.2.5, 2026-11-24; M2 wave 3) - Assets > Import and Settings > Im
 
 #### M2-IMP-09 - Import test corpus and real-data trial
 Size: M - Owner: Both - Deps: M2-IMP-05, F-09
-Status: open - waiting on the founder's anonymised spreadsheet and Google Admin export (F-09). Until then only synthetic data (the 48-device Google Admin sample and generated large files) has been imported; the real-file trial and the baseline time are open.
-- [ ] Corpus of messy fixtures (BOM, mixed encodings, duplicate serials, European decimals and dates, merged header rows, 100k rows) stored in the repo and run in CI.
+Status: partial (corpus done 2026-11-26, ED-31; not released yet) - the corpus: 17 checked-in fixtures in `apps/api/test/importer/fixtures/corpus` (built by `corpus.ts`, byte-exact) run through upload, analysis, mapping, dry run and commit by `test/importer/corpus.e2e.test.ts`, and a generated messy file (`messyAssetCsv`) in `test/perf/import-corpus-scale.e2e.test.ts`, 2,000 rows in every e2e run and 100,000 in the nightly perf job (`PERF=1`). One message fixed (a value over a field's length limit), one gap logged (M2-IMP-10, `.txt` Unicode text refused at upload). Open: the real-file trial, waiting on the founder's anonymised spreadsheet and Google Admin export (F-09); until then only synthetic data has been imported and the baseline time is open.
+- [x] Corpus of messy fixtures (BOM, mixed encodings, duplicate serials, European decimals and dates, merged header rows, 100k rows) stored in the repo and run in CI.
 - [ ] Founder-supplied real files imported end to end; defects are fixed or logged as stories; time from file to labelled assets is recorded as the baseline for the "100 labelled assets under 30 minutes" target.
+
+#### M2-IMP-10 - Accept Excel "Unicode text" (.txt) and .tsv import files
+Size: S - Owner: Claude - Deps: M2-IMP-02, M2-FILE-01
+Status: open - found by the M2-IMP-09 corpus (ED-31). The importer reads UTF-16 LE tab-delimited text (Excel's "Unicode text" export, `.txt`) and `formatOf` accepts `.txt` / `.tsv`, but the attachment allow-list (ADR 0006, `files/content.ts`: `text/csv` with the `.csv` extension only) and the wizard's file picker (`accept=".csv,.xlsx"`) refuse the file before the importer sees it (`415 unsupported-media-type`); renaming it to `.csv` works today.
+- [ ] Attachments of kind `import_file` accept `.txt` and `.tsv` (declared `text/csv`, `text/plain` or `text/tab-separated-values`) with the same CSV sniffing; other kinds are unchanged.
+- [ ] The wizard's file step accepts them and declares a content type the API takes; guide 1 says which Excel save formats work.
+- [ ] The corpus case `utf16le-unicode-text.txt` is uploaded under its own name.
 
 ### E2.9 Notifications and saved views
 

@@ -3,3 +3,6 @@
 *.jpg binary
 *.ico binary
 *.pdf binary
+*.xlsx binary
+# The importer corpus (M2-IMP-09) is byte-exact: encodings, BOMs and mixed line endings are the point.
+apps/api/test/importer/fixtures/corpus/** -text

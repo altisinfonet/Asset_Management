@@ -83,6 +83,8 @@ jobs:
 
       # M2-OPS-01: also the 500-label PDF (labels-perf), the location-scoped list / search / lookups of a
       # scoped user (ED-26) and scan resolve (registry-perf); each suite writes apps/api/test-results/*.json.
+      # M2-IMP-09: import-corpus-scale imports the generated 100,000-row messy file under PERF=1 (2,000 rows in
+      # the ordinary e2e run of ci.yml, which also runs the checked-in corpus, test/importer/corpus.e2e.test.ts).
       - name: Registry, custody, scan, scoped access, labels and import budgets (vitest, PERF=1)
         env:
           PERF: '1'

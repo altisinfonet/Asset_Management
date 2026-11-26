@@ -200,9 +200,23 @@ export function zodIssues(
 ): RowIssue[] {
   return issues.map((i) => ({
     field: pointer(`/${i.path.map(String).join('/')}`),
-    message: i.message,
+    message: lengthMessage(i) ?? i.message,
     code: i.code === 'unrecognized_keys' ? 'unknown-field' : String(i.code),
   }));
+}
+
+/**
+ * A cell over a field's length limit says so in words a spreadsheet user reads (ED-31) instead of the
+ * schema library's "Too big: expected string to have <=200 characters".
+ */
+function lengthMessage(i: z.core.$ZodIssue): string | null {
+  if (i.code === 'too_big' && i.origin === 'string') {
+    return `Too long: at most ${Number(i.maximum).toLocaleString('en')} characters.`;
+  }
+  if (i.code === 'too_small' && i.origin === 'string' && Number(i.minimum) > 1) {
+    return `Too short: at least ${Number(i.minimum).toLocaleString('en')} characters.`;
+  }
+  return null;
 }
 
 /** The acting user of an import, as the services expect to see an `AuthContext`. */

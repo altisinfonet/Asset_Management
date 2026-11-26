@@ -1,7 +1,7 @@
 {
   "name": "assettracker",
   "private": true,
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Asset management platform monorepo (Turborepo + pnpm workspaces)",
   "packageManager": "pnpm@12.21.0",
   "engines": {

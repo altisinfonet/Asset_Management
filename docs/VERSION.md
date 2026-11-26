@@ -4,7 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.8** (milestone M2, close-out before the founder walk-through). Tag `v0.2.8`; see the entry below for the commit.
+**Current version: 0.2.9** (milestone M2, fixes from the automated run of the founder walk-through). Tag `v0.2.9`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -36,6 +36,59 @@ commit (`git tag -a v0.2.4 -m "0.2.4: …"`) and push the tag.
 **Tags:** `v0.1.0` (`6634c54`), `v0.2.1` (`916b15c`) and `v0.2.2` (`2f7c467`) were added afterwards on their release merges;
 their `package.json` files still say `0.0.0` because versions were only introduced with 0.2.3. `v0.2.3` points at the commit
 that set the versions (the release content itself is `2d9a14b` plus that commit).
+
+---
+
+## 0.2.9 - 2026-11-26 - Fixes from the automated run of the founder walk-through
+
+An automated run of the founder's 45-step checklist (`docs/acceptance/m2-walkthrough.md`) on a fresh 0.2.8 stack marked 33
+steps OK and 12 Not OK: eight app bugs and seven places where the checklist or a guide was wrong. This release fixes all of
+them. Branch `m2-walkfixes` from `main` (`14d5f20`); the release commit is tagged `v0.2.9`. Two founder decisions (a taken
+serial errors the row, ED-35; the scan box keeps focus, ED-39), six decision entries (ED-34 to ED-39), two contract changes
+(`ImportValue.issue`, the asset filter `import_job_id`), no migration. Verification: [AUDIT.md](AUDIT.md) B.33.
+
+### Added
+
+- **Print labels for the new assets** (ED-38): on **Import finished** the button opens the **Print labels** window for
+  exactly the assets the import created ("7 assets match the current filter"). `GET /v1/assets` and the label batch filter
+  take the new `import_job_id`.
+- **Needs a decision** on **Match values** (ED-37): a name that exists but whose rows would still fail says why (a bare room
+  name that several places have, counting the paths the same file creates; a model under another category), counts as
+  open, so the step is not skipped, and is left alone by **Create all that are missing**. `ImportValue.issue` in the API.
+- **Scan, scan, scan** (ED-39, founder decision): after a scan opens an asset, the cursor stays in the **Scan or type tag**
+  box for the next label and a screen reader hears "Opened LAP..."; codes scanned quickly one after the other are all
+  read in full, in order.
+- A hint under **Recognise existing assets by** for "Tag, else serial number" (ED-35).
+
+### Changed
+
+- **An unknown person in Assigned to is a row error** (ED-34), as Match values, guide 1, guide 2 and ED-18 said; before,
+  the row was imported without an assignee. **Leave it empty** imports it unassigned; **Create it** creates the person.
+- **"Tag, else serial number": a new tag with a serial another live asset has is a row error** `serial-taken`, "Serial
+  number X40100037 is already used by OFF-0001.", in the dry run and at commit (ED-35, founder decision). A serial repeated
+  inside the file keeps the duplicate-in-file rule.
+- **A "TOTAL ITEMS: 120" line** at the foot of a sheet (one filled cell, a total word and a number) is **Skipped** as "A
+  summary line (...), not data; skipped." instead of failing with "The row has no category" (ED-36).
+- **Column suggestions prefer whole phrases**: "Bought From" is the vendor (it was suggested as the purchase date), "Date
+  of Purchase" the purchase date, "Tag No." the asset tag, "Item" the name; a generic word such as "Name" in "Supplier
+  Name" no longer wins over the phrase.
+- **Saved views**: after **Clear all filters** the **View** list says **All assets** again, so choosing the view applies it
+  (before, re-choosing the selected view did nothing and an export took every asset); a view whose filters were changed
+  by hand shows "(changed)".
+
+### Fixed
+
+- **Match values said "Matches Lab 1" / "Matches UniFi U6 Pro" for rows the dry run then rejected** (ED-37): the value
+  step and the dry run now use the same resolver rules, and a bare location name gives the same answer whatever the
+  order of the rows (before, rows above "Main Building / Lab 1" took the old Lab 1 and rows below it failed).
+- **"too_big (name)"** and the other schema codes in **Why rows were rejected** are said in words ("a value is too long or
+  too large (name)").
+- **Docs** (walk-through steps 6, 12, 17, 20, 24, 27, 28, 39, 40, 41, 43 and exit item 8): **Link to a login** is for
+  Administrators, the Kind column and the badge in People; the seeded **Created** entry is "by the system"; the Category
+  column of Accessories; the seven created TAB tags; guide 3 names the thermal template in full; guide 4 says **User
+  menu**, **Notification settings**; guide 6 and step 43 say the accesses are listed oldest first; exit item 8 runs the
+  API suite only, with the mail, MinIO and ClamAV variables (else 5 platform-services tests skip). Guides 1 and 2
+  describe the new import rules; `01-import-options.png` is re-shot.
 
 ---
 

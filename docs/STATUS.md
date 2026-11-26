@@ -1,10 +1,10 @@
 # Project status
 
-_Last updated: 2026-11-26 (v0.2.8 prepared: the M2 close-out before the founder walk-through, the import test corpus and the walk-through checklist; tag `v0.2.8` local, not pushed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-26 (v0.2.9 prepared: the fixes from the automated run of the founder walk-through checklist; tag `v0.2.9` local, not pushed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
-[VERSION.md](VERSION.md) (version history, current 0.2.8) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+[VERSION.md](VERSION.md) (version history, current 0.2.9) · [AUDIT.md](AUDIT.md) (quality and security audit record).
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); v0.2.8 closed the gaps found while preparing the founder walk-through (lost, found and dispose screens, bulk move, the Organisation settings page, the unlink duplicates, doc fixes) and added the import test corpus and the walk-through checklist; the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); v0.2.8 closed the gaps found while preparing the founder walk-through (lost, found and dispose screens, bulk move, the Organisation settings page, the unlink duplicates, doc fixes) and added the import test corpus and the walk-through checklist; v0.2.9 fixed what an automated run of that checklist found (saved views, print labels for an import, five import rules, the scan box keeps focus, checklist and guide text); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -146,11 +146,24 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 | **Open PDF** shows the label sheet in a new tab; the sidebar theme switch removed (top-bar Theme menu only); guide and getting-started fixes (row 8 fields, Use / Save count, Notification settings path, who runs the first Google import) ✅ | DOC-01 |
 | Import test corpus in CI (17 messy files, 100,000 rows nightly; ED-31) ✅ and the founder walk-through checklist (45 steps) ✅ | IMP-09 (corpus), UX-01 (checklist) |
 
+### Fixes from the automated walk-through run ✅ (v0.2.9, 2026-11-26)
+
+An automated run of the 45-step checklist on 0.2.8 (33 OK, 12 Not OK) found eight app bugs and seven checklist or guide
+errors; all are fixed.
+
+| Change | Stories |
+| ------ | ------- |
+| Saved views: **Clear all filters** returns to **All assets**, choosing a view always applies it, "(changed)" when its filters were edited ✅ | REG-01 |
+| **Print labels for the new assets** opens the label window for exactly the assets the import created (asset filter `import_job_id`, ED-38) ✅ | IMP-08, TAG-03 |
+| Import: an unknown person is a row error as documented (ED-34); a new tag with a taken serial is `serial-taken` (founder decision, ED-35); a "TOTAL ITEMS" footer is a skipped summary row (ED-36); the value step and the dry run resolve names by the same rules, with **Needs a decision** (ED-37); whole-phrase column suggestions; every row-problem code in words ✅ | IMP-03, IMP-04, IMP-09 |
+| Scanning: after a scan the cursor stays in the scan box for the next label, the asset is announced (founder decision, ED-39) ✅ | LIFE-08, TAG-04 |
+| Checklist steps 6, 12, 17, 20, 24, 27, 28, 39, 40, 41, 43 and exit item 8, guides 1, 2, 3, 4 and 6 corrected; one guide picture re-shot ✅ | UX-01, DOC-01 |
+
 ### Next: the founder's part of M2
 
 Only two items remain: the real-file import trial of IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin
 export, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤 with the checklist
-[acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md) (45 steps; updated for 0.2.8, its "known issue" notes are resolved).
+[acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md) (45 steps; updated for 0.2.9 after the automated run, AUDIT B.33).
 
 ## 4. Waiting on the founder 👤
 

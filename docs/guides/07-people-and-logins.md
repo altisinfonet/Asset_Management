@@ -40,8 +40,8 @@ tracker made an **empty** one with her name. **People** now shows two Alices:
 
 ![Two people called Alice Johansen: the real one and the empty record the login came with](img/07-people-two.png)
 
-The first one holds the devices and has **No login**. The second one **Can sign in** but holds nothing. If you do
-nothing, Alice signs in and sees an empty "my devices" list. Linking fixes that: the login moves to the real Alice, and
+The first one holds the devices and has **No login**. The second one **Can sign in** but holds nothing; it carries the
+grey badge **Login's own record**, so you can tell the two apart. If you do nothing, Alice signs in and sees an empty "my devices" list. Linking fixes that: the login moves to the real Alice, and
 the empty record is archived.
 
 ## When to use it
@@ -112,7 +112,15 @@ Unlinking is for a link that is wrong. On the person page press **Unlink login**
 
 The window says: "Alice Johansen keeps everything they hold and their history, but is no longer the person behind
 alice.j@acme.example. The login account gets a new, empty person record. Nobody is signed out and nothing is deleted."
-Press **Unlink**. Afterwards you can link the login to somebody else.
+Press **Unlink**. The message says where the login went: "Alice Johansen keeps their assets and history. The login
+alice.j@acme.example now has its own empty record." with a button **Open the new record**. That new record has the same
+name as the login and the badge **Login's own record**; it is not a mistake and it is not a failed unlink. Afterwards you
+can link the login to somebody else.
+
+The login's own record has **no Unlink login** button (and the **Users** tab has no **Unlink person** for it): there is
+nothing to unlink. Its page says "This is the automatic record of the login ...; there is nothing to unlink. To attach
+the login to a real person, open that person and use Link to a login." Unlinking it would only make another empty record
+with the same name.
 
 Unlinking does **not** switch the login off. To stop someone signing in, deactivate the user on **Settings**, **Users and
 roles**.
@@ -124,6 +132,7 @@ roles**.
 | The login you want is not in the list                        | Type more of the name or the e-mail address: the list shows the accounts that match what you typed, with their e-mail. |
 | The person you want is not offered on the Users screen       | They already have a login. Open them under **People** and unlink first.                                                |
 | A message says the person already has a login                | Unlink that login first, then link the new one.                                                                        |
+| There are several people with the login's name after unlinking | The ones with **Login's own record** are empty automatic records. Archive the extra ones that hold nothing; keep the one that has the login. |
 | A message says the login already has a person somebody chose | The login is linked to a person that someone picked on purpose. Unlink it first.                                       |
 | A message says the empty person record still holds assets    | Somebody checked devices out to the login's empty record. Check them in, or transfer them to the real person.          |
 | You cannot see **Link to a login**                           | Only Administrators may link. Ask one.                                                                                 |

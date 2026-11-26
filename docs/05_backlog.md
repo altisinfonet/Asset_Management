@@ -1055,7 +1055,7 @@ Status: done (2026-11-24, ED-22) - the three keys sort with empty values last in
 #### M2-USR-03 - Link and unlink a person and a login account
 Size: M - Owner: Both - Deps: M2-USR-01, M2-USR-02 - Priority: Should
 Deferred from wave 1 integration. People are linked to a login by e-mail when the account is created; an Admin cannot link or unlink by hand.
-Status: done (2026-11-24, ED-22) - linking replaces the system-made placeholder person of the login (archived, history kept); unlinking leaves the person as it is and gives the login a new placeholder; the Users page got a Person column and the same actions.
+Status: done (2026-11-24, ED-22) - linking replaces the system-made placeholder person of the login (archived, history kept); unlinking leaves the person as it is and gives the login a new placeholder; the Users page got a Person column and the same actions. Follow-up in v0.2.8 (ED-33, founder report): the login's own automatic record cannot be unlinked (409; `Person.is_login_placeholder`, a **Login's own record** badge, no Unlink button), and the unlink message says where the login went.
 - [x] `POST /v1/people/{id}/link-user` and `DELETE /v1/people/{id}/link-user` (Admin only, audited, one person per login account, 409 when taken).
 - [x] The person page offers "Link to a login" and "Unlink" (and Settings -> Users "Link to a person" / "Unlink person"); mock, unit and real-stack tests.
 

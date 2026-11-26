@@ -46,7 +46,7 @@ already did (lost, found and dispose; bulk move), a real Settings landing page, 
 released: the import test corpus (branch `imp-09-corpus`, M2-IMP-09 first criterion, ED-31) and the walk-through checklist
 (branch `m2-acceptance`, `docs/acceptance/m2-walkthrough.md`, 45 steps, updated for this release). Branch `m2-closeout` =
 `main` (`d1f826c`) plus no-fast-forward merges of both branches, the fixes and these docs; the release commit is tagged
-`v0.2.8`. No API or contract change, no migration (ED-32). Verification: [AUDIT.md](AUDIT.md) B.32.
+`v0.2.8`. One contract change (`Person.is_login_placeholder` and the unlink 409, ED-33), no migration. Verification: [AUDIT.md](AUDIT.md) B.32.
 
 ### Added
 
@@ -86,6 +86,13 @@ released: the import test corpus (branch `imp-09-corpus`, M2-IMP-09 first criter
 
 ### Fixed
 
+- **Unlinking a login no longer piles up empty records** (ED-33, founder report): the login's own automatic person record
+  (made for a new login, or left by an unlink) cannot be unlinked any more: `DELETE /v1/people/{id}/link-user` answers
+  `409 conflict` ("This is the automatic record of the login ...; there is nothing to unlink. ..."), the person page shows
+  that sentence instead of **Unlink login**, and the Users menu has no **Unlink person** for it. `Person` has the new
+  read-only `is_login_placeholder`; such records carry a **Login's own record** badge on the person page and in the People
+  list. After an unlink the message says "<person> keeps their assets and history. The login <email> now has its own
+  empty record." with **Open the new record** on the person page. Empty duplicates made before stay; archive them.
 - **Open PDF** on a finished label sheet shows the PDF in a new tab (the sheet is fetched into an `application/pdf` blob
   URL) instead of saving it like **Download PDF**.
 - **Docs**: guide 1 names the fields `category, model` for row 8 of the error report; guide 2 says an Administrator or an

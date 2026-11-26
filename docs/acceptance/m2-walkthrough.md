@@ -776,7 +776,8 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 
 - **Read:** `07-people-and-logins.md`. **Sign in as:** `owner@acme.example`.
 - **Try one task:** guide "Unlink": **People**, **Bjorn Haugen**, press **Unlink login**, read the window, press **Unlink**. Then link him again from the other side: **Settings**, **Users and roles**, **Actions for Bjorn Haugen**, **Link to a person**.
-- **You should see:** "Unlink Bjorn Haugen from their login? Bjorn Haugen keeps everything they hold and their history, but is no longer the person behind bjorn.h@acme.example. The login account gets a new, empty person record. Nobody is signed out and nothing is deleted." Afterwards the person says **No login**.
+- **You should see:** "Unlink Bjorn Haugen from their login? Bjorn Haugen keeps everything they hold and their history, but is no longer the person behind bjorn.h@acme.example. The login account gets a new, empty person record. Nobody is signed out and nothing is deleted." Afterwards the person says **No login**, and the message says "Bjorn Haugen keeps their assets and history. The login bjorn.h@acme.example now has its own empty record." with **Open the new record**.
+  Press **Open the new record**: a second "Bjorn Haugen" with the grey badge **Login's own record**, no **Unlink login** button, and the sentence "This is the automatic record of the login bjorn.h@acme.example; there is nothing to unlink. ..." (0.2.8, ED-33: before, unlinking that record again made one more empty record each time). In **People** the two Bjorn Haugen rows are told apart by that badge.
   From the other side, the **Actions** menu of the login has **Link to a person**: it offers only people without a login ("Bjorn Haugen / bjorn.haugen@acme.example - IT - E-1001") and repeats the same blue sentence; after **Link login** the Person column shows Bjorn Haugen again.
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -837,5 +838,9 @@ Findings while clicking through every step on a fresh stack of version 0.2.7, an
 - **Small differences between guides, docs and screen:** fixed in 0.2.8. Guide 1 names `category, model` for row 8; guide 2 says an
   Asset manager can run the first Google import; `docs/getting-started.md` says **Use** and **Save count** for consumables and
   **User menu**, **Notification settings**; **Open PDF** on the label window shows the PDF instead of saving it.
+- **Unlinking the automatic record** (found by the founder after the first run): pressing **Unlink login** on the record a login
+  got after an unlink made yet another empty record with the same name each time. 0.2.8 refuses it (ED-33): such a record has the
+  badge **Login's own record** and no Unlink button, and the unlink message says where the login went (step 44). Archive the empty
+  duplicates the earlier clicks left behind.
 - **Theme switch:** 0.2.8 removed the System / Light / Dark switch from the bottom of the sidebar; the **Theme** button in the top
   bar is the only theme control (step 2).

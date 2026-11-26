@@ -74,12 +74,27 @@ export function personDto(r: PersonRow, assetsHeld?: number, departmentName?: st
     status: r.status,
     notes: r.notes,
     user_id: r.user_id,
+    is_login_placeholder: isLoginPlaceholder(r),
     ...(assetsHeld !== undefined ? { assets_held: assetsHeld } : {}),
   };
 }
 
+/**
+ * The login account's own automatic person record (ED-15, ED-33): made by the database trigger for a
+ * new login, or by an unlink for the login it leaves behind; nobody chose it (`created_by` is null).
+ */
+export function isLoginPlaceholder(r: Pick<PersonRow, 'user_id' | 'created_by'>): boolean {
+  return r.user_id !== null && r.created_by === null;
+}
+
 const auditView = (dto: Record<string, unknown>) => {
-  const { created_at: _c, updated_at: _u, assets_held: _a, ...rest } = dto;
+  const {
+    created_at: _c,
+    updated_at: _u,
+    assets_held: _a,
+    is_login_placeholder: _p,
+    ...rest
+  } = dto;
   return rest;
 };
 
@@ -528,6 +543,13 @@ export class PeopleService extends RegistryBase {
           throw problem.conflict('This person has no login account to unlink.');
         }
         const user = await trx.user_account.findUnique({ where: { id: person.user_id } });
+        if (isLoginPlaceholder(person)) {
+          // ED-33: unlinking the automatic record would only make another empty one with the same name
+          const login = user ? `the login ${user.email}` : 'its login';
+          throw problem.conflict(
+            `This is the automatic record of ${login}; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.`,
+          );
+        }
         const result = await trx.person.updateMany({
           where: { id, version: person.version },
           data: { user_id: null, updated_by: auth.userId },

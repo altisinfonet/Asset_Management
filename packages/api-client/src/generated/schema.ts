@@ -2623,7 +2623,7 @@ export interface paths {
         post: operations["linkPersonToUser"];
         /**
          * Unlink a person from its login account
-         * @description Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.
+         * @description Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call; `GET /v1/users/{id}` gives its `person_id`). 409 `conflict` when the person has no login, and when the person is the login's own automatic record (`is_login_placeholder`, ED-33): there is nothing to unlink, and unlinking it would only make another empty record with the same name. The login account is not changed, disabled or signed out.
          *
          *     Requires permission `user:manage`.
          */
@@ -3987,6 +3987,8 @@ export interface components {
             readonly department?: string | null;
             /** @description Number of assets currently checked out to this person. */
             readonly assets_held?: number;
+            /** @description [ED-33] True for the login account's own automatic person record: the one the system made for the login (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by`). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`). */
+            readonly is_login_placeholder?: boolean;
         };
         PersonCreate: {
             /**
@@ -15141,7 +15143,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The person has no login account to unlink. Codes: `conflict`, `idempotency-key-in-flight`. */
+            /** @description The person has no login account to unlink, or is the login's own automatic record. Codes: `conflict`, `idempotency-key-in-flight`. */
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["RequestId"];

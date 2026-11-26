@@ -460,6 +460,8 @@ defineResource('Person', {
     department: ro(nstr({ description: '[ED-17] The NAME of the linked department (read-only; write `department_id`). Kept so readers of the old free-text field keep working.' })),
     // [M2-W1] computed per request
     assets_held: ro(int({ minimum: 0, description: 'Number of assets currently checked out to this person.' })),
+    // [ED-33] the login's own automatic record (v0.2.8)
+    is_login_placeholder: ro(bool({ description: "[ED-33] True for the login account's own automatic person record: the one the system made for the login (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by`). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`)." })),
   },
 });
 // [M2-W1] Deactivating a person who still holds assets is refused (409 with `usage.open_assignments`) unless
@@ -1658,8 +1660,8 @@ addOp('/v1/people/{id}/link-user', 'post', {
 });
 addOp('/v1/people/{id}/link-user', 'delete', {
   tag: 'People', id: 'unlinkPersonFromUser', summary: 'Unlink a person from its login account', perm: 'user:manage', params: [ID], ifMatchOptional: true,
-  description: 'Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call). 409 `conflict` when the person has no login. The login account is not changed, disabled or signed out.',
-  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The person has no login account to unlink.' } },
+  description: 'Removes the login from the person (Administrators only, audited as `person.user_unlinked`). The person stays with all its assignments and history, as a person without a login. The login account keeps exactly one person (ED-15): a new one is created from its name and email (the email is left empty while a live person uses it, which is the case right after this call; `GET /v1/users/{id}` gives its `person_id`). 409 `conflict` when the person has no login, and when the person is the login\'s own automatic record (`is_login_placeholder`, ED-33): there is nothing to unlink, and unlinking it would only make another empty record with the same name. The login account is not changed, disabled or signed out.',
+  problems: { 409: { codes: ['conflict', 'idempotency-key-in-flight'], text: 'The person has no login account to unlink, or is the login\'s own automatic record.' } },
   success: { 200: okResp(200, 'Unlinked. The person (`user_id` null); `ETag` is its new version.', S('Person'), { etag: true }) },
 });
 // [M2-USR-03] END

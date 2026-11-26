@@ -224,7 +224,14 @@ describe.skipIf(!dbEnabled)(`link and unlink a person and a login account (${mod
     expect(now.person_id).not.toBe(p.id);
     expect(now.person_id).not.toBe(login.personId);
     const placeholder = await person(now.person_id);
-    expect(placeholder).toMatchObject({ user_id: login.id, email: null, kind: 'employee' });
+    expect(placeholder).toMatchObject({
+      user_id: login.id,
+      email: null,
+      kind: 'employee',
+      is_login_placeholder: true,
+    });
+    // the unlinked person is a person of its own now, not a placeholder
+    expect(res.body.is_login_placeholder).toBe(false);
     expect(placeholder.archived_at).toBeNull();
     // and it can be replaced again (it is system-made)
     const q = await newPerson(a());
@@ -237,6 +244,35 @@ describe.skipIf(!dbEnabled)(`link and unlink a person and a login account (${mod
       await auditRows(t.tenantId, `action = 'person.user_unlinked' and entity_id = '${p.id}'`)
     )[0]!;
     expect(audit.diff?.meta).toMatchObject({ user_id: login.id, new_person_id: now.person_id });
+  });
+
+  it("refuses to unlink the login's own automatic record (409, ED-33): nothing changes, linking still replaces it", async () => {
+    const login = await newLogin('Auto');
+    const auto = await person(login.personId);
+    expect(auto).toMatchObject({ user_id: login.id, is_login_placeholder: true });
+
+    const res = await a().del(`/v1/people/${login.personId}/link-user`);
+    expect(res.status, res.raw).toBe(409);
+    expect(res.body.code).toBe('conflict');
+    expect(res.body.detail).toBe(
+      `This is the automatic record of the login ${login.email}; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.`,
+    );
+    // nothing changed: same person, still the login's, no new record, no audit row
+    expect((await user(login.id)).person_id).toBe(login.personId);
+    expect(await person(login.personId)).toMatchObject({ user_id: login.id, archived_at: null });
+    expect(
+      await auditRows(
+        t.tenantId,
+        `action = 'person.user_unlinked' and entity_id = '${login.personId}'`,
+      ),
+    ).toHaveLength(0);
+    // a person without a login is not a placeholder
+    const p = await newPerson(a());
+    expect((await person(p.id)).is_login_placeholder).toBe(false);
+    // and linking a real person still replaces the automatic record
+    expect((await link(p.id, login.id)).status).toBe(200);
+    expect(await person(p.id)).toMatchObject({ user_id: login.id, is_login_placeholder: false });
+    expect((await person(login.personId)).archived_at).not.toBeNull();
   });
 
   it('a person with a login cannot be archived until it is unlinked; a department manager follows the link', async () => {

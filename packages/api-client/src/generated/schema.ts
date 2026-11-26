@@ -5467,9 +5467,7 @@ export interface components {
             parent_asset_id?: string;
             /**
              * Format: uuid
-             * @description {
-             *       "description": "[ED-38] The assets this import created (\"Print labels for the new assets\")."
-             *     }
+             * @description [ED-38] The assets this import created ("Print labels for the new assets").
              */
             import_job_id?: string;
             /** Format: date */

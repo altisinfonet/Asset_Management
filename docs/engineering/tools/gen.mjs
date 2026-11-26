@@ -1025,7 +1025,7 @@ S_.LabelAssetFilter = obj({
   include_sublocations: bool({ default: true }),
   assigned: bool(), assigned_person_id: uuid(), overdue: bool(),
   company_id: uuid(), vendor_id: uuid(), parent_asset_id: uuid(),
-  import_job_id: uuid({ description: '[ED-38] The assets this import created ("Print labels for the new assets").' }),
+  import_job_id: uuid('[ED-38] The assets this import created ("Print labels for the new assets").'),
   warranty_end_before: date(), warranty_end_after: date(),
   purchase_date_from: date(), purchase_date_to: date(),
   updated_since: dt(),

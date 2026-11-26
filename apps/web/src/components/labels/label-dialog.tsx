@@ -579,11 +579,9 @@ function BatchProgress({
           <Button onClick={onClose}>{t('labels.close')}</Button>
           {url ? (
             <>
-              <Button asChild>
-                <a href={url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink aria-hidden className="size-4" />
-                  {t('labels.open')}
-                </a>
+              <Button onClick={() => void openPdf(url)}>
+                <ExternalLink aria-hidden className="size-4" />
+                {t('labels.open')}
               </Button>
               <Button asChild variant="primary">
                 <a href={url} download={batch.filename ?? undefined}>
@@ -662,4 +660,32 @@ function templateHint(t: ReturnType<typeof useI18n>['t'], template: LabelTemplat
   return isSingleLabel(template)
     ? t('labels.templateOne', { width, height })
     : t('labels.templateHint', { cols: template.cols, rows: template.rows, width, height });
+}
+
+/**
+ * "Open PDF": the stored sheet is delivered as a download (`Content-Disposition: attachment`), so a
+ * plain link would save it like "Download PDF". The bytes are fetched instead and shown from a blob
+ * URL typed `application/pdf`, which the browser opens in its PDF viewer. The tab is opened right
+ * away (inside the click, so no pop-up blocker objects) and pointed at the PDF when it has arrived;
+ * if the fetch fails the tab goes to the link itself, which then downloads the file.
+ */
+async function openPdf(url: string): Promise<void> {
+  const tab = window.open('', '_blank');
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`PDF fetch failed with ${response.status}`);
+    const pdf = new Blob([await response.arrayBuffer()], { type: 'application/pdf' });
+    const objectUrl = URL.createObjectURL(pdf);
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = objectUrl;
+    } else {
+      window.open(objectUrl, '_blank', 'noopener');
+    }
+    // the viewer keeps its own copy once loaded; free ours after a while
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch {
+    if (tab) tab.location.href = url;
+    else window.open(url, '_blank', 'noopener');
+  }
 }

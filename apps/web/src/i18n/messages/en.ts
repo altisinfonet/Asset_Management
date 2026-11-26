@@ -94,7 +94,6 @@ export const en = {
     light: 'Light',
     dark: 'Dark',
     system: 'Use system setting',
-    systemShort: 'System',
   },
   topbar: {
     scanLabel: 'Scan or type an asset tag',

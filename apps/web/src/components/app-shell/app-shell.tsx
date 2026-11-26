@@ -52,7 +52,6 @@ import { ScopeIndicator } from './scope-indicator';
 import { ShortcutsDialog } from './shortcuts-dialog';
 import { WorkflowProviders } from './workflow-providers';
 import { Brand, SidebarCollapseButton, SidebarNav } from './sidebar';
-import { ThemeSwitch } from './theme-switch';
 import { ThemeToggle } from './theme-toggle';
 import { useShortcuts, type GoToTarget } from './use-shortcuts';
 
@@ -430,7 +429,6 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
             collapsed ? 'items-center px-2' : 'items-end',
           )}
         >
-          {collapsed ? null : <ThemeSwitch className="w-full" />}
           <SidebarCollapseButton collapsed={collapsed} onToggle={toggleCollapsed} />
         </div>
       </aside>
@@ -442,9 +440,6 @@ function AppShellFrame({ children, navItems = NAV_ITEMS }: AppShellProps) {
           <Brand tenantName={auth.me?.tenant.name} />
           <div className="flex-1 overflow-y-auto py-2">
             <SidebarNav items={visibleItems} onNavigate={() => setMobileNavOpen(false)} />
-          </div>
-          <div className="border-t border-border p-3">
-            <ThemeSwitch />
           </div>
         </DrawerContent>
       </Drawer>

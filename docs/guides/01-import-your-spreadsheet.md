@@ -64,7 +64,10 @@ at a glance.
 3. Below the table, check **Duplicates and settings**:
 
    - **Recognise existing assets by**: how the tracker decides that a row is a device it already has (**Tag, else
-     serial number** is a good choice).
+     serial number** is a good choice: a row is the device with its tag, or with its serial number when the row has no
+     tag). With this choice a row with a **new** tag whose serial number another device already has is an error
+     ("Serial number ... is already used by ..."): the same serial number is never given to two devices. Check whether
+     the row is that device with a new label, or a typing mistake.
    - **When the record exists already**: **Leave it as it is**, **Update it with the file**, or **Report an error**.
    - **Dates in the file are written**: if your dates are like `03/11/2025`, say whether that is day/month/year or
      month/day/year. If you leave **Work it out**, the tracker asks you when a date can be read two ways.
@@ -83,11 +86,18 @@ and locations. Capital letters and extra spaces do not matter.
 
 For each word the **What happens** column says one of:
 
-- **Matches …**: it found the record.
+- **Matches …**: it found the record, and the dry run will use it.
 - **Will be created**: it does not exist yet and will be made (not allowed for statuses).
-- **Not found: its rows will be errors**: you must decide.
+- **Not found: its rows will be errors**: you must decide. People are never created unless you say so: a name or
+  e-mail address in the **Assigned to** column that is not in **People** makes its rows errors.
+- **Needs a decision: its rows will be errors**, with the reason under it: a record of that name exists, but the rows
+  would still fail. Two cases: a room name such as "Lab 1" that several places have (also when your file creates one,
+  for example from "Main Building / Lab 1"), and a model that exists under another category than the rows' own.
+  Choose the right record under **Use an existing one**, write the full path ("Main Building > Lab 1") in your file, or
+  point the category at the model's category.
 
-To decide, use **Your choice**: **Use an existing one**, **Create it** or **Leave it empty**. Status labels are never
+This screen uses the same rules as the dry run, so a word it shows as matched never fails later for its name. To
+decide, use **Your choice**: **Use an existing one**, **Create it** or **Leave it empty**. Status labels are never
 created by an import, so words such as "Good" or "Needs repair" must be pointed at a status you have (here **Ready to
 deploy** and **In repair**). The shortcut **Create all that are missing** creates everything that can be created.
 
@@ -116,6 +126,8 @@ The four boxes tell you the story: **Will create**, **Will update**, **Skipped**
 - The buttons **All rows**, **Errors**, **With warnings**, **Skipped**, **Will create** and **Will update** filter the
   table. Every row shows its number in your file, the tag or name, and **What happens**.
 - A row that repeats an earlier tag or serial number is **Skipped** (the message names the first row), not an error.
+- A summary line at the end of the sheet, a single cell such as "TOTAL ITEMS: 120", is **Skipped** with "A summary
+  line (...), not data; skipped."
 
 ### 7. Fix the errors, or leave them out
 
@@ -146,8 +158,8 @@ rows that could not be imported.
 ![The finished import](img/01-import-done.png)
 
 - **View assets** opens the register.
-- **Print labels for the new assets** goes straight to label printing (see
-  [Print and apply labels](03-print-and-apply-labels.md)).
+- **Print labels for the new assets** opens the **Print labels** window for exactly the assets this import created
+  ("7 assets match the current filter" in the example; see [Print and apply labels](03-print-and-apply-labels.md)).
 - **Download error report** is here again.
 
 An import cannot be undone yet. If something came in wrong, fix the assets in the register (or archive them).
@@ -192,6 +204,10 @@ details of this import were removed**, the table of rows is gone and the error r
 | "a date can be read two ways"                                              | `03/11/2025` could be 3 November or 11 March. Choose how dates are written under **Dates in the file are written**.                               |
 | "Not found: its rows will be errors" (step 5)                              | A word in your file matches nothing and cannot be created (statuses, people). Use **Use an existing one**, or **Leave it empty**.                 |
 | "Same tag or serial number as row N of the file; skipped."                 | Two rows describe the same device. The first one wins. Remove the duplicate from your sheet if it is a mistake.                                   |
+| "Serial number ... is already used by ..."                                 | The row has a new tag, but another device has that serial number. Use that device's tag, correct the serial number, or leave the row out.        |
+| "Needs a decision: its rows will be errors" (step 5)                       | The name exists, but the rows would still fail (the reason is under it). Choose a record under **Use an existing one**, or write the full path.  |
+| "... matches 2 locations ...; write the full path ..."                     | Several places have that room name. Write the whole path in your file, such as "Main Building > Lab 1", or decide it in step 5.                  |
+| "a value is too long or too large"                                         | A cell is longer than its field allows; the row says the limit ("Too long: at most 200 characters."). Shorten it.                                |
 | "The record was edited after the dry run"                                  | Somebody changed that asset between the preview and the import. It was left alone. Run the import again for that row.                             |
 | "The file, your choices or the dry run changed after the one you reviewed" | Something changed after you looked at the preview. Press **Run the dry run again** and review the new result.                                     |
 | "Too many imports are running at once."                                    | The organisation can run only a few imports at the same time. Wait a moment and try again.                                                        |

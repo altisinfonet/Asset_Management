@@ -45,8 +45,9 @@ first, or deactivate the user instead."), so the button is greyed out.
 
 ### 3. Remove the access for the whole organisation
 
-A person with two accesses uses the wider one, so the old **Technician** for the whole organisation must go. Press
-**Remove** next to it. The question names what is removed: "Demo Technician will no longer have Technician. They are
+A person with two accesses uses the wider one, so the old **Technician** for the whole organisation must go. The window
+lists the accesses oldest first, so it is the first line, "Technician · Whole organisation", above the new "Technician at
+Bergen campus". Press **Remove** next to it. The question names what is removed: "Demo Technician will no longer have Technician. They are
 signed out of every device and sign in again with the access that remains." Press **Remove**. The toast says "Access
 removed from Demo Technician."
 

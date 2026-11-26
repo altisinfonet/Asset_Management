@@ -6,7 +6,9 @@ http://localhost:3001, signed in as the demo users, and mark every step **OK** o
 - **45 steps**, grouped by area; plan for two to three hours without the hardware steps. Steps marked 👤 **needs hardware / real data** need
   your label printer and scanner, or your own files.
 - Written for **version 0.2.7** (`main` at `d1f826c`) and updated for **version 0.2.8**, which closed the gaps the first
-  preparation run found (steps 2, 4, 5, 13, 18, 38, 39 and 44 test the new screens; see "Notes from the preparation run" at the end).
+  preparation run found (steps 2, 4, 5, 13, 18, 38, 39 and 44 test the new screens; see "Notes from the preparation run" at the end),
+  and for **version 0.2.9**, which fixed what the automated run of this checklist found (steps 6, 12, 17, 20, 24, 27, 28, 39,
+  40, 41, 43 and exit item 8 changed; see "Notes from the automated run" at the end).
   Every step was checked against a fresh stack of the build it was written for; where the real app does not do what the
   backlog says, the step says `(known issue: ...)`.
 - Do the steps **in order**: later steps use what earlier ones made (for example the laptop `LAP00004`, the person Bjorn
@@ -201,8 +203,8 @@ full path above into the **File name** box.
   1. Press **Add person**. Name `Walkthrough Student`, **Kind** Student, **Employee or student number** `S-9001`, **Department** Science. Press **Add person**.
   2. Open **Alice Johansen** (search `Alice`). Click the tabs **Assets held** and **History**.
 - **You should see:**
-  - The list has columns Name, E-mail, Department, Number, Home location, Login, Status; most demo people say **No login**, the four demo users say **Can sign in**.
-  - The new student appears. Alice's page shows **Login: No login** and a **Link to a login** button; **Assets held** lists her laptops (one **Overdue**), **History** lists what happened.
+  - The list has columns Name, E-mail, Kind, Department, Number, Home location, Login, Status; most demo people say **No login**, the four demo users say **Can sign in** and have the grey badge **Login's own record**.
+  - The new student appears. Alice's page shows **Login: No login**, without a **Link to a login** button: only Administrators may link a person to a login (you do it as `owner@acme.example` in step 7). **Assets held** lists her laptops (one **Overdue**), **History** lists what happened.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -278,7 +280,7 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 - **Do:** read both timelines. Filter **Show** is on **All events**.
 - **You should see:** on the asset, newest first: **Custody undone**, **Checked out**, **Checked in** ("Checked in from Bjorn Haugen", "Condition: Fair", "Status: Deployed → Ready to deploy", "1 photo",
   “Scratch on the lid”), **Transferred** ("Alice Johansen → Bjorn Haugen", “Walk-through transfer”), **Checked out** ("Due ...", "1 photo", “Walk-through check-out”),
-  **Created**. Every entry has "by Demo Asset Manager" and a time. On Bjorn's page the same check-in and transfer appear with the asset tag LAP00004.
+  **Created**. Every entry you made has "by Demo Asset Manager" and a time; the **Created** entry comes from the demo data and says "by the system". On Bjorn's page the same check-in and transfer appear with the asset tag LAP00004.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -370,10 +372,11 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 - **Sign in as:** `admin@acme.example`
 - **Needs:** a USB (or Bluetooth) keyboard-wedge barcode scanner (M2-TAG-04, LIFE-08, founder task F-02) and printed labels from step 19, or any barcode.
 - **Do:**
-  1. Click the **Scan or type tag** box (or press `/`). Scan one of your printed Code 128 labels.
-  2. Open **Scan assets**, choose **Check in** (or **Open each asset**) and scan five different labels in a row, as fast as you can.
+  1. Click the **Scan or type tag** box (or press `/`). Scan one of your printed Code 128 labels, then at once five more, one after the other, without touching the mouse or the keyboard.
+  2. Open **Scan assets**, choose **Check in** and scan five different labels in a row, as fast as you can.
   3. Scan something that is not in the system (a product barcode).
-- **You should see:** the tag appears complete (no extra characters, no `'` instead of `-`), Enter is sent by the scanner, the asset opens at once and the field is ready for the next scan. The unknown code
+- **You should see:** the tag appears complete (no extra characters, no `'` instead of `-`), Enter is sent by the scanner and the asset opens at once. The cursor stays in the **Scan or type tag** box
+  (0.2.9, founder decision: it no longer jumps to **Check in** / **Check out**), so each next label opens the next asset and no scan is lost or cut short, however fast you scan; a screen reader hears "Opened LAP...". The unknown code
   gives a red message `No asset matches "...".`. Write in the note: the scanner model, whether any scan was wrong or slow, and your verdict on speed and error feedback.
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -425,7 +428,7 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
   2. On **USB-C cable 1 m** press **Check out**. **Person** Alice Johansen, **Quantity** `3`, press **Check out**.
   3. Open **USB-C cable 1 m**. In **People and places holding this** press **Return** on Alice's row, **Units coming back** `1`, press **Return**.
 - **You should see:**
-  - Columns Name, Total, Checked out, Available, Stock, Minimum, Location; **HDMI cable 2 m** says **Low stock** ("1 item is low on stock.").
+  - Columns Name, Category, Total, Checked out, Available, Stock, Minimum, Location; **HDMI cable 2 m** says **Low stock** ("1 item is low on stock.").
   - The check-out dialog says "74 available." and the quantity field "Up to 74."
   - On the item page after the check-out: Total 80, Checked out 9 (was 6), Available 71, Minimum 15, and Alice's row shows **Quantity 3**; after the return it shows **Returned 1**. The **Return** window says "Alice Johansen holds 3. Return some or all of them." and "Returning fewer leaves the rest checked out."
 
@@ -494,7 +497,7 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
   2. Press **Clear all filters**, then choose your view in the **View** list. Look at the buttons next to it, and press **Rename or share** (then **Cancel**).
   3. Press **Export CSV**. Wait. Press **Download CSV** and open the file.
 - **You should see:**
-  - The view appears in **View** next to **All assets**; choosing it restores the filter (State Ready, and a **Clear all filters** button). Buttons **Update view**, **Rename or share** (with "Share with everyone in the organisation"), **Delete view**.
+  - After **Save view** the **View** list shows your view. **Clear all filters** sets it back to **All assets** (all assets listed); choosing your view again restores the filter (State Ready, the Ready count, and a **Clear all filters** button). If you change a filter by hand while a view is chosen, the list shows "Ready devices (walkthrough) (changed)", and choosing the view again restores it. Buttons **Update view**, **Rename or share** (with "Share with everyone in the organisation"), **Delete view**.
   - The dialog **Export to CSV** ("Exports every row the current search and filters show."), then **Your file is ready**, "N rows exported. The download link works until ..." (tomorrow), **Download CSV**. The file starts with `asset_tag,name,serial,category,model,status,location,department,assigned_to,expected_return,...,label_code,...`
     and has one line per row the list showed (plus the header). Its `label_code` column is the code that is in the QR codes.
 
@@ -547,10 +550,11 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 
 - **Sign in as:** `admin@acme.example`
 - **Where:** the dry-run screen of step 26.
-- **Do:** press **Import 7 rows**. When **Import finished** shows, press **Download error report** again, then **View assets**. Look at the bell and at **Locations**.
+- **Do:** press **Import 7 rows**. When **Import finished** shows, press **Download error report** again, then **Print labels for the new assets** (look at the window, then close it), then **View assets**. Look at the bell and at **Locations**.
 - **You should see:**
-  - A progress bar ("Imported x of y rows"), then **Import finished** with **7 Created, 0 Updated, 1 Skipped, 2 Failed**, "2 rows could not be imported. Download the error report, fix them and import them again.", a table **Rows that could not be imported** (6 TAB-106, 8 TAB-108), and the buttons **View assets**, **Print labels for the new assets**, **Start another import**.
-  - TAB-101 to TAB-107 and TAB-110 are in the asset list (TAB-105 shows **In repair**, with the hint "No repair is logged for this asset ..."). **Room 205** is a new top-level location with 2 assets.
+  - A progress bar ("Imported x of y rows"; ten rows can finish before you see it), then **Import finished** with **7 Created, 0 Updated, 1 Skipped, 2 Failed**, "2 rows could not be imported. Download the error report, fix them and import them again.", a table **Rows that could not be imported** (6 TAB-106, 8 TAB-108), and the buttons **View assets**, **Print labels for the new assets**, **Start another import**.
+  - **Print labels for the new assets** opens the **Print labels** window for exactly the assets this import created: "7 assets match the current filter" (0.2.9; before, it opened the plain asset list).
+  - The seven created assets TAB-101, TAB-102, TAB-103, TAB-104, TAB-105, TAB-107 and TAB-110 are in the asset list (TAB-106 and TAB-108 failed; TAB-105 shows **In repair**, with the hint "No repair is logged for this asset ..."). **Room 205** is a new top-level location with 2 assets.
   - The bell has **Import finished**, and Mailpit an e-mail **Import finished**.
   - **All imports** (or **Settings**, **Imports**) lists both imports as **Done**, with **View**. (The details of a finished import are kept for 30 days: download the report you need before then.)
 
@@ -562,10 +566,11 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 - **Needs:** two files of yours in **`E:\Sayak\import-samples\`** (create the folder): (1) a spreadsheet of your real assets, **anonymised** (no real names, e-mail addresses or serial numbers you must not share); (2) a real **Google Admin ChromeOS export** (Google Admin, Devices, Chrome, Devices, Export), also anonymised. Do this step last, or on a fresh stack, so the demo data does not get in the way.
 - **Do:**
   1. Start a stopwatch the moment you choose the first file. Import the spreadsheet through the wizard (**Assets**, **Import**): match columns, match values, dry run, fix or accept errors, **Import**.
-  2. Import the Google Admin export the same way (people in its **User** column must exist first, see guide 2).
-  3. Go to **Print labels for the new assets** (or select 100 of the new assets in **Assets**), generate the PDF. **Stop the stopwatch when the PDF with the labels of 100 assets is ready** (printing and sticking are not part of the clock).
+  2. Import the Google Admin export the same way. People in its **User** column must exist first (see guide 2): on **Match values** a user that is not in **People** says "Not found: its rows will be errors", and the dry run makes those rows errors. Choose **Leave it empty** for such a value to import the device without an assignee.
+  3. On **Import finished** press **Print labels for the new assets**: the **Print labels** window opens for exactly the assets that import created. Generate the PDF. **Stop the stopwatch when the PDF with the labels of 100 assets is ready** (printing and sticking are not part of the clock).
   4. Write down: the number of rows in each file; minutes to the first dry run; minutes to the PDF; every row error and what caused it; every column that was matched wrongly; anything you did not understand.
 - **You should see:** both imports finish, the dry runs show problems in words you can act on, and the **time from choosing the file to a PDF of 100 labels is 30 minutes or less** (the M2 target). If the time is longer, say where it went (waiting for the screen, fixing the file, mapping).
+  Since 0.2.9 (from the substitute run with `E:\Sayak\import-samples\`): **Match values** shows a name that exists but would still fail as **Needs a decision** with the reason (a bare room name such as "Lab 1" when the file also has "Main Building / Lab 1", or a model that exists under another category), so it is not skipped; a "TOTAL ITEMS: 120" line at the end of a sheet is **Skipped** as "A summary line"; with "Tag, else serial number" a new tag whose serial number another asset has is an **Error** ("Serial number ... is already used by ..."); "Bought From", "Date of Purchase", "Tag No." and "Item" are suggested as Vendor, Purchase date, Asset tag and Name; and **Why rows were rejected** says "a value is too long or too large (name)", not "too_big (name)".
   Defects become stories; the time is recorded as the baseline for the target (M2-IMP-09).
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -736,6 +741,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 - **Read:** `02-import-from-google-admin.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** guide step 7, "Next term: import again": run the import of step 25 again and read the dry run; then look at **Settings**, **Departments**.
 - **You should see:** every device **Skipped** ("Nothing to change; left as it is."), and the departments created from the org units (**Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**). Also compare the guide's "Who can do this" sentence with what you saw: it says an Administrator or an Asset manager can run the first import, and the import worked for the Asset manager.
+  And the guide's "Create the people first": a **User** that is not in **People** makes that row an error. **Match values** says so for each such address ("Not found: its rows will be errors") and the dry run lists those rows under **Errors** with "No person named ..." (0.2.9, ED-34; before, they were imported without an assignee).
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -743,7 +749,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 
 - **Read:** `03-print-and-apply-labels.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** guide step 1: open one asset and press **Print labels**; compare the window with the guide; choose **Single label 50 x 25 mm, QR (one per page)** and read the line under it. Cancel. (The test print and sticking are step 19.)
-- **You should see:** the window **Print label for LAP00004** with "1 selected asset", the same six templates as the guide's table, and for the single-label template the line "One label per page (50 x 25 mm)".
+- **You should see:** the window **Print label for LAP00004** with "1 selected asset", the same six templates as the guide's table (with their full names, such as "Single label 2 x 1 inch for thermal / roll printers, QR and Code128"), and for the single-label template the line "One label per page (50 x 25 mm)".
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -753,6 +759,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 - **Try one task:** guide "Part 1, step 2": **Loaners**, **Pools**, **Edit** on the cart (or **New pool**) and compare every field with the guide; **Cancel**. Compare "Reminders" and the e-mail table with the **E-mail borrowers who have no login** list.
 - **You should see:** the fields **Name**, **Description**, **Home location**, **Default loan length (days)**, **Longest loan (days)**, **Devices per borrower**, **Who may borrow** (Employees, Students, Contractors, External people), **Owner**, **E-mail borrowers who have no login**
   (Automatic: employees, contractors and external people, not students / Always, students too / Never), **Lend devices from this pool**, and **Save changes** (**Create pool** for a new one).
+  The guide's "Reminders" sends each person to the **User menu** (their name, top right), **Notification settings**.
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -768,7 +775,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 
 - **Read:** `06-limit-a-user-to-a-site.md`. **Sign in as:** `owner@acme.example`.
 - **Try one task:** you did the task in steps 33 to 36. Compare the guide line by line with what you saw: the button **Actions for Demo Technician**, the menu entry **Change role and access**, the window titles, the toasts "Access added for Demo Technician." / "Access removed from Demo Technician.", the chip **Scoped to: Bergen campus**, and the sections "Records with no location are hidden" and "A site administrator".
-- **You should see:** the same words as the guide; mark Not OK for every difference. (One known order difference: after you add the limited access, the window lists "Technician at Bergen campus" above "Technician · Whole organisation", so the guide's "Remove next to the old access" is the second **Remove**.)
+- **You should see:** the same words as the guide; mark Not OK for every difference. The window lists the accesses oldest first: after you add the limited access (step 33) it shows "Technician · Whole organisation" first and "Technician at Bergen campus" below it, so the guide's "Remove next to the old access" is the first **Remove**. (In step 35, after the whole-organisation access was added back, the Bergen line is the older one and comes first.)
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -807,14 +814,22 @@ The eight items of the M2 exit criteria in the backlog (docs/05_backlog.md, Mile
 | 7   | Accessories checked out, consumables used, with a low-stock alert                                                         | 20, 21                                                       |
 | 8   | The isolation suite (direct and pooled) still passes with every new table and route                                       | automated, see below; visible spot checks in steps 15 and 34 |
 
-Item 8 is not a click-through. Run it (Git Bash, in `E:\Sayak\asset_tracker`, stack running) or check the `api-e2e` job of the latest CI run:
+Item 8 is not a click-through. Run it (Git Bash, in `E:\Sayak\asset_tracker`, stack running) or check the `api-e2e` job of the latest CI run.
+Run the API suite only (`pnpm --filter @assettracker/api test:e2e`; a plain `pnpm test:e2e` also builds and runs the web
+app's Playwright suite and stops at its first failure). Set the mail, file-storage and virus-scan variables as well: without
+them the 5 tests of `test/platform-services.e2e.test.ts` (and the mail block and the S3 / ClamAV variants of `test/files`)
+skip and "0 skipped" cannot be met.
 
 ```bash
 export MIGRATOR_DATABASE_URL=postgres://app_owner:dev@localhost:5433/app
 export ADMIN_DATABASE_URL=postgres://postgres:dev@localhost:5433/app
-ISOLATION_MODE=direct DATABASE_URL=postgres://app_user:dev@localhost:5433/app pnpm test:e2e
-ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app POOLED_ONE_URL=postgres://app_user:dev@localhost:6432/app_one pnpm test:e2e
+export SMTP_URL=smtp://localhost:1025 MAILPIT_API_URL=http://localhost:8025
+export S3_ENDPOINT=http://localhost:9000 CLAMD_HOST=localhost CLAMD_PORT=3310
+ISOLATION_MODE=direct DATABASE_URL=postgres://app_user:dev@localhost:5433/app pnpm --filter @assettracker/api test:e2e
+ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app POOLED_ONE_URL=postgres://app_user:dev@localhost:6432/app_one pnpm --filter @assettracker/api test:e2e
 ```
+
+Each run ends with a line such as `Tests  740 passed (740)`: the item passes with 0 failed and 0 skipped in both modes.
 
 Mark item 8 here: - [ ] Passes (0 skipped) - [ ] Fails — note: ____
 
@@ -844,3 +859,21 @@ Findings while clicking through every step on a fresh stack of version 0.2.7, an
   duplicates the earlier clicks left behind.
 - **Theme switch:** 0.2.8 removed the System / Light / Dark switch from the bottom of the sidebar; the **Theme** button in the top
   bar is the only theme control (step 2).
+
+## Notes from the automated run
+
+An automated run of this checklist (a real browser driven step by step on a fresh demo stack of 0.2.8, 2026-11-26; step 28 with
+the substitute files in `E:\Sayak\import-samples\`) marked 33 steps OK and 12 Not OK. Version 0.2.9 fixed the app bugs it found and
+this checklist where the checklist was wrong:
+
+- **App, fixed in 0.2.9:** a saved view chosen again after **Clear all filters** did nothing (step 24); **Print labels for the new
+  assets** opened the plain list (steps 27, 28; ED-38); "too_big (name)" in **Why rows were rejected** (step 28); an unknown
+  **User** was imported without an assignee although **Match values** and guide 2 said "error" (steps 28, 39; ED-34); **Match values**
+  said "Matches Lab 1" or "Matches UniFi U6 Pro" for rows the dry run then rejected (step 28; ED-37); a new tag with a serial number
+  another asset has made a second asset with that serial (step 28; ED-35, founder decision: error the row); "Bought From" was
+  suggested as the purchase date (step 28); a "TOTAL ITEMS" line was an error with a misleading reason (step 28; ED-36); after a scan
+  the cursor left the scan box for **Check in** / **Check out** (step 17; founder decision: stay in the scan box).
+- **Checklist and guides, corrected in 0.2.9:** step 6 (**Link to a login** is for Administrators; the Kind column and the badge),
+  step 12 (the seeded **Created** entry is "by the system"), step 20 (the Category column), step 27 (the created tags), step 40 and
+  guide 3 (the thermal template's full name), step 41 and guide 4 (**User menu**, **Notification settings**), step 43 and guide 6
+  (accesses are listed oldest first), exit item 8 (the API suite only, with every variable set).

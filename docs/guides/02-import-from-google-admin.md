@@ -13,8 +13,11 @@ category (needs permission to manage the catalogue) and the departments of new o
 - **Put the facts in Google Admin first.** In the Google Admin console you can write an **asset ID**, a **user** and a
   **location** (these are called annotations) on each device. They arrive in the export as the columns **Asset ID**,
   **User** and **Location**. The Asset ID becomes the asset tag on your label, so it is worth filling in.
-- **Create the people first.** The **User** column is the person the Chromebook is checked out to. The tracker never
-  makes people from an asset import: a user it does not know makes that row an error. Import your students and staff
+- **Create the people first.** The **User** column is the person the Chromebook is checked out to. The tracker does not
+  make people from an asset import (unless you choose **Create it** for them on **Match values**): a user it does not
+  know makes that row an error. **Match values** says so for each such address ("Not found: its rows will be errors"),
+  and the dry run lists those rows under **Errors** with "No person named ...". Choose **Leave it empty** for an address
+  to import that device without an assignee. Import your students and staff
   first (see [Schools (K-12)](08-schools-k12-mapping.md); use the **People** kind in the same wizard), matched by their
   e-mail address.
 - **Know what it will create.** The first import creates the **Chromebook** category and a set of custom fields for it
@@ -125,7 +128,7 @@ updated. An asset that is checked out to somebody keeps its status.
 | What you see                                                                                            | What to do                                                                                                                                            |
 | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Starting this import creates the Chromebook category … That needs permission to manage the catalogue." | Ask an Administrator or an Asset manager to run the first import (a site-limited role cannot create the category).                                                              |
-| A row says a record "does not exist" for the **User**                                                   | That person is not in **People** yet, or the e-mail address is different. Import the people first, or fix the address, and run the import again.      |
+| A row says "No person named ..." for the **User** (an error)                                            | That person is not in **People** yet, or the e-mail address is different. Import the people first, or fix the address, and run the import again; or choose **Leave it empty** for that address on **Match values**. |
 | A device shows **Retired**                                                                              | It was **DISABLED** or **DEPROVISIONED** in Google. Re-enable it in Google and import again, or change its status in the register.                    |
 | Devices have no asset tag you recognise                                                                 | Their **Asset ID** was empty in Google. The tracker gave them the next number of your tag numbering. Fill in the Asset ID in Google and import again. |
 | New departments such as **Students / Grade 9** or **Staff** appeared                                    | They come from the **Org unit path**. Rename or merge them under **Departments**, or map the units to existing departments in **Match values**.       |

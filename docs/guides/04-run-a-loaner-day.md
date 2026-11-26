@@ -162,8 +162,9 @@ Once a day, the tracker looks at every open loan of a pool.
 - **Overdue**: sent every day while the device is out, with firmer words after 7 and 14 days. It goes to the borrower
   **and** to the pool's owner (or, if the pool has no owner, to everybody who may manage loaners).
 
-Where the reminders show up: in the **bell** at the top of the page, and by e-mail. Each person chooses under **Account**,
-**Notifications** whether **Loan overdue** and **Loan due soon** arrive **Right away**, as a **Daily summary**, or **Off**.
+Where the reminders show up: in the **bell** at the top of the page, and by e-mail. Each person chooses in the **User
+menu** (their name, top right), **Notification settings**, whether **Loan overdue** and **Loan due soon** arrive **Right
+away**, as a **Daily summary**, or **Off**.
 
 ![The bell, with overdue loans](img/04-bell.png)
 

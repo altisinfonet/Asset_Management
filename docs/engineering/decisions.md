@@ -37,6 +37,12 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 | ED-31 | The import test corpus (M2-IMP-09): what each messy file does, the length message of a row error, `.txt` Unicode text refused at upload (M2-IMP-10) | M2 | none in the contract (message text only), no migration |
 | ED-33 | The login's own automatic person record cannot be unlinked (409); `Person.is_login_placeholder`; the unlink message says where the login went | M2 | `openapi.yaml` (`Person.is_login_placeholder`, unlink 409 text), API.md, api-client; no migration |
 | ED-32 | Lost, found and dispose on screen (M2-LIFE-05): a lost or retired status set by hand stays allowed and is pointed at the actions; bulk dispose is one request per asset; Settings > Organisation shows what the API exposes | M2 | none (web only; the API and the contract are unchanged) |
+| ED-34 | An asset import's unknown person (`Assigned to`) is a row error, as ED-18, guides 1 and 2 and the value step say (walk-through BUG-4) | M2 | none in the contract (row messages), no migration |
+| ED-35 | "Tag, else serial number": a new tag with a serial another live asset has is a row error `serial-taken`, in the dry run and at commit (founder decision, BUG-6) | M2 | none in the contract (row codes are free text), no migration |
+| ED-36 | A single-cell "TOTAL ITEMS: 120" footer is a skipped `summary-row` (walk-through, step 28) | M2 | none |
+| ED-37 | The value step and the dry run resolve names by the same rules: models in their rows' category, bare location names counting the paths of the same file; `ImportValue.issue` (BUG-5) | M2 | `openapi.yaml` (`ImportValue.issue`, operation text), api-client; no migration |
+| ED-38 | "Print labels for the new assets": the asset list and label filter `import_job_id` (BUG-2) | M2 | `openapi.yaml` (list filter, `LabelAssetFilter`), api-client; no migration |
+| ED-39 | After a scan opens an asset, focus stays in the scan box; the opened asset is announced (founder decision, BUG-8) | M2 | none (web only) |
 
 ## ED-01. `person` is separate from `user_account`
 
@@ -453,3 +459,111 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
   API.md and the api-client regenerated). No migration. The duplicates already made stay (empty, without a login); an
   administrator archives them. Audit `before`/`after` of person changes do not carry the derived flag.
 - **Milestone.** M2 (M2-USR-03 follow-up).
+
+## ED-34. An asset import's unknown person is a row error, as documented
+
+- **Decision** (v0.2.9, walk-through BUG-4). An `Assigned to` value that resolves to no person (and has no value-map
+  entry) makes the row an **error** (`field: assigned_to`, `code: not-found`, "No person named ... Create it first, map
+  the value to an existing person, or allow creating missing people.") in the dry run and at commit, when the import
+  checks assets out (`options.assign`, the default). With `assign: false` the column is not used for a hand-over, so the
+  miss stays a warning and the asset is imported without an assignee. "Create it" (the `person` reference policy
+  `create`, or a value-map entry) still creates the person; "Leave it empty" (`skip`) imports the row unassigned.
+- **Which side was wrong.** The documented rule is "error": ED-18 makes `must_exist` the default policy for people;
+  guide 1 ("Not found: its rows will be errors" for people), guide 2 ("a user it does not know makes that row an error")
+  and the value step ("When a person matches nothing: Report an error", "Not found: its rows will be errors") all say
+  so; and ED-29's rehearsal exists so that the dry run says what the commit does. Only the asset handler turned the miss
+  into a warning ("a missing person never blocks the asset"), so the code was changed, not the documents. Guide 2 now
+  also names the two ways out (**Leave it empty**, **Create it**).
+- **Consequences.** A Google Admin file whose users are not in People shows those rows under Errors until the people
+  are imported or the values are decided. No contract change (row messages are free text). The e2e test that pinned the
+  warning now pins the error, the `assign: false` warning and the `create` policy.
+- **Milestone.** M2 (M2-IMP-04, M2-UX-01 follow-up).
+
+## ED-35. "Tag, else serial number": a new tag with a serial another live asset has is a row error
+
+- **Decision** (founder, 2026-11-26: "error the row"; walk-through BUG-6). With `match_on: auto` a row is matched by its
+  tag, and by its serial number only when it has no tag (unchanged). A row whose tag matches no asset and whose serial
+  number a live (not archived) asset already has is now a row **error** in the dry run and again at commit:
+  `field: serial`, `code: serial-taken`, "Serial number X40100037 is already used by OFF-0001." Before, such a row
+  silently created a second asset with that serial (59 assets in the walk-through's `3-office-assets.xlsx`).
+- **In-file repeats keep their rule.** A serial repeated inside the file is the duplicate-in-file case of the later row
+  (`dup_of`: skipped, applied on top, or an error by `on_match`), never `serial-taken`, also when the earlier row's asset
+  was created by an earlier batch of the same commit. The modes `asset_tag`, `serial` and `external_id` are unchanged.
+- **Where.** `AssetHandler.match` (`apps/api/src/importer/handlers/asset.ts`), used by the dry run and the commit, so a
+  serial taken by someone between the dry run and the commit is caught too. The registry still allows equal serials on
+  assets made by hand (`POST /v1/assets`): this is an import rule, not a database constraint.
+- **Words.** The wizard's **Duplicates and settings** says it under **Recognise existing assets by** while "Tag, else
+  serial number" is chosen; the Assets template's notes ("Good to know"), guide 1 and the corpus (`duplicates.csv`)
+  say and test it. The web catalogue of row codes has `serial-taken`.
+- **Milestone.** M2 (M2-IMP-04).
+
+## ED-36. A "TOTAL ITEMS: 120" footer is a skipped summary row
+
+- **Decision** (walk-through, step 28 file 2; the preferred option). A data row whose only non-empty cell starts with
+  `total`, `totals`, `subtotal` / `sub-total`, `grand total`, `sum` or `count` (any case), contains a digit and is at most
+  120 characters long is planned `skip` by the dry run of every entity type, with the warning `summary-row` "A summary
+  line ("TOTAL ITEMS: 120"), not data; skipped." It gets no de-duplication keys, and the commit marks it skipped.
+  Before, it was an error whose reason was whatever field it lacked ("The row has no category").
+- **Why skipping is safe.** A real asset row has more than one filled cell (a category at least). A single filled cell
+  is matched only when it reads like a total with a number ("Totally new laptop 2", a plain "Total" and `TOTAL-001` next
+  to a category are not; unit-tested). Skipping says what the line is and keeps it out of the error report; a clearer
+  error message was the fallback and was not needed.
+- **Consequences.** `importer/mapper.ts` `summaryRowText`, used by `engine.ts`; mirrored by the web mock. No contract
+  change (warning codes are free text).
+- **Milestone.** M2 (M2-IMP-09).
+
+## ED-37. The value step and the dry run resolve names by the same rules
+
+- **Decision** (walk-through BUG-5). `GET /v1/imports/{id}/values` resolves each value with the dry run's resolver and
+  the job's value map, without creating anything, and returns a new member `issue` (`{ code, message }` or null) when a
+  record of that name exists but the rows would still fail:
+  - **Models are looked up in the category (and manufacturer) of their rows**, after the value map of those columns, as
+    the asset handler does. A model that exists only under another category gives `issue.code: invalid` with the dry
+    run's own message ("... already exists in the category "Network equipment", not in this asset's category."); once
+    the category is mapped to the model's category, the value matches. A category the import creates means a new model.
+  - **A bare location name counts the locations the file itself names.** The resolver gets the location texts of the
+    import's column (those with a path separator, after their value-map entries; every prefix of two parts or more). A
+    bare name such as "Lab 1" is resolved against the live locations of that name **plus** the paths of the file ending in
+    it. One candidate in all is that location (if the file creates it, the bare name means that path, so "Store" and
+    "Annex > Store" in one file are one location); two or more are `ambiguous` ("... matches 2 locations, counting "Main
+    Building > Lab 1" named in this file; write the full path ..."). The answer and its words are the same on the value
+    step, in the dry run's rehearsal and at commit, whatever the order of the rows or batches. Only when the import may
+    create locations (policy `create`).
+- **Web.** Such a value is shown as **Needs a decision: its rows will be errors** with the reason, counts as open (so the
+  value step is never skipped as "nothing to decide"), and **Create all that are missing** leaves it alone.
+- **Consequences.** Contract: `ImportValue.issue` (required, nullable) and the operation's text (gen.mjs; api-client
+  regenerated; the API.md catalogue is unchanged). People imports with a location column use the same location rule. A
+  model value whose rows have several categories is shown as matched only when every one of them matches.
+- **Milestone.** M2 (M2-IMP-03).
+
+## ED-38. "Print labels for the new assets": the asset filter `import_job_id`
+
+- **Decision** (walk-through BUG-2). `GET /v1/assets`, the label batch `filter` (`LabelAssetFilter`) and the registry's
+  bulk selection accept `import_job_id`: the assets whose row of that import has `result: created`
+  (`import_row.created_id`). **Print labels for the new assets** on **Import finished** opens the print-labels window
+  with that filter ("7 assets match the current filter"), so exactly the assets the import created are printed. Before,
+  the button linked to the unfiltered asset list.
+- **Why a filter, not the ids.** The created ids are only reachable page by page (`/rows`, `import:run`) and a batch takes
+  at most 2,000 ids; a filter is one parameter, serves the preview and the count, and the label batch already takes list
+  filters. Reading the asset list needs `asset:read` only: the filter tells which of the assets a user can see an import
+  made, nothing about the file. Location scoping applies as for every list filter. After the import's rows are purged
+  (ED-25, 30 days) the filter matches nothing; the button is shown only when the import created assets.
+- **Consequences.** Contract: one list filter and one `LabelAssetFilter` member (gen.mjs, api-client); no migration
+  (`import_row` is keyed by `(tenant_id, job_id, row_no)`).
+- **Milestone.** M2 (M2-IMP-08, M2-TAG-03).
+
+## ED-39. After a scan opens an asset, focus stays in the scan box
+
+- **Decision** (founder, 2026-11-26: "stay in the scan box"; walk-through BUG-8). A scan from the top bar's **Scan or type
+  tag** box, or a keyboard-wedge burst while nothing editable has focus, opens the asset and leaves (or puts) the focus
+  in that box; the asset page no longer moves it to its primary custody button (0.2.4 behaviour, "so Enter starts the
+  hand-over"). The box lives in the app shell, so it stays mounted across the page change; it is emptied as soon as a code
+  is submitted, and the scan queue handles codes in the order they arrive, so a scanner can read label after label
+  without losing characters or an Enter. A polite live region announces "Opened LAP00006, <name>." for screen readers. A
+  field the user is typing in keeps its focus. The scan panel's modes are unchanged ("Open each asset" still closes the
+  panel to show the asset).
+- **Rationale.** With focus on **Check in** / **Check out**, the next scan's characters went nowhere and its Enter opened
+  the custody dialog; in fast runs a code lost its first characters. Hand-over by keyboard stays one Tab away.
+- **Consequences.** Web only; tested in unit tests and in the mock e2e with a simulated scanner (10 tags, 2 ms per key,
+  Enter, back to back).
+- **Milestone.** M2 (M2-LIFE-08, M2-TAG-04).

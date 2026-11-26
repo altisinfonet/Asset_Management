@@ -11,14 +11,14 @@ scan finds the device. This guide uses three science tablets and a sheet of 30 l
 - **Know your label stock.** Look at the box of your label sheets: the brand and number (for example "Avery 5160") and
   the paper size (US Letter or A4). The tracker has templates for the common sheets:
 
-  | Template                                            | Use for                                 |
-  | --------------------------------------------------- | --------------------------------------- |
-  | US Letter 30-up (Avery 5160 layout), QR             | 3 x 10 small address-size labels        |
-  | A4 21-up (Avery L7160 layout), QR                   | A4 sheets of 21                         |
-  | A4 24-up, 3 x 8 (Avery L7159 layout), QR            | A4 sheets of 24                         |
-  | US Letter 10-up (Avery 5163 layout), QR and Code128 | 2 x 5 larger labels, room for a barcode |
-  | Single label 50 x 25 mm, QR (one per page)          | a label printer that takes one per page |
-  | Single label 2 x 1 inch for thermal / roll printers | a thermal roll printer                  |
+  | Template                                                            | Use for                                 |
+  | ------------------------------------------------------------------- | --------------------------------------- |
+  | US Letter 30-up (Avery 5160 layout), QR                             | 3 x 10 small address-size labels        |
+  | A4 21-up (Avery L7160 layout), QR                                   | A4 sheets of 21                         |
+  | A4 24-up, 3 x 8 (Avery L7159 layout), QR                            | A4 sheets of 24                         |
+  | US Letter 10-up (Avery 5163 layout), QR and Code128                 | 2 x 5 larger labels, room for a barcode |
+  | Single label 50 x 25 mm, QR (one per page)                          | a label printer that takes one per page |
+  | Single label 2 x 1 inch for thermal / roll printers, QR and Code128 | a thermal roll printer                  |
 
 - **Your assets need tags.** Every asset has a tag (the text such as `TAB-101`). If you imported your devices, they have
   one already.

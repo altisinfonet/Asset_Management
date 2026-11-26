@@ -264,11 +264,15 @@ test('links a person to a login from the person page and unlinks it again', asyn
     `This is the automatic record of the login ${email}; there is nothing to unlink.`,
   );
   await expect(page.getByRole('button', { name: 'Unlink login' })).toHaveCount(0);
-  const refused = await api<{ code: string }>(
-    page,
-    'DELETE',
-    `/v1/people/${after.json.person_id}/link-user`,
-  );
+  // (this file's `api` always sends a JSON content type, which a body-less DELETE may not carry)
+  const refused = await page.evaluate(async (personId) => {
+    const me = (await (await fetch('/v1/auth/me')).json()) as { csrf_token: string };
+    const res = await fetch(`/v1/people/${personId}/link-user`, {
+      method: 'DELETE',
+      headers: { 'x-csrf-token': me.csrf_token },
+    });
+    return { status: res.status, json: (await res.json()) as { code: string } };
+  }, after.json.person_id);
   expect(refused.status).toBe(409);
   expect(refused.json.code).toBe('conflict');
 });

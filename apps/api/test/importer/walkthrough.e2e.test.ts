@@ -206,6 +206,24 @@ describe.skipIf(!dbEnabled)(`import fixes from the M2 walk-through (${mode})`, (
     expect(dry2.counts.dry_run).toMatchObject({ create: 1, error: 0 });
   });
 
+  it("flags a model of another category also when the row's category is one the import creates (ED-37)", async () => {
+    const network = await created('/v1/categories', { name: unique('Switches') });
+    const model = await created('/v1/models', { category_id: network.id, name: unique('USW') });
+    const job = await analyzed(ih, admin(), t.tenantId, 'asset', {
+      filename: 'new-category.csv',
+      body: csv([
+        ['Asset Tag', 'Category', 'Model'],
+        [unique('NEWC'), unique('Brand new category'), model.name],
+      ]),
+    });
+    const shown = (await values(job.id, 'model'))[0]!;
+    expect(shown.suggestion).toBeNull();
+    expect(shown.issue).toMatchObject({ code: 'invalid' });
+    const dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry.counts.dry_run.error).toBe(1);
+    expect((await allRows(admin(), job.id))[0]!.errors[0].message).toBe(shown.issue.message);
+  });
+
   it('refuses a taken serial at commit too, when it was taken after the dry run (BUG-6, ED-35)', async () => {
     const category = await created('/v1/categories', { name: unique('Serial kit') });
     const serial = unique('SN');

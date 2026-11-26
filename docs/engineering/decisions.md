@@ -520,7 +520,9 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
   - **Models are looked up in the category (and manufacturer) of their rows**, after the value map of those columns, as
     the asset handler does. A model that exists only under another category gives `issue.code: invalid` with the dry
     run's own message ("... already exists in the category "Network equipment", not in this asset's category."); once
-    the category is mapped to the model's category, the value matches. A category the import creates means a new model.
+    the category is mapped to the model's category, the value matches. A category the import creates is new and
+    empty: a model whose name exists under another category is flagged the same way (the dry run refuses it too, found
+    by the UI re-run of step 28 with "Network" / "UniFi U6 Pro"); a model name that exists nowhere is created.
   - **A bare location name counts the locations the file itself names.** The resolver gets the location texts of the
     import's column (those with a path separator, after their value-map entries; every prefix of two parts or more). A
     bare name such as "Lab 1" is resolved against the live locations of that name **plus** the paths of the file ending in

@@ -63,6 +63,9 @@ import type { RefServices } from './refs.js';
 
 type JobRecord = NonNullable<Awaited<ReturnType<Tx['import_job']['findUnique']>>>;
 
+/** Stands for a category the import creates when the value step checks a model (ED-37): it has no models. */
+const NEW_CATEGORY = '00000000-0000-4000-8000-000000000000';
+
 const SPEC: ListSpec = { sortable: { created_at: { kind: 'date' } }, defaultSort: '-created_at' };
 
 /** Permission an import of each entity type needs on top of `import:run`. */
@@ -1117,9 +1120,19 @@ export class ImportsService extends RegistryBase {
     const seen = new Set<string>();
     for (const r of rows) {
       const categoryText = r.c ?? constants.category ?? null;
-      const categoryId = categoryText
+      let categoryId = categoryText
         ? await idOf('category', categoryText)
         : (options.defaults.category ?? null);
+      // A category the import creates is a new, empty category: the dry run then refuses a model whose
+      // name exists under another category, exactly as for an existing category without that model.
+      // A category id that matches no model stands for it.
+      if (
+        categoryId === null &&
+        categoryText &&
+        (options.references.category ?? 'create') === 'create'
+      ) {
+        categoryId = NEW_CATEGORY;
+      }
       const manufacturerId = await idOf('manufacturer', r.m ?? constants.manufacturer ?? null);
       const key = `${r.v}|${categoryId}|${manufacturerId}`;
       if (seen.has(key)) continue;

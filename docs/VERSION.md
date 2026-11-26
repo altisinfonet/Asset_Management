@@ -4,7 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.7** (milestone M2, wave 3 part 2 completed). Tag `v0.2.7`; see the entry below for the commit.
+**Current version: 0.2.8** (milestone M2, close-out before the founder walk-through). Tag `v0.2.8`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -39,12 +39,29 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ---
 
-## Unreleased
+## 0.2.8 - 2026-11-26 - M2 close-out before the founder walk-through
 
-Branch `imp-09-corpus` (M2-IMP-09, first criterion; ED-31; verification in [AUDIT.md](AUDIT.md) B.31). No version bump.
+The gaps found while preparing the founder acceptance walk-through (M2-UX-01) are closed: web screens for what the API
+already did (lost, found and dispose; bulk move), a real Settings landing page, and the guide and doc differences. Also
+released: the import test corpus (branch `imp-09-corpus`, M2-IMP-09 first criterion, ED-31) and the walk-through checklist
+(branch `m2-acceptance`, `docs/acceptance/m2-walkthrough.md`, 45 steps, updated for this release). Branch `m2-closeout` =
+`main` (`d1f826c`) plus no-fast-forward merges of both branches, the fixes and these docs; the release commit is tagged
+`v0.2.8`. No API or contract change, no migration (ED-32). Verification: [AUDIT.md](AUDIT.md) B.32.
 
 ### Added
 
+- **Lost, found and dispose on screen** (M2-LIFE-05, ED-32): on the asset page **Mark as lost or stolen** (also while the
+  asset is checked out: the window says the check-out ends, and it does), **Mark as found** (a ready status and "Where is
+  it now?") and **Dispose** (reason, date, note; the asset is archived and its page says "Disposed of on ...: <reason>").
+  A refusal stays in the window; "N accessory units are still checked out to this asset. Check them in on the Stock page
+  first." replaces the raw usage counts of that 409 (also when archiving).
+- **Bulk dispose**: **Dispose of N assets** in the asset list's bulk bar, one request per asset with a result per asset;
+  checked-out assets in the selection are left out with a message.
+- **Bulk move**: **Location** in the bulk **Edit** (`POST /v1/assets/bulk-move`), with a note for each asset's history;
+  "No location" clears it. A user limited to a site picks only places inside it and cannot clear the location (ED-26).
+- **Settings > Organisation** replaces the "Organisation is not built yet" placeholder: the organisation's name, plan and
+  currency (shown; no API changes them yet), the check-out defaults (also on the loaner pools page) and the file settings
+  (largest upload in MB, never above the plan, and EXIF removal from photos).
 - **Import test corpus** (M2-IMP-09): 17 messy files checked in under `apps/api/test/importer/fixtures/corpus`
   (UTF-8 with a BOM, UTF-16 LE "Unicode text", Windows-1252, mixed line endings, semicolons with European decimals and
   dates, quoted delimiters and line breaks, an unclosed quote, title and merged header rows in CSV and XLSX, trailing
@@ -52,11 +69,29 @@ Branch `imp-09-corpus` (M2-IMP-09, first criterion; ED-31; verification in [AUDI
   length limits, a cell over the reader cap, XLSX dates, text numbers, formulas, error cells and hidden sheets, formula
   injection), each run through upload, analysis, mapping, dry run and commit in every API e2e run; a generated 100,000-row
   messy file in the nightly perf job (2,000 rows in every e2e run).
+- **Founder walk-through checklist** (M2-UX-01): `docs/acceptance/m2-walkthrough.md`, 45 steps with the exit-criteria
+  map, the hardware and real-file steps marked; steps 2, 4, 5, 13, 18, 38 and 39 updated for this release.
 
 ### Changed
 
+- **A lost or retired status picked by hand** in the asset form or the bulk edit shows a note that it does not close the
+  check-out or archive the asset, with **Mark as lost instead** / **Dispose instead** in the form. Saving it is still
+  allowed (the API is unchanged, ED-32).
+- **Theme**: the System / Light / Dark switch in the sidebar footer (0.2.7, GitHub PR #15) is removed with its test and
+  its `theme.systemShort` message; the top bar's **Theme** menu (and the command palette) is the only theme control. The
+  design system, the guides index, FEATURES, STATUS and walk-through step 2 say so; the guide screenshot that showed the
+  sidebar footer (`06-scoped-assets.png`) is re-shot.
 - **Import row errors for a value over its field's length** read "Too long: at most 200 characters." instead of
   "Too big: expected string to have <=200 characters" (same field and code, ED-31).
+
+### Fixed
+
+- **Open PDF** on a finished label sheet shows the PDF in a new tab (the sheet is fetched into an `application/pdf` blob
+  URL) instead of saving it like **Download PDF**.
+- **Docs**: guide 1 names the fields `category, model` for row 8 of the error report; guide 2 says an Administrator or an
+  Asset manager can run the first Google import (both hold `catalog:manage` and `department:manage`; a site-limited role
+  cannot); `docs/getting-started.md` and FEATURES say **Use** and **Save count** for consumables and the user menu >
+  **Notification settings** path.
 
 ---
 

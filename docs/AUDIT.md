@@ -131,7 +131,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.28 | 2026-11-25 | Wave 3 part 2 integration (four branches, guide follow-ups)        | 768/768 API e2e direct and pooled twice, real-stack 68/68; mock e2e starvation root-caused |
 | B.29 | 2026-11-25 | LAN access in local development (ED-30, `SESSION_COOKIE_SECURE`)  | Root cause verified; dev-only cookie mode with a production guard; API e2e direct 771/771, unit 660 |
 | B.30 | 2026-11-25 | Release 0.2.7: GitHub main (PRs #15, #16) plus wave 3 part 2 and ED-30 | One conflict (dashboard) resolved, GitHub files preserved; API e2e 771/771 direct and pooled, real-stack 68/68, mock 759/759 |
-| B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31, unreleased) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
+| B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31; released in 0.2.8) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
 
 ### B.1 Desk validation - 2026-11-17
 

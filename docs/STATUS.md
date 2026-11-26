@@ -87,7 +87,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
-| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 open |
+| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; messy-file test corpus in CI (unreleased, ED-31) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 partial (corpus done, real-file trial open), IMP-10 open |
 | Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 
 ### Wave 3 — part 2: location scoping done ✅ (v0.2.6, 2026-11-25)

@@ -39,6 +39,27 @@ that set the versions (the release content itself is `2d9a14b` plus that commit)
 
 ---
 
+## Unreleased
+
+Branch `imp-09-corpus` (M2-IMP-09, first criterion; ED-31; verification in [AUDIT.md](AUDIT.md) B.31). No version bump.
+
+### Added
+
+- **Import test corpus** (M2-IMP-09): 17 messy files checked in under `apps/api/test/importer/fixtures/corpus`
+  (UTF-8 with a BOM, UTF-16 LE "Unicode text", Windows-1252, mixed line endings, semicolons with European decimals and
+  dates, quoted delimiters and line breaks, an unclosed quote, title and merged header rows in CSV and XLSX, trailing
+  empty columns and rows, header spacing and case, duplicate serials and tags, blank required cells, values over the
+  length limits, a cell over the reader cap, XLSX dates, text numbers, formulas, error cells and hidden sheets, formula
+  injection), each run through upload, analysis, mapping, dry run and commit in every API e2e run; a generated 100,000-row
+  messy file in the nightly perf job (2,000 rows in every e2e run).
+
+### Changed
+
+- **Import row errors for a value over its field's length** read "Too long: at most 200 characters." instead of
+  "Too big: expected string to have <=200 characters" (same field and code, ED-31).
+
+---
+
 ## 0.2.7 - 2026-11-25 - M2 wave 3 part 2 completed: access changes, guides, console-style dashboard
 
 Wave 3 part 2 completed (M2-USR-04, M2-SEC-01, M2-OPS-01, M2-DOC-01, ED-27 to ED-30) on top of two pull requests merged on

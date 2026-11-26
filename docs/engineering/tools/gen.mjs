@@ -461,7 +461,7 @@ defineResource('Person', {
     // [M2-W1] computed per request
     assets_held: ro(int({ minimum: 0, description: 'Number of assets currently checked out to this person.' })),
     // [ED-33] the login's own automatic record (v0.2.8)
-    is_login_placeholder: ro(bool({ description: "[ED-33] True for the login account's own automatic person record: the one the system made for the login (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by`). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`)." })),
+    is_login_placeholder: ro(bool({ description: "[ED-33] True for the login account's own automatic person record: the one the system made when the login was created (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by` and no `updated_by`: a person that was linked to the login, or edited, is not). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`)." })),
   },
 });
 // [M2-W1] Deactivating a person who still holds assets is refused (409 with `usage.open_assignments`) unless

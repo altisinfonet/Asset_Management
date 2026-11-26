@@ -80,11 +80,16 @@ export function personDto(r: PersonRow, assetsHeld?: number, departmentName?: st
 }
 
 /**
- * The login account's own automatic person record (ED-15, ED-33): made by the database trigger for a
- * new login, or by an unlink for the login it leaves behind; nobody chose it (`created_by` is null).
+ * The login account's own automatic person record (ED-15, ED-33): made by the database trigger when
+ * the login was created (or by the 0040 backfill), or by an unlink for the login it leaves behind,
+ * and never touched by anybody since: no `created_by` and no `updated_by`. Linking a person to a
+ * login sets `updated_by`, so a person that was chosen for a login is never taken for its automatic
+ * record, even one the system made without an actor (the demo seed).
  */
-export function isLoginPlaceholder(r: Pick<PersonRow, 'user_id' | 'created_by'>): boolean {
-  return r.user_id !== null && r.created_by === null;
+export function isLoginPlaceholder(
+  r: Pick<PersonRow, 'user_id' | 'created_by' | 'updated_by'>,
+): boolean {
+  return r.user_id !== null && r.created_by === null && r.updated_by === null;
 }
 
 const auditView = (dto: Record<string, unknown>) => {

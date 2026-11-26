@@ -3987,7 +3987,7 @@ export interface components {
             readonly department?: string | null;
             /** @description Number of assets currently checked out to this person. */
             readonly assets_held?: number;
-            /** @description [ED-33] True for the login account's own automatic person record: the one the system made for the login (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by`). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`). */
+            /** @description [ED-33] True for the login account's own automatic person record: the one the system made when the login was created (ED-15) or after an unlink, never chosen by anybody (`user_id` set, no `created_by` and no `updated_by`: a person that was linked to the login, or edited, is not). Such a record cannot be unlinked (409); link the login to a real person instead (`POST /v1/people/{id}/link-user`). */
             readonly is_login_placeholder?: boolean;
         };
         PersonCreate: {

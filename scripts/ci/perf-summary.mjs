@@ -43,6 +43,15 @@ if (imports) {
     '',
   );
 } else lines.push('import-perf.json: not written', '');
+const corpus = read('import-corpus-perf.json');
+if (corpus) {
+  lines.push(
+    `Import, messy corpus file (M2-IMP-09): ${Object.entries(corpus)
+      .map(([k, v]) => `${k} ${typeof v === 'number' ? v.toLocaleString('en') : JSON.stringify(v)}`)
+      .join(', ')}`,
+    '',
+  );
+} else lines.push('import-corpus-perf.json: not written', '');
 
 const text = `${lines.join('\n')}\n`;
 process.stdout.write(text);

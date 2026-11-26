@@ -1,0 +1,6 @@
+Asset Tag,Serial Number,Name,Category,Notes
+,ML-001,One,Laptops,crlf
+,ML-002,Two,Laptops,lf
+,ML-003,Three,Laptops,"first line
+second line
+third line",ML-004,Four,Laptops,after a lone CR

@@ -1,0 +1,8 @@
+Asset Tag,Serial Number,Name,Category,Purchase Date,Cost,Notes
+,DUP-001,First of a pair,Laptops,,,
+, dup-001 ,"Same serial, other case",Laptops,,,
+DUPTAG-1,DUP-002,Tagged,Laptops,,,
+duptag-1,DUP-003,"Same tag, other case",Laptops,,,
+,EXISTING-SN,Serial already in the registry,Laptops,,,
+EXISTING-TAG,DUP-004,Tag already in the registry,Laptops,,,
+,DUP-005,Unique,Laptops,,,

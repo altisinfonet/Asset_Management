@@ -1,0 +1,6 @@
+Asset Tag,Serial Number,Name,Category,Cost,Notes,"=HYPERLINK(""http://evil"")"
+,FI-001,=1+1,Laptops,,+SUM(A1:A9),
+,FI-002,-2+3,Laptops,,@cmd,
+,FI-003,	=cmd|'/c calc'!A1,Laptops,,'=already guarded,
+,FI-004,Formula cost,Laptops,=1+1,"=HYPERLINK(""http://evil"",""x"")",x
+,=FI-005,@SUM(1),=cmd,,,

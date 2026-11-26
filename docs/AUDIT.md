@@ -133,6 +133,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.30 | 2026-11-25 | Release 0.2.7: GitHub main (PRs #15, #16) plus wave 3 part 2 and ED-30 | One conflict (dashboard) resolved, GitHub files preserved; API e2e 771/771 direct and pooled, real-stack 68/68, mock 759/759 |
 | B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31; released in 0.2.8) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
 | B.32 | 2026-11-26 | Release 0.2.8: M2 close-out before the founder walk-through (ED-32, ED-33), corpus and checklist merged | Lost/found/dispose, bulk move, Organisation page, Open PDF, unlink duplicates fixed; API e2e 791/791 direct and pooled, real-stack 72/72, mock 767/767 |
+| B.33 | 2026-11-26 | Release 0.2.9: fixes from the automated run of the founder walk-through (ED-34 to ED-39) | 8 app bugs and 7 checklist/guide errors fixed; walk-through steps 17, 24, 25-28, 39 re-run through the UI: pass; API e2e 798/798 direct and pooled, real-stack 72/72, mock 768/768 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -751,6 +752,85 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   had `axe: users: remove access confirmation (dark)` time out picking a location option (the light variant passed;
   unrelated to this change); the final full run passed.
 - **Open:** M2-IMP-09 real-file trial (F-09), M2-IMP-10, M2-UX-01 (the founder's walk-through).
+
+### B.33 Release 0.2.9: fixes from the automated walk-through run - 2026-11-26 (version 0.2.9)
+
+- **Credit and input:** an automated run of the founder checklist `docs/acceptance/m2-walkthrough.md` (a real browser
+  driven step by step by the acceptance tester, on a fresh 0.2.8 demo stack, compose project `atwalk`; step 28 with the
+  substitute files in `E:\Sayak\import-samples\`): 33 OK, 12 Not OK, eight app bugs with reproduction steps and
+  screenshots (BUG-1 to BUG-8, plus the "TOTAL ITEMS" row) and seven checklist or guide errors. Two founder decisions
+  came with it: a new tag with a taken serial errors the row (ED-35); after a scan, focus stays in the scan box (ED-39).
+- **Scope:** branch `m2-walkfixes` from `main` (`14d5f20`). Contract: `ImportValue.issue` (ED-37) and the asset list /
+  label filter `import_job_id` (ED-38), through `gen.mjs`; api-client regenerated; the API.md catalogue is unchanged. No
+  migration.
+- **What changed (bug, fix, test):**
+  - **BUG-1 saved views** (web): the bar remembers the filters a view applied; when the list's filters are back to the
+    defaults it shows **All assets** (so re-choosing the view is a real change), and "<view> (changed)" when edited by
+    hand. Export already used the shown filters. Unit test in `assets-table-w2.test.tsx`.
+  - **BUG-2 print labels for an import** (ED-38): `import_job_id` filter (`a.id in (select created_id from import_row
+    where job_id = ... and result = 'created')`), the button opens the label dialog with it; mock API parity. API e2e
+    (`walkthrough.e2e.test.ts`: list and label batch count exactly the created assets), web unit test (dialog says "4
+    assets match").
+  - **BUG-3 raw zod codes:** every schema code (`too_big`, `too_small`, `invalid_type`, `invalid_format`, ...) plus
+    `serial-taken`, `archived`, `integer`, `currency`, `unknown-field` have words in `importCodes`. Unit test.
+  - **BUG-4 unknown person** (ED-34): the documented rule (ED-18, guides 1 and 2, the value step) is "error", the handler
+    alone warned; now a row error when the import hands assets over, a warning with `assign: false`. The e2e test that
+    pinned the warning pins the error, the `assign: false` warning and the `create` policy.
+  - **BUG-5 value step versus dry run** (ED-37): the values endpoint uses the dry run's resolver rules (a model in its
+    rows' category and manufacturer after the value map; a bare location name counting the paths of the same column,
+    the same in the value step, the rehearsal and the commit, whatever the row order) and returns `issue`; the web shows
+    **Needs a decision**. API e2e: both row orders give the same verdicts and message, "Store" next to "Annex > Store" is
+    one location, a model of another category is flagged and settled by mapping the category; unit and mock tests.
+  - **BUG-6 taken serial** (ED-35): `serial-taken` in `match` (dry run and commit; in-file repeats keep `dup_of`); wizard
+    hint, template notes, guide 1. Corpus row in `duplicates.csv` and an e2e case where the serial is taken between the
+    dry run and the commit.
+  - **BUG-7 column suggestions:** synonyms ("bought from", "date of purchase", "tag no", "item") and a phrase score (a
+    synonym found as whole words scores by the share of the header it covers; generic words such as "name" only as the
+    whole header; substrings lowest). Unit tests with the messy register's headers; the guide sample still matches 10
+    columns (re-shot picture checked).
+  - **BUG-8 scan focus** (ED-39): focus stays in the app shell's scan box (cleared at once on submit), the asset page no
+    longer focuses its custody button, a polite live region announces the asset. Unit tests and a mock e2e of a
+    simulated scanner (10 tags, 2 ms per key, Enter, back to back).
+  - **"TOTAL ITEMS" footer** (ED-36): a skipped `summary-row` (the preferred option). Unit tests of the detector, API e2e.
+  - **Docs:** checklist steps 6, 12, 17, 20, 24, 27, 28, 39, 40, 41, 43 and exit item 8 (the API suite only, with SMTP,
+    Mailpit, MinIO and clamd variables; else the 5 platform-services tests skip), a "Notes from the automated run"
+    section; guides 1, 2, 3 (thermal template name), 4 (User menu, Notification settings) and 6 (oldest access first);
+    `01-import-options.png` re-shot with `shoot.mjs --only=import` (the only guide picture whose screen changed; the
+    other eight pictures of that stage were compared and left as they were).
+- **Found during verification and fixed:** Redocly flagged the `import_job_id` description of `LabelAssetFilter` as an
+  object (struct error): fixed in `gen.mjs`. The first UI re-run of step 28 found that the value step did not flag
+  "UniFi U6 Pro" when the row's category ("Network") is one the import creates, although the dry run rejects it: the
+  value step now treats such a category as new and empty (e2e case added). The first location e2e showed that the
+  ambiguity message depended on whether the file's path had been created yet: it now names the path "named in this
+  file" either way.
+- **Walk-through re-run through the UI** (an automated browser on the final code, fresh demo stack): step 17 simulated
+  (10 tags in 0.5 s, the 10th asset open, focus in the empty scan box, "Opened LAP00010, ..." announced, no lost
+  characters, unknown EAN message as written) PASS; step 24 (Ready 41, Clear all filters shows All assets and 197,
+  re-choosing restores 41, CSV 41 rows) PASS; step 25 (10 / 0 / 0 / 0, 10 created) PASS; steps 26 and 27 (7 / 0 / 1 / 2,
+  7 created, print labels "7 assets match") PASS; step 28 file 1 (Match values not skipped, UniFi U6 Pro **Needs a
+  decision**; after mapping the category 100 / 0 / 0 / 0, 100 created, "100 assets match", PDF ready 16.3 s of machine
+  time after choosing the file), file 2 (the four suggestions right, "Lab 1" and "Latitude 5440" need a decision, the
+  TOTAL line skipped as a summary line, "a value is too long or too large (name)", all "Lab 1" rows alike), file 3
+  (59 rows "Serial number ... is already used by OFF-...."), file 4 (20 addresses "Not found", 20 rows "No person named
+  ...") PASS; step 39 (10 skipped) PASS.
+- **Result** on the final code (compose project `atfix9`, host ports 26000 to 26901, every stack fresh with `down -v`;
+  the founder's `assettracker` stack and folder untouched): `pnpm install --frozen-lockfile` clean; `turbo run lint
+  typecheck test build --force` 21/21, 0 cached (API unit 666, web 850, api-client 14, ui-tokens 15, schemas 3);
+  `format:check` clean; `gen.mjs` reproduces `openapi.yaml` (205 operations), `gen-api-md --check`, api-client
+  `generate:check` and Redocly (valid) clean; `db:pull` no drift, `schema:lint` 0 violations; API e2e with
+  `ADMIN_DATABASE_URL`, mail, MinIO and clamd: 798/798 in 68 files direct and 798/798 through PgBouncer with the
+  `app_one` negative control, 0 skipped; web mock e2e 768/768 (Chrome); web real-stack e2e 72/72 on a fresh stack.
+- **Rerun:** the first real-stack run shared its stack with the UI re-run, whose imports left assets in "In repair"
+  without a repair record (an import writes none), so `not-deployable.spec.ts` counted 17 against 12 and 3 tests did not
+  run; on a fresh stack the suite passed. Not a code change.
+- **Seen, not changed (candidates for stories):** a model flagged **Needs a decision** says "its rows will be errors"
+  for all its rows although only the rows of the other category fail; the "No person named ..." row text still offers
+  "allow creating missing people" (true: the person policy can be **Create it**, as guide 2 now says); two Google rows
+  whose tag exists say only "is already in use" without the field in the sentence; on **Match values** a long reason
+  runs into the next column; the amber "No row can be imported" banner on a re-import where nothing changed; prices
+  written "Rs.44000/-" are not read as numbers.
+- **Open:** M2-IMP-09 real-file trial (F-09), M2-IMP-10, steps 17 and 19 with the founder's scanner and printer, and
+  M2-UX-01 (the founder's walk-through).
 
 ---
 

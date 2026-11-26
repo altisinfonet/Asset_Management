@@ -102,6 +102,12 @@ export const linkHandlers: HttpHandler[] = [
         detail: 'This person has no login account to unlink.',
       });
     }
+    if (person._system) {
+      const login = registry().users.find((u) => u.id === person.user_id);
+      return problem(409, 'conflict', 'Conflict', {
+        detail: `This is the automatic record of ${login ? `the login ${login.email}` : 'its login'}; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.`,
+      });
+    }
     const userId = person.user_id;
     const updated = mutateRegistry((d) => {
       const target = d.people.find((p) => p.id === person.id)!;

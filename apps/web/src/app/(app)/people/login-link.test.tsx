@@ -77,21 +77,52 @@ describe('person page: link to a login and unlink', () => {
     expect((await personNamed('Maria Reyes')).user_id).toBeNull();
   });
 
-  it('unlinks after a confirmation that says what stays', async () => {
+  it('unlinks after a confirmation that says what stays; the toast says where the login went', async () => {
     const user = userEvent.setup();
-    await openPerson('Vera Viewer');
+    const vera = (await usersApi.list({ q: 'Vera Viewer' })).data[0]!;
+    // somebody the other tests of this file do not use
+    const someone = (await peopleApi.list({ limit: 50 })).data.find(
+      (p) =>
+        !p.user_id &&
+        p.status === 'active' &&
+        !['Jamie Okafor', 'Maria Reyes'].includes(p.display_name),
+    )!;
+    const name = someone.display_name;
+    await peopleApi.linkUser(someone.id, vera.id);
+    await openPerson(name);
     const { container } = renderApp(<PersonView />, { workflows: true });
     await user.click(await screen.findByRole('button', { name: 'Unlink login' }));
     const dialog = await screen.findByRole('dialog', {
-      name: 'Unlink Vera Viewer from their login?',
+      name: `Unlink ${name} from their login?`,
     });
     expect(within(dialog).getByText(/keeps everything they hold and their history/)).toBeVisible();
     expect(within(dialog).getByText(/gets a new, empty person record/)).toBeVisible();
     await expectNoA11yViolations(container);
     await user.click(within(dialog).getByRole('button', { name: 'Unlink' }));
-    expect(await screen.findByText('Vera Viewer was unlinked from their login.')).toBeVisible();
+    expect(await screen.findByText(`${name} was unlinked from their login.`)).toBeVisible();
+    expect(
+      await screen.findByText(
+        `${name} keeps their assets and history. The login viewer@example.org now has its own empty record.`,
+      ),
+    ).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Open the new record' })).toBeVisible();
     expect(await screen.findByRole('button', { name: 'Link to a login' })).toBeVisible();
-    expect((await personNamed('Vera Viewer')).user_id).toBeNull();
+    expect((await personNamed(name)).user_id).toBeNull();
+  });
+
+  it("the login's own automatic record has no Unlink: a badge and a sentence instead (ED-33)", async () => {
+    await openPerson('Vera Viewer');
+    const { container } = renderApp(<PersonView />, { workflows: true });
+    expect(await screen.findByTestId('login-placeholder-badge')).toHaveTextContent(
+      "Login's own record",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('login-placeholder-hint')).toHaveTextContent(
+        /^This is the automatic record of the login \S+@example\.org; there is nothing to unlink\./,
+      ),
+    );
+    expect(screen.queryByRole('button', { name: 'Unlink login' })).not.toBeInTheDocument();
+    await expectNoA11yViolations(container);
   });
 
   it('tells accounts of the same name apart by email and role, and finds them by email', async () => {
@@ -172,12 +203,22 @@ describe('Settings > Users: link a login to a person and unlink', () => {
       name: 'Unlink Jamie Okafor from their login?',
     });
     await user.click(within(confirm).getByRole('button', { name: 'Unlink' }));
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole('row', { name: /Marco Secure/ })).queryByRole('link', {
-          name: 'Jamie Okafor',
-        }),
-      ).not.toBeInTheDocument(),
+    await waitFor(
+      () =>
+        expect(
+          within(screen.getByRole('row', { name: /Marco Secure/ })).queryByRole('link', {
+            name: 'Jamie Okafor',
+          }),
+        ).not.toBeInTheDocument(),
+      { timeout: 5000 },
     );
+    // the login now has its own automatic record: there is nothing more to unlink (ED-33)
+    await user.click(
+      within(await screen.findByRole('row', { name: /Marco Secure/ })).getByRole('button', {
+        name: /Actions for Marco Secure/,
+      }),
+    );
+    expect(await screen.findByRole('menuitem', { name: 'Link to a person' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Unlink person' })).not.toBeInTheDocument();
   });
 });

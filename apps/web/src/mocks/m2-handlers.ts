@@ -572,6 +572,8 @@ function personView(person: MockPerson) {
     ...strip(person),
     department: departmentNameOf(person.department_id),
     assets_held: assetsHeld(person.id),
+    // ED-33: the login's own automatic record (the API's `user_id` set and no `created_by`)
+    is_login_placeholder: !!person.user_id && person._system === true,
   };
 }
 

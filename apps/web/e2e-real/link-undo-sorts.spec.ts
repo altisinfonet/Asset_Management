@@ -247,4 +247,28 @@ test('links a person to a login from the person page and unlinks it again', asyn
   expect(after.json.person_id).toBeTruthy();
   expect(after.json.person_id).not.toBe(pupil);
   expect(after.json.person_id).not.toBe(placeholder);
+
+  // the toast says where the login went and leads to its new automatic record, which has nothing to
+  // unlink: no Unlink button, a badge and a sentence instead; the API refuses it too (ED-33)
+  await expect(
+    page
+      .getByText(
+        `Bruno ${id} keeps their assets and history. The login ${email} now has its own empty record.`,
+      )
+      .first(),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Open the new record' }).click();
+  await expect(page.getByTestId('person-name')).toHaveText(`Login ${id}`);
+  await expect(page.getByTestId('login-placeholder-badge')).toHaveText("Login's own record");
+  await expect(page.getByTestId('login-placeholder-hint')).toContainText(
+    `This is the automatic record of the login ${email}; there is nothing to unlink.`,
+  );
+  await expect(page.getByRole('button', { name: 'Unlink login' })).toHaveCount(0);
+  const refused = await api<{ code: string }>(
+    page,
+    'DELETE',
+    `/v1/people/${after.json.person_id}/link-user`,
+  );
+  expect(refused.status).toBe(409);
+  expect(refused.json.code).toBe('conflict');
 });

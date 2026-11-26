@@ -171,9 +171,15 @@ export function PeopleScreen() {
         header: t('people.columns.login'),
         cell: (row) =>
           row.user_id ? (
-            <Badge tone="primary" icon={KeyRound}>
-              {t('people.login.linked')}
-            </Badge>
+            <span className="flex flex-wrap items-center gap-1">
+              <Badge tone="primary" icon={KeyRound}>
+                {t('people.login.linked')}
+              </Badge>
+              {/* same name as the login, but the login's own automatic record (ED-33) */}
+              {row.is_login_placeholder ? (
+                <Badge tone="neutral">{t('loginLink.placeholderBadge')}</Badge>
+              ) : null}
+            </span>
           ) : (
             <span className="text-muted">{t('people.login.none')}</span>
           ),

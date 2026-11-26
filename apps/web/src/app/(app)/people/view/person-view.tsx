@@ -181,6 +181,11 @@ function PersonById({ id }: { id: string }) {
                 {t('people.login.linked')}
               </Badge>
             ) : null}
+            {value.is_login_placeholder ? (
+              <Badge tone="neutral" data-testid="login-placeholder-badge">
+                {t('loginLink.placeholderBadge')}
+              </Badge>
+            ) : null}
             {value.archived_at ? (
               <span className="font-medium text-warning-text">{t('personView.archivedBadge')}</span>
             ) : null}
@@ -215,7 +220,10 @@ function PersonById({ id }: { id: string }) {
             person={value}
             locationLabel={lookups.locationLabel(value.location_id)}
             onLink={manageLogins ? () => setLinking(true) : undefined}
-            onUnlink={manageLogins ? () => setUnlinking(true) : undefined}
+            // the login's own automatic record has nothing to unlink (ED-33): the Overview says so
+            onUnlink={
+              manageLogins && !value.is_login_placeholder ? () => setUnlinking(true) : undefined
+            }
             loginEmail={loginEmail}
           />
         </TabsContent>
@@ -261,11 +269,24 @@ function PersonById({ id }: { id: string }) {
         onOpenChange={setUnlinking}
         person={{ id, display_name: value.display_name, etag }}
         loginLabel={loginEmail}
-        onDone={async () => {
+        userId={value.user_id}
+        onDone={async (newPersonId) => {
           await refresh();
           toast({
             variant: 'success',
             title: t('loginLink.unlinked', { person: value.display_name }),
+            description: t('loginLink.unlinkedDetail', {
+              person: value.display_name,
+              login: loginEmail ?? t('loginLink.unlinkedLogin'),
+            }),
+            ...(newPersonId
+              ? {
+                  action: {
+                    label: t('loginLink.openNewRecord'),
+                    onClick: () => router.push(routes.personView(newPersonId)),
+                  },
+                }
+              : {}),
           });
         }}
       />
@@ -342,6 +363,13 @@ function Overview({
             <Button size="sm" onClick={onUnlink}>
               {t('loginLink.unlink')}
             </Button>
+          ) : null}
+          {person.is_login_placeholder ? (
+            <span className="basis-full text-sm text-muted" data-testid="login-placeholder-hint">
+              {loginEmail
+                ? t('loginLink.placeholderHint', { login: loginEmail })
+                : t('loginLink.placeholderHintNoEmail')}
+            </span>
           ) : null}
         </span>
       ) : (

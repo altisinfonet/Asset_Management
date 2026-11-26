@@ -330,7 +330,8 @@ function UsersTable({
                 <DropdownMenuItem onSelect={() => setLinking(u)}>
                   {t('loginLink.linkPerson')}
                 </DropdownMenuItem>
-                {personOfLogin.has(u.id) ? (
+                {/* the login's own automatic record has nothing to unlink (ED-33) */}
+                {personOfLogin.has(u.id) && !personOfLogin.get(u.id)?.is_login_placeholder ? (
                   <DropdownMenuItem onSelect={() => setUnlinking(u)}>
                     {t('loginLink.unlinkPerson')}
                   </DropdownMenuItem>
@@ -453,10 +454,14 @@ function UsersTable({
         }}
         loginLabel={unlinking?.email}
         onDone={async () => {
+          // the login's new record shows in the Person column of its row (ED-33)
+          const name = (unlinking && personOfLogin.get(unlinking.id)?.display_name) || '';
           toast({
             variant: 'success',
-            title: t('loginLink.unlinked', {
-              person: (unlinking && personOfLogin.get(unlinking.id)?.display_name) || '',
+            title: t('loginLink.unlinked', { person: name }),
+            description: t('loginLink.unlinkedDetail', {
+              person: name,
+              login: unlinking?.email ?? t('loginLink.unlinkedLogin'),
             }),
           });
         }}

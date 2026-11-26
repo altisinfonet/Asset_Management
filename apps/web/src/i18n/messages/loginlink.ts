@@ -32,6 +32,15 @@ export const loginLinkMessages = {
     unlinkedLogin: 'the login account',
     confirmUnlink: 'Unlink',
     unlinked: '{person} was unlinked from their login.',
+    unlinkedDetail:
+      '{person} keeps their assets and history. The login {login} now has its own empty record.',
+    openNewRecord: 'Open the new record',
+    // ED-33: the login's own automatic record (the system made it; nobody chose it)
+    placeholderBadge: "Login's own record",
+    placeholderHint:
+      'This is the automatic record of the login {login}; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.',
+    placeholderHintNoEmail:
+      "This is the login's own automatic record; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.",
     invited: 'pending invitation',
     loadFailed: 'We could not load the login accounts.',
   },

@@ -276,11 +276,17 @@ const SCENARIOS: Scenario[] = [
   {
     name: 'people: unlink confirmation (M2-USR-03)',
     open: async (p) => {
+      // Vera Viewer's record is her login's own automatic record (nothing to unlink, ED-33): link
+      // Jamie Okafor to the login first, then unlink him
       await p.goto('/people');
-      await p.getByRole('link', { name: 'Vera Viewer' }).click();
+      await p.getByRole('link', { name: 'Jamie Okafor' }).click();
+      await p.getByRole('button', { name: 'Link to a login' }).click();
+      const link = p.getByRole('dialog', { name: 'Link Jamie Okafor to a login' });
+      await pick(p, link.getByRole('combobox', { name: /Login account/ }), 'Vera', /Vera Viewer/);
+      await link.getByRole('button', { name: 'Link login' }).click();
       await p.getByRole('button', { name: 'Unlink login' }).click();
       await expect(
-        p.getByRole('dialog', { name: 'Unlink Vera Viewer from their login?' }),
+        p.getByRole('dialog', { name: 'Unlink Jamie Okafor from their login?' }),
       ).toBeVisible();
     },
   },

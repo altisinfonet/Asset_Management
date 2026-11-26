@@ -1,13 +1,15 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { roleIdFor, uid } from '@/mocks/registry-fixtures';
 import { server } from '@/mocks/server';
 import { expectNoA11yViolations } from '@/test/axe';
 import { renderApp, seedSession } from '@/test/render';
 import { UsersScreen } from './users-screen';
+
+vi.mock('next/navigation', () => import('@/test/navigation').then((m) => m.navigationMock));
 
 describe('UsersScreen role column', () => {
   beforeEach(() => seedSession(MOCK_ACCOUNTS.owner));

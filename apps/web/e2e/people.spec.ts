@@ -1,4 +1,5 @@
 import { MOCK_ACCOUNTS } from '../src/mocks/fixtures';
+import { violations } from './axe';
 import { expect, settled, test } from './fixtures';
 import { choose, heldAsset, pick } from './m2-helpers';
 
@@ -196,7 +197,24 @@ test.describe('link a person to a login', () => {
     await expect(
       page.getByText('Jamie Okafor was unlinked from their login.').first(),
     ).toBeVisible();
+    await expect(
+      page
+        .getByText(
+          'Jamie Okafor keeps their assets and history. The login viewer@example.org now has its own empty record.',
+        )
+        .first(),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Link to a login' })).toBeVisible();
+
+    // the toast leads to the login's new automatic record: no Unlink there, a badge and a sentence (ED-33)
+    await page.getByRole('button', { name: 'Open the new record' }).click();
+    await expect(page.getByTestId('person-name')).toHaveText('Vera Viewer');
+    await expect(page.getByTestId('login-placeholder-badge')).toHaveText("Login's own record");
+    await expect(page.getByTestId('login-placeholder-hint')).toContainText(
+      'This is the automatic record of the login viewer@example.org; there is nothing to unlink.',
+    );
+    await expect(page.getByRole('button', { name: 'Unlink login' })).toHaveCount(0);
+    expect(await violations(page)).toEqual([]);
   });
 });
 

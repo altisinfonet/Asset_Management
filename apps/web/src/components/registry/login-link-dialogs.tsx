@@ -19,7 +19,7 @@ import {
 import { Field, type FieldControlProps } from '@/components/ui/field';
 import { useT } from '@/i18n';
 import { getApi, type UiError } from '@/lib/api';
-import { peopleApi } from '@/lib/registry/api';
+import { peopleApi, usersApi } from '@/lib/registry/api';
 
 /**
  * Link and unlink a person and a login account (M2-USR-03, ED-22). The dialogs say what happens
@@ -213,7 +213,10 @@ export interface UnlinkDialogProps {
   person: { id: string; display_name: string; etag?: string };
   /** The login's e-mail when known; the sentence falls back to "the login account". */
   loginLabel?: string | undefined;
-  onDone: () => void | Promise<void>;
+  /** The login account being unlinked: after the unlink its new (empty) record is looked up. */
+  userId?: string | null | undefined;
+  /** `newPersonId`: the login's new automatic record, when it could be read (`GET /v1/users/{id}`). */
+  onDone: (newPersonId?: string) => void | Promise<void>;
 }
 
 /** Confirmation of removing the login from a person (from either page). */
@@ -222,6 +225,7 @@ export function UnlinkDialog({
   onOpenChange,
   person,
   loginLabel,
+  userId,
   onDone,
 }: UnlinkDialogProps) {
   const t = useT();
@@ -240,7 +244,15 @@ export function UnlinkDialog({
       onConfirm={async () => {
         await peopleApi.unlinkUser(person.id, person.etag);
         await refresh();
-        await onDone();
+        // the login moved to a new automatic record (ED-15): say where, so it does not look as if
+        // the unlink failed (ED-33)
+        const newPersonId = userId
+          ? await usersApi
+              .get(userId)
+              .then((u) => u.value.person_id ?? undefined)
+              .catch(() => undefined)
+          : undefined;
+        await onDone(newPersonId);
       }}
     >
       <p className="text-base text-muted">{t('loginLink.unlinkImpact')}</p>

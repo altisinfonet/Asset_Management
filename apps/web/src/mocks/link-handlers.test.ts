@@ -54,6 +54,19 @@ describe('mock link-user (owner)', () => {
     expect(code(await fails(peopleApi.unlinkUser(jamie.id)))).toBe('conflict');
   });
 
+  it("refuses to unlink the login's own automatic record (409, ED-33) and flags it", async () => {
+    const sam = await user('Sam Lee');
+    const auto = await person('Sam Lee');
+    expect(auto).toMatchObject({ user_id: sam.id, is_login_placeholder: true });
+    expect((await person('Jamie Okafor')).is_login_placeholder).toBe(false);
+    const refused = await fails(peopleApi.unlinkUser(auto.id));
+    expect(code(refused)).toBe('conflict');
+    expect((refused.body as { detail?: string }).detail).toBe(
+      `This is the automatic record of the login ${sam.email}; there is nothing to unlink. To attach the login to a real person, open that person and use Link to a login.`,
+    );
+    expect((await usersApi.get(sam.id)).value.person_id).toBe(auto.id);
+  });
+
   it('answers the documented 409s and 422s', async () => {
     const vera = await user('Vera Viewer');
     const alice = await user('Alice Owner');

@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
 import { expectNoA11yViolations } from '@/test/axe';
 import { renderApp, seedSession } from '@/test/render';
 import { UsersScreen } from './users-screen';
+
+vi.mock('next/navigation', () => import('@/test/navigation').then((m) => m.navigationMock));
 
 /**
  * Pending logins on the Users tab (ED-27): a login whose invitation is not accepted yet is listed with

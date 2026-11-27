@@ -4,7 +4,7 @@ What changed, release by release. Newest first. Format follows [Keep a Changelog
 each release lists **Added**, **Changed**, **Fixed** and **Security**. For what each feature does see
 [FEATURES.md](FEATURES.md); for how it was verified see [AUDIT.md](AUDIT.md); for the API see [API.md](API.md).
 
-**Current version: 0.2.9** (milestone M2, fixes from the automated run of the founder walk-through). Tag `v0.2.9`; see the entry below for the commit.
+**Current version: 0.2.10** (milestone M2, the import polish before the founder's real-file trial). Tag `v0.2.10`; see the entry below for the commit.
 
 ## Versioning scheme
 
@@ -36,6 +36,45 @@ commit (`git tag -a v0.2.4 -m "0.2.4: …"`) and push the tag.
 **Tags:** `v0.1.0` (`6634c54`), `v0.2.1` (`916b15c`) and `v0.2.2` (`2f7c467`) were added afterwards on their release merges;
 their `package.json` files still say `0.0.0` because versions were only introduced with 0.2.3. `v0.2.3` points at the commit
 that set the versions (the release content itself is `2d9a14b` plus that commit).
+
+---
+
+## 0.2.10 - 2026-11-27 - Import polish before the founder's real-file trial
+
+The importer before the founder imports real files (M2-IMP-09): M2-IMP-10 and the five import items the automated
+walk-through run saw but did not change (AUDIT B.33, "seen, not changed"). Branch `imp-polish` from `main` (`629c47b`);
+the release commit is tagged `v0.2.10`. One decision entry (ED-40), an amendment to ADR 0006, one contract change
+(`ImportValue.issue.rows` and `.categories`, and texts), no migration. All M2 features are now built and released; the
+founder acceptance (M2-UX-01) and the real-file trial are deferred until the founder has the hardware (USB scanner, label
+stock, printer) and real files. Verification: [AUDIT.md](AUDIT.md) B.34.
+
+### Added
+
+- **Excel's "Unicode Text (.txt)" and `.tsv` files** (M2-IMP-10): the upload box of an import takes `.csv`, `.txt`, `.tsv`
+  and `.xlsx`, and a `.txt` / `.tsv` file is imported under its own name (no renaming to `.csv`). Only import files: every
+  other upload keeps `.csv` only. The file is stored as CSV and checked as strictly as a CSV (ADR 0006 amended).
+- **Match values says which rows fail**: **Needs a decision** with "3 rows in category Network will be errors" (or "2 rows
+  will be errors"), then the reason; `ImportValue.issue.rows` and `.categories` in the API.
+- The dry-run summary says why rows are skipped (`skipped_by_code`).
+
+### Changed
+
+- **A re-import where nothing changed** says **Nothing to change: every row matches what is already there.** in a neutral
+  (blue) note instead of the amber "No row can be imported. Fix the file and upload it again."; **Nothing to import** stays
+  disabled.
+- **Uniqueness errors name the field and the record**: "Asset tag CHR-00001 is already used by another asset." in an import
+  row (it said only "is already in use") and in the API's 409; likewise "Email ... is already used by <person>.",
+  "Employee number ... is already used by <person>.", "Department code ... is already used by the department <name>.".
+- Guide 1 lists the Excel save formats that work and the price notations it reads; guides 1 and 2, walk-through steps 25,
+  28, 38 and 39 and exit item 8 describe the changes; `01-import-upload.png` re-shot (the upload hint).
+
+### Fixed
+
+- **Prices written "Rs.44000/-"** (also "Rs 44,000/-", "INR 44000", "₹1,14,900.00") were not numbers: a leading `Rs`,
+  `Rs.`, `INR` or a currency symbol and a trailing `/-` are now read past, lakh grouping (`1,14,900.00`) still works, and
+  the currency is INR ("Rs" takes the import's rupee when that is PKR, LKR, NPR, MUR or SCR).
+- **On Match values a long reason ran into the next column**: it wraps inside its column, shows two lines and **Show the
+  whole reason** for the rest (the whole text is also the tooltip); axe clean in light and dark.
 
 ---
 

@@ -843,7 +843,7 @@ ISOLATION_MODE=direct DATABASE_URL=postgres://app_user:dev@localhost:5433/app pn
 ISOLATION_MODE=pooled DATABASE_URL=postgres://app_user:dev@localhost:6432/app POOLED_ONE_URL=postgres://app_user:dev@localhost:6432/app_one pnpm --filter @assettracker/api test:e2e
 ```
 
-Each run ends with a line such as `Tests  798 passed (798)` (0.2.9): the item passes with 0 failed and 0 skipped in both modes.
+Each run ends with a line such as `Tests  803 passed (803)` (0.2.10): the item passes with 0 failed and 0 skipped in both modes.
 
 Mark item 8 here: - [ ] Passes (0 skipped) - [ ] Fails — note: ____
 

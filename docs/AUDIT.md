@@ -134,6 +134,7 @@ Chronological, oldest first. Dates are the commit or document dates in the repos
 | B.31 | 2026-11-26 | Import test corpus (M2-IMP-09, first criterion; ED-31; released in 0.2.8) | 17 fixtures + generated 100k file; one message fixed, one gap logged (M2-IMP-10); API e2e 790/790 direct and pooled |
 | B.32 | 2026-11-26 | Release 0.2.8: M2 close-out before the founder walk-through (ED-32, ED-33), corpus and checklist merged | Lost/found/dispose, bulk move, Organisation page, Open PDF, unlink duplicates fixed; API e2e 791/791 direct and pooled, real-stack 72/72, mock 767/767 |
 | B.33 | 2026-11-26 | Release 0.2.9: fixes from the automated run of the founder walk-through (ED-34 to ED-39) | 8 app bugs and 7 checklist/guide errors fixed; walk-through steps 17, 24, 25-28, 39 re-run through the UI: pass; API e2e 798/798 direct and pooled, real-stack 72/72, mock 768/768 |
+| B.34 | 2026-11-27 | Release 0.2.10: import polish before the founder's real-file trial (M2-IMP-10, ED-40) | IMP-10 and five import fixes; four sample files and a Unicode text file checked through the UI: 11/11; API e2e 803/803 direct and pooled (one relay-race flake, rerun), real-stack 72/72, mock 775/775 |
 
 ### B.1 Desk validation - 2026-11-17
 
@@ -828,9 +829,79 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
   "allow creating missing people" (true: the person policy can be **Create it**, as guide 2 now says); two Google rows
   whose tag exists say only "is already in use" without the field in the sentence; on **Match values** a long reason
   runs into the next column; the amber "No row can be imported" banner on a re-import where nothing changed; prices
-  written "Rs.44000/-" are not read as numbers.
+  written "Rs.44000/-" are not read as numbers. (All but the "No person named" text were fixed in 0.2.10, B.34.)
 - **Open:** M2-IMP-09 real-file trial (F-09), M2-IMP-10, steps 17 and 19 with the founder's scanner and printer, and
   M2-UX-01 (the founder's walk-through).
+
+### B.34 Release 0.2.10: import polish before the founder's real-file trial - 2026-11-27 (version 0.2.10)
+
+- **Scope:** branch `imp-polish` from `main` (`629c47b`): M2-IMP-10 and the import items B.33 listed as "seen, not changed"
+  (ED-40). Contract: `ImportValue.issue.rows` and `.categories`, the `summary` description (`skipped_by_code`), the attachment
+  and import create texts, through `gen.mjs`; api-client regenerated; the API.md catalogue is unchanged. No migration. ADR
+  0006 has an amendment note.
+- **What changed (item, fix, test):**
+  - **`.txt` / `.tsv` import files** (M2-IMP-10): `checkDeclaredType(..., { importFile })` takes `.csv`, `.tsv`, `.txt`
+    declared as `text/csv`, `text/plain` or `text/tab-separated-values` for kind `import_file` only, stored as `text/csv`
+    and sniffed by the import-file CSV rules; other kinds unchanged. Wizard `accept=".csv,.tsv,.txt,.xlsx"` and hint; guide 1
+    names the Excel save formats. Unit tests (`content.test.ts`: allowed names and types, refused names and types, other
+    kinds, sniffing of `.txt` against markup and binaries), the corpus case uploads `utf16le-unicode-text.txt` under its own
+    name as `text/plain` (and refuses it as a `document` and as `.html`), web unit and mock e2e (a tab-separated
+    `Unicode text.txt`).
+  - **Rupee prices:** `parseNumber` reads past a leading `Rs` / `Rs.` / `INR` / currency symbol, a trailing `Rs` and `/-` or
+    `/=`; `currencyHint` gives INR for `₹`, and for `Rs` the import's rupee (PKR, LKR, NPR, MUR, SCR) or INR. Unit tests
+    (17 notations, lakh grouping, refusals) and the corpus file `rupee-prices.csv` (18 fixtures now; a bare `44000/-`
+    takes the organisation's currency, "donated" is a `number` error).
+  - **Uniqueness errors name the field and the record:** the dry-run tag clash says "Asset tag X is already used by another
+    asset."; the registry's 409s for an asset tag, an external id, a person's email or employee number and a department
+    code name the record (`takenBy`); an import row takes the problem's sentence for every `duplicate` field error
+    (`issuesOf`). Unit test of `issuesOf`, e2e (`walkthrough.e2e.test.ts`: matching on serial with a taken tag; the 409
+    sentences of assets, people and departments).
+  - **Row counts on Match values:** `ImportValue.issue.rows` / `.categories` (model scopes grouped with their row counts and
+    category texts); the web shows **Needs a decision**, "3 rows in category Network will be errors", then the reason. E2e
+    (five rows of one model in two categories: 3 rows, category "Network" once although written three ways), the location
+    case (`rows` = `count`, no category), web unit test of the sentence.
+  - **Long reason:** the cell wraps (`whitespace-normal`, fixed width), the reason is clamped to two lines with the full
+    text as `title` and **Show the whole reason** / **Show less** (`aria-expanded`). Web unit test, mock e2e that measures
+    the reason inside its cell collapsed and expanded, axe in light and dark (new screen in `imports.spec.ts`).
+  - **"Nothing to change":** `summary.skipped_by_code`; the review shows the info banner when nothing is written, nothing
+    fails and every skip is `exists` / `unchanged` (repeats and summary lines aside). E2e (first run `duplicate-in-file`,
+    re-runs `exists` and `unchanged`), helper and screen unit tests, mock e2e and axe in light and dark.
+  - **Docs:** ED-40 and its index row; ADR 0006 amendment; guides 1 and 2; walk-through header (deferred until the founder's
+    hardware and files), steps 25, 28, 38, 39, exit item 8 (803) and "Changes in 0.2.10"; FEATURES, STATUS (section 1 M2
+    row, section 3 "Next"), backlog (IMP-09, IMP-10 done, UX-01), VERSION 0.2.10; `01-import-upload.png` re-shot with
+    `shoot.mjs --only=import` (the only guide picture whose screen changed).
+  - **B.33 candidates:** fixed here: the "its rows will be errors" wording for a model, the bare "is already in use", the
+    long reason on Match values, the amber banner on an unchanged re-import, "Rs.44000/-". Not changed: the "No person
+    named ..." text offering "allow creating missing people" (correct as written, B.33). None of them was a backlog entry.
+- **Result** on the final code (compose project `atpol`, host ports 27000 to 27901, every stack fresh with `down -v`; the
+  founder's `assettracker` stack and folder untouched): `pnpm install --frozen-lockfile` clean; `turbo run lint typecheck
+  test build --force` 21/21, 0 cached (API unit 674, web 854, api-client 14, ui-tokens 15, schemas 3); `format:check` clean;
+  `gen.mjs` reproduces `openapi.yaml` (205 operations), `gen-api-md --check`, api-client `generate:check` and Redocly (valid)
+  clean; `db:pull` no drift, `schema:lint` 0 violations; API e2e with `ADMIN_DATABASE_URL`, mail, MinIO and clamd: 803/803 in
+  68 files direct and 803/803 through PgBouncer with the `app_one` negative control (passed), 0 skipped
+  (`assert-no-skips.mjs`); web mock e2e 775/775 (Chrome); web real-stack e2e 72/72 on a fresh stack.
+- **Rerun:** the first pooled run failed 1 of 803: `flows.e2e.test.ts` "commits in batches ..." found no `import.completed`
+  notification after its own `OutboxRelay.runOnce`. The compose `worker` relays the outbox of every active tenant, the test
+  tenants included (`roles/worker.ts`), so it can claim the event first; the same race as the loaner mail tests in B.20.
+  Not related to this change; the full pooled rerun passed 803/803. Logged in section C.
+- **UI check through the real wizard** (an automated Chrome on a fresh demo stack, production build): the upload box offers
+  `.csv,.tsv,.txt,.xlsx` with the new hint; a UTF-16 LE tab-delimited `Unicode text export.txt` (20 rows of file 1 with
+  their own tags) uploaded under its name, stored as `text/csv`, read as `utf-16le` / tab, 19 create and 1 error (the
+  UniFi row, category not mapped in that run). `1-office-assets-clean.csv`: **UniFi U6 Pro** "Needs a decision", "3 rows in
+  category Network will be errors", reason inside its column collapsed and expanded; after mapping Network to Network
+  equipment 100 / 0 / 0 / 0 and 100 created; the same file again: 0 / 0 / 100 / 0, `skipped_by_code` `exists` 100, the blue
+  "Nothing to change: every row matches what is already there.", no amber banner, **Nothing to import** disabled.
+  `2-school-inventory-messy.csv`: the only price error is row 45 "donated"; `Rs.44000/-`, `₹ 58,000` and the other rupee
+  cells are INR amounts (plain numbers take the demo organisation's USD); "Latitude 5440" "1 row in category laptop will be
+  an error", "EB-X51" "1 row in category LAPTOPS will be an error", "Lab 1" "19 rows will be errors", every reason inside
+  its column. `3-office-assets.xlsx`: 60 error rows, "Serial number X40100037 is already used by OFF-0001." and the model
+  rows, no bare "is already in use". `4-google-admin-chromeos-sample.csv`: "Asset tag CHR-00004 is already used by another
+  asset." and CHR-00010, 20 "No person named ..." rows, no bare "is already in use". 11 of 11 checks passed.
+- **Seen, not changed:** a price column whose header names the currency ("Price (Rs)") does not lend it to the plain
+  numbers of that column, so on an organisation whose currency is not INR one file can give INR and the organisation's
+  currency side by side (a candidate: a column-level currency hint).
+- **Open:** the founder's part of M2, deferred until the hardware and real files are there: M2-IMP-09 real-file trial
+  (F-09), steps 17, 19, 28, 37 on a real device and the wrap-up of M2-UX-01.
 
 ---
 
@@ -854,4 +925,5 @@ Root causes found and fixed after the wave 2 runs showed flaky behaviour under l
 | Two open Dependabot pull requests (GitHub Actions; OpenTelemetry exporter)                               | The exporter was pinned on purpose                                    | Founder 👤, STATUS.md                                                                                    |
 | `ensurePartitions` can use up its 10 NOWAIT attempts under sustained writes (known, not fixed)          | `migrate` or the monthly partition job then fails and must be rerun; no data is lost | `apps/api/src/db/maintenance.ts`; found by the 0.2.7 independent verification (B.30) |
 | `assertAnotherAdmin` is a plain count without a row lock (known, not fixed; predates 0.2.7)              | Two concurrent removals of two different admins could leave a tenant with no admin | `apps/api/src/auth/users.service.ts`; found by the 0.2.7 verification (B.30) |
+| `flows.e2e.test.ts` "commits in batches" can miss its `import.completed` notification when the compose `worker`'s outbox relay (it relays every active tenant, the test tenants too) claims the event first (known, not fixed) | A run with the compose stack up can fail that one test; a rerun passes | Found by the 0.2.10 verification (B.34); fix: hand the event to the subscriptions in-process, as the loaner mail tests do (B.20) |
 | Two e2e flakes (known, not fixed): TOTP time-step test (`auth-security.e2e.test.ts:630`), scan wait in `custody-files.spec.ts:177` (5 s) | A step boundary or a slow scan can fail a run; a rerun passes | Found by the 0.2.7 verification (B.30) |

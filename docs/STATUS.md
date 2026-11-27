@@ -1,10 +1,10 @@
 # Project status
 
-_Last updated: 2026-11-26 (v0.2.9 prepared: the fixes from the automated run of the founder walk-through checklist; tag `v0.2.9` local, not pushed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
+_Last updated: 2026-11-27 (v0.2.10 prepared: the import polish before the founder's real-file trial, ED-40; tag `v0.2.10` local, not pushed). Detailed story-level status lives in [05_backlog.md](05_backlog.md); this page is the
 one-screen summary._
 
 Related pages: [FEATURES.md](FEATURES.md) (every feature and its state) · [API.md](API.md) (API reference) ·
-[VERSION.md](VERSION.md) (version history, current 0.2.9) · [AUDIT.md](AUDIT.md) (quality and security audit record).
+[VERSION.md](VERSION.md) (version history, current 0.2.10) · [AUDIT.md](AUDIT.md) (quality and security audit record).
 
 Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 needs the founder
 
@@ -16,7 +16,7 @@ Legend: ✅ done · 🟡 in progress / partly done · ⏳ not started · 👤 ne
 | Validation (desk + hands-on)            | ✅     | [04_validation_report.md](04_validation_report.md); real-customer validation happens in the M4 beta |
 | Sprint 0 (scaffold, data model, design) | ✅     | Monorepo, API contract, design system, backlog                                            |
 | **M1** Tenancy, sign-in, asset registry | ✅     | Accepted by the founder walk-through on 2026-11-19                                        |
-| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); v0.2.8 closed the gaps found while preparing the founder walk-through (lost, found and dispose screens, bulk move, the Organisation settings page, the unlink duplicates, doc fixes) and added the import test corpus and the walk-through checklist; v0.2.9 fixed what an automated run of that checklist found (saved views, print labels for an import, five import rules, the scan box keeps focus, checklist and guide text); the import trial with the founder's files (IMP-09) and the founder acceptance (M2-UX-01) to come |
+| **M2** Custody, labels, import          | 🟡     | Waves 1 and 2 merged; review fixes, managed departments and location editing done (v0.2.4); wave 3 part 1 released as v0.2.5 (import backend and wizard, loaner pools, desk and dashboard, three deferred stories); location scoping for roles released as v0.2.6; isolation harness extension, performance harness, add and remove access, user guides, the ED-29 fixes and LAN access in development (ED-30) released as v0.2.7, together with the console-style dashboard and teal palette (GitHub PR #15) and the CI fix (PR #16); v0.2.8 closed the gaps found while preparing the founder walk-through (lost, found and dispose screens, bulk move, the Organisation settings page, the unlink duplicates, doc fixes) and added the import test corpus and the walk-through checklist; v0.2.9 fixed what an automated run of that checklist found (saved views, print labels for an import, five import rules, the scan box keeps focus, checklist and guide text); v0.2.10 polished the importer (Unicode text and .tsv files, IMP-10; rupee prices; uniqueness errors that name the record; row counts on Match values; "Nothing to change" on an unchanged re-import; ED-40). **All M2 features are built and released.** The founder acceptance (M2-UX-01) and the real-file import trial (IMP-09) are **deferred until the founder has the hardware (USB scanner, label stock, printer) and real files** 👤: only the founder's five steps remain (17, 19, 28, 37 on a real device, wrap-up) |
 | **M3** Expo mobile app                  | ⏳     |                                                                                           |
 | **M4** Self-hosted edition (first real users) | ⏳ |                                                                                         |
 | **M5** Snipe-IT importer, reports, webhooks, licences | ⏳ |                                                                                |
@@ -87,7 +87,7 @@ Wave 2 verified on the merged code: API e2e 566/566 (direct and through PgBounce
 
 | Area                                                            | Stories |
 | --------------------------------------------------------------- | ------- |
-| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; messy-file test corpus in CI (v0.2.8, ED-31) ✅; waiting for the founder's real files (F-09) 👤 | IMP-01…08 done, IMP-09 partial (corpus done, real-file trial open), IMP-10 open |
+| CSV / XLSX import: engine, API, wizard with dry run, Google Admin ChromeOS template, templates, saved mappings, data retention (ED-25) ✅; messy-file test corpus in CI (v0.2.8, ED-31) ✅; `.txt` / `.tsv` import files (v0.2.10, ED-40) ✅; real-file trial deferred until the founder has real files (F-09) 👤 | IMP-01…08 done, IMP-09 partial (corpus done, real-file trial deferred), IMP-10 done |
 | Loaner pools: pools, desk, dashboard, quick loan and return by scanning, overdue and due-soon alerts (also by mail to borrowers without a login), loan length order and "next available" by idle time (ED-24), default return date pre-fill ✅ (ADR 0011) | LOAN-01…04, LIFE-09 done |
 
 ### Wave 3 — part 2: location scoping done ✅ (v0.2.6, 2026-11-25)
@@ -159,11 +159,24 @@ errors; all are fixed.
 | Scanning: after a scan the cursor stays in the scan box for the next label, the asset is announced (founder decision, ED-39) ✅ | LIFE-08, TAG-04 |
 | Checklist steps 6, 12, 17, 20, 24, 27, 28, 39, 40, 41, 43 and exit item 8, guides 1, 2, 3, 4 and 6 corrected; one guide picture re-shot ✅ | UX-01, DOC-01 |
 
-### Next: the founder's part of M2
+### Import polish before the real-file trial ✅ (v0.2.10, 2026-11-27)
 
-Only two items remain: the real-file import trial of IMP-09 (waiting on the founder's anonymised spreadsheet and Google Admin
-export, F-09 👤), then the founder acceptance walk-through M2-UX-01 👤 with the checklist
-[acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md) (45 steps; updated for 0.2.9 after the automated run, AUDIT B.33).
+| Change | Stories |
+| ------ | ------- |
+| Excel's **Unicode Text (.txt)** and `.tsv` files are uploaded and imported under their own name (import files only; stored as CSV, sniffed as strictly as before; ADR 0006 amended) ✅ | IMP-10 |
+| Prices such as `Rs.44000/-`, `Rs 44,000/-`, `INR 44000` and `₹1,14,900.00` are numbers (INR) ✅ | IMP-03 |
+| Uniqueness errors name the field and the record ("Asset tag CHR-00001 is already used by another asset.") in import rows and in the API ✅ | IMP-04 |
+| **Match values**: **Needs a decision** says how many rows fail and in which category; a long reason wraps in its column, two lines with **Show the whole reason** ✅ | IMP-03, IMP-08 |
+| A re-import where every row matches says **Nothing to change: every row matches what is already there.** (neutral) instead of the amber "No row can be imported" ✅ | IMP-08 |
+
+### Next: the founder's part of M2 (deferred until the hardware and real files are there) 👤
+
+**Deferred until the founder has the hardware (USB scanner, label stock, printer) and real files.** All M2 features are
+built and released (0.2.10). What remains is the founder's own part: the real-file import trial of IMP-09 (the anonymised
+spreadsheet and Google Admin export, F-09) and the founder acceptance walk-through M2-UX-01 with the checklist
+[acceptance/m2-walkthrough.md](acceptance/m2-walkthrough.md), where only five steps are left: **17** (USB scanner), **19**
+(real label stock and printer), **28** (real files and the 30-minute target), **37** on a real second device, and the
+**wrap-up**. Every other step was run through the UI by the automated runs (AUDIT B.33, B.34).
 
 ## 4. Waiting on the founder 👤
 

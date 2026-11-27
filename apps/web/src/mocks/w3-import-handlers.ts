@@ -1206,10 +1206,19 @@ function finishDryRun(job: MockImportJob): void {
       }
     }
   }
+  // ED-40: why rows are skipped (the row's last warning), as the API's summary says
+  const skipped = new Map<string, number>();
+  for (const row of rows.filter((r) => r.plan === 'skip')) {
+    const code = row.warnings[row.warnings.length - 1]?.code ?? '';
+    skipped.set(code, (skipped.get(code) ?? 0) + 1);
+  }
   const setup = (job.summary as { setup?: unknown } | null)?.setup;
   job.summary = {
     counts: { ...job.plan },
     errors_by_code: [...byCode.values()].sort((a, b) => b.n - a.n).slice(0, 50),
+    skipped_by_code: [...skipped.entries()]
+      .map(([code, n]) => ({ code, n }))
+      .sort((a, b) => b.n - a.n),
     will_create: [...willCreate.values()].sort((a, b) => b.n - a.n).slice(0, 200),
     validated_at_commit: rows.filter(
       (r) =>
@@ -2414,9 +2423,11 @@ export const importHandlers: HttpHandler[] = [
     if (scanState(attachment.id) === 'infected' || attachment.scan_status === 'error') {
       return bad('This file was rejected by the upload checks.');
     }
-    const ext = /\.([a-z0-9]+)$/i.exec(attachment.filename)?.[1]?.toLowerCase();
+    const named = /\.([a-z0-9]+)$/i.exec(attachment.filename)?.[1]?.toLowerCase();
+    // `.txt` and `.tsv` are comma- or tab-separated text like a CSV (ED-40)
+    const ext = named === 'txt' || named === 'tsv' ? 'csv' : named;
     if (ext !== 'csv' && ext !== 'xlsx') {
-      return bad(`"${attachment.filename}" is not a CSV or XLSX file.`);
+      return bad(`"${attachment.filename}" is not a CSV, TSV, TXT or XLSX file.`);
     }
     const quota = capacity(job);
     if (quota) return quota;
@@ -2541,7 +2552,9 @@ export const importHandlers: HttpHandler[] = [
       distinct: counts.size,
       data: grouped.slice(0, limit).map(([value, count]) => {
         const res = resolveRef({ ...job, value_map: {} }, strict, kind, value);
-        const issue = kind === 'location' ? bareLocationIssue(value, [...counts.keys()]) : null;
+        const found = kind === 'location' ? bareLocationIssue(value, [...counts.keys()]) : null;
+        // ED-40: every row of an ambiguous bare name fails; no category is named
+        const issue = found ? { ...found, rows: count, categories: [] as string[] } : null;
         return {
           value,
           count,

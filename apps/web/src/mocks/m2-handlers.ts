@@ -2265,15 +2265,28 @@ const ALLOWED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['text/csv', ['csv']],
 ];
 
+/** An import file may also be `.txt` / `.tsv` text, declared as CSV, plain or tab-separated text (ED-40). */
+const IMPORT_TEXT_MIMES = ['text/csv', 'text/plain', 'text/tab-separated-values'];
+const IMPORT_TEXT_EXTENSIONS = ['csv', 'tsv', 'txt'];
+
 /** Declared type and file name: allow-listed, and the extension fits the type (`checkDeclaredType`). */
-function declaredTypeProblem(contentType: string, filename: string): string | null {
+function declaredTypeProblem(
+  contentType: string,
+  filename: string,
+  importFile = false,
+): string | null {
   const mime = contentType.split(';')[0]!.trim().toLowerCase();
+  const dot = filename.lastIndexOf('.');
+  const ext = dot > 0 && dot < filename.length - 1 ? filename.slice(dot + 1).toLowerCase() : '';
+  if (importFile && IMPORT_TEXT_MIMES.includes(mime)) {
+    return IMPORT_TEXT_EXTENSIONS.includes(ext)
+      ? null
+      : `The file name extension "${ext || '(none)'}" does not match a text file for import (expected .csv, .tsv, .txt).`;
+  }
   const type = ALLOWED_TYPES.find(([m]) => m === mime);
   if (!type) {
     return `Files of type "${mime.slice(0, 100)}" are not accepted. Allowed: images (JPEG, PNG, WebP, GIF), PDF, Office documents and CSV.`;
   }
-  const dot = filename.lastIndexOf('.');
-  const ext = dot > 0 && dot < filename.length - 1 ? filename.slice(dot + 1).toLowerCase() : '';
   if (!type[1].includes(ext)) {
     return `The file name extension "${ext || '(none)'}" does not match ${mime} (expected ${type[1].map((e) => `.${e}`).join(' or ')}).`;
   }
@@ -2457,7 +2470,8 @@ const attachmentHandlers: HttpHandler[] = [
     }
     if (errors.length > 0) return validation(errors);
 
-    const typeProblem = declaredTypeProblem(contentType, filename);
+    const importFile = body.kind === 'import_file';
+    const typeProblem = declaredTypeProblem(contentType, filename, importFile);
     if (typeProblem) {
       return fail('unsupported-media-type', {
         detail: typeProblem,
@@ -2498,7 +2512,11 @@ const attachmentHandlers: HttpHandler[] = [
         entity_id: body.entity_id as string,
         kind: (body.kind as MockAttachment['kind']) ?? 'document',
         filename,
-        content_type: contentType.split(';')[0]!.trim().toLowerCase(),
+        // an import file's text is stored as text/csv, whatever text type it was declared as (ED-40)
+        content_type:
+          importFile && IMPORT_TEXT_MIMES.includes(contentType.split(';')[0]!.trim().toLowerCase())
+            ? 'text/csv'
+            : contentType.split(';')[0]!.trim().toLowerCase(),
         size_bytes: bytes,
         sha256: (body.sha256 as string | undefined) ?? null,
         scan_status: 'pending',

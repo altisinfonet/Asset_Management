@@ -14,14 +14,20 @@ import { useUploadLimit } from '@/lib/files/use-upload-limit';
 import { useUploads } from '@/lib/files/use-uploads';
 import { downloadTemplate, importKeys, importsApi, type ImportJob } from '@/lib/imports/api';
 import { importErrorText, type ImportErrorText } from '@/lib/imports/error-text';
-import { IMPORT_KINDS, isPurged, kindOf, withImportContentType } from '@/lib/imports/helpers';
+import {
+  IMPORT_FILE_ACCEPT,
+  IMPORT_KINDS,
+  isPurged,
+  kindOf,
+  withImportContentType,
+} from '@/lib/imports/helpers';
 import { routes } from '@/lib/routes';
 
 /**
  * Step "Upload file": the same pipeline as every attachment (presigned PUT with progress, then the
  * virus scan), owned by the import job. Once the file is clean the analysis is queued (`202`) and the
- * wizard moves on to matching columns while the worker reads the file. CSV and Excel (.xlsx) files
- * are accepted. With `replacing`, the file of an import that has been read already is swapped: the
+ * wizard moves on to matching columns while the worker reads the file. CSV, tab-separated text (.tsv,
+ * .txt: Excel's "Unicode text") and Excel (.xlsx) files are accepted. With `replacing`, the file of an import that has been read already is swapped: the
  * new file is read again and its columns are matched afresh.
  */
 export function StepFile({ job, replacing = false }: { job: ImportJob; replacing?: boolean }) {
@@ -78,7 +84,7 @@ export function StepFile({ job, replacing = false }: { job: ImportJob; replacing
       {/* one file at a time: while it travels or is scanned the drop zone gives way to its progress */}
       {busy ? null : (
         <FileDropzone
-          accept=".csv,.xlsx"
+          accept={IMPORT_FILE_ACCEPT}
           multiple={false}
           buttonLabel={t('importFile.button')}
           dropLabel={t('importFile.drop')}

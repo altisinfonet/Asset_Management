@@ -1,12 +1,15 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { issueRowsText } from '@/components/imports/step-values';
+import { createTranslator } from '@/i18n';
 import { attachmentsApi, putToStorage } from '@/lib/files/api';
 import {
   importsApi,
   importTemplatesApi,
   type ImportJob,
   type ImportUpdate,
+  type ImportValue,
 } from '@/lib/imports/api';
 import { assetsApi } from '@/lib/registry/api';
 import { MOCK_ACCOUNTS } from '@/mocks/fixtures';
@@ -277,7 +280,12 @@ describe('import: upload the file', () => {
     const { container } = renderApp(<JobScreen />);
     await screen.findByRole('heading', { name: 'Upload your file' });
     expect(screen.getByTestId('import-step-caption')).toHaveTextContent('Step 2 of 6: Upload file');
-    expect(screen.getByText(/A CSV or Excel \(\.xlsx\)/)).toBeVisible();
+    expect(
+      screen.getByText(
+        /A CSV \(\.csv\), text \(\.txt or \.tsv, .*Unicode text.*\) or Excel \(\.xlsx\)/,
+      ),
+    ).toBeVisible();
+    expect(fileInput(container)).toHaveAttribute('accept', '.csv,.tsv,.txt,.xlsx');
     await expectNoA11yViolations(container);
     await user.upload(fileInput(container), new File([CSV], 'devices.csv', { type: 'text/csv' }));
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith(`/imports/job?id=${job.id}`));
@@ -292,12 +300,32 @@ describe('import: upload the file', () => {
     const user = userEvent.setup();
     const { container } = renderApp(<JobScreen />);
     await screen.findByRole('heading', { name: 'Upload your file' });
-    expect(fileInput(container).accept).toBe('.csv,.xlsx');
+    expect(fileInput(container).accept).toBe('.csv,.tsv,.txt,.xlsx');
     await user.upload(fileInput(container), new File(['PK'], 'devices.xlsx', { type: '' }));
     await waitFor(() => expect(router.replace).toHaveBeenCalled());
     const after = await settle(job.id, 'analyzed');
     expect(after).toMatchObject({ source: 'xlsx', filename: 'devices.xlsx' });
     expect(after.parse.format).toBe('xlsx');
+  });
+
+  it('accepts a tab-separated .txt file ("Unicode text") under its own name (M2-IMP-10, ED-40)', async () => {
+    const job = (await importsApi.create({ entity_type: 'asset', preset_key: 'assets' })).value;
+    open(job.id);
+    const user = userEvent.setup();
+    const { container } = renderApp(<JobScreen />);
+    await screen.findByRole('heading', { name: 'Upload your file' });
+    const tsv = CSV.split('\n')
+      .map((line) => line.split(',').join('\t'))
+      .join('\n');
+    await user.upload(
+      fileInput(container),
+      new File([tsv], 'Unicode text.txt', { type: 'text/plain' }),
+    );
+    await waitFor(() => expect(router.replace).toHaveBeenCalled());
+    const after = await settle(job.id, 'analyzed');
+    expect(after).toMatchObject({ filename: 'Unicode text.txt', source: 'csv', rows_total: 6 });
+    expect(after.parse.delimiter).toBe('\t');
+    expect((await attachmentsApi.get(after.file_attachment_id!)).content_type).toBe('text/csv');
   });
 
   it('declares text/csv for a CSV the browser calls an Excel file, and ignores other kinds of file', async () => {
@@ -306,7 +334,10 @@ describe('import: upload the file', () => {
     const user = userEvent.setup();
     const { container } = renderApp(<JobScreen />);
     await screen.findByRole('heading', { name: 'Upload your file' });
-    await user.upload(fileInput(container), new File(['a'], 'notes.txt', { type: 'text/plain' }));
+    await user.upload(
+      fileInput(container),
+      new File(['a'], 'notes.pdf', { type: 'application/pdf' }),
+    );
     expect(router.replace).not.toHaveBeenCalled();
     await user.upload(
       fileInput(container),
@@ -696,13 +727,51 @@ describe('import: match the values', () => {
       ].join('\n'),
     );
     open(job.id, 'values');
-    renderApp(<JobScreen />);
+    const user = userEvent.setup();
+    const { container } = renderApp(<JobScreen />);
     await screen.findByRole('table', { name: 'Values of Location' });
     const row = screen.getByRole('row', { name: /^Room 101/ });
-    expect(row).toHaveTextContent('Needs a decision: its rows will be errors');
-    expect(row).toHaveTextContent('"Annex > Room 101" named in this file');
+    expect(row).toHaveTextContent('Needs a decision');
+    // ED-40: how many rows fail; the long reason is clamped to two lines with a toggle for the rest
+    expect(within(row).getByTestId('import-value-issue-rows')).toHaveTextContent(
+      '1 row will be an error',
+    );
+    const reason = within(row).getByTestId('import-value-issue-reason');
+    expect(reason).toHaveTextContent('"Annex > Room 101" named in this file');
+    expect(reason).toHaveClass('line-clamp-2', 'break-words');
+    expect(reason).toHaveAttribute('title', expect.stringContaining('named in this file'));
+    const more = within(row).getByRole('button', { name: 'Show the whole reason' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    await user.click(more);
+    expect(within(row).getByRole('button', { name: 'Show less' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(reason).not.toHaveClass('line-clamp-2');
     expect(row).not.toHaveTextContent('Matches');
     expect(screen.getByTestId('import-values-open')).toHaveTextContent('1 value still needs');
+    await expectNoA11yViolations(container);
+  });
+
+  it('says how many rows of a value fail and in which category (ED-40)', () => {
+    const { t } = createTranslator({ locale: 'en' });
+    const value = (issue: Partial<NonNullable<ImportValue['issue']>>): ImportValue => ({
+      value: 'UniFi U6 Pro',
+      count: 5,
+      suggestion: null,
+      entry: null,
+      issue: { code: 'invalid', message: 'x', rows: 3, categories: [], ...issue },
+    });
+    expect(issueRowsText(t, value({ categories: ['Network'] }))).toBe(
+      '3 rows in category Network will be errors',
+    );
+    expect(issueRowsText(t, value({ rows: 1, categories: ['Network'] }))).toBe(
+      '1 row in category Network will be an error',
+    );
+    expect(issueRowsText(t, value({ categories: ['Network', 'Wi-Fi'] }))).toBe(
+      '3 rows in categories Network, Wi-Fi will be errors',
+    );
+    expect(issueRowsText(t, value({ rows: 5 }))).toBe('5 rows will be errors');
   });
 
   it('does not offer to create a status label, and searches the values of a long column', async () => {
@@ -882,6 +951,31 @@ describe('import: the dry run', () => {
       await screen.findByText('No row can be imported. Fix the file and upload it again.'),
     ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Nothing to import' })).toBeDisabled();
+  });
+
+  it('says in a neutral tone that nothing changes when a re-import matches what is there (ED-40)', async () => {
+    const text = [
+      'Serial Number,Asset ID,Category,Location',
+      '5CG7701,RE-7701,Chromebook,Room 101',
+      '5CG7702,RE-7702,Chromebook,Room 101',
+    ].join('\n');
+    await completed(text);
+    const again = await reviewed(text);
+    expect(again.summary).toMatchObject({
+      counts: { create: 0, update: 0, skip: 2, error: 0 },
+      skipped_by_code: [{ code: 'exists', n: 2 }],
+    });
+    open(again.id);
+    const { container } = renderApp(<JobScreen />);
+    const banner = await screen.findByText(
+      'Nothing to change: every row matches what is already there.',
+    );
+    expect(banner).toBeVisible();
+    expect(
+      screen.queryByText('No row can be imported. Fix the file and upload it again.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Nothing to import' })).toBeDisabled();
+    await expectNoA11yViolations(container);
   });
 
   it('shows the counts but no rows and no way to import without import:run', async () => {

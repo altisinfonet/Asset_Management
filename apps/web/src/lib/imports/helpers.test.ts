@@ -10,6 +10,7 @@ import {
   errorGroupsOf,
   fileFormatOf,
   hasDateTarget,
+  nothingChanged,
   isFinished,
   isPurged,
   isResumable,
@@ -152,9 +153,12 @@ describe('the kind of data and the file', () => {
     );
   });
 
-  it('accepts CSV and XLSX, by the extension', () => {
+  it('accepts CSV, TSV / TXT text and XLSX, by the extension', () => {
     expect(fileFormatOf('devices.csv')).toBe('csv');
+    expect(fileFormatOf('Unicode text.TXT')).toBe('csv');
+    expect(fileFormatOf('devices.tsv')).toBe('csv');
     expect(fileFormatOf('Devices.XLSX')).toBe('xlsx');
+    expect(fileFormatOf('devices.txt.pdf')).toBeNull();
     expect(fileFormatOf('devices.xls')).toBeNull();
     expect(fileFormatOf('devices')).toBeNull();
   });
@@ -171,6 +175,13 @@ describe('the kind of data and the file', () => {
     expect(sheet.type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     const same = new File(['a'], 'x.csv', { type: 'text/csv' });
     expect(withImportContentType(same)).toBe(same);
+    // Excel's "Unicode text" (.txt) and .tsv files are declared as CSV text, under their own name (ED-40)
+    const text = withImportContentType(
+      new File(['a\tb'], 'Unicode text.txt', { type: 'text/plain' }),
+    );
+    expect(text.type).toBe('text/csv');
+    expect(text.name).toBe('Unicode text.txt');
+    expect(withImportContentType(new File(['a\tb'], 'x.tsv', { type: '' })).type).toBe('text/csv');
   });
 });
 
@@ -351,7 +362,12 @@ describe('references and the value map', () => {
   it('a value whose rows would still fail (ambiguous location, model in another category) needs a decision (ED-37)', () => {
     const lab: ImportValue = {
       ...value('Lab 1', false),
-      issue: { code: 'ambiguous', message: '"Lab 1" matches 2 locations' },
+      issue: {
+        code: 'ambiguous',
+        message: '"Lab 1" matches 2 locations',
+        rows: 1,
+        categories: [],
+      },
     };
     expect(needsDecision(lab, 'location', { references: {} }, {})).toBe(true);
     // creating it does not help: "Create all that are missing" leaves it alone
@@ -468,6 +484,36 @@ describe('progress, rows and the summary of a dry run', () => {
     expect(errorGroupsOf({ summary: null })).toEqual([]);
     expect(willCreateOf({ summary: null })).toEqual([]);
     expect(setupOf({ summary: { counts: {} } })).toBeNull();
+  });
+
+  it('tells a re-import where nothing changed from one where nothing can be imported (ED-40)', () => {
+    const summary = (counts: Record<string, number>, skipped: unknown) => ({
+      summary: {
+        counts: { create: 0, update: 0, skip: 0, error: 0, ...counts },
+        skipped_by_code: skipped,
+      },
+    });
+    expect(nothingChanged(summary({ skip: 3 }, [{ code: 'exists', n: 3 }]))).toBe(true);
+    expect(
+      nothingChanged(
+        summary({ skip: 5 }, [
+          { code: 'unchanged', n: 3 },
+          { code: 'duplicate-in-file', n: 1 },
+          { code: 'summary-row', n: 1 },
+        ]),
+      ),
+    ).toBe(true);
+    // errors, writes, only repeats, or an unknown reason: not "nothing changed"
+    expect(nothingChanged(summary({ skip: 2, error: 1 }, [{ code: 'exists', n: 2 }]))).toBe(false);
+    expect(nothingChanged(summary({ skip: 2, create: 1 }, [{ code: 'exists', n: 2 }]))).toBe(false);
+    expect(nothingChanged(summary({ skip: 1 }, [{ code: 'summary-row', n: 1 }]))).toBe(false);
+    expect(nothingChanged(summary({ skip: 1 }, [{ code: 'something-else', n: 1 }]))).toBe(false);
+    expect(nothingChanged(summary({ skip: 0 }, []))).toBe(false);
+    // an API without the reasons (before 0.2.10)
+    expect(
+      nothingChanged({ summary: { counts: { create: 0, update: 0, skip: 2, error: 0 } } }),
+    ).toBe(false);
+    expect(nothingChanged({ summary: null })).toBe(false);
   });
 
   it('opens the list of what was imported', () => {

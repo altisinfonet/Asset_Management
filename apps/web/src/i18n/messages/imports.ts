@@ -134,13 +134,14 @@ export const importsMessages = {
   importFile: {
     heading: 'Upload your file',
     description:
-      'Upload a CSV or Excel (.xlsx) file. It is checked for viruses first, then read. Nothing is imported yet.',
+      'Upload a CSV, a tab-separated text file or an Excel (.xlsx) file. It is checked for viruses first, then read. Nothing is imported yet.',
     button: 'Choose a file',
     drop: 'or drop it here',
-    hint: 'A CSV or Excel (.xlsx) file, up to {limit}.',
-    hintNoLimit: 'A CSV or Excel (.xlsx) file.',
+    hint: 'A CSV (.csv), text (.txt or .tsv, such as Excel’s "Unicode text") or Excel (.xlsx) file, up to {limit}.',
+    hintNoLimit:
+      'A CSV (.csv), text (.txt or .tsv, such as Excel’s "Unicode text") or Excel (.xlsx) file.',
     uploads: 'File upload',
-    wrongType: 'Only CSV and Excel (.xlsx) files can be uploaded here.',
+    wrongType: 'Only CSV, text (.txt, .tsv) and Excel (.xlsx) files can be uploaded here.',
     attachFailed: 'We could not start reading the file.',
     replaceNote:
       'The new file is read again and the columns are matched afresh. Your earlier column choices are replaced.',
@@ -304,9 +305,20 @@ export const importsMessages = {
       matches: 'Matches {name}',
       willCreate: 'Will be created',
       notFound: 'Not found: its rows will be errors',
-      problem: 'Needs a decision: its rows will be errors',
+      problem: 'Needs a decision',
       decided: 'Decided by you',
     },
+    // ED-40: which rows of a value that needs a decision fail
+    issueRows: {
+      inCategory_one: '{count} row in category {category} will be an error',
+      inCategory_other: '{count} rows in category {category} will be errors',
+      inCategories_one: '{count} row in categories {categories} will be an error',
+      inCategories_other: '{count} rows in categories {categories} will be errors',
+      plain_one: '{count} row will be an error',
+      plain_other: '{count} rows will be errors',
+    },
+    reasonMore: 'Show the whole reason',
+    reasonLess: 'Show less',
     actions: {
       auto: 'Decide by name',
       use: 'Use an existing one',
@@ -407,6 +419,7 @@ export const importsMessages = {
     importButton_other: 'Import {count} rows',
     importNothing: 'Nothing to import',
     nothingToImport: 'No row can be imported. Fix the file and upload it again.',
+    nothingChanged: 'Nothing to change: every row matches what is already there.',
     fix: 'Fix and upload again',
     back: 'Back to columns',
     runAgain: 'Run the dry run again',

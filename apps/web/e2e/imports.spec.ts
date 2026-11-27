@@ -165,8 +165,13 @@ test.describe('import wizard', () => {
     const { id } = await importAt(page, 'draft');
     await page.goto(jobUrl(id));
     await expect(page.getByRole('heading', { name: 'Upload your file' })).toBeVisible();
-    await expect(page.getByText(/A CSV or Excel \(\.xlsx\) file/)).toBeVisible();
-    await expect(page.locator('input[type="file"]')).toHaveAttribute('accept', '.csv,.xlsx');
+    await expect(
+      page.getByText(/text \(\.txt or \.tsv.*\) or Excel \(\.xlsx\) file/),
+    ).toBeVisible();
+    await expect(page.locator('input[type="file"]')).toHaveAttribute(
+      'accept',
+      '.csv,.tsv,.txt,.xlsx',
+    );
     await page.locator('input[type="file"]').setInputFiles({
       name: 'devices.xlsx',
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -376,6 +381,86 @@ test.describe('import wizard as a viewer', () => {
   });
 });
 
+/** A file whose bare "Room 101" also names "Annex > Room 101" of the same file: it needs a decision. */
+const CSV_AMBIGUOUS = [
+  'Serial Number,Asset ID,Category,Location',
+  '5CG0301,AMB-0301,Chromebook,Room 101',
+  '5CG0302,AMB-0302,Chromebook,Annex / Room 101',
+  '5CG0303,AMB-0303,Chromebook,Room 101',
+].join('\n');
+
+test.describe('import polish (ED-40)', () => {
+  test('uploads a tab-separated .txt file ("Unicode text") under its own name', async ({
+    page,
+  }) => {
+    await loadApp(page);
+    const { id } = await importAt(page, 'draft');
+    await page.goto(jobUrl(id));
+    await expect(page.getByRole('heading', { name: 'Upload your file' })).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'Unicode text.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(
+        CSV_ASSETS.split('\n')
+          .map((l) => l.split(',').join('\t'))
+          .join('\r\n'),
+      ),
+    });
+    const columns = page.getByRole('table', { name: 'Columns of your file' });
+    await expect(columns).toBeVisible({ timeout: 20_000 });
+    await expect(columns.getByRole('row', { name: /Serial Number/ })).toBeVisible();
+    const job = (await api<{ filename: string; source: string }>(page, 'GET', `/v1/imports/${id}`))
+      .json;
+    expect(job).toMatchObject({ filename: 'Unicode text.txt', source: 'csv' });
+  });
+
+  test('a value that needs a decision says how many rows fail; its long reason stays in its column', async ({
+    page,
+  }) => {
+    await loadApp(page);
+    const { id } = await importAt(page, 'mapped', { csv: CSV_AMBIGUOUS });
+    await page.goto(jobUrl(id, 'values'));
+    const table = page.getByRole('table', { name: 'Values of Location' });
+    const row = table.getByRole('row', { name: /^Room 101/ });
+    await expect(row).toContainText('Needs a decision');
+    await expect(row.getByTestId('import-value-issue-rows')).toHaveText('2 rows will be errors');
+    const reason = row.getByTestId('import-value-issue-reason');
+    const statusCell = row.getByRole('cell').nth(2);
+    const nextCell = row.getByRole('cell').nth(3);
+    for (const expanded of [false, true]) {
+      const r = (await reason.boundingBox())!;
+      const s = (await statusCell.boundingBox())!;
+      const n = (await nextCell.boundingBox())!;
+      expect(r.x + r.width, `reason inside its cell (expanded: ${expanded})`).toBeLessThanOrEqual(
+        s.x + s.width + 1,
+      );
+      expect(r.x + r.width).toBeLessThanOrEqual(n.x + 1);
+      if (!expanded) await row.getByRole('button', { name: 'Show the whole reason' }).click();
+    }
+    await expect(row.getByRole('button', { name: 'Show less' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  test('a re-import where nothing changed says so in a neutral tone', async ({ page }) => {
+    await loadApp(page);
+    const csv = [
+      'Serial Number,Asset ID,Category,Location',
+      '5CG0401,SAME-0401,Chromebook,Room 101',
+      '5CG0402,SAME-0402,Chromebook,Room 101',
+    ].join('\n');
+    await importAt(page, 'committed', { csv });
+    const { id } = await reviewed(page, csv);
+    await page.goto(jobUrl(id));
+    await expect(
+      page.getByText('Nothing to change: every row matches what is already there.'),
+    ).toBeVisible();
+    await expect(page.getByText('No row can be imported')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Nothing to import' })).toBeDisabled();
+  });
+});
+
 /** axe (WCAG 2.2 A/AA, contrast included) in both colour schemes for the screens this change touched. */
 const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
   {
@@ -424,6 +509,36 @@ const SCREENS: Array<{ name: string; open: (page: Page) => Promise<void> }> = [
       const { id } = await importAt(page, 'mapped');
       await page.goto(jobUrl(id, 'values'));
       await expect(page.getByRole('table', { name: 'Values of Location' })).toBeVisible();
+      await settled(page);
+    },
+  },
+  {
+    name: 'match the values with a value that needs a decision, its reason expanded',
+    open: async (page) => {
+      await loadApp(page);
+      const { id } = await importAt(page, 'mapped', { csv: CSV_AMBIGUOUS });
+      await page.goto(jobUrl(id, 'values'));
+      const row = page
+        .getByRole('table', { name: 'Values of Location' })
+        .getByRole('row', { name: /^Room 101/ });
+      await expect(row.getByTestId('import-value-issue-rows')).toBeVisible();
+      await row.getByRole('button', { name: 'Show the whole reason' }).click();
+      await expect(row.getByRole('button', { name: 'Show less' })).toBeVisible();
+      await settled(page);
+    },
+  },
+  {
+    name: 'the dry run of a re-import where nothing changes',
+    open: async (page) => {
+      await loadApp(page);
+      const csv = [
+        'Serial Number,Asset ID,Category,Location',
+        '5CG0501,AXE-0501,Chromebook,Room 101',
+      ].join('\n');
+      await importAt(page, 'committed', { csv });
+      const { id } = await reviewed(page, csv);
+      await page.goto(jobUrl(id));
+      await expect(page.getByText('Nothing to change:')).toBeVisible();
       await settled(page);
     },
   },

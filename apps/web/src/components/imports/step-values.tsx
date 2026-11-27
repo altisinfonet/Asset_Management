@@ -15,7 +15,7 @@ import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useI18n } from '@/i18n';
+import { useI18n, type Translator } from '@/i18n';
 import {
   importKeys,
   importsApi,
@@ -38,6 +38,7 @@ import {
   policyOf,
   withEntry,
 } from '@/lib/imports/helpers';
+import { cn } from '@/lib/cn';
 import { useLookups } from '@/lib/registry/queries';
 import { useDebounced } from '@/lib/use-debounced';
 import { routes } from '@/lib/routes';
@@ -277,11 +278,15 @@ function ValueGroup({
       cell: (row) => {
         if (actionOf(row) !== AUTO) return <Badge>{t('importValues.status.decided')}</Badge>;
         if (row.issue) {
-          // ED-37: a record of that name exists, but the dry run would still reject these rows
+          // ED-37: a record of that name exists, but the dry run would still reject these rows; ED-40: say
+          // how many of them and, for a model, in which category, and keep a long reason inside the column
           return (
-            <div className="flex max-w-md flex-col items-start gap-1">
+            <div className="flex w-80 max-w-full flex-col items-start gap-1 py-1.5 whitespace-normal">
               <Badge tone="danger">{t('importValues.status.problem')}</Badge>
-              <span className="text-sm text-muted">{row.issue.message}</span>
+              <span className="text-sm font-medium text-text" data-testid="import-value-issue-rows">
+                {issueRowsText(t, row)}
+              </span>
+              <IssueReason message={row.issue.message} />
             </div>
           );
         }
@@ -440,6 +445,54 @@ function ValueGroup({
         loading={q !== '' && found.isPending}
         empty={<p className="px-4 py-6 text-base text-muted">{t('importValues.noMatches')}</p>}
       />
+    </div>
+  );
+}
+
+/**
+ * ED-40: which rows of a value that needs a decision will be errors: "3 rows in category Network will be
+ * errors" for a model whose other rows are fine, "2 rows will be errors" otherwise.
+ */
+export function issueRowsText(t: Translator['t'], row: ImportValue): string {
+  const issue = row.issue!;
+  const count = issue.rows ?? row.count;
+  const categories = issue.categories ?? [];
+  if (categories.length === 1) {
+    return t('importValues.issueRows.inCategory', { count, category: categories[0]! });
+  }
+  if (categories.length > 1) {
+    return t('importValues.issueRows.inCategories', { count, categories: categories.join(', ') });
+  }
+  return t('importValues.issueRows.plain', { count });
+}
+
+/** A reason longer than two lines shows two lines and a toggle for the rest (ED-40). */
+const LONG_REASON = 90;
+
+function IssueReason({ message }: { message: string }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const long = message.length > LONG_REASON;
+  return (
+    <div className="flex max-w-full flex-col items-start gap-0.5">
+      <span
+        className={cn('text-sm break-words text-muted', long && !open ? 'line-clamp-2' : null)}
+        title={long && !open ? message : undefined}
+        data-testid="import-value-issue-reason"
+      >
+        {message}
+      </span>
+      {long ? (
+        <Button
+          variant="link"
+          size="sm"
+          className="-ml-1 h-auto px-1 py-0"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? t('importValues.reasonLess') : t('importValues.reasonMore')}
+        </Button>
+      ) : null}
     </div>
   );
 }

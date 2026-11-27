@@ -63,10 +63,17 @@ const CONTENT_TYPES = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 } as const;
 
-/** `.csv` or `.xlsx` (the two formats the importer reads), from the file name. */
+/** The file picker of the upload step: CSV, tab- or comma-separated text (Excel's "Unicode text") and XLSX. */
+export const IMPORT_FILE_ACCEPT = '.csv,.tsv,.txt,.xlsx';
+
+/**
+ * The format the importer reads a file as, from its name: `.csv`, `.tsv` and `.txt` are delimited text
+ * (`csv`; Excel's "Unicode text" is a tab-delimited `.txt`, ED-40), `.xlsx` a workbook.
+ */
 export function fileFormatOf(name: string): 'csv' | 'xlsx' | null {
   const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
-  return ext === 'csv' || ext === 'xlsx' ? ext : null;
+  if (ext === 'csv' || ext === 'tsv' || ext === 'txt') return 'csv';
+  return ext === 'xlsx' ? ext : null;
 }
 
 /**
@@ -605,6 +612,36 @@ export function errorGroupsOf(job: Pick<ImportJob, 'summary'>): ErrorGroup[] {
       ? [{ code: e.code, field: typeof e.field === 'string' ? e.field : null, count: e.n }]
       : [];
   });
+}
+
+/** Skip reasons that mean "the record is already there as the file says" (or the line is not data). */
+const ALREADY_THERE = new Set(['exists', 'unchanged']);
+const NOT_DATA = new Set(['duplicate-in-file', 'summary-row']);
+
+/**
+ * ED-40: a dry run where nothing would be written because every row matches what is already there (a
+ * re-import of an unchanged file): no errors, nothing to create or update, and every skipped row is
+ * `exists` / `unchanged` (or a repeat or summary line of the file). The review then says so in a neutral
+ * tone instead of "No row can be imported".
+ */
+export function nothingChanged(job: Pick<ImportJob, 'summary'>): boolean {
+  const summary = job.summary as {
+    counts?: { create?: unknown; update?: unknown; skip?: unknown; error?: unknown };
+    skipped_by_code?: unknown;
+  } | null;
+  const counts = summary?.counts;
+  const list = summary?.skipped_by_code;
+  if (!counts || !Array.isArray(list)) return false;
+  if (counts.create !== 0 || counts.update !== 0 || counts.error !== 0) return false;
+  if (typeof counts.skip !== 'number' || counts.skip === 0) return false;
+  let already = 0;
+  for (const entry of list) {
+    const e = entry as { code?: unknown; n?: unknown };
+    if (typeof e.code !== 'string' || typeof e.n !== 'number') return false;
+    if (ALREADY_THERE.has(e.code)) already += e.n;
+    else if (!NOT_DATA.has(e.code)) return false;
+  }
+  return already > 0;
 }
 
 export interface WillCreate {

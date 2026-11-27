@@ -34,6 +34,7 @@ import {
   deferredRowsOf,
   errorGroupsOf,
   isKnownCode,
+  nothingChanged,
   progressPercent,
   rowKey,
   rowQueryFor,
@@ -119,6 +120,7 @@ export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean })
   const pageStart = cursors.length * PAGE_SIZE;
   const shown = rows.data?.data.length ?? 0;
   const toWrite = rowsToWrite(job);
+  const unchanged = toWrite === 0 && nothingChanged(job);
   const errorGroups = errorGroupsOf(job);
   const willCreate = willCreateOf(job);
   const deferred = deferredRowsOf(job);
@@ -448,7 +450,14 @@ export function StepReview({ job, canRun }: { job: ImportJob; canRun: boolean })
           {t('importReview.errorsWillBeSkipped', { count: counts.error })}
         </Banner>
       ) : null}
-      {toWrite === 0 ? <Banner tone="warning">{t('importReview.nothingToImport')}</Banner> : null}
+      {toWrite === 0 ? (
+        // ED-40: a re-import where every row matches what is already there is not a problem
+        unchanged ? (
+          <Banner tone="info">{t('importReview.nothingChanged')}</Banner>
+        ) : (
+          <Banner tone="warning">{t('importReview.nothingToImport')}</Banner>
+        )
+      ) : null}
       {error ? (
         <FormError message={error.message} requestId={error.requestId} details={error.details} />
       ) : null}

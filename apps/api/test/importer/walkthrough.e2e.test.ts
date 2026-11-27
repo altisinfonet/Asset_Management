@@ -132,7 +132,8 @@ describe.skipIf(!dbEnabled)(`import fixes from the M2 walk-through (${mode})`, (
       const shown = await values(job.id, 'location');
       const bare = shown.find((v) => v.value === 'Lab 1')!;
       expect(bare.suggestion).toBeNull();
-      expect(bare.issue).toMatchObject({ code: 'ambiguous' });
+      // ED-40: every row of a bare name fails, and no category is named
+      expect(bare.issue).toMatchObject({ code: 'ambiguous', rows: bare.count, categories: [] });
       expect(bare.issue.message).toContain(`"${building} > Lab 1" named in this file`);
       expect(shown.find((v) => v.value === `${building} / Lab 1`)).toMatchObject({
         suggestion: null,
@@ -224,6 +225,32 @@ describe.skipIf(!dbEnabled)(`import fixes from the M2 walk-through (${mode})`, (
     expect((await allRows(admin(), job.id))[0]!.errors[0].message).toBe(shown.issue.message);
   });
 
+  it('says how many rows of a model fail and in which category (ED-40)', async () => {
+    const network = await created('/v1/categories', { name: unique('Access points') });
+    const model = await created('/v1/models', { category_id: network.id, name: unique('U6 Pro') });
+    const other = await created('/v1/categories', { name: unique('Network') });
+    const tag = unique('AP');
+    const job = await analyzed(ih, admin(), t.tenantId, 'asset', {
+      filename: 'aps.csv',
+      body: csv([
+        ['Asset Tag', 'Category', 'Model'],
+        [`${tag}-1`, network.name, model.name],
+        [`${tag}-2`, other.name, model.name],
+        [`${tag}-3`, other.name.toUpperCase(), model.name],
+        [`${tag}-4`, network.name, model.name],
+        [`${tag}-5`, ` ${other.name}`, model.name],
+      ]),
+    });
+    const shown = (await values(job.id, 'model'))[0]!;
+    expect(shown).toMatchObject({ value: model.name, count: 5, suggestion: null });
+    expect(shown.issue).toMatchObject({ code: 'invalid', rows: 3, categories: [other.name] });
+    const dry = await dryRun(ih, admin(), t.tenantId, job.id);
+    expect(dry.counts.dry_run).toMatchObject({ create: 2, error: 3 });
+    // the categories themselves are fine
+    const categories = await values(job.id, 'category');
+    expect(categories.every((v) => v.issue === null)).toBe(true);
+  });
+
   it('refuses a taken serial at commit too, when it was taken after the dry run (BUG-6, ED-35)', async () => {
     const category = await created('/v1/categories', { name: unique('Serial kit') });
     const serial = unique('SN');
@@ -249,6 +276,112 @@ describe.skipIf(!dbEnabled)(`import fixes from the M2 walk-through (${mode})`, (
       message: `Serial number ${serial} is already used by ${taker.asset_tag}.`,
     });
     expect((await admin().get(`/v1/assets?serial=${serial}`)).body.data).toHaveLength(1);
+  });
+
+  it('a tag another asset has names the field and the record, in the dry run and in the API (ED-40)', async () => {
+    const category = await created('/v1/categories', { name: unique('Chromebook kit') });
+    const tag = unique('CHR');
+    await created('/v1/assets', { category_id: category.id, asset_tag: tag, serial: unique('SN') });
+    // as the Google Admin preset does: matched on the serial number, so this row is a new asset whose tag
+    // is taken
+    const job = await analyzed(
+      ih,
+      admin(),
+      t.tenantId,
+      'asset',
+      {
+        filename: 'google-tags.csv',
+        body: csv([
+          ['Asset Tag', 'Serial Number', 'Category'],
+          [tag, unique('SN'), category.name],
+        ]),
+      },
+      { options: { match_on: 'serial', on_match: 'update' } },
+    );
+    await dryRun(ih, admin(), t.tenantId, job.id);
+    const [row] = await allRows(admin(), job.id);
+    expect(row!.outcome).toBe('error');
+    expect(row!.errors).toEqual([
+      {
+        field: 'asset_tag',
+        code: 'duplicate',
+        message: `Asset tag ${tag} is already used by another asset.`,
+      },
+    ]);
+    const direct = await admin().post('/v1/assets', { category_id: category.id, asset_tag: tag });
+    expect(direct.status).toBe(409);
+    expect(direct.body.detail).toBe(`Asset tag ${tag} is already used by another asset.`);
+    expect(direct.body.errors).toEqual([
+      expect.objectContaining({ pointer: '/asset_tag', code: 'duplicate' }),
+    ]);
+  });
+
+  it('an email, employee number or department code another record has names it (ED-40)', async () => {
+    const email = `${unique('dup').toLowerCase()}@example.com`;
+    const ref = unique('EMP');
+    const owner = await created('/v1/people', {
+      display_name: unique('Ana Silva'),
+      email,
+      employee_ref: ref,
+    });
+    const byEmail = await admin().post('/v1/people', { display_name: unique('B'), email });
+    expect(byEmail.status).toBe(409);
+    expect(byEmail.body.detail).toBe(`Email ${email} is already used by ${owner.display_name}.`);
+    const byRef = await admin().post('/v1/people', {
+      display_name: unique('C'),
+      employee_ref: ref,
+    });
+    expect(byRef.status).toBe(409);
+    expect(byRef.body.detail).toBe(
+      `Employee number ${ref} is already used by ${owner.display_name}.`,
+    );
+    const code = unique('D').slice(0, 20);
+    const dept = await created('/v1/departments', { name: unique('Finance'), code });
+    const byCode = await admin().post('/v1/departments', { name: unique('Fin 2'), code });
+    expect(byCode.status).toBe(409);
+    expect(byCode.body.detail).toBe(
+      `Department code ${code} is already used by the department ${dept.name}.`,
+    );
+  });
+
+  it('says why rows are skipped, so a re-import where nothing changed can say so (ED-40)', async () => {
+    const tag = unique('SAME');
+    const file = csv([
+      ['Asset Tag', 'Name', 'Category'],
+      [`${tag}-1`, 'One', 'Laptops'],
+      [`${tag}-2`, 'Two', 'Laptops'],
+      [`${tag}-2`, 'Two', 'Laptops'],
+    ]);
+    const first = await analyzed(ih, admin(), t.tenantId, 'asset', {
+      filename: 'same.csv',
+      body: file,
+    });
+    const dry = await dryRun(ih, admin(), t.tenantId, first.id);
+    expect(dry.summary.counts).toEqual({ create: 2, update: 0, skip: 1, error: 0 });
+    expect(dry.summary.skipped_by_code).toEqual([{ code: 'duplicate-in-file', n: 1 }]);
+    await commit(ih, admin(), t.tenantId, first.id, dry.dry_run_digest);
+    // the same rows again: matched and left alone (skip), or matched with nothing to change (update)
+    const same = csv([
+      ['Asset Tag', 'Name', 'Category'],
+      [`${tag}-1`, 'One', 'Laptops'],
+      [`${tag}-2`, 'Two', 'Laptops'],
+    ]);
+    for (const [onMatch, code] of [
+      ['skip', 'exists'],
+      ['update', 'unchanged'],
+    ] as const) {
+      const again = await analyzed(
+        ih,
+        admin(),
+        t.tenantId,
+        'asset',
+        { filename: 'same.csv', body: same },
+        { options: { on_match: onMatch } },
+      );
+      const re = await dryRun(ih, admin(), t.tenantId, again.id);
+      expect(re.summary.counts).toEqual({ create: 0, update: 0, skip: 2, error: 0 });
+      expect(re.summary.skipped_by_code).toEqual([{ code, n: 2 }]);
+    }
   });
 
   it('lists and prints exactly the assets an import created (BUG-2, ED-38)', async () => {

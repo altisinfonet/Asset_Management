@@ -569,6 +569,12 @@ export class ImportEngine {
       select e->>'code' as code, e->>'field' as field, count(*)::int as n
         from app.import_row, jsonb_array_elements(errors) e
        where job_id = ${job.id}::uuid and plan = 'error' group by 1, 2 order by n desc limit 50`;
+    // ED-40: why rows are skipped (`exists`, `unchanged`, `duplicate-in-file`, `summary-row`), so the review
+    // can tell "nothing changed" from "nothing can be imported". The reason is the row's last warning.
+    const skipCodes = await tx.$queryRaw<Array<{ code: string; n: number }>>`
+      select coalesce(warnings->-1->>'code', '') as code, count(*)::int as n
+        from app.import_row
+       where job_id = ${job.id}::uuid and plan = 'skip' group by 1 order by n desc limit 50`;
     const creates = await tx.$queryRaw<Array<{ field: string; message: string; n: number }>>`
       select w->>'field' as field, w->>'message' as message, count(*)::int as n
         from app.import_row, jsonb_array_elements(warnings) w
@@ -609,6 +615,7 @@ export class ImportEngine {
     const summary = {
       counts: { create: n('create'), update: n('update'), skip: n('skip'), error: n('error') },
       errors_by_code: errorCodes,
+      skipped_by_code: skipCodes,
       will_create: creates,
       validated_at_commit: deferred[0]?.n ?? 0,
     };

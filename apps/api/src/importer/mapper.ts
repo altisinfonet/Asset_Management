@@ -233,7 +233,7 @@ export function mapRow(
         if (!n.ok) bad(spec.key, `${spec.label} ${n.message}`, n.code);
         else {
           costAmount = n.value;
-          costHint = currencyHint(text);
+          costHint = currencyHint(text, ctx.options.default_currency ?? ctx.baseCurrency);
         }
         break;
       }

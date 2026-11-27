@@ -58,9 +58,9 @@ import { categoryDto, departmentDto, locationDto, modelDto, vendorDto } from './
 import {
   RegistryBase,
   type TxScope,
-  duplicate,
   invalidRef,
   stalePrecondition,
+  takenBy,
 } from './registry-base.js';
 import { inSavepoint } from './savepoint.js';
 import {
@@ -486,7 +486,9 @@ export class AssetsFacade extends RegistryBase {
     } catch (err) {
       if (isUniqueViolation(err)) {
         throw body.external_source
-          ? problem.conflict('An asset with this external source and id already exists.')
+          ? problem.conflict(
+              `External id ${String(body.external_id ?? '').slice(0, 100)} (source ${body.external_source}) is already used by another asset.`,
+            )
           : this.tagTaken(tag, pointerBase);
       }
       throw err;
@@ -1420,8 +1422,10 @@ export class AssetsFacade extends RegistryBase {
   // Validation helpers
 
   private tagTaken(tag: string, pointerBase = ''): ApiProblem {
-    const err = duplicate('An asset with the tag', `${pointerBase}/asset_tag`, tag);
-    return err;
+    return takenBy(
+      `Asset tag ${tag} is already used by another asset.`,
+      `${pointerBase}/asset_tag`,
+    );
   }
 
   private async checkModel(

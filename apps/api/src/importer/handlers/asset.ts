@@ -486,7 +486,12 @@ export class AssetHandler implements EntityHandler {
       !r.hit && !r.issue && tagHit
         ? {
             hit: null,
-            issue: { field: 'asset_tag', code: 'duplicate', message: 'is already in use' },
+            // ED-40: a uniqueness error names the field and the record that has the value
+            issue: {
+              field: 'asset_tag',
+              code: 'duplicate',
+              message: `Asset tag ${tagHit.asset_tag} is already used by another asset.`,
+            },
           }
         : r;
     switch (env.options.match_on) {

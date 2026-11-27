@@ -19,11 +19,11 @@ import {
 } from '../ports/index.js';
 import {
   RegistryBase,
-  duplicate,
   inUse,
   invalidRef,
   type TxScope,
   stalePrecondition,
+  takenBy,
 } from '../registry/index.js';
 import {
   Prisma,
@@ -654,16 +654,24 @@ export class PeopleService extends RegistryBase {
     if (email) {
       const taken = await trx.person.findFirst({
         where: { email_key: email.toLowerCase(), archived_at: null, ...other },
-        select: { id: true },
+        select: { id: true, display_name: true },
       });
-      if (taken) throw duplicate('A person with the email', '/email', email);
+      if (taken)
+        throw takenBy(
+          `Email ${email.slice(0, 200)} is already used by ${taken.display_name}.`,
+          '/email',
+        );
     }
     if (employeeRef) {
       const taken = await trx.person.findFirst({
         where: { employee_ref: employeeRef, archived_at: null, ...other },
-        select: { id: true },
+        select: { id: true, display_name: true },
       });
-      if (taken) throw duplicate('A person with the employee number', '/employee_ref', employeeRef);
+      if (taken)
+        throw takenBy(
+          `Employee number ${employeeRef.slice(0, 100)} is already used by ${taken.display_name}.`,
+          '/employee_ref',
+        );
     }
   }
 

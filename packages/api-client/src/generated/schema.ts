@@ -646,7 +646,7 @@ export interface paths {
          * Start an upload
          * @description Creates the metadata row (`scan_status=pending`) and returns a presigned PUT URL with size and content-type conditions and a tenant-prefixed key. After the PUT, call `POST /v1/attachments/{id}/complete`.
          *
-         *     The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension; the size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
+         *     The declared `content_type` must be on the allow-list (JPEG, PNG, WebP, GIF, PDF, Office documents, ODF, CSV; never SVG or HTML) and match the file name extension. An `import_file` may also be a `.txt` or `.tsv` text file declared as `text/csv`, `text/plain` or `text/tab-separated-values`; it is stored as `text/csv` and sniffed as CSV text (ED-40). The size must be within the organisation's cap. The owner (`entity_type` + `entity_id`) must exist in your organisation (`422` otherwise, also for an owner type that is not available yet). To attach photos to a record that does not exist yet (a check-in), upload them against the asset and send their ids with the check-in.
          *
          *     Requires permission `attachment:write`.
          */
@@ -1474,7 +1474,7 @@ export interface paths {
         put?: never;
         /**
          * Create an import
-         * @description Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252), complete the upload, and call `POST /v1/imports/{id}/analyze`.
+         * @description Creates a `draft` import. Then upload the file through the attachments API (`POST /v1/attachments` with `entity_type: "import_job"`, `entity_id` = this import, `kind: "import_file"`, content type `text/csv` or the XLSX type; a CSV may be UTF-8, UTF-16 or Windows-1252, comma-, semicolon- or tab-delimited, and named `.csv`, `.tsv` or `.txt` such as Excel's "Unicode text"), complete the upload, and call `POST /v1/imports/{id}/analyze`.
          *
          *     The caller needs the write permission of the entity type (`asset:create`, `person:manage`, `location:manage`, `department:manage`). `preset_key: google_admin_chromeos` also creates the Chromebook category and its custom fields when missing.
          *
@@ -6560,7 +6560,7 @@ export interface components {
             cancel_requested: boolean;
             /** @description Why a failed import failed (a sentence; for a bad file it names the line). */
             error: string | null;
-            /** @description After a dry run: `counts`, `errors_by_code`, `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created). */
+            /** @description After a dry run: `counts`, `errors_by_code`, `skipped_by_code` (why rows are skipped, `[{ code, n }]`: `exists`, `unchanged`, `duplicate-in-file`, `summary-row`; ED-40), `will_create` (references the commit would create, with counts) and `validated_at_commit` (rows whose last checks wait for the commit: a location below a parent the same import creates, ED-29). On a preset import: `setup` (what creating the import created). */
             summary: {
                 [key: string]: unknown;
             } | null;
@@ -6679,6 +6679,10 @@ export interface components {
                 /** @description `ambiguous` (a bare location name that several locations have, counting those the import creates) or `invalid` (a model that exists only in another category than its rows'). */
                 code: string;
                 message: string;
+                /** @description [ED-40] How many of the value's rows will fail (at most `count`): for a model only the rows whose category it is not in. */
+                rows: number;
+                /** @description [ED-40] For a model: the categories, as the file writes them, of the rows that will fail. Empty otherwise. */
+                categories: string[];
             } | null;
             /** @description What the value map says now. */
             entry: components["schemas"]["ImportValueEntry"] | null;

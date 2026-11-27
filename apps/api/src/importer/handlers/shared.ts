@@ -186,7 +186,10 @@ export function issuesOf(err: unknown, pointer: PointerMap): RowIssue[] {
   if (err.errors && err.errors.length > 0) {
     return err.errors.map((e) => ({
       field: pointer(e.pointer),
-      message: e.message,
+      // ED-40: a uniqueness error of a service says only "is already in use" next to its field; a row of an
+      // import is read without the form around it, so it takes the problem's sentence, which names the
+      // field and the value ("A person with the email "ana@example.com" already exists.").
+      message: e.code === 'duplicate' && err.detail ? err.detail : e.message,
       code: e.code ?? err.code,
     }));
   }

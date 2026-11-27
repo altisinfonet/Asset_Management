@@ -106,6 +106,18 @@ export const duplicate = (label: string, pointer: string, value: string): ApiPro
     errors: [{ pointer, message: 'is already in use', code: 'duplicate' }],
   });
 
+/**
+ * A uniqueness conflict whose sentence names the field, the value and the record that has it ("Asset tag
+ * CHR-00001 is already used by another asset.", ED-40). The field error stays the terse `duplicate` a
+ * form shows next to the field; an import row takes the sentence.
+ */
+export const takenBy = (detail: string, pointer: string): ApiProblem =>
+  new ApiProblem({
+    code: 'conflict',
+    detail,
+    errors: [{ pointer, message: 'is already in use', code: 'duplicate' }],
+  });
+
 export const invalidRef = (pointer: string, message: string): FieldError => ({
   pointer,
   message,

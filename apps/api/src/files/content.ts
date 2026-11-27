@@ -4,7 +4,7 @@ import { fileTypeFromBuffer } from 'file-type';
  * Upload type allow-list and content sniffing (M2-FILE-01, M2-SEC-02).
  *
  * Only these types are accepted: raster images, PDF, office formats (OOXML, ODF, legacy binary) and
- * CSV. SVG, HTML, XML, scripts and archives are NOT on the list and cannot be declared. A declared
+ * CSV (an import file may also be `.txt` / `.tsv` text, stored as CSV: `IMPORT_TEXT_MIMES`). SVG, HTML, XML, scripts and archives are NOT on the list and cannot be declared. A declared
  * content type is a CLAIM: it must match the filename extension, and the first bytes of the stored
  * object must be of the claimed format (`sniffContent`, checked when the client confirms the upload
  * and again before the object is ever served). Everything is served with a type taken from this table,
@@ -103,8 +103,36 @@ export function extensionOf(filename: string): string {
 
 export type TypeCheck = { ok: true; type: AllowedType } | { ok: false; reason: string };
 
+/**
+ * A text file for the importer (attachment kind `import_file`; M2-IMP-10, ED-40) may also be named `.txt` or
+ * `.tsv` (Excel's "Unicode text" export is a tab-delimited `.txt`) and be declared as plain or tab-separated
+ * text. It is the CSV family all the same: stored and served as `text/csv` (the upload instructions carry
+ * that type) and sniffed as CSV text. Other kinds of attachment keep `.csv` only; `text/plain` is not on
+ * the general allow-list.
+ */
+export const IMPORT_TEXT_MIMES: readonly string[] = [
+  'text/csv',
+  'text/plain',
+  'text/tab-separated-values',
+];
+export const IMPORT_TEXT_EXTENSIONS: readonly string[] = ['csv', 'tsv', 'txt'];
+
 /** Declared type and filename: allow-listed, and the extension fits the type. */
-export function checkDeclaredType(contentType: string, filename: string): TypeCheck {
+export function checkDeclaredType(
+  contentType: string,
+  filename: string,
+  opts: { importFile?: boolean } = {},
+): TypeCheck {
+  if (opts.importFile && IMPORT_TEXT_MIMES.includes(normalizeMime(contentType))) {
+    const ext = extensionOf(filename);
+    if (!IMPORT_TEXT_EXTENSIONS.includes(ext)) {
+      return {
+        ok: false,
+        reason: `The file name extension "${ext || '(none)'}" does not match a text file for import (expected ${IMPORT_TEXT_EXTENSIONS.map((e) => `.${e}`).join(', ')}).`,
+      };
+    }
+    return { ok: true, type: BY_MIME.get('text/csv')! };
+  }
   const type = findAllowedType(contentType);
   if (!type) {
     return {

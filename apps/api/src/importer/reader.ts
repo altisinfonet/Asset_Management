@@ -34,7 +34,9 @@ export function formatOf(filename: string): 'csv' | 'xlsx' {
       'Old Excel files (.xls) are not supported. Save the file as .xlsx or export it as CSV.',
     );
   }
-  throw new FileFormatError('Only .csv and .xlsx files can be imported.');
+  throw new FileFormatError(
+    'Only .csv, .tsv or .txt (comma- or tab-separated text) and .xlsx files can be imported.',
+  );
 }
 
 /** Fills in what the file itself says: the encoding and delimiter of a CSV, the sheet of a workbook. */

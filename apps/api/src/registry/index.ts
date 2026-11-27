@@ -52,6 +52,7 @@ export {
   isForeignKeyViolation,
   nonZero,
   stalePrecondition,
+  takenBy,
 } from './registry-base.js';
 export { inSavepoint } from './savepoint.js';
 export { ScanResolverRegistry, type ScanResolution, type ScanResolver } from './scan-resolvers.js';

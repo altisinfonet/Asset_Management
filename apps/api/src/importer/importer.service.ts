@@ -63,6 +63,16 @@ import type { RefServices } from './refs.js';
 
 type JobRecord = NonNullable<Awaited<ReturnType<Tx['import_job']['findUnique']>>>;
 
+/** The rows of one model value that share a category and manufacturer (the value step, ED-37 / ED-40). */
+interface ModelScope {
+  categoryId: string | null;
+  manufacturerId: string | null;
+  /** How many rows of the file have this model with this category and manufacturer. */
+  rows: number;
+  /** The category those rows name, as written (case variants of one name once). */
+  categories: string[];
+}
+
 /** Stands for a category the import creates when the value step checks a model (ED-37): it has no models. */
 const NEW_CATEGORY = '00000000-0000-4000-8000-000000000000';
 
@@ -1083,7 +1093,8 @@ export class ImportsService extends RegistryBase {
   /**
    * For the model values of an asset import: the category and manufacturer each value's rows resolve to
    * (ED-37), so the value step checks a model inside its rows' category, as the dry run does. A category
-   * that does not exist (yet) is `null`: the import creates it and the model with it.
+   * that does not exist (yet) is `null`: the import creates it and the model with it. Each scope carries
+   * how many rows it has and the category they name (ED-40), so the value step can say which rows fail.
    */
   private async modelScopes(
     trx: Tx,
@@ -1092,7 +1103,7 @@ export class ImportsService extends RegistryBase {
     context: RefResolver,
     idx: number,
     hasColumn: boolean,
-  ): Promise<Map<string, Array<{ categoryId: string | null; manufacturerId: string | null }>>> {
+  ): Promise<Map<string, ModelScope[]>> {
     const mapping = (job.mapping ?? {}) as {
       columns?: Array<{ index: number; target: string | null }>;
       constants?: Record<string, string>;
@@ -1104,20 +1115,21 @@ export class ImportsService extends RegistryBase {
     const model = hasColumn
       ? Prisma.sql`btrim(raw->>${idx}::int)`
       : Prisma.sql`${constants.model ?? ''}::text`;
-    const rows = await trx.$queryRaw<Array<{ v: string; c: string | null; m: string | null }>>`
-      select distinct ${model} as v, ${cell(colOf('category'))} as c, ${cell(colOf('manufacturer'))} as m
+    const rows = await trx.$queryRaw<
+      Array<{ v: string; c: string | null; m: string | null; n: number }>
+    >`
+      select ${model} as v, ${cell(colOf('category'))} as c, ${cell(colOf('manufacturer'))} as m,
+             count(*)::int as n
         from app.import_row where job_id = ${job.id}::uuid and nullif(${model}, '') is not null
+       group by 1, 2, 3
        limit 5000`;
     const idOf = async (kind: RefKind, text: string | null | undefined) => {
       if (!text) return null;
       const res = await context.resolve(kind, text);
       return res.kind === 'found' ? res.id : null;
     };
-    const out = new Map<
-      string,
-      Array<{ categoryId: string | null; manufacturerId: string | null }>
-    >();
-    const seen = new Set<string>();
+    const out = new Map<string, ModelScope[]>();
+    const seen = new Map<string, ModelScope>();
     for (const r of rows) {
       const categoryText = r.c ?? constants.category ?? null;
       let categoryId = categoryText
@@ -1135,10 +1147,22 @@ export class ImportsService extends RegistryBase {
       }
       const manufacturerId = await idOf('manufacturer', r.m ?? constants.manufacturer ?? null);
       const key = `${r.v}|${categoryId}|${manufacturerId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const known = seen.get(key);
+      if (known) {
+        known.rows += r.n;
+        if (categoryText && !known.categories.some((c) => normKey(c) === normKey(categoryText)))
+          known.categories.push(categoryText.trim());
+        continue;
+      }
+      const scope: ModelScope = {
+        categoryId,
+        manufacturerId,
+        rows: r.n,
+        categories: categoryText ? [categoryText.trim()] : [],
+      };
+      seen.set(key, scope);
       const list = out.get(r.v) ?? [];
-      list.push({ categoryId, manufacturerId });
+      list.push(scope);
       out.set(r.v, list);
     }
     return out;
@@ -1219,23 +1243,40 @@ export class ImportsService extends RegistryBase {
       const data = [];
       for (const g of grouped) {
         let suggestion: { id: string; name: string } | null = null;
-        let issue: { code: string; message: string } | null = null;
-        const results: Resolution[] = [];
+        let issue: {
+          code: string;
+          message: string;
+          rows: number;
+          categories: string[];
+        } | null = null;
+        const results: Array<{ res: Resolution; rows: number; categories: string[] }> = [];
         if (scopes) {
-          for (const scope of scopes.get(g.v) ?? [{ categoryId: null, manufacturerId: null }]) {
+          const all: ModelScope[] = scopes.get(g.v) ?? [
+            { categoryId: null, manufacturerId: null, rows: g.n, categories: [] },
+          ];
+          for (const scope of all) {
             // a category that does not exist yet is created by the import, and so is the model
-            if (scope.categoryId === null) results.push({ kind: 'create', name: g.v });
-            else results.push(await resolver.resolve('model', g.v, scope));
+            const res: Resolution =
+              scope.categoryId === null
+                ? { kind: 'create', name: g.v }
+                : await resolver.resolve('model', g.v, scope);
+            results.push({ res, rows: scope.rows, categories: scope.categories });
           }
-        } else results.push(await resolver.resolve(kind, g.v));
-        for (const res of results) {
-          if (res.kind === 'error' && res.issue.code !== 'not-found') {
-            issue = { code: res.issue.code, message: res.issue.message };
-            break;
+        } else results.push({ res: await resolver.resolve(kind, g.v), rows: g.n, categories: [] });
+        // ED-40: how many of the value's rows fail, and (for a model) the categories those rows name
+        for (const { res, rows, categories } of results) {
+          if (res.kind !== 'error' || res.issue.code === 'not-found') continue;
+          if (!issue) {
+            issue = { code: res.issue.code, message: res.issue.message, rows: 0, categories: [] };
+          }
+          issue.rows += rows;
+          for (const c of categories) {
+            if (!issue.categories.some((x) => normKey(x) === normKey(c))) issue.categories.push(c);
           }
         }
-        if (!issue && results.length > 0 && results.every((r) => r.kind === 'found')) {
-          const first = results[0] as Extract<Resolution, { kind: 'found' }>;
+        if (issue) issue.rows = Math.min(issue.rows, g.n);
+        if (!issue && results.length > 0 && results.every((r) => r.res.kind === 'found')) {
+          const first = results[0]!.res as Extract<Resolution, { kind: 'found' }>;
           suggestion = { id: first.id, name: first.name };
         }
         data.push({

@@ -118,8 +118,12 @@ export function parseNumber(text: string, format: NumberFormat = 'auto'): Parsed
     negative = true;
     t = t.slice(1, -1);
   }
-  // currency symbols, codes, spaces and apostrophe separators around the number
+  // the "/-" or "/=" an amount ends with on Indian and East African bills ("Rs.44000/-": no paise)
+  t = t.replace(/\s*\/\s*[-=]$/, '');
+  // currency symbols, words, codes, spaces and apostrophe separators around the number
   t = t
+    .replace(/^(?:rs\.?|inr\.?)\s*/i, '')
+    .replace(/(?<=[\d\s])rs\.?$/i, '')
     .replace(/\p{Sc}/gu, '')
     .replace(/^[A-Za-z]{3}(?=[\s\d-])/, '')
     .replace(/(?<=[\d\s])[A-Za-z]{3}$/, '')
@@ -177,14 +181,25 @@ export function minorDigits(currency: string): number {
   }
 }
 
-/** The ISO 4217 code a money cell names (`€`, `USD 12`, `12 EUR`), or null. */
-export function currencyHint(text: string): string | null {
+/** Currencies whose amounts are written "Rs" (rupee): the Indian, Pakistani, Sri Lankan, Nepalese, ... rupee. */
+const RUPEES = new Set(['INR', 'PKR', 'LKR', 'NPR', 'MUR', 'SCR']);
+
+/**
+ * The ISO 4217 code a money cell names (`€`, `₹`, `USD 12`, `12 EUR`, `Rs.44000/-`), or null. "Rs" is the
+ * rupee of several countries: it names `fallback` (the import's or the organisation's currency) when that
+ * is a rupee, else INR.
+ */
+export function currencyHint(text: string, fallback?: string | null): string | null {
   const t = text.trim();
   const code = /(?:^|[^A-Za-z])([A-Z]{3})(?:[^A-Za-z]|$)/.exec(t);
   if (code && /\d/.test(t)) return code[1]!;
   if (t.includes('€')) return 'EUR';
   if (t.includes('£')) return 'GBP';
   if (t.includes('¥')) return 'JPY';
+  if (t.includes('₹')) return 'INR';
+  if (/\d/.test(t) && (/^rs\.?(?![a-z])/i.test(t) || /[\d\s]rs\.?$/i.test(t))) {
+    return fallback && RUPEES.has(fallback) ? fallback : 'INR';
+  }
   return null;
 }
 

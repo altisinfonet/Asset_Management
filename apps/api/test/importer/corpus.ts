@@ -256,6 +256,25 @@ export const CORPUS: Record<string, () => Buffer> = {
       ),
       'utf8',
     ),
+  /**
+   * An Indian register (M2-IMP-09 trial finding, ED-40): rupee amounts written "Rs.44000/-", "Rs 44,000/-",
+   * "INR 44000", "₹1,14,900.00" (lakh grouping), a bare "44000/-" and a word where the price should be.
+   */
+  'rupee-prices.csv': () =>
+    Buffer.from(
+      BOM8 +
+        delimited([
+          H,
+          ['', 'RS-001', 'Laptop 1', 'Laptops', '', 'Rs.44000/-', ''],
+          ['', 'RS-002', 'Laptop 2', 'Laptops', '', 'Rs 44,000/-', ''],
+          ['', 'RS-003', 'Laptop 3', 'Laptops', '', 'INR 44000', ''],
+          ['', 'RS-004', 'Laptop 4', 'Laptops', '', '₹1,14,900.00', ''],
+          ['', 'RS-005', 'Laptop 5', 'Laptops', '', 'Rs. 1,14,900.00 /-', ''],
+          ['', 'RS-006', 'Laptop 6', 'Laptops', '', '44000/-', 'no currency named'],
+          ['', 'RS-007', 'Laptop 7', 'Laptops', '', 'donated', ''],
+        ]),
+      'utf8',
+    ),
   /** Cells holding the delimiter, doubled quotes and line breaks; a bare inch mark in an unquoted cell. */
   'quoted-fields.csv': () =>
     Buffer.from(

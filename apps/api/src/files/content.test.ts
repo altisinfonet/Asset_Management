@@ -198,3 +198,70 @@ describe('CSV files for the importer (M2-IMP-02)', () => {
     );
   });
 });
+
+describe('.txt and .tsv text for the importer (M2-IMP-10, ED-40)', () => {
+  const asImport = (mime: string, name: string) =>
+    checkDeclaredType(mime, name, { importFile: true });
+
+  it('an import file may be .csv, .tsv or .txt, declared as CSV, plain or tab-separated text, and is stored as text/csv', () => {
+    for (const mime of ['text/csv', 'text/plain', 'Text/Tab-Separated-Values; charset=utf-16']) {
+      for (const name of ['rows.csv', 'Unicode text.TXT', 'export.tsv']) {
+        const check = asImport(mime, name);
+        expect(check.ok, `${mime} ${name}`).toBe(true);
+        if (check.ok) expect(check.type.mime).toBe('text/csv');
+      }
+    }
+    // the XLSX type keeps its own extension
+    expect(
+      asImport('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'a.xlsx').ok,
+    ).toBe(true);
+  });
+
+  it('other names and types stay refused for an import file', () => {
+    for (const [mime, name] of [
+      ['text/plain', 'a.html'],
+      ['text/plain', 'a.svg'],
+      ['text/plain', 'a'],
+      ['text/tab-separated-values', 'a.txt.exe'],
+      ['text/csv', 'a.xml'],
+      ['text/html', 'a.txt'],
+      ['application/octet-stream', 'a.txt'],
+      ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'a.txt'],
+    ] as const) {
+      const check = asImport(mime, name);
+      expect(check.ok, `${mime} ${name}`).toBe(false);
+    }
+    expect(asImport('text/plain', 'a.html')).toMatchObject({
+      reason: expect.stringContaining('expected .csv, .tsv, .txt'),
+    });
+  });
+
+  it('every other kind of attachment keeps .csv only and has no text/plain', () => {
+    expect(checkDeclaredType('text/csv', 'a.txt').ok).toBe(false);
+    expect(checkDeclaredType('text/csv', 'a.tsv').ok).toBe(false);
+    expect(checkDeclaredType('text/plain', 'a.txt').ok).toBe(false);
+    expect(checkDeclaredType('text/tab-separated-values', 'a.tsv').ok).toBe(false);
+  });
+
+  it('a .txt import file is sniffed as strictly as a CSV: UTF-16 text passes, markup and binary do not', async () => {
+    const check = asImport('text/plain', 'Unicode text.txt');
+    if (!check.ok) throw new Error(check.reason);
+    const sniffImport = (body: Buffer) => sniffContent(body, check.type, { importFile: true });
+    const u16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('Asset Tag\tName\r\nA-1\tLaptop\r\n', 'utf16le'),
+    ]);
+    expect((await sniffImport(u16)).ok).toBe(true);
+    expect((await sniffImport(html())).ok).toBe(false);
+    expect((await sniffImport(svg())).ok).toBe(false);
+    expect((await sniffImport(await png())).ok).toBe(false);
+    expect((await sniffImport(exe())).ok).toBe(false);
+    expect(
+      (
+        await sniffImport(
+          Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('a\tb\r\n<script>x', 'utf16le')]),
+        )
+      ).ok,
+    ).toBe(false);
+  });
+});

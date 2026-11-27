@@ -76,6 +76,46 @@ describe('numbers and money', () => {
     expect(currencyHint('USD 12.50')).toBe('USD');
     expect(currencyHint('12.50')).toBeNull();
   });
+
+  it('reads rupee amounts as Indian registers write them: Rs, Rs., INR, ₹ and a trailing "/-"', () => {
+    for (const [text, n] of [
+      ['Rs.44000/-', 44000],
+      ['Rs 44,000/-', 44000],
+      ['Rs. 44,000 /-', 44000],
+      ['rs.44000', 44000],
+      ['INR 44000', 44000],
+      ['INR. 44,000.50', 44000.5],
+      ['₹44,000/-', 44000],
+      ['₹ 58,000', 58000],
+      ['44000/-', 44000],
+      ['44000/=', 44000],
+      ['44000 Rs', 44000],
+      ['Rs.1,14,900.00/-', 114900],
+      ['1,14,900.00', 114900],
+      ['Rs. 12,34,567', 1234567],
+      ['$44,000/-', 44000],
+      ['€1.234,50', 1234.5],
+      ['£ 1,299.99', 1299.99],
+    ] as const) {
+      expect(value(parseNumber(text)), text).toBe(n);
+    }
+    // a trailing minus is still a negative number, and words are still not numbers
+    expect(value(parseNumber('44000-'))).toBe(-44000);
+    for (const text of ['Rs.', 'Rs. donated', 'not known', '/-', 'Rsx44000']) {
+      expect(parseNumber(text), text).toMatchObject({ ok: false });
+    }
+  });
+
+  it('a rupee amount names its currency: ₹ and INR are INR, "Rs" the import\'s rupee or INR', () => {
+    expect(currencyHint('₹ 58,000')).toBe('INR');
+    expect(currencyHint('INR 44000')).toBe('INR');
+    expect(currencyHint('Rs.44000/-')).toBe('INR');
+    expect(currencyHint('Rs 44,000/-', 'USD')).toBe('INR');
+    expect(currencyHint('Rs 44,000/-', 'LKR')).toBe('LKR');
+    expect(currencyHint('44000 Rs', 'PKR')).toBe('PKR');
+    expect(currencyHint('44000/-')).toBeNull();
+    expect(currencyHint('Rsx 1')).toBeNull();
+  });
 });
 
 describe('text helpers', () => {

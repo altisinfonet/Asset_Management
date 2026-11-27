@@ -138,23 +138,45 @@ describe.skipIf(!dbEnabled)(`import corpus (${mode})`, () => {
     ]);
   });
 
-  it('UTF-16 LE "Unicode text": refused as .txt at upload with a sentence, imported when named .csv', async () => {
-    // the upload allow-list takes .csv and .xlsx only (the wizard's file picker too): logged as M2-IMP-10
+  it('UTF-16 LE "Unicode text": uploaded and imported under its own .txt name (M2-IMP-10, ED-40)', async () => {
+    // an import file may be .txt / .tsv, declared as plain text (what a browser says for .txt); it is stored
+    // as text/csv and sniffed as CSV text. Any other kind of attachment still refuses the name.
     const created = await admin().post('/v1/imports', { entity_type: 'asset' });
-    const refused = await admin().post('/v1/attachments', {
+    const asDocument = await admin().post('/v1/attachments', {
+      entity_type: 'import_job',
+      entity_id: created.body.id,
+      kind: 'document',
+      filename: 'utf16le-unicode-text.txt',
+      content_type: 'text/plain',
+      size_bytes: fixture('utf16le-unicode-text.txt').length,
+    });
+    expect(asDocument.status).toBe(415);
+    expect(asDocument.body.code).toBe('unsupported-media-type');
+    const wrongName = await admin().post('/v1/attachments', {
       entity_type: 'import_job',
       entity_id: created.body.id,
       kind: 'import_file',
-      filename: 'utf16le-unicode-text.txt',
-      content_type: 'text/csv',
+      filename: 'utf16le-unicode-text.html',
+      content_type: 'text/plain',
       size_bytes: fixture('utf16le-unicode-text.txt').length,
     });
-    expect(refused.status).toBe(415);
-    expect(refused.body.code).toBe('unsupported-media-type');
-    expect(refused.body.detail).toMatch(/extension "txt"/);
+    expect(wrongName.status).toBe(415);
+    expect(wrongName.body.detail).toMatch(/expected \.csv, \.tsv, \.txt/);
 
-    const job = await analyse('utf16le-unicode-text.txt', {}, undefined, 'unicode-text.csv');
-    expect(job.parse).toMatchObject({ encoding: 'utf-16le', delimiter: '\t' });
+    const job = await analyzed(ih, admin(), t.tenantId, 'asset', {
+      filename: 'utf16le-unicode-text.txt',
+      body: fixture('utf16le-unicode-text.txt'),
+      content_type: 'text/plain',
+    });
+    expect(job.filename).toBe('utf16le-unicode-text.txt');
+    expect(job.parse).toMatchObject({ format: 'csv', encoding: 'utf-16le', delimiter: '\t' });
+    const stored = await admin().get(`/v1/attachments/${job.file_attachment_id}`);
+    expect(stored.status).toBe(200);
+    expect(stored.body).toMatchObject({
+      filename: 'utf16le-unicode-text.txt',
+      content_type: 'text/csv',
+      kind: 'import_file',
+    });
     expect(job.headers[0]).toBe('Asset Tag');
     const { done, rows } = await dry(job);
     expect(rows.map((r) => r.outcome)).toEqual(['create', 'create', 'create']);
@@ -240,6 +262,28 @@ describe.skipIf(!dbEnabled)(`import corpus (${mode})`, () => {
     expect(updated.every((a) => a === null)).toBe(true);
     const f = await admin().get('/v1/assets?serial=EU-006');
     expect(f.body.data[0].purchase_cost).toEqual({ amount_minor: 1250, currency: 'USD' });
+  });
+
+  it('rupee prices: "Rs.44000/-", "Rs 44,000/-", "INR 44000" and lakh grouping are numbers in INR (ED-40)', async () => {
+    const job = await analyse('rupee-prices.csv');
+    expect(targetsOf(job)).toMatchObject({ Cost: 'purchase_cost' });
+    const { done, rows } = await dry(job);
+    expect(rows.map((r) => r.outcome)).toEqual([...Array(6).fill('create'), 'error']);
+    expect(rows[6]!.errors).toEqual([
+      expect.objectContaining({ field: 'purchase_cost', code: 'number' }),
+    ]);
+    expect(rows[6]!.errors[0].message).toContain('"donated" is not a number');
+    const { assets } = await commitAll(done);
+    expect(assets.map((a) => a?.purchase_cost ?? null)).toEqual([
+      { amount_minor: 4400000, currency: 'INR' },
+      { amount_minor: 4400000, currency: 'INR' },
+      { amount_minor: 4400000, currency: 'INR' },
+      { amount_minor: 11490000, currency: 'INR' },
+      { amount_minor: 11490000, currency: 'INR' },
+      // no currency named in the cell: the organisation's currency (as for any bare number)
+      { amount_minor: 4400000, currency: 'USD' },
+      null,
+    ]);
   });
 
   it('quoted fields with delimiters, doubled quotes and line breaks; a bare inch mark is kept', async () => {

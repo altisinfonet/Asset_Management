@@ -127,7 +127,7 @@ describe('header detection and analysis (M2-IMP-02)', () => {
         maxRows: 5,
         sink: async () => undefined,
       }),
-    ).rejects.toThrow(/csv and .xlsx/);
+    ).rejects.toThrow(/\.csv, \.tsv or \.txt .* and \.xlsx/);
   });
 });
 

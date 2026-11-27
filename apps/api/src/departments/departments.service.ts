@@ -24,6 +24,7 @@ import {
   inUse,
   invalidRef,
   stalePrecondition,
+  takenBy,
   type TxScope,
 } from '../registry/index.js';
 import {
@@ -396,9 +397,13 @@ export class DepartmentsService extends RegistryBase {
     if (code) {
       const taken = await trx.department.findFirst({
         where: { code_key: code.trim().toLowerCase(), archived_at: null, ...other },
-        select: { id: true },
+        select: { id: true, name: true },
       });
-      if (taken) throw duplicate('A department with the code', '/code', code);
+      if (taken)
+        throw takenBy(
+          `Department code ${code.slice(0, 100)} is already used by the department ${taken.name}.`,
+          '/code',
+        );
     }
   }
 

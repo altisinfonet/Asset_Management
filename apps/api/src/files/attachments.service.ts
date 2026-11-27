@@ -207,7 +207,9 @@ export class AttachmentsService {
     auth: AuthContext,
     body: AttachmentCreate,
   ): Promise<{ attachment: AttachmentDto; upload: UploadInstructions }> {
-    const declared = checkDeclaredType(body.content_type, body.filename);
+    const declared = checkDeclaredType(body.content_type, body.filename, {
+      importFile: body.kind === 'import_file',
+    });
     if (!declared.ok) {
       throw new ApiProblem({
         code: 'unsupported-media-type',

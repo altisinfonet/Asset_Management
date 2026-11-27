@@ -43,6 +43,7 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 | ED-37 | The value step and the dry run resolve names by the same rules: models in their rows' category, bare location names counting the paths of the same file; `ImportValue.issue` (BUG-5) | M2 | `openapi.yaml` (`ImportValue.issue`, operation text), api-client; no migration |
 | ED-38 | "Print labels for the new assets": the asset list and label filter `import_job_id` (BUG-2) | M2 | `openapi.yaml` (list filter, `LabelAssetFilter`), api-client; no migration |
 | ED-39 | After a scan opens an asset, focus stays in the scan box; the opened asset is announced (founder decision, BUG-8) | M2 | none (web only) |
+| ED-40 | Import polish: `.txt` / `.tsv` import files (M2-IMP-10, stored as `text/csv`), rupee prices (`Rs.44000/-`), uniqueness errors that name the field and the record, the value step's failing row count and category, "Nothing to change" on an unchanged re-import | M2 | `openapi.yaml` (`ImportValue.issue.rows` / `.categories`, summary and upload texts), api-client; ADR 0006 amended; no migration |
 
 ## ED-01. `person` is separate from `user_account`
 
@@ -569,3 +570,47 @@ Milestone = the milestone in which the decision takes effect (M1 tenancy/identit
 - **Consequences.** Web only; tested in unit tests and in the mock e2e with a simulated scanner (10 tags, 2 ms per key,
   Enter, back to back).
 - **Milestone.** M2 (M2-LIFE-08, M2-TAG-04).
+
+## ED-40. Import polish before the real-file trial: Unicode text files, rupee prices, named uniqueness errors, the value step's row counts, "nothing to change"
+
+- **Decision** (v0.2.10; M2-IMP-10 and the "candidates for stories" of AUDIT B.33).
+  - **`.txt` and `.tsv` import files (M2-IMP-10).** An attachment of kind `import_file` may be named `.csv`, `.tsv` or
+    `.txt` and declared as `text/csv`, `text/plain` or `text/tab-separated-values` (what browsers report for those names).
+    It is stored, signed and served as `text/csv` (the upload instructions carry that type) and sniffed exactly like a
+    CSV import file: no magic number of another format, no NUL bytes outside UTF-16, valid UTF-8, UTF-16 with a byte
+    order mark or Windows-1252, no markup (`files/content.ts`, `IMPORT_TEXT_MIMES`). Every other kind of attachment
+    keeps `.csv` only and `text/plain` stays off the general allow-list, so nothing new can be uploaded as a document or
+    a photo (ADR 0006 section 3, amended). The importer already read UTF-16 LE tab-delimited text (`formatOf` takes
+    `.txt` / `.tsv`); the wizard's picker now offers `.csv,.tsv,.txt,.xlsx` and says so, and the corpus file
+    `utf16le-unicode-text.txt` is uploaded under its own name.
+  - **Rupee prices.** `parseNumber` strips a leading `Rs`, `Rs.`, `INR` (any case) or a currency symbol (`₹ $ € £` ...),
+    a trailing `Rs`, and the `/-` or `/=` that closes an amount on Indian and East African bills, then reads the digits by
+    the existing rules (so `1,14,900.00` is 114900 and `1.234,50` is 1234.5). `Rs.44000/-`, `Rs 44,000/-`, `INR 44000` and
+    `₹1,14,900.00` are numbers; a trailing minus without the slash is still a negative number; a word ("donated") is still
+    a `number` row error. The currency hint: `₹` and `INR` are INR; `Rs` is the rupee of several countries, so it names the
+    import's or the organisation's currency when that is a rupee (INR, PKR, LKR, NPR, MUR, SCR), else INR. A bare
+    `44000/-` takes the import's or the organisation's currency, as any bare number does. Corpus file `rupee-prices.csv`.
+  - **Uniqueness errors name the field and the record.** A tag that another asset has (with matching on serial number or
+    external id, as the Google Admin preset does) said only "is already in use"; the row now says "Asset tag CHR-00001 is
+    already used by another asset." The registry's own 409s say the same (`Asset tag ... is already used by another
+    asset.`, `Email ... is already used by <person>.`, `Employee number ... is already used by <person>.`, `Department code
+    ... is already used by the department <name>.`, `External id ... (source ...) is already used by another asset.`;
+    `registry-base.ts` `takenBy`). The field errors keep the short `duplicate` text that forms show next to the field; an
+    import row takes the problem's sentence for every `duplicate` field error (`handlers/shared.ts` `issuesOf`).
+  - **The value step says which rows fail.** `ImportValue.issue` gains `rows` (how many of the value's rows the dry run
+    will reject, at most `count`) and `categories` (for a model: the categories, as written in the file, of those rows).
+    The web shows **Needs a decision** with "3 rows in category Network will be errors" (or "2 rows will be errors" for a
+    location), then the reason. A reason longer than two lines wraps inside its column (it ran into **Your choice**),
+    is clamped to two lines with the whole text in the `title` and behind **Show the whole reason** (`aria-expanded`).
+  - **"Nothing to change".** The dry run's summary gains `skipped_by_code` (`[{ code, n }]`, the last warning of each
+    skipped row: `exists`, `unchanged`, `duplicate-in-file`, `summary-row`). When nothing would be written, no row is an
+    error and every skipped row is `exists` or `unchanged` (repeats and summary lines of the file aside), the review shows
+    the neutral (info) banner "Nothing to change: every row matches what is already there." instead of the amber "No row
+    can be imported. Fix the file and upload it again.". **Nothing to import** stays disabled.
+- **Rationale.** All five were found by the automated walk-through run (B.33) or the corpus (ED-31) and would meet the
+  founder in the first real-file trial (M2-IMP-09): an Excel user's "Unicode text" save, an Indian register's prices, a
+  Google re-import whose tags exist, a model shared by two categories, and the second run of an unchanged file.
+- **Consequences.** Contract (gen.mjs; api-client regenerated; the API.md catalogue is unchanged): `ImportValue.issue.rows`
+  and `.categories` (required), the `summary` description (`skipped_by_code`), the attachment and import create texts. No
+  migration. ADR 0006 has an amendment note. Mock API parity (allow-list, analysis of `.txt`, issue counts, the summary).
+- **Milestone.** M2 (M2-IMP-02, M2-IMP-03, M2-IMP-04, M2-IMP-08, M2-IMP-10).

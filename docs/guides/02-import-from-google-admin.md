@@ -121,7 +121,8 @@ Export the devices again from Google Admin and run the same import. For this kin
 **Duplicates and settings** are already right: devices are **recognised by their serial number**, and **When the record
 exists already** says **Update it with the file**. Nothing is made twice. A device that has not changed is listed as
 **Skipped** ("Nothing to change; left as it is."); one that has (a new OS version, a new last sync, another user) is
-updated. An asset that is checked out to somebody keeps its status.
+updated. An asset that is checked out to somebody keeps its status. When no device changed at all, a blue note says
+**Nothing to change: every row matches what is already there.**: there is nothing to import.
 
 ## If something goes wrong
 
@@ -133,6 +134,7 @@ updated. An asset that is checked out to somebody keeps its status.
 | Devices have no asset tag you recognise                                                                 | Their **Asset ID** was empty in Google. The tracker gave them the next number of your tag numbering. Fill in the Asset ID in Google and import again. |
 | New departments such as **Students / Grade 9** or **Staff** appeared                                    | They come from the **Org unit path**. Rename or merge them under **Departments**, or map the units to existing departments in **Match values**.       |
 | The same device is listed twice                                                                         | Two rows have the same serial number: the first wins and the second is **Skipped**.                                                                   |
+| A row says "Asset tag CHR-00001 is already used by another asset."                                      | The device is new to the tracker (its serial number matches none), but its **Asset ID** is the tag of another device. Correct the Asset ID in Google (or the other device's tag) and import again. |
 
 ## Related guides
 

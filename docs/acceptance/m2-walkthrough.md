@@ -8,7 +8,13 @@ http://localhost:3001, signed in as the demo users, and mark every step **OK** o
 - Written for **version 0.2.7** (`main` at `d1f826c`) and updated for **version 0.2.8**, which closed the gaps the first
   preparation run found (steps 2, 4, 5, 13, 18, 38, 39 and 44 test the new screens; see "Notes from the preparation run" at the end),
   and for **version 0.2.9**, which fixed what the automated run of this checklist found (steps 6, 12, 17, 20, 24, 27, 28, 39,
-  40, 41, 43 and exit item 8 changed; see "Notes from the automated run" at the end).
+  40, 41, 43 and exit item 8 changed; see "Notes from the automated run" at the end), and for **version 0.2.10**, the
+  import polish before your real-file trial (steps 25, 28, 38, 39 and exit item 8; see "Changes in 0.2.10" at the end).
+- **Status (2026-11-27): deferred until you have the hardware (USB scanner, label stock, printer) and your real files.**
+  All M2 features are built and released (0.2.10), and every step without hardware was run through the UI by the
+  automated runs. Only your five steps remain: **17** (USB scanner), **19** (print on real label stock and scan), **28**
+  (your own files, the 30-minute target, M2-IMP-09), **37** on a real second device (phone or tablet), and the
+  **wrap-up**.
   Every step was checked against a fresh stack of the build it was written for; where the real app does not do what the
   backlog says, the step says `(known issue: ...)`.
 - Do the steps **in order**: later steps use what earlier ones made (for example the laptop `LAP00004`, the person Bjorn
@@ -522,7 +528,8 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
   - "We matched 11 of your columns." and **Fixed values**: "Category = Chromebook". Serial number, Asset ID (to **Asset tag**), Status, Model and **User** (to **Assigned to**) are matched for you.
   - Dry run: "Preview. Nothing has been saved yet." **10 Will create, 0 Will update, 0 Skipped, 0 Errors**, and "Records the import would create on the way" (4 models; departments **Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**).
   - **Import finished**, "Your data is in the register.", **10 Created**. GA-1001 to GA-1010 are listed; GA-1001 is **Deployed** to Gustav Eriksen, GA-1007 and GA-1010 are **Retired**; the new departments are under Settings, Departments.
-  - Second run: **0 Will create, 0 Will update, 10 Skipped**, "Nothing to change; left as it is."
+  - Second run: **0 Will create, 0 Will update, 10 Skipped**, "Nothing to change; left as it is.", and a blue note
+    **Nothing to change: every row matches what is already there.** (0.2.10; before, an amber "No row can be imported").
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -563,7 +570,7 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
 ### Step 28. 👤 needs hardware / real data: your own files, and the 30-minute target (IMP-09)
 
 - **Sign in as:** `admin@acme.example`
-- **Needs:** two files of yours in **`E:\Sayak\import-samples\`** (create the folder): (1) a spreadsheet of your real assets, **anonymised** (no real names, e-mail addresses or serial numbers you must not share); (2) a real **Google Admin ChromeOS export** (Google Admin, Devices, Chrome, Devices, Export), also anonymised. Do this step last, or on a fresh stack, so the demo data does not get in the way.
+- **Needs:** two files of yours in **`E:\Sayak\import-samples\`** (create the folder): (1) a spreadsheet of your real assets, **anonymised** (no real names, e-mail addresses or serial numbers you must not share), as `.xlsx`, `.csv` or Excel's **Unicode Text (.txt)** (0.2.10: `.txt` and `.tsv` are taken as they are, no renaming); (2) a real **Google Admin ChromeOS export** (Google Admin, Devices, Chrome, Devices, Export), also anonymised. Do this step last, or on a fresh stack, so the demo data does not get in the way.
 - **Do:**
   1. Start a stopwatch the moment you choose the first file. Import the spreadsheet through the wizard (**Assets**, **Import**): match columns, match values, dry run, fix or accept errors, **Import**.
   2. Import the Google Admin export the same way. People in its **User** column must exist first (see guide 2): on **Match values** a user that is not in **People** says "Not found: its rows will be errors", and the dry run makes those rows errors. Choose **Leave it empty** for such a value to import the device without an assignee.
@@ -571,6 +578,11 @@ The laptop for steps 8 to 12 is **LAP00004** (EliteBook 840 G10 (Lab), Ready to 
   4. Write down: the number of rows in each file; minutes to the first dry run; minutes to the PDF; every row error and what caused it; every column that was matched wrongly; anything you did not understand.
 - **You should see:** both imports finish, the dry runs show problems in words you can act on, and the **time from choosing the file to a PDF of 100 labels is 30 minutes or less** (the M2 target). If the time is longer, say where it went (waiting for the screen, fixing the file, mapping).
   Since 0.2.9 (from the substitute run with `E:\Sayak\import-samples\`): **Match values** shows a name that exists but would still fail as **Needs a decision** with the reason (a bare room name such as "Lab 1" when the file also has "Main Building / Lab 1", or a model that exists under another category), so it is not skipped; a "TOTAL ITEMS: 120" line at the end of a sheet is **Skipped** as "A summary line"; with "Tag, else serial number" a new tag whose serial number another asset has is an **Error** ("Serial number ... is already used by ..."); "Bought From", "Date of Purchase", "Tag No." and "Item" are suggested as Vendor, Purchase date, Asset tag and Name; and **Why rows were rejected** says "a value is too long or too large (name)", not "too_big (name)".
+  Since 0.2.10 (ED-40): prices such as `Rs.44000/-`, `Rs 44,000/-`, `INR 44000` and `₹1,14,900.00` are read as numbers in INR;
+  **Needs a decision** says how many rows will be errors and, for a model, in which category ("3 rows in category Network will be
+  errors"), and a long reason stays in its column (two lines, **Show the whole reason** for the rest); a Google row whose tag another
+  asset has says "Asset tag CHR-00001 is already used by another asset."; and a second import of an unchanged file says **Nothing to
+  change: every row matches what is already there.** in a blue note.
   Defects become stories; the time is recorded as the baseline for the target (M2-IMP-09).
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -732,7 +744,9 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 - **Read:** `01-import-your-spreadsheet.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** in **Assets**, **Import**, **Assets**, press **Download the Assets template (CSV)**, open it, and use **What the template contains**. Then upload `school-devices.csv` again to the column screen, type a name under **Saved mappings** and press **Save this mapping**; leave the wizard without importing.
 - **You should see:** `assets-template.csv` with the columns Asset tag, Name, Serial number, Category, Manufacturer, Model, Status, Location, Department, Vendor, Assigned to, ... and an example row. After saving, the mapping is offered under **Saved mappings** ("Choose a saved mapping", **Use this mapping**).
-  Also check the guide's error report example against step 27: row 8 names the fields `category, model`.
+  Also check the guide's error report example against step 27: row 8 names the fields `category, model`. And "Before you start"
+  lists the Excel save formats that work (**Excel Workbook (.xlsx)**, the two **CSV** formats and **Unicode Text (.txt)**) and the
+  price notations it reads (0.2.10); the upload box says ".txt or .tsv, such as Excel's "Unicode text"".
 
 - [ ] OK - [ ] Not OK — note: ____
 
@@ -740,7 +754,7 @@ Not OK for any sentence that is unclear, any button or label that is not on the 
 
 - **Read:** `02-import-from-google-admin.md`. **Sign in as:** `admin@acme.example`.
 - **Try one task:** guide step 7, "Next term: import again": run the import of step 25 again and read the dry run; then look at **Settings**, **Departments**.
-- **You should see:** every device **Skipped** ("Nothing to change; left as it is."), and the departments created from the org units (**Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**). Also compare the guide's "Who can do this" sentence with what you saw: it says an Administrator or an Asset manager can run the first import, and the import worked for the Asset manager.
+- **You should see:** every device **Skipped** ("Nothing to change; left as it is.") with the blue note **Nothing to change: every row matches what is already there.** (0.2.10), and the departments created from the org units (**Students / Grade 8**, **Students / Grade 9**, **Spare pool**, **Staff**, **Retired**). Also compare the guide's "Who can do this" sentence with what you saw: it says an Administrator or an Asset manager can run the first import, and the import worked for the Asset manager.
   And the guide's "Create the people first": a **User** that is not in **People** makes that row an error. **Match values** says so for each such address ("Not found: its rows will be errors") and the dry run lists those rows under **Errors** with "No person named ..." (0.2.9, ED-34; before, they were imported without an assignee).
 
 - [ ] OK - [ ] Not OK — note: ____
@@ -877,3 +891,18 @@ this checklist where the checklist was wrong:
   step 12 (the seeded **Created** entry is "by the system"), step 20 (the Category column), step 27 (the created tags), step 40 and
   guide 3 (the thermal template's full name), step 41 and guide 4 (**User menu**, **Notification settings**), step 43 and guide 6
   (accesses are listed oldest first), exit item 8 (the API suite only, with every variable set).
+
+## Changes in 0.2.10
+
+The import polish before your real-file trial (ED-40), from the "seen, not changed" list of the automated run and the import
+corpus. Nothing else in the checklist changed.
+
+- **Unicode text files** (M2-IMP-10): the upload box takes `.csv`, `.txt`, `.tsv` and `.xlsx`; Excel's **Unicode Text (.txt)** is
+  imported under its own name (steps 28, 38).
+- **Rupee prices**: `Rs.44000/-`, `Rs 44,000/-`, `INR 44000` and `₹1,14,900.00` are numbers in INR (step 28).
+- **Tags that another asset has**: the row says "Asset tag CHR-00001 is already used by another asset." instead of "is already in
+  use" (steps 25, 28).
+- **Match values**: **Needs a decision** says how many rows will be errors and, for a model, in which category; a long reason
+  stays in its column, two lines with **Show the whole reason** (step 28).
+- **A re-import where nothing changed**: a blue **Nothing to change: every row matches what is already there.** instead of the
+  amber "No row can be imported" (steps 25, 39).

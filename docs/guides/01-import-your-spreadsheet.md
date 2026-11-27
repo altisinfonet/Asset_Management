@@ -8,9 +8,14 @@ column is which, look at a preview, and only then save. This guide uses a small 
 
 ## Before you start
 
-- **Your file.** A CSV file or an Excel file saved as **.xlsx** (the old **.xls** format is refused: open it in Excel and
-  use Save As). Keep the rows on the first sheet, with the column titles in the first row. A file can hold up to 100,000
-  rows. The upload screen shows the size limit.
+- **Your file.** A CSV file, a text file with tabs between the columns, or an Excel file saved as **.xlsx**. In Excel's
+  **Save As**, these work: **Excel Workbook (.xlsx)**, **CSV UTF-8 (Comma delimited) (.csv)**, **CSV (Comma delimited)
+  (.csv)** and **Unicode Text (.txt)**; a `.tsv` file from another program works too. The old **.xls** format (Excel
+  97-2003 Workbook) is refused: open it in Excel and use Save As. Keep the rows on the first sheet, with the column
+  titles in the first row. A file can hold up to 100,000 rows. The upload screen shows the size limit.
+- **Prices** may be written as plain numbers (`44000`, `44,000.00`, `1,14,900.00`) or with a currency, as registers
+  often do: `Rs.44000/-`, `Rs 44,000/-`, `INR 44000`, `₹ 58,000`, `$1,299.99`, `1.234,50 €`. A word such as "donated"
+  is an error for that row.
 - **One row per device.** Every device needs a **category** (for example "Laptops" or "Phones and tablets"). If your
   sheet has no category column, you can choose one category for the whole file in step 4.
 - **Get the order right.** An asset can only point at things that exist, or that the import is allowed to create:
@@ -44,8 +49,8 @@ Pick **Assets** and press **Continue**. If you want a template first, press **Do
 
 ### 3. Upload your file
 
-Press **Choose a file** (or drop the file on the box). The file is checked for viruses and then read. This takes a few
-seconds. Nothing is imported yet.
+Press **Choose a file** (or drop the file on the box). The box takes `.csv`, `.txt`, `.tsv` and `.xlsx` files. The file
+is checked for viruses and then read. This takes a few seconds. Nothing is imported yet.
 
 ![Uploading the file](img/01-import-upload.png)
 
@@ -90,11 +95,13 @@ For each word the **What happens** column says one of:
 - **Will be created**: it does not exist yet and will be made (not allowed for statuses).
 - **Not found: its rows will be errors**: you must decide. People are never created unless you say so: a name or
   e-mail address in the **Assigned to** column that is not in **People** makes its rows errors.
-- **Needs a decision: its rows will be errors**, with the reason under it: a record of that name exists, but the rows
-  would still fail. Two cases: a room name such as "Lab 1" that several places have (also when your file creates one,
-  for example from "Main Building / Lab 1"), and a model that exists under another category than the rows' own.
-  Choose the right record under **Use an existing one**, write the full path ("Main Building > Lab 1") in your file, or
-  point the category at the model's category.
+- **Needs a decision**, with how many rows will be errors and the reason under it: a record of that name exists, but
+  those rows would still fail. Two cases: a room name such as "Lab 1" that several places have (also when your file
+  creates one, for example from "Main Building / Lab 1"): "2 rows will be errors"; and a model that exists under another
+  category than the rows' own: only the rows of the other category fail, so it says which, for example "3 rows in
+  category Network will be errors". Choose the right record under **Use an existing one**, write the full path ("Main
+  Building > Lab 1") in your file, or point the category at the model's category. A long reason shows two lines; press
+  **Show the whole reason** to read the rest.
 
 This screen uses the same rules as the dry run, so a word it shows as matched never fails later for its name. To
 decide, use **Your choice**: **Use an existing one**, **Create it** or **Leave it empty**. Status labels are never
@@ -128,6 +135,9 @@ The four boxes tell you the story: **Will create**, **Will update**, **Skipped**
 - A row that repeats an earlier tag or serial number is **Skipped** (the message names the first row), not an error.
 - A summary line at the end of the sheet, a single cell such as "TOTAL ITEMS: 120", is **Skipped** with "A summary
   line (...), not data; skipped."
+- When you import the same file a second time and nothing in it changed, every row is **Skipped** and a blue note says
+  **Nothing to change: every row matches what is already there.** That is the expected result, not a problem: the
+  devices are already in the register. (The orange **No row can be imported** appears only when rows really fail.)
 
 ### 7. Fix the errors, or leave them out
 
@@ -198,14 +208,16 @@ details of this import were removed**, the table of rows is gone and the error r
 
 | What you see                                                               | What it means and what to do                                                                                                                      |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Old Excel files (.xls) are not supported."                                | Open the file in Excel and choose Save As, **Excel Workbook (.xlsx)** or **CSV**.                                                                 |
-| "a number cannot be read"                                                  | A cost cell holds text such as "about 389". Make it a plain number.                                                                               |
+| "Old Excel files (.xls) are not supported."                                | Open the file in Excel and choose Save As, **Excel Workbook (.xlsx)**, **CSV** or **Unicode Text (.txt)**.                                        |
+| "a number cannot be read"                                                  | A cost cell holds text such as "about 389" or "donated". Make it a number; `Rs.44000/-` and `INR 44000` are fine.                                 |
+| "Asset tag ... is already used by another asset."                          | The row is a new device (its serial number matches none), but its tag belongs to another device. Correct the tag, or the serial number.          |
 | "a required value is missing (category)"                                   | The row has no category. Fill it in, or choose a default category in step 4.                                                                      |
 | "a date can be read two ways"                                              | `03/11/2025` could be 3 November or 11 March. Choose how dates are written under **Dates in the file are written**.                               |
 | "Not found: its rows will be errors" (step 5)                              | A word in your file matches nothing and cannot be created (statuses, people). Use **Use an existing one**, or **Leave it empty**.                 |
 | "Same tag or serial number as row N of the file; skipped."                 | Two rows describe the same device. The first one wins. Remove the duplicate from your sheet if it is a mistake.                                   |
 | "Serial number ... is already used by ..."                                 | The row has a new tag, but another device has that serial number. Use that device's tag, correct the serial number, or leave the row out.        |
-| "Needs a decision: its rows will be errors" (step 5)                       | The name exists, but the rows would still fail (the reason is under it). Choose a record under **Use an existing one**, or write the full path.  |
+| "Needs a decision: N rows ... will be errors" (step 5)                     | The name exists, but those rows would still fail (the reason is under it). Choose a record under **Use an existing one**, or write the full path. |
+| "Nothing to change: every row matches what is already there." (step 6)     | The file was imported before and nothing in it changed. There is nothing to do.                                                                   |
 | "... matches 2 locations ...; write the full path ..."                     | Several places have that room name. Write the whole path in your file, such as "Main Building > Lab 1", or decide it in step 5.                  |
 | "a value is too long or too large"                                         | A cell is longer than its field allows; the row says the limit ("Too long: at most 200 characters."). Shorten it.                                |
 | "The record was edited after the dry run"                                  | Somebody changed that asset between the preview and the import. It was left alone. Run the import again for that row.                             |

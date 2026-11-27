@@ -245,7 +245,7 @@ stages.import = async ({ admin }) => {
   await shot(
     admin,
     '01-import-upload',
-    [caption, admin.getByText('A CSV or Excel (.xlsx) file, up to')],
+    [caption, admin.getByText(/or Excel \(\.xlsx\) file, up to/)],
     { padBottom: 50 },
   );
 
